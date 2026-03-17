@@ -22,7 +22,6 @@ Docker build:
 Docker run for containerized Isaac execution:
 
 ```bash
-xhost +SI:localuser:root
 ./docker_env.sh run
 ```
 
@@ -76,5 +75,5 @@ Notes:
 - the current environment loads the FR3 as a scene USD asset only; no arm control or articulation command path is implemented yet,
 - the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
 - `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
-- GUI mode in Docker requires X11 auth; `xhost +SI:localuser:root` grants the container's root user access to your local X server,
-- you can revoke that access later with `xhost -SI:localuser:root`.
+- for GUI mode, `docker_env.sh run` grants the container's root user temporary X11 access with `xhost +SI:localuser:root` when `DISPLAY` and `xhost` are available,
+- that X11 access is revoked automatically when `docker_env.sh run` exits.
