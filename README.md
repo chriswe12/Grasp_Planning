@@ -1,1 +1,80 @@
 # Grasp_Planning
+
+Minimal Isaac Lab scaffold for task-aware grasp planning experiments on Franka Research 3.
+
+Current scope:
+- interactive environment only,
+- ground plane + dynamic cube + FR3 scene,
+- no controller or grasp execution yet.
+
+Main entrypoint:
+
+```bash
+python scripts/launch_fr3_cube_env.py
+```
+
+Docker build:
+
+```bash
+./docker_env.sh build
+```
+
+Docker run for containerized Isaac execution:
+
+```bash
+xhost +SI:localuser:root
+./docker_env.sh run
+```
+
+Inside the container:
+
+```bash
+export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
+/isaac-sim/python.sh scripts/launch_fr3_cube_env.py --headless
+```
+
+For GUI mode inside the container:
+
+```bash
+export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
+/isaac-sim/python.sh scripts/launch_fr3_cube_env.py
+```
+
+To run for a fixed duration instead of until interrupted:
+
+```bash
+export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
+/isaac-sim/python.sh scripts/launch_fr3_cube_env.py --run-seconds 30
+```
+
+To override the built-in Isaac FR3 asset URL with another USD:
+
+```bash
+/isaac-sim/python.sh scripts/launch_fr3_cube_env.py --fr3-usd /absolute/path/to/fr3.usd
+```
+
+Container lifecycle helpers:
+
+```bash
+./docker_env.sh stop
+./docker_env.sh remove
+```
+
+Host compatibility checks used for the Docker setup:
+- architecture: `x86_64`,
+- OS: Ubuntu 22.04.5,
+- NVIDIA driver module: `570.211.01`,
+- Docker: `29.1.3`,
+- NVIDIA Container Toolkit: `1.18.1`.
+
+Notes:
+- the cube pose is defined directly in `scripts/launch_fr3_cube_env.py`,
+- by default the launcher uses Isaac Sim's built-in FR3 asset:
+  `Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd`,
+- `--fr3-usd` is optional and only needed to override that default,
+- later controller work can replace the hard-coded cube pose with an externally provided object pose,
+- the current environment loads the FR3 as a scene USD asset only; no arm control or articulation command path is implemented yet,
+- the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
+- `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
+- GUI mode in Docker requires X11 auth; `xhost +SI:localuser:root` grants the container's root user access to your local X server,
+- you can revoke that access later with `xhost -SI:localuser:root`.
