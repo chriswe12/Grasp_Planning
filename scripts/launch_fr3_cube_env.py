@@ -32,7 +32,8 @@ from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
-from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
+from grasp_planning import CubeFaceGraspGenerator, FR3PickController  # noqa: E402
+from grasp_planning.envs import DEFAULT_CUBE_CFG, make_fr3_cube_scene_cfg  # noqa: E402
 
 
 ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
@@ -95,6 +96,18 @@ def run() -> None:
 
     sim, scene = build_scene()
     physics_dt = sim.get_physics_dt()
+    robot = scene["robot"]
+    grasp_generator = CubeFaceGraspGenerator(cube_size=DEFAULT_CUBE_CFG.size)
+    grasp_candidates = grasp_generator.generate(
+        cube_position_w=CUBE_POSITION,
+        cube_orientation_xyzw=CUBE_ORIENTATION_XYZW,
+        robot_base_position_w=ROBOT_BASE_POSITION,
+    )
+    controller = FR3PickController(
+        robot=robot,
+        grasp=grasp_candidates[0],
+        physics_dt=physics_dt,
+    )
     elapsed_s = 0.0
     print("[INFO]: Setup complete...")
 
@@ -105,6 +118,7 @@ def run() -> None:
             if not sim.is_playing():
                 sim.step()
                 continue
+            controller.step()
             scene.write_data_to_sim()
             sim.step()
             scene.update(physics_dt)
