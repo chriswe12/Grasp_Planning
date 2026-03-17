@@ -32,6 +32,14 @@ build_image() {
 
 run_container() {
     local xauth_args=()
+    local revoke_xhost=0
+
+    if [[ -n "${DISPLAY:-}" ]] && command -v xhost >/dev/null 2>&1; then
+        xhost +SI:localuser:root >/dev/null
+        revoke_xhost=1
+        trap 'xhost -SI:localuser:root >/dev/null 2>&1 || true' EXIT
+    fi
+
     if [[ -f "${XAUTH_FILE}" ]]; then
         xauth_args=(
             -e XAUTHORITY=/tmp/.docker.xauth
@@ -51,6 +59,11 @@ run_container() {
         -v "${WORKSPACE_DIR}:/workspace/Grasp_Planning" \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         "${IMAGE_NAME}"
+
+    if [[ "${revoke_xhost}" -eq 1 ]]; then
+        xhost -SI:localuser:root >/dev/null 2>&1 || true
+        trap - EXIT
+    fi
 }
 
 stop_container() {
