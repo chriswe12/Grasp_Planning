@@ -13,6 +13,15 @@ Main entrypoint:
 python scripts/launch_fr3_cube_env.py
 ```
 
+Standalone grasp debug viewer:
+
+```bash
+python scripts/debug_cube_grasps.py
+```
+
+The debug viewer is browser-based. It writes a self-contained HTML file to
+`artifacts/cube_grasp_debug.html`; open that file from the host browser.
+
 Docker build:
 
 ```bash
@@ -46,6 +55,24 @@ export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py --run-seconds 30
 ```
 
+To inspect the deterministic cube grasps with a selectable ranked list:
+
+```bash
+python scripts/debug_cube_grasps.py --cube-position 0.45,0.0,0.025 --cube-orientation-xyzw 0,0,0,1
+```
+
+Viewer controls:
+- left mouse drag rotates the scene,
+- middle mouse drag pans the scene,
+- mouse wheel zooms,
+- arrow keys or `Prev` / `Next` switch the selected grasp.
+
+Current grasp convention for the cube generator:
+- each candidate represents a symmetric parallel-jaw pinch grasp,
+- `position_w` is the cube-center pinch midpoint,
+- the selected face label (`+x`, `-y`, etc.) determines the approach side and gripper orientation,
+- the debug viewer derives the two finger locations from that grasp pose and `gripper_width`.
+
 To override the built-in Isaac FR3 asset URL with another USD:
 
 ```bash
@@ -68,6 +95,7 @@ Host compatibility checks used for the Docker setup:
 
 Notes:
 - the cube pose is defined directly in `scripts/launch_fr3_cube_env.py`,
+- `scripts/debug_cube_grasps.py` is intended for local debug visualization and writes generated output into `artifacts/`,
 - by default the launcher uses Isaac Sim's built-in FR3 asset:
   `Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd`,
 - `--fr3-usd` is optional and only needed to override that default,
