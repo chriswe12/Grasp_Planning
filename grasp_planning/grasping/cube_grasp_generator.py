@@ -145,7 +145,7 @@ class CubeFaceGraspGenerator:
             point_obj = normal_obj * face_offset
             point_w = cube_position + rotmat @ point_obj
             normal_w = _normalize(rotmat @ normal_obj)
-            orientation = _make_gripper_orientation(normal_w)
+            orientation = _make_gripper_orientation(-normal_w)
             score = self._score_candidate(
                 point_w=point_w,
                 normal_w=normal_w,
@@ -154,7 +154,7 @@ class CubeFaceGraspGenerator:
             )
             candidates.append(
                 GraspCandidate(
-                    position_w=tuple(float(v) for v in point_w),
+                    position_w=tuple(float(v) for v in cube_position),
                     orientation_xyzw=orientation,
                     normal_w=tuple(float(v) for v in normal_w),
                     pregrasp_offset=self._pregrasp_offset,
