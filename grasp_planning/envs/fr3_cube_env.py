@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
@@ -83,15 +84,41 @@ class FR3CubeSceneCfg(InteractiveSceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=DEFAULT_CUBE_CFG.pos, rot=DEFAULT_CUBE_CFG.rot),
     )
 
-    robot = AssetBaseCfg(
+    robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path="",
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(
+        init_state=ArticulationCfg.InitialStateCfg(
             pos=DEFAULT_ROBOT_CFG.base_pos,
             rot=DEFAULT_ROBOT_CFG.base_rot,
+            joint_pos={
+                "fr3_joint1": 0.0,
+                "fr3_joint2": -0.785398,
+                "fr3_joint3": 0.0,
+                "fr3_joint4": -2.356194,
+                "fr3_joint5": 0.0,
+                "fr3_joint6": 1.570796,
+                "fr3_joint7": 0.785398,
+                "fr3_finger_joint.*": 0.04,
+            },
         ),
+        actuators={
+            "fr3_arm": ImplicitActuatorCfg(
+                joint_names_expr=["fr3_joint[1-7]"],
+                stiffness=800.0,
+                damping=80.0,
+                effort_limit=87.0,
+                velocity_limit=2.175,
+            ),
+            "fr3_hand": ImplicitActuatorCfg(
+                joint_names_expr=["fr3_finger_joint.*"],
+                stiffness=2_000.0,
+                damping=200.0,
+                effort_limit=200.0,
+                velocity_limit=0.2,
+            ),
+        },
     )
 
 

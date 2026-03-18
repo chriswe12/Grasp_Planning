@@ -72,7 +72,7 @@ Notes:
   `Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd`,
 - `--fr3-usd` is optional and only needed to override that default,
 - later controller work can replace the hard-coded cube pose with an externally provided object pose,
-- the current environment loads the FR3 as a scene USD asset only; no arm control or articulation command path is implemented yet,
+- the current stable environment spawns the FR3 as an `ArticulationCfg` from the built-in USD and only steps the scene; no controller or grasp execution path runs in the launcher,
 - the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
 - `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
 - for GUI mode, `docker_env.sh run` grants the container's root user temporary X11 access with `xhost +SI:localuser:root` when `DISPLAY` and `xhost` are available,

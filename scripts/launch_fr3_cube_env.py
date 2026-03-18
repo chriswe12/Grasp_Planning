@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+import math
+import re
 
 from isaaclab.app import AppLauncher
 
@@ -30,10 +31,10 @@ simulation_app = app_launcher.app
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
+import torch  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3PickController  # noqa: E402
-from grasp_planning.envs import DEFAULT_CUBE_CFG, make_fr3_cube_scene_cfg  # noqa: E402
+from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 
 
 ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
@@ -43,6 +44,16 @@ ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
 # replace this constant with externally provided pose data later.
 CUBE_POSITION = (0.45, 0.0, 0.025)
 CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
+
+
+def resolve_joint_ids(joint_names: list[str], pattern: str) -> torch.Tensor:
+    """Resolve articulation joint indices from a regex."""
+
+    compiled = re.compile(pattern)
+    joint_ids = [idx for idx, name in enumerate(joint_names) if compiled.fullmatch(name)]
+    if not joint_ids:
+        raise RuntimeError(f"No joints matched pattern '{pattern}'. Available joints: {joint_names}")
+    return torch.tensor(joint_ids, dtype=torch.long)
 
 
 def resolve_fr3_usd_path() -> str:
@@ -97,19 +108,13 @@ def run() -> None:
     sim, scene = build_scene()
     physics_dt = sim.get_physics_dt()
     robot = scene["robot"]
-    grasp_generator = CubeFaceGraspGenerator(cube_size=DEFAULT_CUBE_CFG.size)
-    grasp_candidates = grasp_generator.generate(
-        cube_position_w=CUBE_POSITION,
-        cube_orientation_xyzw=CUBE_ORIENTATION_XYZW,
-        robot_base_position_w=ROBOT_BASE_POSITION,
-    )
-    controller = FR3PickController(
-        robot=robot,
-        grasp=grasp_candidates[0],
-        physics_dt=physics_dt,
-    )
+    device = robot.device
+    joint_names = list(getattr(robot, "joint_names", []))
+    arm_joint_ids = resolve_joint_ids(joint_names, r"fr3_joint[1-7]").to(device=device)
+    hand_joint_ids = resolve_joint_ids(joint_names, r"fr3_finger_joint.*").to(device=device)
+    default_joint_pos = robot.data.joint_pos[0].clone()
     elapsed_s = 0.0
-    print("[INFO]: Setup complete...")
+    print("[INFO]: Setup complete. Running scene with dummy articulation commands...", flush=True)
 
     while args_cli.run_seconds <= 0.0 or elapsed_s < args_cli.run_seconds:
         try:
@@ -118,7 +123,30 @@ def run() -> None:
             if not sim.is_playing():
                 sim.step()
                 continue
-            controller.step()
+            joint_targets = default_joint_pos.unsqueeze(0).clone()
+            phase = 2.0 * math.pi * 0.2 * elapsed_s
+            arm_offsets = torch.tensor(
+                [
+                    0.20 * math.sin(phase),
+                    0.15 * math.sin(phase + 0.7),
+                    0.00,
+                    0.25 * math.sin(phase + 1.4),
+                    0.00,
+                    0.20 * math.sin(phase + 2.1),
+                    0.00,
+                ],
+                dtype=joint_targets.dtype,
+                device=device,
+            ).unsqueeze(0)
+            hand_targets = torch.full(
+                (1, int(hand_joint_ids.numel())),
+                0.04,
+                dtype=joint_targets.dtype,
+                device=device,
+            )
+            joint_targets[:, arm_joint_ids] = default_joint_pos[arm_joint_ids].unsqueeze(0) + arm_offsets
+            joint_targets[:, hand_joint_ids] = hand_targets
+            robot.set_joint_position_target(joint_targets)
             scene.write_data_to_sim()
             sim.step()
             scene.update(physics_dt)
