@@ -53,7 +53,6 @@ xhost +SI:localuser:root
 Inside the container, the common launcher path is:
 
 ```bash
-export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py
 ```
 

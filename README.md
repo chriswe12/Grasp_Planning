@@ -34,24 +34,23 @@ Docker run for containerized Isaac execution:
 ./docker_env.sh run
 ```
 
+This opens an interactive shell inside the container immediately.
+
 Inside the container:
 
 ```bash
-export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py --headless
 ```
 
 For GUI mode inside the container:
 
 ```bash
-export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py
 ```
 
 To run for a fixed duration instead of until interrupted:
 
 ```bash
-export PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py --run-seconds 30
 ```
 
@@ -104,5 +103,6 @@ Notes:
 - the current planner / pickup path does not work reliably yet; the arm moves, but the cube is not picked successfully,
 - the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
 - `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
+- the container exports `PYTHONPATH` automatically for the mounted workspace and Isaac Lab source tree,
 - for GUI mode, `docker_env.sh run` grants the container's root user temporary X11 access with `xhost +SI:localuser:root` when `DISPLAY` and `xhost` are available,
 - that X11 access is revoked automatically when `docker_env.sh run` exits.
