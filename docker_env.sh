@@ -51,6 +51,7 @@ run_container() {
         --gpus all \
         --network host \
         --ipc host \
+        --entrypoint /bin/bash \
         -e ACCEPT_EULA=Y \
         -e PRIVACY_CONSENT=Y \
         -e DISPLAY="${DISPLAY:-:0}" \
@@ -58,7 +59,8 @@ run_container() {
         "${xauth_args[@]}" \
         -v "${WORKSPACE_DIR}:/workspace/Grasp_Planning" \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-        "${IMAGE_NAME}"
+        "${IMAGE_NAME}" \
+        -l
 
     if [[ "${revoke_xhost}" -eq 1 ]]; then
         xhost -SI:localuser:root >/dev/null 2>&1 || true
@@ -75,7 +77,7 @@ remove_container() {
 }
 
 open_shell() {
-    docker exec -it "${CONTAINER_NAME}" /bin/bash
+    docker exec -it "${CONTAINER_NAME}" /bin/bash -l
 }
 
 COMMAND="${1:-help}"

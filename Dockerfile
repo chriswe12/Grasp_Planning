@@ -67,9 +67,17 @@ print(AppLauncher)
 print(isaaclab_source_root)
 PY
 
+ENV GRASP_WORKSPACE=/workspace/Grasp_Planning
+ENV ISAACLAB_PYTHON_ROOT=/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
+ENV PYTHONPATH=${GRASP_WORKSPACE}:${ISAACLAB_PYTHON_ROOT}
+
+RUN cat >/etc/profile.d/grasp_pythonpath.sh <<'EOF'
+export GRASP_WORKSPACE=/workspace/Grasp_Planning
+export ISAACLAB_PYTHON_ROOT=/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
+export PYTHONPATH="${GRASP_WORKSPACE}:${ISAACLAB_PYTHON_ROOT}"
+EOF
+
 WORKDIR /workspace/Grasp_Planning
 COPY . /workspace/Grasp_Planning
-
-ENV PYTHONPATH=/workspace/Grasp_Planning:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 
 CMD ["/bin/bash"]
