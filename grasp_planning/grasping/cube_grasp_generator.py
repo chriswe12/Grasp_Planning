@@ -11,7 +11,11 @@ import numpy as np
 
 @dataclass(frozen=True)
 class GraspCandidate:
-    """World-frame grasp pose and metadata for a parallel gripper."""
+    """World-frame grasp pose and metadata for a parallel gripper.
+
+    `position_w` is the pinch center of the grasp. For the symmetric cube grasps
+    generated here, that is the cube center.
+    """
 
     position_w: tuple[float, float, float]
     orientation_xyzw: tuple[float, float, float, float]
@@ -29,6 +33,26 @@ class GraspCandidate:
         position = np.asarray(self.position_w, dtype=float)
         pregrasp = position - normal * self.pregrasp_offset
         return tuple(float(v) for v in pregrasp)
+
+    def gripper_axes_w(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return the gripper frame axes in world coordinates."""
+
+        rotmat = _quat_to_rotmat_xyzw(self.orientation_xyzw)
+        return rotmat[:, 0].copy(), rotmat[:, 1].copy(), rotmat[:, 2].copy()
+
+    def finger_positions_w(self, *, finger_span: float | None = None) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        """Return derived left/right finger locations for visualization."""
+
+        _, closing_axis, _ = self.gripper_axes_w()
+        grasp_center = np.asarray(self.position_w, dtype=float)
+        span = self.gripper_width if finger_span is None else float(finger_span)
+        half_span = 0.5 * span
+        left_finger = grasp_center - closing_axis * half_span
+        right_finger = grasp_center + closing_axis * half_span
+        return (
+            tuple(float(v) for v in left_finger),
+            tuple(float(v) for v in right_finger),
+        )
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -85,7 +109,7 @@ def _rotmat_to_quat_xyzw(rotmat: np.ndarray) -> tuple[float, float, float, float
 
 
 def _make_gripper_orientation(normal_w: np.ndarray) -> tuple[float, float, float, float]:
-    """Construct a gripper orientation from the face normal.
+    """Construct a gripper orientation from the approach direction.
 
     The gripper x-axis points along the approach direction toward the object.
     The z-axis is kept as aligned with world up as possible.
@@ -105,7 +129,7 @@ def _make_gripper_orientation(normal_w: np.ndarray) -> tuple[float, float, float
 
 
 class CubeFaceGraspGenerator:
-    """Generate and rank face-centered grasps for a cube."""
+    """Generate and rank cube-center pinch grasps for a cube."""
 
     def __init__(
         self,
@@ -126,7 +150,7 @@ class CubeFaceGraspGenerator:
         cube_orientation_xyzw: tuple[float, float, float, float],
         robot_base_position_w: tuple[float, float, float],
     ) -> list[GraspCandidate]:
-        """Return face-centered grasp candidates ordered by descending score."""
+        """Return cube-center grasp candidates ordered by descending score."""
 
         rotmat = _quat_to_rotmat_xyzw(cube_orientation_xyzw)
         cube_position = np.asarray(cube_position_w, dtype=float)
@@ -142,21 +166,21 @@ class CubeFaceGraspGenerator:
 
         candidates: list[GraspCandidate] = []
         for label, normal_obj, face_offset, closing_span in face_defs:
-            point_obj = normal_obj * face_offset
-            point_w = cube_position + rotmat @ point_obj
-            normal_w = _normalize(rotmat @ normal_obj)
-            orientation = _make_gripper_orientation(normal_w)
-            score = self._score_candidate(
-                point_w=point_w,
-                normal_w=normal_w,
+            face_center_obj = normal_obj * face_offset
+            face_center_w = cube_position + rotmat @ face_center_obj
+            approach_w = _normalize(-(rotmat @ normal_obj))
+            orientation = _make_gripper_orientation(approach_w)
+            score = self.score_components(
+                point_w=face_center_w,
+                normal_w=approach_w,
                 robot_base_position_w=robot_base_position,
                 label=label,
-            )
+            )["total"]
             candidates.append(
                 GraspCandidate(
-                    position_w=tuple(float(v) for v in point_w),
+                    position_w=tuple(float(v) for v in cube_position),
                     orientation_xyzw=orientation,
-                    normal_w=tuple(float(v) for v in normal_w),
+                    normal_w=tuple(float(v) for v in approach_w),
                     pregrasp_offset=self._pregrasp_offset,
                     gripper_width=float(closing_span + self._finger_clearance),
                     score=score,
@@ -167,16 +191,24 @@ class CubeFaceGraspGenerator:
         return sorted(candidates, key=lambda grasp: grasp.score, reverse=True)
 
     @staticmethod
-    def _score_candidate(
+    def score_components(
         *,
         point_w: np.ndarray,
         normal_w: np.ndarray,
         robot_base_position_w: np.ndarray,
         label: str,
-    ) -> float:
+    ) -> dict[str, float]:
         distance_score = -float(np.linalg.norm(point_w - robot_base_position_w))
         side_grasp_bonus = 0.25 if label in {"+x", "-x", "+y", "-y"} else 0.0
         top_grasp_penalty = -0.15 if label == "+z" else 0.0
         underside_penalty = -2.0 if label == "-z" else 0.0
         horizontal_bonus = 0.1 * (1.0 - abs(float(normal_w[2])))
-        return distance_score + side_grasp_bonus + top_grasp_penalty + underside_penalty + horizontal_bonus
+        total = distance_score + side_grasp_bonus + top_grasp_penalty + underside_penalty + horizontal_bonus
+        return {
+            "distance_score": distance_score,
+            "side_grasp_bonus": side_grasp_bonus,
+            "top_grasp_penalty": top_grasp_penalty,
+            "underside_penalty": underside_penalty,
+            "horizontal_bonus": horizontal_bonus,
+            "total": total,
+        }
