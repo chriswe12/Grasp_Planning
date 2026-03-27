@@ -3,9 +3,10 @@
 Minimal Isaac Lab scaffold for task-aware grasp planning experiments on Franka Research 3.
 
 Current scope:
-- interactive environment only,
+- interactive FR3 + cube environment,
 - ground plane + dynamic cube + FR3 scene,
-- no controller or grasp execution yet.
+- experimental move-to-pose planning path in the launcher,
+- no reliable grasp execution or pickup pipeline yet.
 
 Main entrypoint:
 
