@@ -199,10 +199,10 @@ class CubeFaceGraspGenerator:
         label: str,
     ) -> dict[str, float]:
         distance_score = -float(np.linalg.norm(point_w - robot_base_position_w))
-        side_grasp_bonus = 0.25 if label in {"+x", "-x", "+y", "-y"} else 0.0
-        top_grasp_penalty = -0.15 if label == "+z" else 0.0
+        side_grasp_bonus = -0.10 if label in {"+x", "-x", "+y", "-y"} else 0.0
+        top_grasp_penalty = 0.45 if label == "+z" else 0.0
         underside_penalty = -2.0 if label == "-z" else 0.0
-        horizontal_bonus = 0.1 * (1.0 - abs(float(normal_w[2])))
+        horizontal_bonus = 0.0
         total = distance_score + side_grasp_bonus + top_grasp_penalty + underside_penalty + horizontal_bonus
         return {
             "distance_score": distance_score,

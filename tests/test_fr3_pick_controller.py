@@ -27,6 +27,7 @@ class _FakeRobot:
     def __init__(self) -> None:
         self.device = "cpu"
         self.is_fixed_base = True
+        self.last_joint_targets = []
         self.joint_names = [
             "fr3_joint1",
             "fr3_joint2",
@@ -57,6 +58,7 @@ class _FakeRobot:
         self.root_physx_view = _FakeRootPhysxView()
 
     def set_joint_position_target(self, *_args, **_kwargs) -> None:
+        self.last_joint_targets.append((_args, _kwargs))
         return None
 
 
@@ -108,11 +110,25 @@ class FR3PickControllerTests(unittest.TestCase):
             target_orientation_xyzw=(0.0, 0.0, 1.0, 0.0),
             duration_s=controller._durations.pregrasp_s,
         )
+        expected_quat_wxyz = controller._phase_start_quat_w
         self.assertAlmostEqual(pos[0], 0.5, places=4)
         self.assertAlmostEqual(pos[1], 0.0, places=4)
-        self.assertAlmostEqual(pos[2], 0.0, places=4)
-        self.assertAlmostEqual(quat_xyzw[2], 0.7071067, places=4)
-        self.assertAlmostEqual(quat_xyzw[3], 0.7071067, places=4)
+        self.assertAlmostEqual(pos[2], -0.0225, places=4)
+        self.assertEqual(len(quat_xyzw), 4)
+        self.assertAlmostEqual(sum(component * component for component in quat_xyzw), 1.0, places=4)
+        self.assertFalse(torch.allclose(expected_quat_wxyz, torch.tensor([[1.0, 0.0, 0.0, 0.0]])))
+
+    def test_limit_joint_delta_per_step(self) -> None:
+        current_joint_pos = torch.zeros((1, 7), dtype=torch.float32)
+        desired_joint_pos = torch.full((1, 7), 0.5, dtype=torch.float32)
+
+        limited = FR3PickController._limit_joint_delta(
+            current_joint_pos,
+            desired_joint_pos,
+            max_joint_delta_rad=0.04,
+        )
+
+        torch.testing.assert_close(limited, torch.full((1, 7), 0.04, dtype=torch.float32))
 
 
 if __name__ == "__main__":

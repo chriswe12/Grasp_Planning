@@ -119,7 +119,7 @@ class FR3MotionContext:
     """Isaac-specific articulation accessors shared by motion components."""
 
     _EE_PATTERNS = (r"fr3_hand_tcp", r".*tcp.*", r".*hand.*", r".*gripper.*", r".*tool.*")
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, -0.70710678, 0.0)
+    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, -0.045)
 
     def __init__(self, *, robot, scene, sim, fixed_gripper_width: float = 0.04) -> None:
