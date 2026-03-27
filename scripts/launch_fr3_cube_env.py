@@ -7,7 +7,7 @@ import argparse
 from isaaclab.app import AppLauncher
 
 
-parser = argparse.ArgumentParser(description="Launch an FR3 + cube grasp environment in Isaac Lab.")
+parser = argparse.ArgumentParser(description="Launch an FR3 + cube motion-planning environment in Isaac Lab.")
 parser.add_argument(
     "--fr3-usd",
     type=str,
@@ -20,6 +20,27 @@ parser.add_argument(
     default=0.0,
     help="Optional wall-clock duration to keep the simulation alive. Use 0 for until interrupted.",
 )
+parser.add_argument(
+    "--target-pos",
+    type=float,
+    nargs=3,
+    default=(0.45, 0.0, 0.35),
+    metavar=("X", "Y", "Z"),
+    help="Primary target TCP position in world coordinates.",
+)
+parser.add_argument(
+    "--target-quat",
+    type=float,
+    nargs=4,
+    default=(0.0, 1.0, 0.0, 0.0),
+    metavar=("X", "Y", "Z", "W"),
+    help="Target TCP orientation as a quaternion in xyzw order.",
+)
+parser.add_argument(
+    "--test-multi-targets",
+    action="store_true",
+    help="Run a short three-target planner smoke test instead of a single pose.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -30,18 +51,23 @@ import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
+import torch  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3PickController  # noqa: E402
-from grasp_planning.envs import DEFAULT_CUBE_CFG, make_fr3_cube_scene_cfg  # noqa: E402
+from grasp_planning import CubeFaceGraspGenerator, FR3MoveToPoseController  # noqa: E402
+from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
+from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
+from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 
 
 ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
 ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
-
-# Keep the cube pose local to the scene launcher for now. Controller integration can
-# replace this constant with externally provided pose data later.
 CUBE_POSITION = (0.45, 0.0, 0.025)
 CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
+SMOKE_TEST_TCP_TARGETS = (
+    (-0.30, 0.00, 0.60),
+    (-0.18, 0.14, 0.60),
+    (-0.18, -0.14, 0.58),
+)
 
 
 def resolve_fr3_usd_path() -> str:
@@ -90,8 +116,74 @@ def build_scene() -> tuple[sim_utils.SimulationContext, InteractiveScene]:
     return sim, scene
 
 
+def build_target_sequence(
+    current_orientation_xyzw: tuple[float, float, float, float],
+) -> list[tuple[tuple[float, float, float], tuple[float, float, float, float]]]:
+    """Return the ordered move-to-pose targets in the grasp frame expected by the controller."""
+
+    if args_cli.test_multi_targets:
+        return [
+            FR3MotionContext.tcp_pose_to_grasp_pose(
+                position,
+                current_orientation_xyzw,
+            )
+            for position in SMOKE_TEST_TCP_TARGETS
+        ]
+    if tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
+        grasp_generator = CubeFaceGraspGenerator(cube_size=DEFAULT_CUBE_CFG.size)
+        grasp = grasp_generator.generate(
+            cube_position_w=CUBE_POSITION,
+            cube_orientation_xyzw=CUBE_ORIENTATION_XYZW,
+            robot_base_position_w=ROBOT_BASE_POSITION,
+        )[0]
+        pregrasp_position_w = (
+            grasp.pregrasp_position_w[0],
+            grasp.pregrasp_position_w[1],
+            grasp.pregrasp_position_w[2] + 0.2,
+        )
+        return [(pregrasp_position_w, grasp.orientation_xyzw)]
+    return [FR3MotionContext.tcp_pose_to_grasp_pose(tuple(args_cli.target_pos), tuple(args_cli.target_quat))]
+
+
+def drive_robot_to_start_pose(sim, scene) -> None:
+    """Actively settle the FR3 into a safe home pose before planning."""
+
+    robot = scene["robot"]
+    joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
+    arm_joint_names = tuple(DEFAULT_ARM_START_JOINT_POS.keys())
+    arm_joint_ids = [joint_name_to_idx[name] for name in arm_joint_names]
+    arm_targets = torch.tensor([[
+        DEFAULT_ARM_START_JOINT_POS[name]
+        for name in arm_joint_names
+    ]], dtype=torch.float32, device=robot.device)
+    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith("fr3_finger_joint"))
+    hand_target = float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"])
+    physics_dt = sim.get_physics_dt()
+    hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
+
+    for _ in range(max(1, int(1.5 / physics_dt))):
+        robot.set_joint_position_target(arm_targets, joint_ids=arm_joint_ids)
+        if hand_joint_names:
+            hand_targets = torch.full(
+                (1, len(hand_joint_ids)),
+                hand_target,
+                dtype=torch.float32,
+                device=robot.device,
+            )
+            robot.set_joint_position_target(hand_targets, joint_ids=hand_joint_ids)
+        scene.write_data_to_sim()
+        sim.step()
+        scene.update(physics_dt)
+
+    settled_joint_pos = {
+        name: float(robot.data.joint_pos[0, joint_name_to_idx[name]].item())
+        for name in arm_joint_names
+    }
+    print(f"[INFO]: Settled FR3 start joints: {settled_joint_pos}", flush=True)
+
+
 def run() -> None:
-    """Step the simulation until the Isaac app is closed."""
+    """Plan and execute one or more move-to-pose requests, then keep the app alive if requested."""
 
     sim, scene = build_scene()
     physics_dt = sim.get_physics_dt()
@@ -102,32 +194,63 @@ def run() -> None:
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
-    cube_position = tuple(float(v) for v in cube.data.root_pos_w[0].tolist())
-    cube_orientation_xyzw = tuple(float(v) for v in cube.data.root_quat_w[0].tolist())
-    robot_base_position = tuple(float(v) for v in robot.data.root_pos_w[0].tolist())
-    grasp_generator = CubeFaceGraspGenerator(cube_size=DEFAULT_CUBE_CFG.size)
-    grasp_candidates = grasp_generator.generate(
-        cube_position_w=cube_position,
-        cube_orientation_xyzw=cube_orientation_xyzw,
-        robot_base_position_w=robot_base_position,
-    )
-    grasp = grasp_candidates[0]
-    controller = FR3PickController(robot=robot, grasp=grasp, physics_dt=physics_dt)
-    elapsed_s = 0.0
-    last_phase = controller.phase
-    initial_cube_height = float(cube.data.root_pos_w[0, 2].item())
+    drive_robot_to_start_pose(sim, scene)
+
+    controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
     print(
-        "[INFO]: Setup complete. "
-        f"Selected grasp '{grasp.label}' at {grasp.position_w} with score {grasp.score:.3f}.",
-        flush=True,
-    )
-    print(
-        "[INFO]: Controller resolved "
+        "[INFO]: Planner resolved "
         f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
         f"hand_joints={controller.hand_joint_names}.",
         flush=True,
     )
 
+    current_tcp_position_w, current_orientation_xyzw = controller.get_current_tcp_pose()
+    print(
+        "[INFO]: Current TCP pose "
+        f"position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
+        flush=True,
+    )
+    targets = build_target_sequence(current_orientation_xyzw)
+    for index, (position_w, orientation_xyzw) in enumerate(targets, start=1):
+        if args_cli.test_multi_targets:
+            target_tcp_position_w = SMOKE_TEST_TCP_TARGETS[index - 1]
+            target_tcp_orientation_xyzw = current_orientation_xyzw
+        elif tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
+            target_tcp_position_w, target_tcp_orientation_xyzw = FR3MotionContext.grasp_pose_to_tcp_pose(
+                position_w,
+                orientation_xyzw,
+            )
+        else:
+            target_tcp_position_w = tuple(args_cli.target_pos)
+            target_tcp_orientation_xyzw = tuple(args_cli.target_quat)
+        print(
+            "[INFO]: Executing target "
+            f"{index}/{len(targets)} tcp_position={target_tcp_position_w} "
+            f"tcp_orientation_xyzw={target_tcp_orientation_xyzw} "
+            f"grasp_position={position_w} grasp_orientation_xyzw={orientation_xyzw}",
+            flush=True,
+        )
+        result = controller.move_to_pose(position_w=position_w, orientation_xyzw=orientation_xyzw)
+        print(
+            "[INFO]: Move request finished. "
+            f"target_index={index}, status={result.status}, success={result.success}, message={result.message}",
+            flush=True,
+        )
+        if not result.success:
+            break
+        actual_tcp_position_w, actual_tcp_orientation_xyzw = controller.get_current_tcp_pose()
+        print(
+            "[INFO]: Final TCP pose after target "
+            f"{index}: position={actual_tcp_position_w} orientation_xyzw={actual_tcp_orientation_xyzw} "
+            f"(initial_tcp_position={current_tcp_position_w})",
+            flush=True,
+        )
+        for _ in range(max(1, int(0.25 / physics_dt))):
+            scene.write_data_to_sim()
+            sim.step()
+            scene.update(physics_dt)
+
+    elapsed_s = 0.0
     while args_cli.run_seconds <= 0.0 or elapsed_s < args_cli.run_seconds:
         try:
             if sim.is_stopped():
@@ -135,24 +258,12 @@ def run() -> None:
             if not sim.is_playing():
                 sim.step()
                 continue
-            controller.step()
             scene.write_data_to_sim()
             sim.step()
             scene.update(physics_dt)
             elapsed_s += physics_dt
-            if controller.phase != last_phase:
-                print(f"[INFO]: Controller phase -> {controller.phase}", flush=True)
-                last_phase = controller.phase
         except KeyboardInterrupt:
             break
-
-    final_cube_height = float(cube.data.root_pos_w[0, 2].item())
-    print(
-        "[INFO]: Run finished. "
-        f"controller_status={controller.status}, "
-        f"cube_height_delta={final_cube_height - initial_cube_height:.4f} m",
-        flush=True,
-    )
 
 
 if __name__ == "__main__":

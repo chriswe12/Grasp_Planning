@@ -32,6 +32,16 @@ class DefaultCubeCfg:
 
 DEFAULT_ROBOT_CFG = DefaultRobotCfg()
 DEFAULT_CUBE_CFG = DefaultCubeCfg()
+DEFAULT_ARM_START_JOINT_POS = {
+    "fr3_joint1": -0.35,
+    "fr3_joint2": -0.45,
+    "fr3_joint3": 0.0,
+    "fr3_joint4": -1.85,
+    "fr3_joint5": 0.0,
+    "fr3_joint6": 1.25,
+    "fr3_joint7": -1.2,
+}
+DEFAULT_HAND_START_JOINT_POS = {"fr3_finger_joint.*": 0.04}
 
 
 @configclass
@@ -92,16 +102,7 @@ class FR3CubeSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=DEFAULT_ROBOT_CFG.base_pos,
             rot=DEFAULT_ROBOT_CFG.base_rot,
-            joint_pos={
-                "fr3_joint1": 0.0,
-                "fr3_joint2": -0.785398,
-                "fr3_joint3": 0.0,
-                "fr3_joint4": -2.356194,
-                "fr3_joint5": 0.0,
-                "fr3_joint6": 1.570796,
-                "fr3_joint7": 0.785398,
-                "fr3_finger_joint.*": 0.04,
-            },
+            joint_pos={**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
         ),
         actuators={
             "fr3_arm": ImplicitActuatorCfg(
