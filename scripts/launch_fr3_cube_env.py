@@ -15,6 +15,13 @@ parser.add_argument(
     help="Optional override for the Franka Research 3 USD asset path or Omniverse URL.",
 )
 parser.add_argument(
+    "--controller",
+    type=str,
+    default="planner",
+    choices=("planner", "admittance"),
+    help="Execution controller: conservative joint-space planner or Isaac-side admittance controller.",
+)
+parser.add_argument(
     "--run-seconds",
     type=float,
     default=0.0,
@@ -53,7 +60,7 @@ import omni.usd  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3MoveToPoseController  # noqa: E402
+from grasp_planning import CubeFaceGraspGenerator, FR3AdmittanceController, FR3MoveToPoseController  # noqa: E402
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
@@ -61,7 +68,7 @@ from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa:
 
 ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
 ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
-CUBE_POSITION = (0.45, 0.0, 0.025)
+CUBE_POSITION = (-0.45, 0.0, 0.025)
 CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
 SMOKE_TEST_TCP_TARGETS = (
     (-0.30, 0.00, 0.60),
@@ -196,9 +203,12 @@ def run() -> None:
         scene.update(physics_dt)
     drive_robot_to_start_pose(sim, scene)
 
-    controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
+    if args_cli.controller == "admittance":
+        controller = FR3AdmittanceController(robot=robot, scene=scene, sim=sim)
+    else:
+        controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
     print(
-        "[INFO]: Planner resolved "
+        "[INFO]: Controller resolved "
         f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
         f"hand_joints={controller.hand_joint_names}.",
         flush=True,
@@ -269,5 +279,11 @@ def run() -> None:
 if __name__ == "__main__":
     try:
         run()
+    except Exception as exc:
+        import traceback
+
+        print(f"[ERROR]: Unhandled exception: {exc}", flush=True)
+        traceback.print_exc()
+        raise
     finally:
         simulation_app.close()
