@@ -16,6 +16,13 @@ parser.add_argument(
     help="Optional override for the Franka Research 3 USD asset path or Omniverse URL.",
 )
 parser.add_argument(
+    "--controller",
+    type=str,
+    default="planner",
+    choices=("planner", "admittance"),
+    help="Execution controller: conservative joint-space planner or Isaac-side admittance controller.",
+)
+parser.add_argument(
     "--run-seconds",
     type=float,
     default=0.0,
@@ -87,7 +94,7 @@ import omni.usd  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3PickController  # noqa: E402
+from grasp_planning import CubeFaceGraspGenerator, FR3AdmittanceController, FR3MoveToPoseController, FR3PickController  # noqa: E402
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
 from grasp_planning.planning.goal_ik import GoalIKSolver  # noqa: E402
@@ -100,6 +107,11 @@ from grasp_planning.scene_defaults import (  # noqa: E402
     ROBOT_BASE_POSITION,
 )
 
+
+ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
+ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
+CUBE_POSITION = (-0.45, 0.0, 0.025)
+CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
 SMOKE_TEST_TCP_TARGETS = (
     (-0.30, 0.00, 0.60),
     (-0.18, 0.14, 0.60),
@@ -355,10 +367,44 @@ def run() -> None:
         scene.update(physics_dt)
     drive_robot_to_start_pose(sim, scene)
 
-    if tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
-        run_pick_sequence(sim, scene, robot, cube)
+    if args_cli.controller == "admittance":
+        controller = FR3AdmittanceController(robot=robot, scene=scene, sim=sim)
     else:
         controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
+    print(
+        "[INFO]: Controller resolved "
+        f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
+        f"hand_joints={controller.hand_joint_names}.",
+        flush=True,
+    )
+
+    current_tcp_position_w, current_orientation_xyzw = controller.get_current_tcp_pose()
+    print(
+        "[INFO]: Current TCP pose "
+        f"position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
+        flush=True,
+    )
+    targets = build_target_sequence(current_orientation_xyzw)
+    for index, (position_w, orientation_xyzw) in enumerate(targets, start=1):
+        if args_cli.test_multi_targets:
+            target_tcp_position_w = SMOKE_TEST_TCP_TARGETS[index - 1]
+            target_tcp_orientation_xyzw = current_orientation_xyzw
+        elif tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
+            target_tcp_position_w, target_tcp_orientation_xyzw = FR3MotionContext.grasp_pose_to_tcp_pose(
+                position_w,
+                orientation_xyzw,
+            )
+        else:
+            target_tcp_position_w = tuple(args_cli.target_pos)
+            target_tcp_orientation_xyzw = tuple(args_cli.target_quat)
+        print(
+            "[INFO]: Executing target "
+            f"{index}/{len(targets)} tcp_position={target_tcp_position_w} "
+            f"tcp_orientation_xyzw={target_tcp_orientation_xyzw} "
+            f"grasp_position={position_w} grasp_orientation_xyzw={orientation_xyzw}",
+            flush=True,
+        )
+        result = controller.move_to_pose(position_w=position_w, orientation_xyzw=orientation_xyzw)
         print(
             "[INFO]: Planner resolved "
             f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
@@ -426,9 +472,11 @@ def run() -> None:
 if __name__ == "__main__":
     try:
         run()
-    except Exception:
-        print("[ERROR]: Unhandled exception in launch_fr3_cube_env.py", flush=True)
-        print(traceback.format_exc(), flush=True)
+    except Exception as exc:
+        import traceback
+
+        print(f"[ERROR]: Unhandled exception: {exc}", flush=True)
+        traceback.print_exc()
         raise
     finally:
         simulation_app.close()

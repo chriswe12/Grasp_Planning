@@ -43,6 +43,12 @@ Inside the container:
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py --headless
 ```
 
+To run the new Isaac-side admittance controller instead of the joint-space planner:
+
+```bash
+/isaac-sim/python.sh scripts/launch_fr3_cube_env.py --controller admittance --headless
+```
+
 For GUI mode inside the container:
 
 ```bash
@@ -101,6 +107,7 @@ Notes:
 - `--fr3-usd` is optional and only needed to override that default,
 - later controller work can replace the hard-coded cube pose with an externally provided object pose,
 - the launcher now spawns the FR3 as an `ArticulationCfg` and includes an experimental grasp controller path,
+- `--controller admittance` uses an Isaac-only Cartesian admittance loop adapted from the upstream ROS2/libfranka controller,
 - the current planner / pickup path does not work reliably yet; the arm moves, but the cube is not picked successfully,
 - the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
 - `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
