@@ -4,12 +4,11 @@
 
 This repository is for task-aware grasp planning on Franka Research 3 in Isaac Sim / Isaac Lab.
 
-Current stable scope:
-- scene setup only,
-- FR3 in scene,
-- ground plane,
+Current scope:
+- FR3 + cube scene setup in Isaac Lab,
 - one dynamic cube with fixed pose from the launcher,
-- no controller, motion planning, or grasp execution in the stable launch path.
+- experimental move-to-pose planning in the launcher,
+- no reliable grasp execution or pickup pipeline in the main launch path.
 
 ## Main Files
 
@@ -22,7 +21,7 @@ Current stable scope:
 
 - The launcher uses Isaac Sim's built-in FR3 asset by default.
 - The cube pose is defined in `scripts/launch_fr3_cube_env.py`.
-- The current stable setup loads the FR3 as a scene USD asset.
+- The FR3 is spawned via `ArticulationCfg` from a USD path.
 - Keep environment work separate from controller work when possible.
 
 ## Docker Notes
