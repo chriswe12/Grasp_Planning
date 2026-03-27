@@ -24,7 +24,7 @@ class DefaultCubeCfg:
     """Default cube geometry and physical properties."""
 
     size = (0.05, 0.05, 0.05)
-    pos = (0.45, 0.0, 0.025)
+    pos = (-0.65, 0.0, 0.025)
     rot = (0.0, 0.0, 0.0, 1.0)
     mass = 0.15
     color = (0.8, 0.2, 0.2)

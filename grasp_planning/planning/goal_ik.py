@@ -27,7 +27,7 @@ class GoalIKSolver:
         self._fallback_orientation_tolerance_rad = float(fallback_orientation_tolerance_rad)
         self._settle_steps_per_iter = int(settle_steps_per_iter)
 
-    def solve(self, cmd: PoseCommand, max_iters: int = 220) -> torch.Tensor | None:
+    def solve(self, cmd: PoseCommand, max_iters: int = 220, restore_start_state: bool = True) -> torch.Tensor | None:
         from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 
         q_start = self._context.get_arm_q()
@@ -57,7 +57,8 @@ class GoalIKSolver:
                 best_q = self._context.get_arm_q()
             if pos_norm <= self._position_tolerance_m and rot_norm <= self._orientation_tolerance_rad:
                 goal_q = self._context.get_arm_q()
-                self._context.hold_position(q_start, steps=8)
+                if restore_start_state:
+                    self._context.hold_position(q_start, steps=8)
                 print(
                     f"[INFO]: IK converged with position_error={pos_norm:.4f} orientation_error={rot_norm:.4f}",
                     flush=True,
@@ -68,7 +69,8 @@ class GoalIKSolver:
             best_position_error <= self._fallback_position_tolerance_m
             and best_orientation_error <= self._fallback_orientation_tolerance_rad
         ):
-            self._context.hold_position(q_start, steps=8)
+            if restore_start_state:
+                self._context.hold_position(q_start, steps=8)
             print(
                 "[WARN]: IK accepted approximate solution. "
                 f"best_position_error={best_position_error:.4f} best_orientation_error={best_orientation_error:.4f}",
@@ -76,7 +78,8 @@ class GoalIKSolver:
             )
             return best_q
 
-        self._context.hold_position(q_start, steps=8)
+        if restore_start_state:
+            self._context.hold_position(q_start, steps=8)
         print(
             "[WARN]: IK did not converge. "
             f"best_position_error={best_position_error:.4f} best_orientation_error={best_orientation_error:.4f}",

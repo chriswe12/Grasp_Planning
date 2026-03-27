@@ -8,6 +8,7 @@ import re
 import torch
 
 from grasp_planning.grasping import GraspCandidate
+from grasp_planning.planning.fr3_motion_context import tcp_pose_to_grasp_pose
 
 
 def quat_xyzw_to_wxyz(quat_xyzw: torch.Tensor) -> torch.Tensor:
@@ -42,17 +43,17 @@ def quat_slerp_wxyz(q1: torch.Tensor, q2: torch.Tensor, tau: float) -> torch.Ten
 class _PhaseDurations:
     settle_s: float = 0.25
     pregrasp_s: float = 2.5
-    approach_s: float = 2.0
+    approach_s: float = 4.0
     close_s: float = 0.6
     hold_s: float = 0.25
-    lift_s: float = 2.0
+    retreat_s: float = 4.0
 
 
 class FR3PickController:
     """Execute a grasp using differential IK and simple gripper commands."""
 
     _EE_PATTERNS = (r"fr3_hand_tcp", r".*tcp.*", r".*hand.*", r".*gripper.*", r".*tool.*")
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, -0.70710678, 0.0)
+    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, -0.045)
 
     def __init__(
@@ -61,18 +62,21 @@ class FR3PickController:
         robot,
         grasp: GraspCandidate,
         physics_dt: float,
-        lift_height: float = 0.12,
         position_tolerance_m: float = 0.01,
         close_width: float = 0.0,
+        max_joint_delta_rad: float = 0.02,
+        start_phase: str = "settle",
     ) -> None:
         self._robot = robot
         self._grasp = grasp
         self._physics_dt = float(physics_dt)
-        self._lift_height = float(lift_height)
         self._position_tolerance_m = float(position_tolerance_m)
         self._close_width = float(close_width)
+        self._max_joint_delta_rad = float(max_joint_delta_rad)
         self._durations = _PhaseDurations()
-        self._phase = "settle"
+        if start_phase not in {"settle", "pregrasp", "approach"}:
+            raise ValueError(f"Unsupported start_phase '{start_phase}'.")
+        self._phase = start_phase
         self._phase_elapsed_s = 0.0
         self._status = "running"
         self._ee_body_name, self._ee_body_idx = self._resolve_ee_body()
@@ -80,7 +84,7 @@ class FR3PickController:
         self._arm_joint_names, self._arm_joint_ids = self._resolve_joint_ids(r"fr3_joint[1-7]")
         self._hand_joint_names, self._hand_joint_ids = self._resolve_joint_ids(r"fr3_finger_joint[12]")
         self._ik_controller = self._build_ik_controller()
-        self._phase_start_pos_w, self._phase_start_quat_w = self._current_tcp_pose_w()
+        self._phase_start_pos_w, self._phase_start_quat_w = self._current_grasp_pose_w()
 
     @property
     def status(self) -> str:
@@ -120,7 +124,8 @@ class FR3PickController:
             if self._within_position_tolerance(self._grasp.pregrasp_position_w):
                 self._transition("approach")
         elif self._phase == "approach":
-            self._track_phase_pose(
+            self._track_straight_line_phase(
+                start_position_w=self._grasp.pregrasp_position_w,
                 target_position_w=self._grasp.position_w,
                 target_orientation_xyzw=self._grasp.orientation_xyzw,
                 duration_s=self._durations.approach_s,
@@ -134,27 +139,19 @@ class FR3PickController:
         elif self._phase == "hold":
             self._track_pose(self._grasp.position_w, self._grasp.orientation_xyzw)
             if self._phase_elapsed_s >= self._durations.hold_s:
-                self._transition("lift")
-        elif self._phase == "lift":
-            lift_target = (
-                self._grasp.position_w[0],
-                self._grasp.position_w[1],
-                self._grasp.position_w[2] + self._lift_height,
-            )
-            self._track_phase_pose(
-                target_position_w=lift_target,
+                self._transition("retreat")
+        elif self._phase == "retreat":
+            retreat_target = self._grasp.pregrasp_position_w
+            self._track_straight_line_phase(
+                start_position_w=self._grasp.position_w,
+                target_position_w=retreat_target,
                 target_orientation_xyzw=self._grasp.orientation_xyzw,
-                duration_s=self._durations.lift_s,
+                duration_s=self._durations.retreat_s,
             )
-            if self._within_position_tolerance(lift_target):
+            if self._within_position_tolerance(retreat_target):
                 self._transition("done")
         elif self._phase == "done":
-            lift_target = (
-                self._grasp.position_w[0],
-                self._grasp.position_w[1],
-                self._grasp.position_w[2] + self._lift_height,
-            )
-            self._track_pose(lift_target, self._grasp.orientation_xyzw)
+            self._track_pose(self._grasp.pregrasp_position_w, self._grasp.orientation_xyzw)
             self._status = "done"
         else:
             raise RuntimeError(f"Unknown controller phase '{self._phase}'.")
@@ -164,7 +161,7 @@ class FR3PickController:
     def _transition(self, next_phase: str) -> None:
         self._phase = next_phase
         self._phase_elapsed_s = 0.0
-        self._phase_start_pos_w, self._phase_start_quat_w = self._current_tcp_pose_w()
+        self._phase_start_pos_w, self._phase_start_quat_w = self._current_grasp_pose_w()
 
     def _apply_gripper_command(self) -> None:
         if self._hand_joint_ids.numel() == 0:
@@ -224,7 +221,22 @@ class FR3PickController:
         jacobian[:, 3:, :] = torch.bmm(base_rot, jacobian[:, 3:, :])
         joint_pos = self._robot.data.joint_pos[:, self._arm_joint_ids]
         joint_pos_des = self._ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+        # Keep the Cartesian path smooth by limiting per-step joint changes.
+        # This reduces branch-jumping where multiple joint solutions satisfy the same EE pose.
+        joint_pos_des = self._limit_joint_delta(joint_pos, joint_pos_des, self._max_joint_delta_rad)
         self._robot.set_joint_position_target(joint_pos_des, joint_ids=self._arm_joint_ids)
+
+    @staticmethod
+    def _limit_joint_delta(
+        joint_pos: torch.Tensor,
+        joint_pos_des: torch.Tensor,
+        max_joint_delta_rad: float,
+    ) -> torch.Tensor:
+        if max_joint_delta_rad <= 0.0:
+            return joint_pos_des
+        joint_delta = joint_pos_des - joint_pos
+        joint_delta = torch.clamp(joint_delta, -max_joint_delta_rad, max_joint_delta_rad)
+        return joint_pos + joint_delta
 
     def _track_phase_pose(
         self,
@@ -239,6 +251,23 @@ class FR3PickController:
             duration_s=duration_s,
         )
         self._track_pose(interp_position_w, interp_orientation_xyzw)
+
+    def _track_straight_line_phase(
+        self,
+        *,
+        start_position_w: tuple[float, float, float],
+        target_position_w: tuple[float, float, float],
+        target_orientation_xyzw: tuple[float, float, float, float],
+        duration_s: float,
+    ) -> None:
+        tau = 1.0 if duration_s <= 0.0 else min(max(self._phase_elapsed_s / duration_s, 0.0), 1.0)
+        start_pos = torch.tensor([start_position_w], dtype=torch.float32, device=self._device)
+        target_pos = torch.tensor([target_position_w], dtype=torch.float32, device=self._device)
+        interp_pos = start_pos + tau * (target_pos - start_pos)
+        self._track_pose(
+            tuple(float(v) for v in interp_pos[0].tolist()),
+            target_orientation_xyzw,
+        )
 
     def _interpolate_phase_pose(
         self,
@@ -268,8 +297,28 @@ class FR3PickController:
         ee_quat_w = ee_pose_w[:, 3:7].clone()
         return ee_pos_w, ee_quat_w
 
+    def _current_grasp_pose_w(self) -> tuple[tuple[float, float, float], torch.Tensor]:
+        tcp_position_w, tcp_quat_w = self._current_tcp_pose_w()
+        tcp_orientation_xyzw = (
+            float(tcp_quat_w[0, 1].item()),
+            float(tcp_quat_w[0, 2].item()),
+            float(tcp_quat_w[0, 3].item()),
+            float(tcp_quat_w[0, 0].item()),
+        )
+        grasp_position_w, grasp_orientation_xyzw = tcp_pose_to_grasp_pose(
+            position_w=tcp_position_w,
+            orientation_xyzw=tcp_orientation_xyzw,
+            grasp_to_tcp_quat_wxyz=self._GRASP_TO_TCP_QUAT_WXYZ,
+            tcp_to_grasp_center_offset=self._TCP_TO_GRASP_CENTER_OFFSET,
+        )
+        grasp_quat_w = quat_xyzw_to_wxyz(
+            torch.tensor([grasp_orientation_xyzw], dtype=torch.float32, device=self._device)
+        )
+        return grasp_position_w, grasp_quat_w
+
     def _within_position_tolerance(self, target_position_w: tuple[float, float, float]) -> bool:
-        current_position = self._robot.data.body_state_w[0, self._ee_body_idx, :3]
+        current_position_w, _current_quat_w = self._current_grasp_pose_w()
+        current_position = torch.tensor(current_position_w, dtype=torch.float32, device=self._device)
         target = torch.tensor(target_position_w, dtype=torch.float32, device=self._device)
         error = torch.linalg.norm(current_position - target)
         return bool(error <= self._position_tolerance_m)

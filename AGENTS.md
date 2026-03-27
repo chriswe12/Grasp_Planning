@@ -7,21 +7,25 @@ This repository is for task-aware grasp planning on Franka Research 3 in Isaac S
 Current scope:
 - FR3 + cube scene setup in Isaac Lab,
 - one dynamic cube with fixed pose from the launcher,
-- experimental move-to-pose planning in the launcher,
+- a debug pickup path in the launcher with optional `--pregrasp-only`,
 - no reliable grasp execution or pickup pipeline in the main launch path.
 
 ## Main Files
 
 - `scripts/launch_fr3_cube_env.py`
+- `scripts/debug_cube_grasps.py`
 - `grasp_planning/envs/fr3_cube_env.py`
+- `grasp_planning/scene_defaults.py`
 - `Dockerfile`
 - `docker_env.sh`
 
 ## Environment Notes
 
 - The launcher uses Isaac Sim's built-in FR3 asset by default.
-- The cube pose is defined in `scripts/launch_fr3_cube_env.py`.
+- Shared cube and robot defaults live in `grasp_planning/scene_defaults.py`.
 - The FR3 is spawned via `ArticulationCfg` from a USD path.
+- The default launcher debug flow runs pregrasp, approach, close, and retreat; use `--pregrasp-only` to stop after pregrasp.
+- The launcher exposes face selection with `--grasp-face {pos_x,neg_x,pos_y,neg_y,pos_z,neg_z}`, `--pregrasp-offset`, and `--tcp-to-grasp-offset`.
 - Keep environment work separate from controller work when possible.
 
 ## Docker Notes
