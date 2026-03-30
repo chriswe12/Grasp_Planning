@@ -9,7 +9,7 @@ Current scope:
 - one dynamic cube with fixed pose from the launcher,
 - a debug pickup path in the launcher with optional `--pregrasp-only`,
 - a standalone teleport-based pickup debug script,
-- a separate object-frame antipodal grasp debug path for procedural mesh geometry,
+- a separate object-frame antipodal grasp debug path for procedural mesh geometry and STL input,
 - pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
@@ -36,6 +36,7 @@ Current scope:
 - The main residual problem was arm drive tracking under load, not offline IK or TCP frame conversion.
 - Keep environment work separate from controller work when possible.
 - Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
+- STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
 
 ## Docker Notes
 

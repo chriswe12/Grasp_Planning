@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import struct
 import sys
 
 import numpy as np
@@ -24,6 +25,7 @@ from grasp_planning.grasping import (  # noqa: E402
 
 
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
+DEFAULT_STL_DIR = REPO_ROOT / "assets" / "stl"
 
 
 def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
@@ -46,6 +48,102 @@ def _parse_rolls(raw: str) -> tuple[float, ...]:
     if not values:
         raise argparse.ArgumentTypeError("Expected at least one roll angle.")
     return values
+
+
+def _dedupe_triangle_vertices(triangles: np.ndarray) -> TriangleMesh:
+    vertex_map: dict[tuple[float, float, float], int] = {}
+    vertices: list[list[float]] = []
+    faces: list[list[int]] = []
+
+    for triangle in np.asarray(triangles, dtype=float):
+        face: list[int] = []
+        for vertex in triangle:
+            key = tuple(float(value) for value in vertex)
+            vertex_index = vertex_map.get(key)
+            if vertex_index is None:
+                vertex_index = len(vertices)
+                vertex_map[key] = vertex_index
+                vertices.append([float(value) for value in vertex])
+            face.append(vertex_index)
+        faces.append(face)
+
+    return TriangleMesh(
+        vertices_obj=np.array(vertices, dtype=float),
+        faces=np.array(faces, dtype=np.int64),
+    )
+
+
+def _load_ascii_stl(path: Path, *, scale: float) -> TriangleMesh:
+    triangles: list[np.ndarray] = []
+    current_vertices: list[list[float]] = []
+
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith("vertex"):
+            parts = line.split()
+            if len(parts) != 4:
+                raise ValueError(f"Malformed ASCII STL vertex at line {line_number} in '{path}'.")
+            current_vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            if len(current_vertices) == 3:
+                triangles.append(np.asarray(current_vertices, dtype=float) * scale)
+                current_vertices = []
+
+    if current_vertices:
+        raise ValueError(f"Incomplete triangle in ASCII STL '{path}'.")
+    if not triangles:
+        raise ValueError(f"No triangles found in ASCII STL '{path}'.")
+    return _dedupe_triangle_vertices(np.stack(triangles, axis=0))
+
+
+def _load_binary_stl(path: Path, *, scale: float) -> TriangleMesh:
+    data = path.read_bytes()
+    if len(data) < 84:
+        raise ValueError(f"Binary STL '{path}' is too short.")
+
+    triangle_count = struct.unpack_from("<I", data, offset=80)[0]
+    expected_size = 84 + triangle_count * 50
+    if len(data) != expected_size:
+        raise ValueError(
+            f"Binary STL '{path}' has size {len(data)} bytes, expected {expected_size} bytes for {triangle_count} triangles."
+        )
+
+    triangles = np.empty((triangle_count, 3, 3), dtype=float)
+    offset = 84
+    for triangle_index in range(triangle_count):
+        # Skip the stored facet normal; the grasp generator recomputes normals from winding.
+        offset += 12
+        vertices = struct.unpack_from("<9f", data, offset=offset)
+        triangles[triangle_index, :, :] = np.asarray(vertices, dtype=float).reshape(3, 3) * scale
+        offset += 36
+        offset += 2
+
+    if triangle_count == 0:
+        raise ValueError(f"Binary STL '{path}' does not contain any triangles.")
+    return _dedupe_triangle_vertices(triangles)
+
+
+def _load_stl_mesh(path: Path, *, scale: float) -> TriangleMesh:
+    stl_path = path.expanduser()
+    if not stl_path.is_absolute():
+        stl_path = (DEFAULT_STL_DIR / stl_path).resolve()
+    else:
+        stl_path = stl_path.resolve()
+    if not stl_path.is_file():
+        raise FileNotFoundError(
+            f"STL file not found at '{stl_path}'. Place it under '{DEFAULT_STL_DIR}' or pass an absolute path."
+        )
+    if scale <= 0.0:
+        raise ValueError("--stl-scale must be > 0.")
+
+    data = stl_path.read_bytes()
+    if len(data) >= 84:
+        triangle_count = struct.unpack_from("<I", data, offset=80)[0]
+        if len(data) == 84 + triangle_count * 50:
+            return _load_binary_stl(stl_path, scale=scale)
+    return _load_ascii_stl(stl_path, scale=scale)
 
 
 def _make_cube_mesh(side_length: float) -> TriangleMesh:
@@ -114,6 +212,10 @@ def _make_cylinder_mesh(radius: float, height: float, radial_segments: int) -> T
 
 
 def _build_mesh(args: argparse.Namespace) -> TriangleMesh:
+    if args.geometry == "stl":
+        if not args.stl_path:
+            raise ValueError("--stl-path is required when --geometry stl.")
+        return _load_stl_mesh(args.stl_path, scale=args.stl_scale)
     if args.geometry == "cube":
         return _make_cube_mesh(side_length=args.cube_side)
     return _make_cylinder_mesh(radius=args.cylinder_radius, height=args.cylinder_height, radial_segments=args.cylinder_segments)
@@ -172,11 +274,28 @@ def _finger_box_corners(
 
 
 parser = argparse.ArgumentParser(description="Generate an HTML debug view for object-frame antipodal grasps.")
-parser.add_argument("--geometry", choices=("cube", "cylinder"), default="cube", help="Procedural geometry to generate.")
+parser.add_argument(
+    "--geometry",
+    choices=("cube", "cylinder", "stl"),
+    default="cube",
+    help="Mesh source: procedural cube/cylinder or an STL file.",
+)
 parser.add_argument("--cube-side", type=float, default=0.05, help="Cube side length in meters.")
 parser.add_argument("--cylinder-radius", type=float, default=0.02, help="Cylinder radius in meters.")
 parser.add_argument("--cylinder-height", type=float, default=0.05, help="Cylinder height in meters.")
 parser.add_argument("--cylinder-segments", type=int, default=24, help="Cylinder radial segment count.")
+parser.add_argument(
+    "--stl-path",
+    type=Path,
+    default=None,
+    help=f"Path to an STL file. Relative paths are resolved under {DEFAULT_STL_DIR}.",
+)
+parser.add_argument(
+    "--stl-scale",
+    type=float,
+    default=1.0,
+    help="Uniform scale applied to STL vertices after loading. Use this to convert units to meters if needed.",
+)
 parser.add_argument("--num-samples", type=int, default=192, help="Number of surface samples.")
 parser.add_argument("--min-jaw-width", type=float, default=0.02, help="Minimum jaw width in meters.")
 parser.add_argument("--max-jaw-width", type=float, default=0.08, help="Maximum jaw width in meters.")
@@ -249,6 +368,7 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
         "geometry_name": state.geometry_name,
         "vertices_obj": vertices,
         "edges": state.edges,
+        "faces": [[int(v) for v in face] for face in state.mesh.faces.tolist()],
         "triangle_count": int(len(state.mesh.faces)),
         "vertex_count": int(len(state.mesh.vertices_obj)),
         "candidate_count": int(len(state.candidates)),
@@ -323,6 +443,7 @@ def _html_document(payload: dict[str, object]) -> str:
     }}
     .controls {{
       display: flex;
+      flex-wrap: wrap;
       gap: 10px;
       margin-bottom: 14px;
     }}
@@ -482,6 +603,7 @@ def _html_document(payload: dict[str, object]) -> str:
       <div class="controls">
         <button id="prevBtn" type="button">Prev</button>
         <button id="nextBtn" type="button">Next</button>
+        <button id="meshModeBtn" type="button">Solid Mesh</button>
       </div>
       <div id="graspList" class="list"></div>
     </aside>
@@ -531,6 +653,7 @@ def _html_document(payload: dict[str, object]) -> str:
     const configView = document.getElementById("config");
     const prevBtn = document.getElementById("prevBtn");
     const nextBtn = document.getElementById("nextBtn");
+    const meshModeBtn = document.getElementById("meshModeBtn");
 
     const state = {{
       selectedIndex: 0,
@@ -543,6 +666,8 @@ def _html_document(payload: dict[str, object]) -> str:
       dragMode: "rotate",
       lastPointerX: 0,
       lastPointerY: 0,
+      pointerId: null,
+      meshRenderMode: "wireframe",
     }};
 
     const objectPoints = [
@@ -592,6 +717,17 @@ def _html_document(payload: dict[str, object]) -> str:
       }};
     }}
 
+    function wrapAngle(angle) {{
+      const tau = Math.PI * 2;
+      let wrapped = angle % tau;
+      if (wrapped <= -Math.PI) {{
+        wrapped += tau;
+      }} else if (wrapped > Math.PI) {{
+        wrapped -= tau;
+      }}
+      return wrapped;
+    }}
+
     function fmtVec(vec) {{
       return `(${vec.map((value) => value >= 0 ? `+${value.toFixed(4)}` : value.toFixed(4)).join(", ")})`;
     }}
@@ -616,6 +752,32 @@ def _html_document(payload: dict[str, object]) -> str:
         "stroke-opacity": options.opacity ?? 1,
         "stroke-dasharray": options.dash || "",
         "marker-end": options.markerEnd || "",
+      }});
+    }}
+
+    function shadeColor(hex, factor) {{
+      const clean = hex.replace("#", "");
+      const value = Number.parseInt(clean, 16);
+      const r = (value >> 16) & 255;
+      const g = (value >> 8) & 255;
+      const b = value & 255;
+      const scale = clamp(factor, 0, 1.4);
+      const next = [r, g, b]
+        .map((channel) => clamp(Math.round(channel * scale), 0, 255))
+        .map((channel) => channel.toString(16).padStart(2, "0"))
+        .join("");
+      return `#${next}`;
+    }}
+
+    function drawPolygon(points, options = {{}}) {{
+      const projected = points.map((point) => project(point));
+      addSvg("polygon", {{
+        points: projected.map((point) => `${point.x},${point.y}`).join(" "),
+        fill: options.fill || "none",
+        "fill-opacity": options.fillOpacity ?? 1,
+        stroke: options.stroke || "none",
+        "stroke-width": options.strokeWidth || 1,
+        "stroke-opacity": options.strokeOpacity ?? 1,
       }});
     }}
 
@@ -661,6 +823,43 @@ def _html_document(payload: dict[str, object]) -> str:
       ];
       edges.forEach(([start, end]) => {{
         drawLine(corners[start], corners[end], {{ stroke: color, strokeWidth: 2, opacity: 0.8 }});
+      }});
+    }}
+
+    function drawMesh() {{
+      if (state.meshRenderMode === "solid") {{
+        const faces = data.faces.map((face) => {{
+          const points = face.map((index) => data.vertices_obj[index]);
+          const rotated = points.map((point) => rotate(point));
+          const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+          const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+          const normal = [
+            edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+            edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+            edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+          ];
+          const depth = rotated.reduce((sum, point) => sum + point[2], 0) / rotated.length;
+          return {{ points, normal, depth }};
+        }});
+        faces
+          .filter((face) => face.normal[2] > 0)
+          .sort((a, b) => a.depth - b.depth)
+          .forEach((face) => {{
+            const norm = Math.hypot(face.normal[0], face.normal[1], face.normal[2]) || 1;
+            const light = 0.45 + 0.55 * (face.normal[2] / norm);
+            drawPolygon(face.points, {{
+              fill: shadeColor("#4f6b5f", 0.7 + light * 0.45),
+              fillOpacity: 0.92,
+              stroke: "#32453d",
+              strokeWidth: 1.2,
+              strokeOpacity: 0.55,
+            }});
+          }});
+        return;
+      }}
+
+      data.edges.forEach(([start, end]) => {{
+        drawLine(data.vertices_obj[start], data.vertices_obj[end], {{ stroke: "#4f6b5f", strokeWidth: 2, opacity: 0.75 }});
       }});
     }}
 
@@ -730,9 +929,7 @@ def _html_document(payload: dict[str, object]) -> str:
       marker.innerHTML = '<path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path>';
       defs.appendChild(marker);
 
-      data.edges.forEach(([start, end]) => {{
-        drawLine(data.vertices_obj[start], data.vertices_obj[end], {{ stroke: "#4f6b5f", strokeWidth: 2, opacity: 0.75 }});
-      }});
+      drawMesh();
 
       drawFingerBox(candidate.finger_box_a, "#6d3cc6");
       drawFingerBox(candidate.finger_box_b, "#6d3cc6");
@@ -774,6 +971,12 @@ def _html_document(payload: dict[str, object]) -> str:
       render();
     }});
 
+    meshModeBtn.addEventListener("click", () => {{
+      state.meshRenderMode = state.meshRenderMode === "wireframe" ? "solid" : "wireframe";
+      meshModeBtn.textContent = state.meshRenderMode === "wireframe" ? "Solid Mesh" : "Wireframe Mesh";
+      render();
+    }});
+
     window.addEventListener("keydown", (event) => {{
       if (event.key === "ArrowUp" || event.key === "ArrowLeft") {{
         event.preventDefault();
@@ -785,7 +988,7 @@ def _html_document(payload: dict[str, object]) -> str:
       }}
     }});
 
-    scene.addEventListener("mousedown", (event) => {{
+    scene.addEventListener("pointerdown", (event) => {{
       if (event.button !== 0 && event.button !== 1) {{
         return;
       }}
@@ -794,16 +997,29 @@ def _html_document(payload: dict[str, object]) -> str:
       state.dragMode = event.button === 1 ? "pan" : "rotate";
       state.lastPointerX = event.clientX;
       state.lastPointerY = event.clientY;
+      state.pointerId = event.pointerId;
+      scene.setPointerCapture(event.pointerId);
       scene.style.cursor = state.dragMode === "pan" ? "move" : "grabbing";
     }});
 
-    window.addEventListener("mouseup", () => {{
+    function stopDragging() {{
       state.dragging = false;
+      state.pointerId = null;
       scene.style.cursor = "grab";
+    }}
+
+    scene.addEventListener("pointerup", (event) => {{
+      if (state.pointerId === event.pointerId) {{
+        stopDragging();
+      }}
     }});
 
-    window.addEventListener("mousemove", (event) => {{
-      if (!state.dragging) {{
+    scene.addEventListener("pointercancel", () => {{
+      stopDragging();
+    }});
+
+    scene.addEventListener("pointermove", (event) => {{
+      if (!state.dragging || (state.pointerId !== null && event.pointerId !== state.pointerId)) {{
         return;
       }}
       const dx = event.clientX - state.lastPointerX;
@@ -814,8 +1030,8 @@ def _html_document(payload: dict[str, object]) -> str:
         state.panX += dx;
         state.panY += dy;
       }} else {{
-        state.yaw += dx * 0.01;
-        state.pitch = clamp(state.pitch - dy * 0.01, -1.45, 1.45);
+        state.yaw = wrapAngle(state.yaw + dx * 0.01);
+        state.pitch = wrapAngle(state.pitch - dy * 0.01);
       }}
       render();
     }});
@@ -876,6 +1092,29 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
 def main() -> None:
     args = parser.parse_args()
     state = _build_viewer_state(args)
+    mins = state.mesh.vertices_obj.min(axis=0)
+    maxs = state.mesh.vertices_obj.max(axis=0)
+    extents = maxs - mins
+    print(
+        "[INFO] Mesh summary: "
+        f"vertices={len(state.mesh.vertices_obj)} triangles={len(state.mesh.faces)} "
+        f"extents_m=({extents[0]:.6f}, {extents[1]:.6f}, {extents[2]:.6f})",
+        flush=True,
+    )
+    if np.max(np.abs(extents)) > 2.0:
+        print(
+            "[WARN] Mesh extents look very large for meter units. "
+            "If the STL was authored in millimeters, retry with --stl-scale 0.001.",
+            flush=True,
+        )
+    if not state.candidates:
+        print(
+            "[WARN] No grasp candidates passed the current filters. "
+            "If scale is correct, try more samples and a looser antipodal threshold, "
+            "for example: --num-samples 1024 --max-pair-checks 60000 "
+            "--antipodal-cosine-threshold 0.8 --min-jaw-width 0.005",
+            flush=True,
+        )
     output_path = args.output_html.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(_html_document(_build_payload(state)), encoding="utf-8")
