@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import traceback
 
 from isaaclab.app import AppLauncher
 
@@ -13,6 +14,13 @@ parser.add_argument(
     type=str,
     default="",
     help="Optional override for the Franka Research 3 USD asset path or Omniverse URL.",
+)
+parser.add_argument(
+    "--controller",
+    type=str,
+    default="planner",
+    choices=("planner", "admittance"),
+    help="Execution controller: conservative joint-space planner or Isaac-side admittance controller.",
 )
 parser.add_argument(
     "--run-seconds",
@@ -41,6 +49,39 @@ parser.add_argument(
     action="store_true",
     help="Run a short three-target planner smoke test instead of a single pose.",
 )
+parser.add_argument(
+    "--grasp-face",
+    type=str,
+    default="pos_z",
+    choices=("pos_x", "neg_x", "pos_y", "neg_y", "pos_z", "neg_z"),
+    help="Cube face grasp to use for the default pregrasp-only debug path.",
+)
+parser.add_argument(
+    "--grasp-label",
+    type=str,
+    default="",
+    choices=("+x", "-x", "+y", "-y", "+z", "-z"),
+    help="Optional raw face label override. Prefer --grasp-face for normal use.",
+)
+parser.add_argument(
+    "--pregrasp-offset",
+    type=float,
+    default=0.20,
+    help="Pregrasp offset in meters applied opposite the grasp approach direction.",
+)
+parser.add_argument(
+    "--pregrasp-only",
+    action="store_true",
+    help="Stop after reaching pregrasp instead of running the full approach-close-retreat pickup sequence.",
+)
+parser.add_argument(
+    "--tcp-to-grasp-offset",
+    type=float,
+    nargs=3,
+    default=(0.0, 0.0, -0.045),
+    metavar=("X", "Y", "Z"),
+    help="Override the fixed TCP-to-grasp-center offset used for pose conversion and pickup execution.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -53,15 +94,23 @@ import omni.usd  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3MoveToPoseController  # noqa: E402
+from grasp_planning import CubeFaceGraspGenerator, FR3AdmittanceController, FR3MoveToPoseController, FR3PickController  # noqa: E402
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
+from grasp_planning.planning.goal_ik import GoalIKSolver  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
+from grasp_planning.planning.types import PoseCommand  # noqa: E402
+from grasp_planning.scene_defaults import (  # noqa: E402
+    CUBE_ORIENTATION_XYZW,
+    CUBE_POSITION,
+    ROBOT_BASE_ORIENTATION_XYZW,
+    ROBOT_BASE_POSITION,
+)
 
 
 ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
 ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
-CUBE_POSITION = (0.45, 0.0, 0.025)
+CUBE_POSITION = (-0.45, 0.0, 0.025)
 CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
 SMOKE_TEST_TCP_TARGETS = (
     (-0.30, 0.00, 0.60),
@@ -116,6 +165,19 @@ def build_scene() -> tuple[sim_utils.SimulationContext, InteractiveScene]:
     return sim, scene
 
 
+def configure_grasp_tcp_calibration() -> None:
+    """Apply the runtime TCP-to-grasp-center calibration used by planning and pickup."""
+
+    tcp_to_grasp_offset = tuple(float(value) for value in args_cli.tcp_to_grasp_offset)
+    FR3MotionContext._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
+    FR3PickController._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
+    print(
+        "[INFO]: Using TCP-to-grasp-center offset "
+        f"{tcp_to_grasp_offset}",
+        flush=True,
+    )
+
+
 def build_target_sequence(
     current_orientation_xyzw: tuple[float, float, float, float],
 ) -> list[tuple[tuple[float, float, float], tuple[float, float, float, float]]]:
@@ -129,20 +191,281 @@ def build_target_sequence(
             )
             for position in SMOKE_TEST_TCP_TARGETS
         ]
-    if tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
-        grasp_generator = CubeFaceGraspGenerator(cube_size=DEFAULT_CUBE_CFG.size)
-        grasp = grasp_generator.generate(
-            cube_position_w=CUBE_POSITION,
-            cube_orientation_xyzw=CUBE_ORIENTATION_XYZW,
-            robot_base_position_w=ROBOT_BASE_POSITION,
-        )[0]
-        pregrasp_position_w = (
-            grasp.pregrasp_position_w[0],
-            grasp.pregrasp_position_w[1],
-            grasp.pregrasp_position_w[2] + 0.2,
-        )
-        return [(pregrasp_position_w, grasp.orientation_xyzw)]
     return [FR3MotionContext.tcp_pose_to_grasp_pose(tuple(args_cli.target_pos), tuple(args_cli.target_quat))]
+
+
+def build_selected_grasp():
+    """Return the requested face grasp candidate for the configured cube."""
+
+    label_from_face = {
+        "pos_x": "+x",
+        "neg_x": "-x",
+        "pos_y": "+y",
+        "neg_y": "-y",
+        "pos_z": "+z",
+        "neg_z": "-z",
+    }
+    requested_label = args_cli.grasp_label or label_from_face[args_cli.grasp_face]
+    grasp_generator = CubeFaceGraspGenerator(
+        cube_size=DEFAULT_CUBE_CFG.size,
+        pregrasp_offset=args_cli.pregrasp_offset,
+    )
+    candidates = grasp_generator.generate(
+        cube_position_w=CUBE_POSITION,
+        cube_orientation_xyzw=CUBE_ORIENTATION_XYZW,
+        robot_base_position_w=ROBOT_BASE_POSITION,
+    )
+    for grasp in candidates:
+        if grasp.label == requested_label:
+            return grasp
+    raise RuntimeError(f"Cube grasp generator did not produce the requested grasp '{requested_label}'.")
+
+
+def run_pick_sequence(sim, scene, robot, cube) -> None:
+    """Run the debug pick flow: pregrasp first, then optionally approach, close, and retreat."""
+
+    grasp = build_selected_grasp()
+    floor_clearance_m = 0.05
+    if grasp.pregrasp_position_w[2] <= floor_clearance_m:
+        raise RuntimeError(
+            "Requested pregrasp is too close to or below the floor: "
+            f"grasp_face={args_cli.grasp_face}, pregrasp_position_w={grasp.pregrasp_position_w}, "
+            f"required_min_z={floor_clearance_m:.3f}. Increase --pregrasp-offset or choose another face."
+        )
+    print(
+        "[INFO]: Selected debug grasp "
+        f"label={grasp.label} pregrasp={grasp.pregrasp_position_w} grasp={grasp.position_w} "
+        f"normal_w={grasp.normal_w} orientation_xyzw={grasp.orientation_xyzw} gripper_width={grasp.gripper_width}",
+        flush=True,
+    )
+    fixed_gripper_width = float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"])
+    context = FR3MotionContext(
+        robot=robot,
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=fixed_gripper_width,
+    )
+    if args_cli.controller == "admittance":
+        pregrasp_controller = FR3AdmittanceController(
+            robot=robot,
+            scene=scene,
+            sim=sim,
+            fixed_gripper_width=fixed_gripper_width,
+        )
+        print(
+            "[INFO]: Pregrasp controller resolved "
+            f"type=admittance ee_body={pregrasp_controller.ee_body_name}, "
+            f"arm_joints={pregrasp_controller.arm_joint_names}, hand_joints={pregrasp_controller.hand_joint_names}.",
+            flush=True,
+        )
+        pregrasp_result = pregrasp_controller.move_to_pose(
+            position_w=grasp.pregrasp_position_w,
+            orientation_xyzw=grasp.orientation_xyzw,
+        )
+        print(
+            "[INFO]: Pregrasp admittance move finished. "
+            f"status={pregrasp_result.status} success={pregrasp_result.success} message={pregrasp_result.message}",
+            flush=True,
+        )
+        if not pregrasp_result.success:
+            return
+    else:
+        solver = GoalIKSolver(context)
+        print(
+            "[INFO]: Pregrasp controller resolved "
+            f"type=goal_ik ee_body={context.ee_body_name}, arm_joints={context.arm_joint_names}, "
+            f"hand_joints={context.hand_joint_names}.",
+            flush=True,
+        )
+        goal_q = solver.solve(
+            PoseCommand(
+                position_w=grasp.pregrasp_position_w,
+                orientation_xyzw=grasp.orientation_xyzw,
+            ),
+            restore_start_state=False,
+        )
+        print(
+            "[INFO]: Pregrasp IK finished. "
+            f"success={goal_q is not None}",
+            flush=True,
+        )
+        if goal_q is None:
+            return
+    target_tcp_position_w, target_tcp_orientation_xyzw = FR3MotionContext.grasp_pose_to_tcp_pose(
+        grasp.pregrasp_position_w,
+        grasp.orientation_xyzw,
+    )
+    print(
+        "[INFO]: Pregrasp target "
+        f"grasp_position={grasp.pregrasp_position_w} grasp_orientation_xyzw={grasp.orientation_xyzw} "
+        f"tcp_position={target_tcp_position_w} tcp_orientation_xyzw={target_tcp_orientation_xyzw}",
+        flush=True,
+    )
+    tcp_position_w, tcp_quat_w = context.get_tcp_pose_w()
+    actual_tcp_position_w = tuple(float(v) for v in tcp_position_w[0].tolist())
+    actual_tcp_orientation_xyzw = (
+        float(tcp_quat_w[0, 1].item()),
+        float(tcp_quat_w[0, 2].item()),
+        float(tcp_quat_w[0, 3].item()),
+        float(tcp_quat_w[0, 0].item()),
+    )
+    print(
+        "[INFO]: Actual TCP pose after pregrasp move "
+        f"position={actual_tcp_position_w} orientation_xyzw={actual_tcp_orientation_xyzw}",
+        flush=True,
+    )
+    if args_cli.pregrasp_only:
+        return
+
+    execute_vertical_pick_sequence(
+        sim=sim,
+        scene=scene,
+        robot=robot,
+        cube=cube,
+        start_tcp_position_w=actual_tcp_position_w,
+        start_tcp_orientation_xyzw=actual_tcp_orientation_xyzw,
+        target_tcp_z=grasp.position_w[2],
+        open_gripper_width=grasp.gripper_width / 2.0,
+        closed_gripper_width=0.0,
+    )
+
+
+def _build_vertical_tcp_waypoints(
+    *,
+    start_tcp_position_w: tuple[float, float, float],
+    target_tcp_z: float,
+    num_waypoints: int,
+) -> list[tuple[float, float, float]]:
+    start_x, start_y, start_z = start_tcp_position_w
+    if num_waypoints <= 1:
+        return [(start_x, start_y, float(target_tcp_z))]
+    return [
+        (
+            start_x,
+            start_y,
+            float(start_z + (target_tcp_z - start_z) * (step_idx / num_waypoints)),
+        )
+        for step_idx in range(1, num_waypoints + 1)
+    ]
+
+
+def _execute_tcp_waypoint_sequence(
+    *,
+    controller,
+    tcp_positions_w: list[tuple[float, float, float]],
+    tcp_orientation_xyzw: tuple[float, float, float, float],
+    label: str,
+) -> bool:
+    for index, tcp_position_w in enumerate(tcp_positions_w, start=1):
+        grasp_position_w, grasp_orientation_xyzw = FR3MotionContext.tcp_pose_to_grasp_pose(
+            tcp_position_w,
+            tcp_orientation_xyzw,
+        )
+        print(
+            f"[INFO]: {label} waypoint "
+            f"{index}/{len(tcp_positions_w)} tcp_position={tcp_position_w} tcp_orientation_xyzw={tcp_orientation_xyzw} "
+            f"grasp_position={grasp_position_w} grasp_orientation_xyzw={grasp_orientation_xyzw}",
+            flush=True,
+        )
+        result = controller.move_to_pose(position_w=grasp_position_w, orientation_xyzw=grasp_orientation_xyzw)
+        print(
+            f"[INFO]: {label} waypoint result "
+            f"index={index} status={result.status} success={result.success} message={result.message}",
+            flush=True,
+        )
+        if not result.success:
+            return False
+    return True
+
+
+def _command_gripper_width(
+    *,
+    sim,
+    scene,
+    robot,
+    width: float,
+    duration_s: float,
+) -> None:
+    joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
+    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith("fr3_finger_joint"))
+    if not hand_joint_names:
+        return
+    hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
+    physics_dt = sim.get_physics_dt()
+    steps = max(1, int(duration_s / physics_dt))
+    hand_targets = torch.full(
+        (1, len(hand_joint_ids)),
+        float(width),
+        dtype=torch.float32,
+        device=robot.device,
+    )
+    for _ in range(steps):
+        robot.set_joint_position_target(hand_targets, joint_ids=hand_joint_ids)
+        scene.write_data_to_sim()
+        sim.step()
+        scene.update(physics_dt)
+
+
+def execute_vertical_pick_sequence(
+    *,
+    sim,
+    scene,
+    robot,
+    cube,
+    start_tcp_position_w: tuple[float, float, float],
+    start_tcp_orientation_xyzw: tuple[float, float, float, float],
+    target_tcp_z: float,
+    open_gripper_width: float,
+    closed_gripper_width: float,
+) -> None:
+    def build_waypoint_controller(fixed_gripper_width: float):
+        if args_cli.controller == "admittance":
+            return FR3AdmittanceController(
+                robot=robot,
+                scene=scene,
+                sim=sim,
+                fixed_gripper_width=fixed_gripper_width,
+            )
+        return FR3MoveToPoseController(
+            robot=robot,
+            cube=cube,
+            scene=scene,
+            sim=sim,
+            fixed_gripper_width=fixed_gripper_width,
+        )
+
+    descent_waypoints = _build_vertical_tcp_waypoints(
+        start_tcp_position_w=start_tcp_position_w,
+        target_tcp_z=target_tcp_z,
+        num_waypoints=12,
+    )
+    open_controller = build_waypoint_controller(open_gripper_width)
+    if not _execute_tcp_waypoint_sequence(
+        controller=open_controller,
+        tcp_positions_w=descent_waypoints,
+        tcp_orientation_xyzw=start_tcp_orientation_xyzw,
+        label="Vertical",
+    ):
+        print("[WARN]: Vertical approach failed before gripper close.", flush=True)
+        return
+
+    _command_gripper_width(
+        sim=sim,
+        scene=scene,
+        robot=robot,
+        width=closed_gripper_width,
+        duration_s=0.6,
+    )
+
+    retreat_controller = build_waypoint_controller(closed_gripper_width)
+    retreat_waypoints = list(reversed(descent_waypoints[:-1])) + [start_tcp_position_w]
+    if not _execute_tcp_waypoint_sequence(
+        controller=retreat_controller,
+        tcp_positions_w=retreat_waypoints,
+        tcp_orientation_xyzw=start_tcp_orientation_xyzw,
+        label="Retreat",
+    ):
+        print("[WARN]: Vertical retreat failed after gripper close.", flush=True)
 
 
 def drive_robot_to_start_pose(sim, scene) -> None:
@@ -183,8 +506,9 @@ def drive_robot_to_start_pose(sim, scene) -> None:
 
 
 def run() -> None:
-    """Plan and execute one or more move-to-pose requests, then keep the app alive if requested."""
+    """Run either the debug pick flow or explicit move-to-pose targets, then keep the app alive if requested."""
 
+    configure_grasp_tcp_calibration()
     sim, scene = build_scene()
     physics_dt = sim.get_physics_dt()
     robot = scene["robot"]
@@ -196,9 +520,36 @@ def run() -> None:
         scene.update(physics_dt)
     drive_robot_to_start_pose(sim, scene)
 
-    controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
+    default_target_pos = (0.45, 0.0, 0.35)
+    default_target_quat = (0.0, 1.0, 0.0, 0.0)
+    using_default_target = (
+        tuple(args_cli.target_pos) == default_target_pos
+        and tuple(args_cli.target_quat) == default_target_quat
+    )
+    if not args_cli.test_multi_targets and using_default_target:
+        run_pick_sequence(sim, scene, robot, cube)
+        elapsed_s = 0.0
+        while args_cli.run_seconds <= 0.0 or elapsed_s < args_cli.run_seconds:
+            try:
+                if sim.is_stopped():
+                    break
+                if not sim.is_playing():
+                    sim.step()
+                    continue
+                scene.write_data_to_sim()
+                sim.step()
+                scene.update(physics_dt)
+                elapsed_s += physics_dt
+            except KeyboardInterrupt:
+                break
+        return
+
+    if args_cli.controller == "admittance":
+        controller = FR3AdmittanceController(robot=robot, scene=scene, sim=sim)
+    else:
+        controller = FR3MoveToPoseController(robot=robot, cube=cube, scene=scene, sim=sim)
     print(
-        "[INFO]: Planner resolved "
+        "[INFO]: Controller resolved "
         f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
         f"hand_joints={controller.hand_joint_names}.",
         flush=True,
@@ -215,11 +566,6 @@ def run() -> None:
         if args_cli.test_multi_targets:
             target_tcp_position_w = SMOKE_TEST_TCP_TARGETS[index - 1]
             target_tcp_orientation_xyzw = current_orientation_xyzw
-        elif tuple(args_cli.target_pos) == (0.45, 0.0, 0.35) and tuple(args_cli.target_quat) == (0.0, 1.0, 0.0, 0.0):
-            target_tcp_position_w, target_tcp_orientation_xyzw = FR3MotionContext.grasp_pose_to_tcp_pose(
-                position_w,
-                orientation_xyzw,
-            )
         else:
             target_tcp_position_w = tuple(args_cli.target_pos)
             target_tcp_orientation_xyzw = tuple(args_cli.target_quat)
@@ -231,6 +577,19 @@ def run() -> None:
             flush=True,
         )
         result = controller.move_to_pose(position_w=position_w, orientation_xyzw=orientation_xyzw)
+        print(
+            "[INFO]: Planner resolved "
+            f"ee_body={controller.ee_body_name}, arm_joints={controller.arm_joint_names}, "
+            f"hand_joints={controller.hand_joint_names}.",
+            flush=True,
+        )
+
+        current_tcp_position_w, current_orientation_xyzw = controller.get_current_tcp_pose()
+        print(
+            "[INFO]: Current TCP pose "
+            f"position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
+            flush=True,
+        )
         print(
             "[INFO]: Move request finished. "
             f"target_index={index}, status={result.status}, success={result.success}, message={result.message}",
@@ -269,5 +628,11 @@ def run() -> None:
 if __name__ == "__main__":
     try:
         run()
+    except Exception as exc:
+        import traceback
+
+        print(f"[ERROR]: Unhandled exception: {exc}", flush=True)
+        traceback.print_exc()
+        raise
     finally:
         simulation_app.close()

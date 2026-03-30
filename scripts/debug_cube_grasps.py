@@ -16,12 +16,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.grasping import CubeFaceGraspGenerator, GraspCandidate
 from grasp_planning.grasping.cube_grasp_generator import _quat_to_rotmat_xyzw
+from grasp_planning.scene_defaults import CUBE_ORIENTATION_XYZW, CUBE_POSITION, ROBOT_BASE_POSITION
 
 
 DEFAULT_CUBE_SIZE = (0.05, 0.05, 0.05)
-DEFAULT_CUBE_POSITION = (0.45, 0.0, 0.025)
-DEFAULT_CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
-DEFAULT_ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
+DEFAULT_CUBE_POSITION = CUBE_POSITION
+DEFAULT_CUBE_ORIENTATION_XYZW = CUBE_ORIENTATION_XYZW
+DEFAULT_ROBOT_BASE_POSITION = ROBOT_BASE_POSITION
 DEFAULT_PREGRASP_OFFSET = 0.10
 DEFAULT_FINGER_CLEARANCE = 0.01
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "cube_grasp_debug.html"
@@ -154,6 +155,7 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
                 "score_parts": {key: round(float(value), 6) for key, value in _score_parts(state, grasp).items()},
                 "position_w": _fmt_vec(grasp.position_w),
                 "pregrasp_position_w": _fmt_vec(grasp.pregrasp_position_w),
+                "orientation_xyzw": _fmt_vec(grasp.orientation_xyzw),
                 "normal_w": _fmt_vec(grasp.normal_w),
                 "left_finger_w": _fmt_vec(left_finger),
                 "right_finger_w": _fmt_vec(right_finger),
@@ -447,10 +449,11 @@ def _html_document(payload: dict[str, object]) -> str:
           <svg id="scene" viewBox="0 0 960 760" aria-label="Cube grasp debug scene"></svg>
           <div class="legend">
             <span><i class="swatch" style="background: var(--cube)"></i>Cube center</span>
+            <span><i class="swatch" style="background: #c9c2b3"></i>Floor plane</span>
             <span><i class="swatch" style="background: var(--robot)"></i>Robot base</span>
             <span><i class="swatch" style="background: var(--accent)"></i>Selected grasp</span>
             <span><i class="swatch" style="background: var(--pre)"></i>Pregrasp / approach path</span>
-            <span><i class="swatch" style="background: var(--finger)"></i>Finger locations / closing axis</span>
+            <span><i class="swatch" style="background: var(--finger)"></i>Finger locations / gripper body</span>
             <span><i class="swatch" style="background: var(--axis)"></i>Gripper z-axis</span>
           </div>
           <p class="caption">
@@ -606,9 +609,78 @@ def _html_document(payload: dict[str, object]) -> str:
       node.textContent = text;
     }}
 
-    function drawArrow(origin, vector, length, color, width) {{
+    function drawArrow(origin, vector, length, color, width, label = null, dx = 8, dy = -8) {{
       const target = origin.map((value, axis) => value + vector[axis] * length);
       drawLine(origin, target, {{ stroke: color, strokeWidth: width, markerEnd: "url(#arrow)" }});
+      if (label) {{
+        drawLabel(target, label, color, dx, dy);
+      }}
+    }}
+
+    function drawGripperGlyph(candidate) {{
+      const palmDepth = 0.04;
+      const leftBase = candidate.left_finger_w.map(
+        (value, axis) => value - candidate.approach_axis_w[axis] * palmDepth
+      );
+      const rightBase = candidate.right_finger_w.map(
+        (value, axis) => value - candidate.approach_axis_w[axis] * palmDepth
+      );
+
+      drawLine(leftBase, candidate.left_finger_w, {{
+        stroke: "#6d3cc6",
+        strokeWidth: 4,
+        opacity: 0.9,
+      }});
+      drawLine(rightBase, candidate.right_finger_w, {{
+        stroke: "#6d3cc6",
+        strokeWidth: 4,
+        opacity: 0.9,
+      }});
+      drawLine(leftBase, rightBase, {{
+        stroke: "#6d3cc6",
+        strokeWidth: 4,
+        opacity: 0.85,
+      }});
+
+      drawPoint(leftBase, {{ fill: "#6d3cc6", radius: 4, stroke: "#f5f1e6", strokeWidth: 1.5 }});
+      drawPoint(rightBase, {{ fill: "#6d3cc6", radius: 4, stroke: "#f5f1e6", strokeWidth: 1.5 }});
+    }}
+
+    function drawFloorPlane() {{
+      const floorExtent = Math.max(0.8, extent * 0.75);
+      const half = 0.5 * floorExtent;
+      const corners = [
+        [center[0] - half, center[1] - half, 0.0],
+        [center[0] + half, center[1] - half, 0.0],
+        [center[0] + half, center[1] + half, 0.0],
+        [center[0] - half, center[1] + half, 0.0],
+      ];
+      const pointsAttr = corners.map((point) => {{
+        const p = project(point);
+        return `${{p.x}},${{p.y}}`;
+      }}).join(" ");
+      addSvg("polygon", {{
+        points: pointsAttr,
+        fill: "#c9c2b3",
+        "fill-opacity": 0.2,
+        stroke: "#b4ab99",
+        "stroke-width": 2,
+        "stroke-opacity": 0.55,
+      }});
+
+      for (let idx = 1; idx < 4; idx += 1) {{
+        const offset = -half + (idx * floorExtent) / 4.0;
+        drawLine(
+          [center[0] - half, center[1] + offset, 0.0],
+          [center[0] + half, center[1] + offset, 0.0],
+          {{ stroke: "#b8b1a4", strokeWidth: 1, opacity: 0.35, dash: "5 7" }}
+        );
+        drawLine(
+          [center[0] + offset, center[1] - half, 0.0],
+          [center[0] + offset, center[1] + half, 0.0],
+          {{ stroke: "#b8b1a4", strokeWidth: 1, opacity: 0.35, dash: "5 7" }}
+        );
+      }}
     }}
 
     function renderList() {{
@@ -623,7 +695,7 @@ def _html_document(payload: dict[str, object]) -> str:
             <div class="item-label">${{candidate.label}}</div>
             <div class="item-score">${{candidate.score.toFixed(4)}}</div>
           </div>
-          <div class="item-meta">center=${{fmtVec(candidate.position_w)}}<br>normal=${{fmtVec(candidate.normal_w)}}</div>
+          <div class="item-meta">center=${{fmtVec(candidate.position_w)}}<br>quat=${{fmtVec(candidate.orientation_xyzw)}}</div>
         `;
         item.addEventListener("click", () => {{
           state.selectedIndex = index;
@@ -644,6 +716,7 @@ def _html_document(payload: dict[str, object]) -> str:
         `cube_position_w:    ${{fmtVec(data.cube_position_w)}}\\n` +
         `grasp_position_w:   ${{fmtVec(candidate.position_w)}}\\n` +
         `pregrasp_position:  ${{fmtVec(candidate.pregrasp_position_w)}}\\n` +
+        `orientation_xyzw:   ${{fmtVec(candidate.orientation_xyzw)}}\\n` +
         `normal_w:           ${{fmtVec(candidate.normal_w)}}\\n` +
         `approach_axis_w:    ${{fmtVec(candidate.approach_axis_w)}}\\n` +
         `closing_axis_w:     ${{fmtVec(candidate.closing_axis_w)}}\\n` +
@@ -690,6 +763,8 @@ def _html_document(payload: dict[str, object]) -> str:
         rx: 16,
         fill: "transparent",
       }});
+
+      drawFloorPlane();
 
       const segments = [];
       data.cube_edges.forEach(([start, end]) => {{
@@ -741,15 +816,16 @@ def _html_document(payload: dict[str, object]) -> str:
       drawPoint(candidate.left_finger_w, {{ fill: "#6d3cc6", radius: 6 }});
       drawPoint(candidate.right_finger_w, {{ fill: "#6d3cc6", radius: 6 }});
 
+      drawGripperGlyph(candidate);
       drawLine(candidate.left_finger_w, candidate.right_finger_w, {{ stroke: "#6d3cc6", strokeWidth: 3 }});
       drawLine(candidate.pregrasp_position_w, candidate.position_w, {{
         stroke: "#2b8a57",
         strokeWidth: 3,
         markerEnd: "url(#arrow)",
       }});
-      drawArrow(candidate.position_w, candidate.approach_axis_w, 0.08, "#b43f2c", 3);
-      drawArrow(candidate.position_w, candidate.closing_axis_w, 0.05, "#6d3cc6", 2.5);
-      drawArrow(candidate.position_w, candidate.gripper_z_axis_w, 0.05, "#1397a6", 2.5);
+      drawArrow(candidate.position_w, candidate.approach_axis_w, 0.08, "#b43f2c", 3, "x");
+      drawArrow(candidate.position_w, candidate.closing_axis_w, 0.05, "#6d3cc6", 2.5, "y");
+      drawArrow(candidate.position_w, candidate.gripper_z_axis_w, 0.05, "#1397a6", 2.5, "z");
 
       drawLabel(candidate.pregrasp_position_w, "pre", "#2b8a57");
       drawLabel(candidate.position_w, candidate.label, "#b43f2c", 12, -14);

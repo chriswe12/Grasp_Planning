@@ -61,6 +61,25 @@ def _quat_apply_wxyz(
     )
 
 
+def compute_dls_position_correction(
+    jacobian_pos: torch.Tensor,
+    position_error: torch.Tensor,
+    *,
+    gain: float,
+    damping: float,
+    max_delta_rad: float,
+) -> torch.Tensor:
+    """Map EE position error to a bounded joint correction with DLS."""
+
+    error = position_error.to(dtype=torch.float32) * float(gain)
+    j_pos = jacobian_pos.to(dtype=torch.float32)
+    eye = torch.eye(3, dtype=torch.float32, device=j_pos.device).unsqueeze(0).expand(j_pos.shape[0], -1, -1)
+    lambda_sq = max(float(damping), 1.0e-4) ** 2
+    inv_term = torch.linalg.solve(torch.bmm(j_pos, j_pos.transpose(1, 2)) + lambda_sq * eye, error.unsqueeze(-1))
+    dq = torch.bmm(j_pos.transpose(1, 2), inv_term).squeeze(-1)
+    return torch.clamp(dq, min=-float(max_delta_rad), max=float(max_delta_rad))
+
+
 def tcp_pose_to_grasp_pose(
     position_w: tuple[float, float, float],
     orientation_xyzw: tuple[float, float, float, float],
@@ -119,8 +138,11 @@ class FR3MotionContext:
     """Isaac-specific articulation accessors shared by motion components."""
 
     _EE_PATTERNS = (r"fr3_hand_tcp", r".*tcp.*", r".*hand.*", r".*gripper.*", r".*tool.*")
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, -0.70710678, 0.0)
+    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, -0.045)
+    _EE_POSITION_CORRECTION_GAIN = 2.0
+    _EE_POSITION_CORRECTION_DAMPING = 0.05
+    _EE_POSITION_CORRECTION_MAX_RAD = 0.10
 
     def __init__(self, *, robot, scene, sim, fixed_gripper_width: float = 0.04) -> None:
         self.robot = robot
@@ -309,8 +331,37 @@ class FR3MotionContext:
         jacobian[:, 3:, :] = torch.bmm(base_rot, jacobian[:, 3:, :])
         joint_pos = self.robot.data.joint_pos[:, self.arm_joint_ids]
         joint_pos_des = ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
-        self.command_arm(joint_pos_des)
-        return joint_pos_des
+        joint_pos_cmd = self.compute_ee_position_corrected_arm_command(
+            q_target=joint_pos_des,
+            jacobian_pos_b=jacobian[:, :3, :],
+            current_tcp_position_b=ee_pos_b,
+            target_tcp_position_b=desired_pos_b,
+        )
+        self.command_arm(joint_pos_cmd)
+        return joint_pos_cmd
+
+    def compute_ee_position_corrected_arm_command(
+        self,
+        *,
+        q_target: torch.Tensor,
+        jacobian_pos_b: torch.Tensor,
+        current_tcp_position_b: torch.Tensor,
+        target_tcp_position_b: torch.Tensor,
+    ) -> torch.Tensor:
+        """Add a bounded outer correction based on EE position error, not joint error."""
+
+        dq = compute_dls_position_correction(
+            jacobian_pos=jacobian_pos_b,
+            position_error=target_tcp_position_b - current_tcp_position_b,
+            gain=self._EE_POSITION_CORRECTION_GAIN,
+            damping=self._EE_POSITION_CORRECTION_DAMPING,
+            max_delta_rad=self._EE_POSITION_CORRECTION_MAX_RAD,
+        )
+        q_cmd = q_target + dq
+        lower, upper = self.get_joint_limits()
+        if self.joint_limits_are_usable(lower, upper):
+            q_cmd = torch.max(torch.min(q_cmd, upper), lower)
+        return q_cmd
 
     def _resolve_ee_body(self) -> tuple[str, int]:
         body_names = list(getattr(self.robot, "body_names", []))

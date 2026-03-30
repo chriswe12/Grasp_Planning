@@ -5,8 +5,10 @@ import unittest
 
 import torch
 
+from grasp_planning.grasping import CubeFaceGraspGenerator
 from grasp_planning.planning.fr3_motion_context import (
     FR3MotionContext,
+    compute_dls_position_correction,
     grasp_pose_to_tcp_pose,
     tcp_pose_to_grasp_pose,
 )
@@ -18,6 +20,7 @@ class _FakeRobotData:
             [[[-1.0, 1.0], [-2.0, 2.0], [-3.0, 3.0], [-4.0, 4.0], [-5.0, 5.0], [-6.0, 6.0], [-7.0, 7.0]]],
             dtype=torch.float32,
         )
+        self.joint_pos = torch.zeros((1, 7), dtype=torch.float32)
 
 
 class _FakeRobot:
@@ -84,6 +87,62 @@ class FR3MotionContextTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=6)
         for actual, expected in zip(roundtrip_orientation_xyzw, tcp_orientation_xyzw):
             self.assertAlmostEqual(actual, expected, places=6)
+
+    def test_pos_z_grasp_maps_to_expected_tcp_top_down_orientation(self) -> None:
+        generator = CubeFaceGraspGenerator(
+            cube_size=(0.05, 0.05, 0.05),
+            pregrasp_offset=0.20,
+        )
+        candidates = generator.generate(
+            cube_position_w=(-0.45, 0.0, 0.025),
+            cube_orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            robot_base_position_w=(0.0, 0.0, 0.0),
+        )
+        grasp = next(candidate for candidate in candidates if candidate.label == "+z")
+
+        tcp_position_w, tcp_orientation_xyzw = grasp_pose_to_tcp_pose(
+            position_w=grasp.pregrasp_position_w,
+            orientation_xyzw=grasp.orientation_xyzw,
+            grasp_to_tcp_quat_wxyz=FR3MotionContext._GRASP_TO_TCP_QUAT_WXYZ,
+            tcp_to_grasp_center_offset=FR3MotionContext._TCP_TO_GRASP_CENTER_OFFSET,
+        )
+
+        self.assertAlmostEqual(tcp_position_w[0], -0.45, places=6)
+        self.assertAlmostEqual(tcp_position_w[1], 0.0, places=6)
+        self.assertAlmostEqual(tcp_position_w[2], 0.18, places=6)
+        self.assertAlmostEqual(tcp_orientation_xyzw[0], 0.0, places=6)
+        self.assertAlmostEqual(tcp_orientation_xyzw[1], 1.0, places=6)
+        self.assertAlmostEqual(tcp_orientation_xyzw[2], 0.0, places=6)
+        self.assertAlmostEqual(tcp_orientation_xyzw[3], 0.0, places=6)
+
+    def test_compute_dls_position_correction_moves_along_jacobian_direction(self) -> None:
+        jacobian_pos = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]], dtype=torch.float32)
+        position_error = torch.tensor([[0.1, -0.2, 0.0]], dtype=torch.float32)
+
+        dq = compute_dls_position_correction(
+            jacobian_pos,
+            position_error,
+            gain=1.0,
+            damping=0.0,
+            max_delta_rad=1.0,
+        )
+
+        self.assertAlmostEqual(float(dq[0, 0].item()), 0.1, places=6)
+        self.assertAlmostEqual(float(dq[0, 1].item()), -0.2, places=6)
+
+    def test_compute_dls_position_correction_respects_clamp(self) -> None:
+        jacobian_pos = torch.tensor([[[1.0], [0.0], [0.0]]], dtype=torch.float32)
+        position_error = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)
+
+        dq = compute_dls_position_correction(
+            jacobian_pos,
+            position_error,
+            gain=2.0,
+            damping=0.0,
+            max_delta_rad=0.05,
+        )
+
+        self.assertAlmostEqual(float(dq[0, 0].item()), 0.05, places=6)
 
 
 if __name__ == "__main__":
