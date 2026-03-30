@@ -1,0 +1,886 @@
+"""Generate a browser-based HTML debug view for mesh antipodal grasps."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import json
+import math
+from pathlib import Path
+import sys
+
+import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_planning.grasping import (  # noqa: E402
+    AntipodalGraspGeneratorConfig,
+    AntipodalMeshGraspGenerator,
+    ObjectFrameGraspCandidate,
+    TriangleMesh,
+)
+
+
+DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
+
+
+def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
+    x, y, z, w = [float(v) for v in quat_xyzw]
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    return np.array(
+        [
+            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+        ],
+        dtype=float,
+    )
+
+
+def _parse_rolls(raw: str) -> tuple[float, ...]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if not values:
+        raise argparse.ArgumentTypeError("Expected at least one roll angle.")
+    return values
+
+
+def _make_cube_mesh(side_length: float) -> TriangleMesh:
+    half = 0.5 * float(side_length)
+    vertices = np.array(
+        [
+            [-half, -half, -half],
+            [half, -half, -half],
+            [half, half, -half],
+            [-half, half, -half],
+            [-half, -half, half],
+            [half, -half, half],
+            [half, half, half],
+            [-half, half, half],
+        ],
+        dtype=float,
+    )
+    faces = np.array(
+        [
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [3, 7, 6],
+            [3, 6, 2],
+            [0, 4, 7],
+            [0, 7, 3],
+            [1, 2, 6],
+            [1, 6, 5],
+        ],
+        dtype=np.int64,
+    )
+    return TriangleMesh(vertices_obj=vertices, faces=faces)
+
+
+def _make_cylinder_mesh(radius: float, height: float, radial_segments: int) -> TriangleMesh:
+    if radial_segments < 3:
+        raise ValueError("radial_segments must be at least 3.")
+    half_height = 0.5 * float(height)
+    angles = np.linspace(0.0, 2.0 * np.pi, num=radial_segments, endpoint=False)
+
+    vertices: list[list[float]] = []
+    for z in (-half_height, half_height):
+        for angle in angles:
+            vertices.append([float(radius * np.cos(angle)), float(radius * np.sin(angle)), z])
+    bottom_center_index = len(vertices)
+    vertices.append([0.0, 0.0, -half_height])
+    top_center_index = len(vertices)
+    vertices.append([0.0, 0.0, half_height])
+
+    faces: list[list[int]] = []
+    for idx in range(radial_segments):
+        next_idx = (idx + 1) % radial_segments
+        bottom_a = idx
+        bottom_b = next_idx
+        top_a = radial_segments + idx
+        top_b = radial_segments + next_idx
+        faces.append([bottom_a, bottom_b, top_b])
+        faces.append([bottom_a, top_b, top_a])
+        faces.append([bottom_center_index, bottom_b, bottom_a])
+        faces.append([top_center_index, top_a, top_b])
+
+    return TriangleMesh(vertices_obj=np.array(vertices, dtype=float), faces=np.array(faces, dtype=np.int64))
+
+
+def _build_mesh(args: argparse.Namespace) -> TriangleMesh:
+    if args.geometry == "cube":
+        return _make_cube_mesh(side_length=args.cube_side)
+    return _make_cylinder_mesh(radius=args.cylinder_radius, height=args.cylinder_height, radial_segments=args.cylinder_segments)
+
+
+def _unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
+    edges: set[tuple[int, int]] = set()
+    for i0, i1, i2 in faces.tolist():
+        for a, b in ((i0, i1), (i1, i2), (i2, i0)):
+            edge = tuple(sorted((int(a), int(b))))
+            edges.add(edge)
+    return sorted(edges)
+
+
+def _finger_box_corners(
+    candidate: ObjectFrameGraspCandidate,
+    *,
+    depth: float,
+    length: float,
+    thickness: float,
+    clearance: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
+    point_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
+    normal_a = np.asarray(candidate.contact_normal_a_obj, dtype=float)
+    normal_b = np.asarray(candidate.contact_normal_b_obj, dtype=float)
+    closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
+
+    def build(contact_point: np.ndarray, contact_normal: np.ndarray, invert_closing_axis: bool) -> np.ndarray:
+        finger_x = contact_normal / np.linalg.norm(contact_normal)
+        finger_y = -closing_axis if invert_closing_axis else closing_axis
+        finger_y = finger_y - float(np.dot(finger_y, finger_x)) * finger_x
+        finger_y /= np.linalg.norm(finger_y)
+        finger_z = np.cross(finger_x, finger_y)
+        finger_z /= np.linalg.norm(finger_z)
+        rotation = np.column_stack((finger_x, finger_y, finger_z))
+        half_extents = 0.5 * np.array([depth, length, thickness], dtype=float)
+        center = contact_point + finger_x * (0.5 * clearance)
+        signs = np.array(
+            [
+                [-1, -1, -1],
+                [1, -1, -1],
+                [1, 1, -1],
+                [-1, 1, -1],
+                [-1, -1, 1],
+                [1, -1, 1],
+                [1, 1, 1],
+                [-1, 1, 1],
+            ],
+            dtype=float,
+        )
+        local_corners = signs * half_extents[None, :]
+        return center[None, :] + local_corners @ rotation.T
+
+    return build(point_a, normal_a, False), build(point_b, normal_b, True)
+
+
+parser = argparse.ArgumentParser(description="Generate an HTML debug view for object-frame antipodal grasps.")
+parser.add_argument("--geometry", choices=("cube", "cylinder"), default="cube", help="Procedural geometry to generate.")
+parser.add_argument("--cube-side", type=float, default=0.05, help="Cube side length in meters.")
+parser.add_argument("--cylinder-radius", type=float, default=0.02, help="Cylinder radius in meters.")
+parser.add_argument("--cylinder-height", type=float, default=0.05, help="Cylinder height in meters.")
+parser.add_argument("--cylinder-segments", type=int, default=24, help="Cylinder radial segment count.")
+parser.add_argument("--num-samples", type=int, default=192, help="Number of surface samples.")
+parser.add_argument("--min-jaw-width", type=float, default=0.02, help="Minimum jaw width in meters.")
+parser.add_argument("--max-jaw-width", type=float, default=0.08, help="Maximum jaw width in meters.")
+parser.add_argument("--antipodal-cosine-threshold", type=float, default=0.94, help="Minimum cosine alignment for antipodal normals.")
+parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians.")
+parser.add_argument("--max-pair-checks", type=int, default=4096, help="Maximum contact pairs to evaluate.")
+parser.add_argument("--finger-depth", type=float, default=0.008, help="Finger box depth in meters.")
+parser.add_argument("--finger-length", type=float, default=0.012, help="Finger box length along the closing axis.")
+parser.add_argument("--finger-thickness", type=float, default=0.01, help="Finger box thickness in meters.")
+parser.add_argument("--finger-clearance", type=float, default=0.002, help="Contact-plane finger clearance in meters.")
+parser.add_argument("--contact-patch-radius", type=float, default=0.006, help="Ignored contact neighborhood radius.")
+parser.add_argument("--collision-sample-count", type=int, default=256, help="Auxiliary surface samples for coarse clearance checks.")
+parser.add_argument("--rng-seed", type=int, default=0, help="Random seed for deterministic sampling.")
+parser.add_argument("--output-html", type=Path, default=DEFAULT_OUTPUT_HTML, help=f"Output HTML path. Default: {DEFAULT_OUTPUT_HTML}")
+
+
+@dataclass(frozen=True)
+class _ViewerState:
+    mesh: TriangleMesh
+    edges: list[tuple[int, int]]
+    candidates: list[ObjectFrameGraspCandidate]
+    config: AntipodalGraspGeneratorConfig
+    geometry_name: str
+
+
+def _fmt_vec(vec: tuple[float, ...] | list[float]) -> list[float]:
+    return [round(float(value), 6) for value in vec]
+
+
+def _build_payload(state: _ViewerState) -> dict[str, object]:
+    vertices = [[round(float(v), 6) for v in vertex] for vertex in state.mesh.vertices_obj]
+    candidates = []
+    for index, candidate in enumerate(state.candidates, start=1):
+        point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
+        point_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
+        center = np.asarray(candidate.grasp_position_obj, dtype=float)
+        normal_a = np.asarray(candidate.contact_normal_a_obj, dtype=float)
+        normal_b = np.asarray(candidate.contact_normal_b_obj, dtype=float)
+        closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
+        rotation = _quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+        finger_box_a, finger_box_b = _finger_box_corners(
+            candidate,
+            depth=state.config.finger_depth,
+            length=state.config.finger_length,
+            thickness=state.config.finger_thickness,
+            clearance=state.config.finger_clearance,
+        )
+        candidates.append(
+            {
+                "rank": index,
+                "grasp_position_obj": _fmt_vec(candidate.grasp_position_obj),
+                "grasp_orientation_xyzw_obj": _fmt_vec(candidate.grasp_orientation_xyzw_obj),
+                "contact_point_a_obj": _fmt_vec(candidate.contact_point_a_obj),
+                "contact_point_b_obj": _fmt_vec(candidate.contact_point_b_obj),
+                "contact_normal_a_obj": _fmt_vec(candidate.contact_normal_a_obj),
+                "contact_normal_b_obj": _fmt_vec(candidate.contact_normal_b_obj),
+                "jaw_width": round(float(candidate.jaw_width), 6),
+                "roll_angle_rad": round(float(candidate.roll_angle_rad), 6),
+                "closing_axis_obj": _fmt_vec(closing_axis.tolist()),
+                "gripper_x_axis_obj": _fmt_vec(rotation[:, 0].tolist()),
+                "gripper_y_axis_obj": _fmt_vec(rotation[:, 1].tolist()),
+                "gripper_z_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
+                "finger_box_a": [_fmt_vec(corner.tolist()) for corner in finger_box_a],
+                "finger_box_b": [_fmt_vec(corner.tolist()) for corner in finger_box_b],
+                "contact_midpoint_error": round(float(np.linalg.norm(center - 0.5 * (point_a + point_b))), 8),
+            }
+        )
+
+    return {
+        "geometry_name": state.geometry_name,
+        "vertices_obj": vertices,
+        "edges": state.edges,
+        "triangle_count": int(len(state.mesh.faces)),
+        "vertex_count": int(len(state.mesh.vertices_obj)),
+        "candidate_count": int(len(state.candidates)),
+        "config": {
+            "num_surface_samples": state.config.num_surface_samples,
+            "min_jaw_width": state.config.min_jaw_width,
+            "max_jaw_width": state.config.max_jaw_width,
+            "antipodal_cosine_threshold": state.config.antipodal_cosine_threshold,
+            "roll_angles_rad": [float(v) for v in state.config.roll_angles_rad],
+            "finger_depth": state.config.finger_depth,
+            "finger_length": state.config.finger_length,
+            "finger_thickness": state.config.finger_thickness,
+            "finger_clearance": state.config.finger_clearance,
+        },
+        "candidates": candidates,
+    }
+
+
+def _html_document(payload: dict[str, object]) -> str:
+    data_json = json.dumps(payload, indent=2)
+    template = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mesh Antipodal Grasp Debug</title>
+  <style>
+    :root {{
+      --bg: #f3efe4;
+      --panel: #fffaf0;
+      --ink: #1e1d1a;
+      --accent: #b43f2c;
+      --accent-soft: #e8b59f;
+      --muted: #6f6a5f;
+      --line: #d9ceb8;
+      --mesh: #4f6b5f;
+      --contact-a: #c8452d;
+      --contact-b: #1f7c60;
+      --box: #6d3cc6;
+      --axis: #1397a6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #fff8e8 0, transparent 30%),
+        linear-gradient(135deg, #f7f2e7 0%, #efe7d4 100%);
+    }}
+    .layout {{
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      min-height: 100vh;
+    }}
+    .sidebar {{
+      border-right: 1px solid var(--line);
+      background: rgba(255, 250, 240, 0.92);
+      padding: 20px 18px;
+      overflow: auto;
+    }}
+    .title {{
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.1;
+    }}
+    .subtitle {{
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }}
+    .controls {{
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    button {{
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }}
+    button:hover {{
+      border-color: var(--accent);
+    }}
+    .list {{
+      display: grid;
+      gap: 10px;
+      margin-bottom: 18px;
+    }}
+    .item {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    }}
+    .item:hover {{
+      transform: translateY(-1px);
+      border-color: var(--accent-soft);
+      box-shadow: 0 8px 18px rgba(85, 65, 42, 0.08);
+    }}
+    .item.active {{
+      border-color: var(--accent);
+      box-shadow: 0 10px 24px rgba(180, 63, 44, 0.18);
+      background: #fff;
+    }}
+    .item-rank {{
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }}
+    .item-main {{
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-top: 6px;
+      gap: 10px;
+    }}
+    .item-label {{
+      font-size: 22px;
+      font-weight: 700;
+    }}
+    .item-score {{
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 14px;
+    }}
+    .item-meta {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-family: "IBM Plex Mono", monospace;
+    }}
+    .main {{
+      padding: 18px;
+      overflow: auto;
+    }}
+    .cards {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+      gap: 18px;
+      align-items: start;
+    }}
+    .card {{
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255, 250, 240, 0.88);
+      padding: 16px;
+      box-shadow: 0 14px 32px rgba(72, 51, 28, 0.08);
+    }}
+    .card h2 {{
+      margin: 0 0 12px;
+      font-size: 16px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }}
+    #scene {{
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1.25 / 1;
+      display: block;
+      background:
+        radial-gradient(circle at 20% 18%, rgba(255,255,255,0.9), rgba(255,255,255,0.55) 35%, rgba(233,226,208,0.65)),
+        linear-gradient(180deg, rgba(255,255,255,0.2), rgba(223,214,194,0.18));
+      border-radius: 16px;
+    }}
+    .legend {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }}
+    .legend span {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .swatch {{
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      display: inline-block;
+    }}
+    .details {{
+      display: grid;
+      gap: 14px;
+    }}
+    .kv {{
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      margin: 0;
+    }}
+    .caption {{
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }}
+    @media (max-width: 1100px) {{
+      .layout {{
+        grid-template-columns: 1fr;
+      }}
+      .sidebar {{
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }}
+      .cards {{
+        grid-template-columns: 1fr;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1 class="title">Mesh Antipodal Grasp Debug</h1>
+      <p class="subtitle">
+        Object-frame antipodal grasp candidates generated from procedural object geometry only.
+        Select a candidate to inspect contacts, normals, gripper axes, and the coarse finger boxes.
+      </p>
+      <div class="controls">
+        <button id="prevBtn" type="button">Prev</button>
+        <button id="nextBtn" type="button">Next</button>
+      </div>
+      <div id="graspList" class="list"></div>
+    </aside>
+    <main class="main">
+      <div class="cards">
+        <section class="card">
+          <h2>Object Frame</h2>
+          <svg id="scene" viewBox="0 0 960 760" aria-label="Mesh antipodal grasp debug scene"></svg>
+          <div class="legend">
+            <span><i class="swatch" style="background: var(--mesh)"></i>Mesh wireframe</span>
+            <span><i class="swatch" style="background: var(--accent)"></i>Grasp center</span>
+            <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A / normal</span>
+            <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B / normal</span>
+            <span><i class="swatch" style="background: var(--box)"></i>Finger boxes</span>
+            <span><i class="swatch" style="background: var(--axis)"></i>Gripper frame axes</span>
+          </div>
+          <p class="caption">
+            The viewer uses the same coarse finger-box geometry as the object-only clearance filter.
+          </p>
+        </section>
+        <section class="card">
+          <h2>Selection</h2>
+          <div class="details">
+            <div>
+              <h2 style="margin-bottom:10px;">Summary</h2>
+              <pre id="summary" class="kv"></pre>
+            </div>
+            <div>
+              <h2 style="margin-bottom:10px;">Geometry</h2>
+              <pre id="geometry" class="kv"></pre>
+            </div>
+            <div>
+              <h2 style="margin-bottom:10px;">Generator</h2>
+              <pre id="config" class="kv"></pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script>
+    const data = __DATA_JSON__;
+    const scene = document.getElementById("scene");
+    const graspList = document.getElementById("graspList");
+    const summary = document.getElementById("summary");
+    const geometry = document.getElementById("geometry");
+    const configView = document.getElementById("config");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
+
+    const state = {{
+      selectedIndex: 0,
+      yaw: -0.82,
+      pitch: 0.56,
+      zoom: 1.0,
+      panX: 0,
+      panY: 0,
+      dragging: false,
+      dragMode: "rotate",
+      lastPointerX: 0,
+      lastPointerY: 0,
+    }};
+
+    const objectPoints = [
+      ...data.vertices_obj,
+      ...data.candidates.flatMap((candidate) => [
+        candidate.grasp_position_obj,
+        candidate.contact_point_a_obj,
+        candidate.contact_point_b_obj,
+        ...candidate.finger_box_a,
+        ...candidate.finger_box_b,
+      ]),
+    ];
+
+    const bounds = objectPoints.reduce((acc, point) => {{
+      point.forEach((value, axis) => {{
+        acc.min[axis] = Math.min(acc.min[axis], value);
+        acc.max[axis] = Math.max(acc.max[axis], value);
+      }});
+      return acc;
+    }}, {{ min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }});
+    const center = bounds.min.map((value, axis) => 0.5 * (value + bounds.max[axis]));
+    const extent = Math.max(...bounds.max.map((value, axis) => value - bounds.min[axis]), 0.18);
+    const baseScale = 520 / extent;
+
+    function rotate(point) {{
+      const shifted = point.map((value, axis) => value - center[axis]);
+      const cy = Math.cos(state.yaw);
+      const sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch);
+      const sp = Math.sin(state.pitch);
+      const x1 = cy * shifted[0] + sy * shifted[1];
+      const y1 = -sy * shifted[0] + cy * shifted[1];
+      const z1 = shifted[2];
+      const x2 = x1;
+      const y2 = cp * y1 - sp * z1;
+      const z2 = sp * y1 + cp * z1;
+      return [x2, y2, z2];
+    }}
+
+    function project(point) {{
+      const [x, y, z] = rotate(point);
+      const scale = baseScale * state.zoom;
+      return {{
+        x: 480 + state.panX + x * scale,
+        y: 380 + state.panY - y * scale,
+        depth: z,
+      }};
+    }}
+
+    function fmtVec(vec) {{
+      return `(${vec.map((value) => value >= 0 ? `+${value.toFixed(4)}` : value.toFixed(4)).join(", ")})`;
+    }}
+
+    function addSvg(tag, attrs) {{
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+      scene.appendChild(node);
+      return node;
+    }}
+
+    function drawLine(a, b, options = {{}}) {{
+      const pa = project(a);
+      const pb = project(b);
+      addSvg("line", {{
+        x1: pa.x,
+        y1: pa.y,
+        x2: pb.x,
+        y2: pb.y,
+        stroke: options.stroke || "#555",
+        "stroke-width": options.strokeWidth || 2,
+        "stroke-opacity": options.opacity ?? 1,
+        "stroke-dasharray": options.dash || "",
+        "marker-end": options.markerEnd || "",
+      }});
+    }}
+
+    function drawPoint(point, options = {{}}) {{
+      const p = project(point);
+      addSvg("circle", {{
+        cx: p.x,
+        cy: p.y,
+        r: options.radius || 6,
+        fill: options.fill || "#000",
+        "fill-opacity": options.opacity ?? 1,
+        stroke: options.stroke || "white",
+        "stroke-width": options.strokeWidth || 2,
+      }});
+    }}
+
+    function drawLabel(point, text, fill, dx = 10, dy = -10) {{
+      const p = project(point);
+      const node = addSvg("text", {{
+        x: p.x + dx,
+        y: p.y + dy,
+        fill,
+        "font-size": 16,
+        "font-family": "IBM Plex Mono, monospace",
+        "font-weight": 600,
+      }});
+      node.textContent = text;
+    }}
+
+    function drawArrow(origin, vector, length, color, width, label = null, dx = 8, dy = -8) {{
+      const target = origin.map((value, axis) => value + vector[axis] * length);
+      drawLine(origin, target, {{ stroke: color, strokeWidth: width, markerEnd: "url(#arrow)" }});
+      if (label) {{
+        drawLabel(target, label, color, dx, dy);
+      }}
+    }}
+
+    function drawFingerBox(corners, color) {{
+      const edges = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7],
+      ];
+      edges.forEach(([start, end]) => {{
+        drawLine(corners[start], corners[end], {{ stroke: color, strokeWidth: 2, opacity: 0.8 }});
+      }});
+    }}
+
+    function renderList() {{
+      graspList.replaceChildren();
+      data.candidates.forEach((candidate, index) => {{
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `item${index === state.selectedIndex ? " active" : ""}`;
+        item.innerHTML = `
+          <div class="item-rank">Candidate ${candidate.rank}</div>
+          <div class="item-main">
+            <div class="item-label">w=${candidate.jaw_width.toFixed(4)}</div>
+            <div class="item-score">roll=${candidate.roll_angle_rad.toFixed(3)}</div>
+          </div>
+          <div class="item-meta">center=${fmtVec(candidate.grasp_position_obj)}<br>closing=${fmtVec(candidate.closing_axis_obj)}</div>
+        `;
+        item.addEventListener("click", () => {{
+          state.selectedIndex = index;
+          render();
+        }});
+        graspList.appendChild(item);
+      }});
+    }}
+
+    function renderDetails(candidate) {{
+      summary.textContent =
+        `geometry:        ${data.geometry_name}\\n` +
+        `candidate:       ${candidate.rank} / ${data.candidate_count}\\n` +
+        `jaw_width:       ${candidate.jaw_width.toFixed(6)} m\\n` +
+        `roll_angle_rad:  ${candidate.roll_angle_rad.toFixed(6)}\\n` +
+        `midpoint_error:  ${candidate.contact_midpoint_error.toFixed(8)}`;
+
+      geometry.textContent =
+        `grasp_position_obj:      ${fmtVec(candidate.grasp_position_obj)}\\n` +
+        `grasp_orientation_xyzw:  ${fmtVec(candidate.grasp_orientation_xyzw_obj)}\\n` +
+        `contact_point_a_obj:     ${fmtVec(candidate.contact_point_a_obj)}\\n` +
+        `contact_point_b_obj:     ${fmtVec(candidate.contact_point_b_obj)}\\n` +
+        `contact_normal_a_obj:    ${fmtVec(candidate.contact_normal_a_obj)}\\n` +
+        `contact_normal_b_obj:    ${fmtVec(candidate.contact_normal_b_obj)}\\n` +
+        `closing_axis_obj:        ${fmtVec(candidate.closing_axis_obj)}\\n` +
+        `gripper_x_axis_obj:      ${fmtVec(candidate.gripper_x_axis_obj)}\\n` +
+        `gripper_y_axis_obj:      ${fmtVec(candidate.gripper_y_axis_obj)}\\n` +
+        `gripper_z_axis_obj:      ${fmtVec(candidate.gripper_z_axis_obj)}`;
+
+      configView.textContent =
+        `vertices:        ${data.vertex_count}\\n` +
+        `triangles:       ${data.triangle_count}\\n` +
+        `samples:         ${data.config.num_surface_samples}\\n` +
+        `jaw_limits:      [${data.config.min_jaw_width.toFixed(4)}, ${data.config.max_jaw_width.toFixed(4)}]\\n` +
+        `antipodal_cos:   ${data.config.antipodal_cosine_threshold.toFixed(4)}\\n` +
+        `rolls:           ${data.config.roll_angles_rad.map((v) => Number(v).toFixed(3)).join(", ")}\\n` +
+        `finger_dims:     (${data.config.finger_depth.toFixed(4)}, ${data.config.finger_length.toFixed(4)}, ${data.config.finger_thickness.toFixed(4)})\\n` +
+        `finger_clear:    ${data.config.finger_clearance.toFixed(4)}`;
+    }}
+
+    function renderScene(candidate) {{
+      scene.replaceChildren();
+      const defs = addSvg("defs", {{}});
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+      marker.setAttribute("id", "arrow");
+      marker.setAttribute("markerWidth", "8");
+      marker.setAttribute("markerHeight", "8");
+      marker.setAttribute("refX", "7");
+      marker.setAttribute("refY", "4");
+      marker.setAttribute("orient", "auto");
+      marker.innerHTML = '<path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path>';
+      defs.appendChild(marker);
+
+      data.edges.forEach(([start, end]) => {{
+        drawLine(data.vertices_obj[start], data.vertices_obj[end], {{ stroke: "#4f6b5f", strokeWidth: 2, opacity: 0.75 }});
+      }});
+
+      drawFingerBox(candidate.finger_box_a, "#6d3cc6");
+      drawFingerBox(candidate.finger_box_b, "#6d3cc6");
+      drawLine(candidate.contact_point_a_obj, candidate.contact_point_b_obj, {{ stroke: "#b43f2c", strokeWidth: 3, opacity: 0.9 }});
+
+      drawPoint(candidate.grasp_position_obj, {{ fill: "#b43f2c", radius: 7 }});
+      drawPoint(candidate.contact_point_a_obj, {{ fill: "#c8452d", radius: 6 }});
+      drawPoint(candidate.contact_point_b_obj, {{ fill: "#1f7c60", radius: 6 }});
+
+      drawArrow(candidate.contact_point_a_obj, candidate.contact_normal_a_obj, 0.03, "#c8452d", 2.5, "nA");
+      drawArrow(candidate.contact_point_b_obj, candidate.contact_normal_b_obj, 0.03, "#1f7c60", 2.5, "nB");
+      drawArrow(candidate.grasp_position_obj, candidate.gripper_x_axis_obj, 0.035, "#b43f2c", 2.5, "x");
+      drawArrow(candidate.grasp_position_obj, candidate.gripper_y_axis_obj, 0.035, "#6d3cc6", 2.5, "y");
+      drawArrow(candidate.grasp_position_obj, candidate.gripper_z_axis_obj, 0.035, "#1397a6", 2.5, "z");
+
+      drawLabel(candidate.grasp_position_obj, "g", "#b43f2c");
+      drawLabel(candidate.contact_point_a_obj, "A", "#c8452d", 10, 14);
+      drawLabel(candidate.contact_point_b_obj, "B", "#1f7c60", 10, 14);
+    }}
+
+    function render() {{
+      const candidate = data.candidates[state.selectedIndex];
+      renderList();
+      renderDetails(candidate);
+      renderScene(candidate);
+    }}
+
+    function clamp(value, min, max) {{
+      return Math.min(max, Math.max(min, value));
+    }}
+
+    prevBtn.addEventListener("click", () => {{
+      state.selectedIndex = (state.selectedIndex - 1 + data.candidates.length) % data.candidates.length;
+      render();
+    }});
+
+    nextBtn.addEventListener("click", () => {{
+      state.selectedIndex = (state.selectedIndex + 1) % data.candidates.length;
+      render();
+    }});
+
+    window.addEventListener("keydown", (event) => {{
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") {{
+        event.preventDefault();
+        prevBtn.click();
+      }}
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") {{
+        event.preventDefault();
+        nextBtn.click();
+      }}
+    }});
+
+    scene.addEventListener("mousedown", (event) => {{
+      if (event.button !== 0 && event.button !== 1) {{
+        return;
+      }}
+      event.preventDefault();
+      state.dragging = true;
+      state.dragMode = event.button === 1 ? "pan" : "rotate";
+      state.lastPointerX = event.clientX;
+      state.lastPointerY = event.clientY;
+      scene.style.cursor = state.dragMode === "pan" ? "move" : "grabbing";
+    }});
+
+    window.addEventListener("mouseup", () => {{
+      state.dragging = false;
+      scene.style.cursor = "grab";
+    }});
+
+    window.addEventListener("mousemove", (event) => {{
+      if (!state.dragging) {{
+        return;
+      }}
+      const dx = event.clientX - state.lastPointerX;
+      const dy = event.clientY - state.lastPointerY;
+      state.lastPointerX = event.clientX;
+      state.lastPointerY = event.clientY;
+      if (state.dragMode === "pan") {{
+        state.panX += dx;
+        state.panY += dy;
+      }} else {{
+        state.yaw += dx * 0.01;
+        state.pitch = clamp(state.pitch - dy * 0.01, -1.45, 1.45);
+      }}
+      render();
+    }});
+
+    scene.addEventListener("wheel", (event) => {{
+      event.preventDefault();
+      const zoomFactor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
+      state.zoom = clamp(state.zoom * zoomFactor, 0.35, 4.0);
+      render();
+    }}, {{ passive: false }});
+
+    scene.style.cursor = "grab";
+    scene.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    if (data.candidates.length > 0) {{
+      render();
+    }} else {{
+      graspList.textContent = "No candidates passed the current filters.";
+      summary.textContent = "No candidates generated.";
+      geometry.textContent = "";
+      configView.textContent = "";
+    }}
+  </script>
+</body>
+</html>
+"""
+    return template.replace("{{", "{").replace("}}", "}").replace("__DATA_JSON__", data_json)
+
+
+def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
+    config = AntipodalGraspGeneratorConfig(
+        num_surface_samples=args.num_samples,
+        min_jaw_width=args.min_jaw_width,
+        max_jaw_width=args.max_jaw_width,
+        antipodal_cosine_threshold=args.antipodal_cosine_threshold,
+        roll_angles_rad=args.roll_angles_rad,
+        max_pair_checks=args.max_pair_checks,
+        finger_depth=args.finger_depth,
+        finger_length=args.finger_length,
+        finger_thickness=args.finger_thickness,
+        finger_clearance=args.finger_clearance,
+        contact_patch_radius=args.contact_patch_radius,
+        collision_sample_count=args.collision_sample_count,
+        rng_seed=args.rng_seed,
+    )
+    mesh = _build_mesh(args)
+    generator = AntipodalMeshGraspGenerator(config)
+    candidates = generator.generate(mesh)
+    return _ViewerState(
+        mesh=mesh,
+        edges=_unique_edges(mesh.faces),
+        candidates=candidates,
+        config=config,
+        geometry_name=args.geometry,
+    )
+
+
+def main() -> None:
+    args = parser.parse_args()
+    state = _build_viewer_state(args)
+    output_path = args.output_html.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(_html_document(_build_payload(state)), encoding="utf-8")
+    print(f"[INFO] Wrote HTML mesh grasp debug view to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

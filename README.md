@@ -7,6 +7,7 @@ Current scope:
 - ground plane + dynamic cube + FR3 scene,
 - experimental move-to-pose and pickup debug paths in the launcher,
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
+- a separate minimal object-frame antipodal grasp generator for procedural mesh debug,
 - pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
@@ -23,6 +24,16 @@ python scripts/debug_cube_grasps.py
 
 The debug viewer is browser-based. It writes a self-contained HTML file to
 `artifacts/cube_grasp_debug.html`; open that file from the host browser.
+
+Standalone mesh antipodal grasp debug viewer:
+
+```bash
+python scripts/debug_mesh_antipodal_grasps.py --geometry cube
+python scripts/debug_mesh_antipodal_grasps.py --geometry cylinder
+```
+
+This viewer is also browser-based. It writes a self-contained HTML file to
+`artifacts/mesh_antipodal_grasp_debug.html`; open that file from the host browser.
 
 Docker build:
 
@@ -92,6 +103,14 @@ Viewer controls:
 - mouse wheel zooms,
 - arrow keys or `Prev` / `Next` switch the selected grasp.
 
+Mesh antipodal grasp path:
+- lives separately from the existing cube-face grasp generator,
+- uses object geometry only and returns grasps in the object frame,
+- samples surface points and normals on a triangle mesh,
+- forms approximate antipodal contact pairs for a parallel-jaw gripper,
+- filters only on jaw width, antipodal consistency, and coarse finger clearance,
+- can export typed grasp candidates with pose, contacts, normals, and jaw width.
+
 Current grasp convention for the cube generator:
 - each candidate represents a symmetric parallel-jaw pinch grasp,
 - `position_w` is the cube-center pinch midpoint,
@@ -121,6 +140,8 @@ Host compatibility checks used for the Docker setup:
 Notes:
 - the cube pose is defined directly in `scripts/launch_fr3_cube_env.py`,
 - `scripts/debug_cube_grasps.py` is intended for local debug visualization and writes generated output into `artifacts/`,
+- `scripts/debug_mesh_antipodal_grasps.py` is a separate local viewer for the new object-frame antipodal grasp path and generates procedural cube/cylinder meshes internally,
+- the new mesh grasp generator lives under `grasp_planning/grasping/mesh_antipodal_grasp_generator.py` and is intentionally separate from the existing cube-face path,
 - by default the launcher uses Isaac Sim's built-in FR3 asset:
   `Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd`,
 - `--fr3-usd` is optional and only needed to override that default,

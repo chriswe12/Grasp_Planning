@@ -9,12 +9,14 @@ Current scope:
 - one dynamic cube with fixed pose from the launcher,
 - a debug pickup path in the launcher with optional `--pregrasp-only`,
 - a standalone teleport-based pickup debug script,
+- a separate object-frame antipodal grasp debug path for procedural mesh geometry,
 - pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
 
 - `scripts/launch_fr3_cube_env.py`
 - `scripts/debug_cube_grasps.py`
+- `scripts/debug_mesh_antipodal_grasps.py`
 - `scripts/teleport_fr3_pickup.py`
 - `scripts/inspect_fr3_tcp_geometry.py`
 - `scripts/diagnose_fr3_top_grasp.py`
@@ -33,6 +35,7 @@ Current scope:
 - The fixed TCP offset `(0, 0, -0.045)` was verified from the spawned Isaac asset; do not keep re-tuning it blindly.
 - The main residual problem was arm drive tracking under load, not offline IK or TCP frame conversion.
 - Keep environment work separate from controller work when possible.
+- Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
 
 ## Docker Notes
 
