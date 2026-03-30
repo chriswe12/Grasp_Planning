@@ -8,6 +8,7 @@ import torch
 from grasp_planning.grasping import CubeFaceGraspGenerator
 from grasp_planning.planning.fr3_motion_context import (
     FR3MotionContext,
+    compute_dls_position_correction,
     grasp_pose_to_tcp_pose,
     tcp_pose_to_grasp_pose,
 )
@@ -19,6 +20,7 @@ class _FakeRobotData:
             [[[-1.0, 1.0], [-2.0, 2.0], [-3.0, 3.0], [-4.0, 4.0], [-5.0, 5.0], [-6.0, 6.0], [-7.0, 7.0]]],
             dtype=torch.float32,
         )
+        self.joint_pos = torch.zeros((1, 7), dtype=torch.float32)
 
 
 class _FakeRobot:
@@ -112,6 +114,35 @@ class FR3MotionContextTests(unittest.TestCase):
         self.assertAlmostEqual(tcp_orientation_xyzw[1], 1.0, places=6)
         self.assertAlmostEqual(tcp_orientation_xyzw[2], 0.0, places=6)
         self.assertAlmostEqual(tcp_orientation_xyzw[3], 0.0, places=6)
+
+    def test_compute_dls_position_correction_moves_along_jacobian_direction(self) -> None:
+        jacobian_pos = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]], dtype=torch.float32)
+        position_error = torch.tensor([[0.1, -0.2, 0.0]], dtype=torch.float32)
+
+        dq = compute_dls_position_correction(
+            jacobian_pos,
+            position_error,
+            gain=1.0,
+            damping=0.0,
+            max_delta_rad=1.0,
+        )
+
+        self.assertAlmostEqual(float(dq[0, 0].item()), 0.1, places=6)
+        self.assertAlmostEqual(float(dq[0, 1].item()), -0.2, places=6)
+
+    def test_compute_dls_position_correction_respects_clamp(self) -> None:
+        jacobian_pos = torch.tensor([[[1.0], [0.0], [0.0]]], dtype=torch.float32)
+        position_error = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)
+
+        dq = compute_dls_position_correction(
+            jacobian_pos,
+            position_error,
+            gain=2.0,
+            damping=0.0,
+            max_delta_rad=0.05,
+        )
+
+        self.assertAlmostEqual(float(dq[0, 0].item()), 0.05, places=6)
 
 
 if __name__ == "__main__":

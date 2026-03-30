@@ -105,16 +105,18 @@ def _diag_tensor(values: tuple[float, ...], device: str) -> torch.Tensor:
 class AdmittanceControllerCfg:
     """Controller gains and execution parameters."""
 
-    stiffness_diag: tuple[float, float, float, float, float, float] = (250.0, 250.0, 250.0, 10.0, 10.0, 8.0)
-    inertia_diag: tuple[float, float, float, float, float, float] = (4.0, 2.0, 3.0, 0.075, 0.2, 0.001)
-    reference_filter: float = 0.02
+    stiffness_diag: tuple[float, float, float, float, float, float] = (320.0, 320.0, 320.0, 10.0, 10.0, 8.0)
+    inertia_diag: tuple[float, float, float, float, float, float] = (3.0, 1.8, 2.4, 0.075, 0.2, 0.001)
+    reference_filter: float = 0.05
     wrench_filter: float = 0.15
-    max_linear_speed_mps: float = 0.25
-    max_angular_speed_radps: float = 1.2
+    use_estimated_external_wrench: bool = False
+    max_linear_speed_mps: float = 0.35
+    max_angular_speed_radps: float = 1.8
     max_duration_s: float = 12.0
+    inner_settle_steps: int = 6
     settle_steps: int = 10
-    position_tolerance_m: float = 0.03
-    orientation_tolerance_rad: float = 0.12
+    position_tolerance_m: float = 0.015
+    orientation_tolerance_rad: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -268,6 +270,20 @@ class FR3AdmittanceController:
             else:
                 stable_steps = 0
 
+        actual_tcp_position_w, actual_tcp_orientation_xyzw = self.get_current_tcp_pose()
+        target_tcp_position_w, target_tcp_orientation_xyzw = self._context.grasp_pose_to_tcp_pose(
+            position_w,
+            orientation_xyzw,
+        )
+        print(
+            "[WARN]: Admittance final TCP pose "
+            f"target_position={target_tcp_position_w} target_orientation_xyzw={target_tcp_orientation_xyzw} "
+            f"actual_position={actual_tcp_position_w} actual_orientation_xyzw={actual_tcp_orientation_xyzw} "
+            f"position_error_xyz={tuple(float(v) for v in pos_error[0].tolist())} "
+            f"orientation_error_xyz={tuple(float(v) for v in rot_error[0].tolist())}",
+            flush=True,
+        )
+
         return PlanResult(
             False,
             "execution_failed",
@@ -288,7 +304,12 @@ class FR3AdmittanceController:
 
     def step(self, external_wrench: torch.Tensor | None = None) -> None:
         self._update_references()
-        wrench = self._estimate_external_wrench() if external_wrench is None else external_wrench
+        if external_wrench is not None:
+            wrench = external_wrench
+        elif self._cfg.use_estimated_external_wrench:
+            wrench = self._estimate_external_wrench()
+        else:
+            wrench = torch.zeros((1, 6), dtype=torch.float32, device=self._context.device)
         if wrench.ndim == 1:
             wrench = wrench.unsqueeze(0)
         self._filtered_wrench = (
@@ -318,11 +339,7 @@ class FR3AdmittanceController:
         lower, upper = self._context.get_joint_limits()
         if self._context.joint_limits_are_usable(lower, upper):
             q_des = torch.max(torch.min(q_des, upper), lower)
-            self._context.command_arm(q_des)
-        self._context.command_fixed_gripper()
-        self._context.scene.write_data_to_sim()
-        self._context.sim.step()
-        self._context.scene.update(self._context.physics_dt)
+        self._context.hold_position(q_des, steps=self._cfg.inner_settle_steps)
 
     def _build_ik_controller(self):
         from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg

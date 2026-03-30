@@ -5,8 +5,9 @@ Minimal Isaac Lab scaffold for task-aware grasp planning experiments on Franka R
 Current scope:
 - interactive FR3 + cube environment,
 - ground plane + dynamic cube + FR3 scene,
-- experimental move-to-pose planning path in the launcher,
-- no reliable grasp execution or pickup pipeline yet.
+- experimental move-to-pose and pickup debug paths in the launcher,
+- a standalone teleport-based pickup debug script for isolating path-planning issues,
+- pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
 
@@ -47,6 +48,24 @@ To run the new Isaac-side admittance controller instead of the joint-space plann
 
 ```bash
 /isaac-sim/python.sh scripts/launch_fr3_cube_env.py --controller admittance --headless
+```
+
+Standalone teleport-based pickup debug path:
+
+```bash
+/isaac-sim/python.sh scripts/teleport_fr3_pickup.py --headless
+```
+
+FR3 TCP geometry inspection from the spawned asset:
+
+```bash
+/isaac-sim/python.sh scripts/inspect_fr3_tcp_geometry.py --headless
+```
+
+Systematic top-grasp diagnosis for offline IK vs controller tracking:
+
+```bash
+/isaac-sim/python.sh scripts/diagnose_fr3_top_grasp.py --headless --baselines-only
 ```
 
 For GUI mode inside the container:
@@ -108,7 +127,10 @@ Notes:
 - later controller work can replace the hard-coded cube pose with an externally provided object pose,
 - the launcher now spawns the FR3 as an `ArticulationCfg` and includes an experimental grasp controller path,
 - `--controller admittance` uses an Isaac-only Cartesian admittance loop adapted from the upstream ROS2/libfranka controller,
-- the current planner / pickup path does not work reliably yet; the arm moves, but the cube is not picked successfully,
+- the best current pickup path is the launcher with `--controller admittance`; it can pick up the cube in sim, but is still sensitive to gains and not yet robust,
+- the standalone teleport script is the cleanest way to debug grasp geometry because it bypasses arm path planning,
+- the fixed `fr3_hand_tcp -> finger-midpoint` offset is verified from the spawned Isaac asset as approximately `(0, 0, -0.045)`,
+- the main residual error found during debugging was low-level arm joint tracking under load, not the TCP offset or the offline IK solve,
 - the Dockerfile is based on `nvcr.io/nvidia/isaac-sim:5.1.0` and installs the minimal Isaac Lab `2.3.2.post1` runtime needed for this repo on top of Isaac Sim,
 - `docker_env.sh` mounts the repo root to `/workspace/Grasp_Planning` inside the container,
 - the container exports `PYTHONPATH` automatically for the mounted workspace and Isaac Lab source tree,

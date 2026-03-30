@@ -6,6 +6,7 @@ import torch
 
 from grasp_planning.planning.admittance_controller import (
     AdmittanceStepState,
+    AdmittanceControllerCfg,
     FR3AdmittanceController,
     integrate_admittance_step,
 )
@@ -90,6 +91,40 @@ class AdmittanceControllerMathTests(unittest.TestCase):
         wrench = controller._estimate_external_wrench()
 
         torch.testing.assert_close(wrench.cpu(), torch.zeros((1, 6), dtype=torch.float32))
+
+    def test_step_uses_zero_wrench_by_default(self) -> None:
+        controller = FR3AdmittanceController.__new__(FR3AdmittanceController)
+        controller._context = _FakeContext()
+        controller._cfg = AdmittanceControllerCfg()
+        controller._filtered_wrench = torch.zeros((1, 6), dtype=torch.float32)
+        controller._twist = torch.zeros((1, 6), dtype=torch.float32)
+        controller._reference_position = torch.zeros((1, 3), dtype=torch.float32)
+        controller._reference_orientation = torch.tensor([[0.0, 0.0, 0.0, 1.0]], dtype=torch.float32)
+        controller._virtual_position = controller._reference_position.clone()
+        controller._virtual_orientation = controller._reference_orientation.clone()
+        controller._target_position_w = (0.0, 0.0, 0.0)
+        controller._target_orientation_xyzw = (0.0, 0.0, 0.0, 1.0)
+        controller._stiffness = torch.eye(6, dtype=torch.float32)
+        controller._inertia = torch.eye(6, dtype=torch.float32)
+        controller._damping = torch.eye(6, dtype=torch.float32)
+        controller._ik_controller = unittest.mock.Mock()
+        controller._context.physics_dt = 0.01
+        controller._context.command_pose_via_differential_ik = unittest.mock.Mock(return_value=torch.zeros((1, 7)))
+        controller._context.get_joint_limits = unittest.mock.Mock(
+            return_value=(torch.full((1, 7), -1.0), torch.full((1, 7), 1.0))
+        )
+        controller._context.joint_limits_are_usable = unittest.mock.Mock(return_value=True)
+        controller._context.hold_position = unittest.mock.Mock()
+        controller._estimate_external_wrench = unittest.mock.Mock(
+            return_value=torch.tensor([[1.0, -2.0, 3.5, 0.4, -0.5, 0.6]], dtype=torch.float32)
+        )
+
+        controller.step()
+
+        torch.testing.assert_close(controller._filtered_wrench, torch.zeros((1, 6), dtype=torch.float32))
+        controller._context.hold_position.assert_called_once()
+        _q_des, = controller._context.hold_position.call_args.args
+        self.assertEqual(controller._context.hold_position.call_args.kwargs["steps"], controller._cfg.inner_settle_steps)
 
 
 if __name__ == "__main__":

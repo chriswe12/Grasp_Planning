@@ -14,8 +14,8 @@ class TrajectoryExecutor:
     def __init__(
         self,
         context: FR3MotionContext,
-        waypoint_tolerance_rad: float = 0.04,
-        max_steps_per_waypoint: int = 180,
+        waypoint_tolerance_rad: float = 0.01,
+        max_steps_per_waypoint: int = 300,
     ) -> None:
         self._context = context
         self._waypoint_tolerance_rad = float(waypoint_tolerance_rad)

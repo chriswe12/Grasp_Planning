@@ -130,6 +130,45 @@ class FR3PickControllerTests(unittest.TestCase):
 
         torch.testing.assert_close(limited, torch.full((1, 7), 0.04, dtype=torch.float32))
 
+    def test_compute_line_tracking_target_projects_lateral_error(self) -> None:
+        desired_line_point, lateral_error = FR3PickController._compute_line_tracking_target(
+            current_position_w=(0.12, 0.03, 0.0),
+            start_position_w=(0.0, 0.0, 0.0),
+            target_position_w=(0.2, 0.0, 0.0),
+            tau=0.5,
+        )
+
+        self.assertAlmostEqual(desired_line_point[0], 0.1, places=4)
+        self.assertAlmostEqual(desired_line_point[1], 0.0, places=4)
+        self.assertAlmostEqual(desired_line_point[2], 0.0, places=4)
+        self.assertAlmostEqual(lateral_error[0], 0.0, places=4)
+        self.assertAlmostEqual(lateral_error[1], 0.03, places=4)
+        self.assertAlmostEqual(lateral_error[2], 0.0, places=4)
+
+    def test_start_phase_approach_initializes_distinct_tcp_targets(self) -> None:
+        fake_robot = _FakeRobot()
+        fake_robot.data.body_pose_w[0, 12, :3] = torch.tensor([-0.43, 0.0, 0.17], dtype=torch.float32)
+        fake_robot.data.body_pose_w[0, 12, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
+        grasp = GraspCandidate(
+            position_w=(-0.45, 0.0, 0.025),
+            orientation_xyzw=(0.0, 0.70710678, 0.0, 0.70710678),
+            normal_w=(0.0, 0.0, -1.0),
+            pregrasp_offset=0.2,
+            gripper_width=0.06,
+            score=1.0,
+            label="+z",
+        )
+
+        with mock.patch.object(FR3PickController, "_build_ik_controller", return_value=object()):
+            controller = FR3PickController(robot=fake_robot, grasp=grasp, physics_dt=0.01, start_phase="approach")
+
+        self.assertAlmostEqual(controller._pregrasp_tcp_position_w[0], -0.43, places=4)
+        self.assertAlmostEqual(controller._pregrasp_tcp_position_w[1], 0.0, places=4)
+        self.assertAlmostEqual(controller._pregrasp_tcp_position_w[2], 0.17, places=4)
+        self.assertAlmostEqual(controller._grasp_tcp_position_w[0], -0.43, places=4)
+        self.assertAlmostEqual(controller._grasp_tcp_position_w[1], 0.0, places=4)
+        self.assertAlmostEqual(controller._grasp_tcp_position_w[2], 0.025, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,12 +8,16 @@ Current scope:
 - FR3 + cube scene setup in Isaac Lab,
 - one dynamic cube with fixed pose from the launcher,
 - a debug pickup path in the launcher with optional `--pregrasp-only`,
-- no reliable grasp execution or pickup pipeline in the main launch path.
+- a standalone teleport-based pickup debug script,
+- pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
 
 - `scripts/launch_fr3_cube_env.py`
 - `scripts/debug_cube_grasps.py`
+- `scripts/teleport_fr3_pickup.py`
+- `scripts/inspect_fr3_tcp_geometry.py`
+- `scripts/diagnose_fr3_top_grasp.py`
 - `grasp_planning/envs/fr3_cube_env.py`
 - `grasp_planning/scene_defaults.py`
 - `Dockerfile`
@@ -26,6 +30,8 @@ Current scope:
 - The FR3 is spawned via `ArticulationCfg` from a USD path.
 - The default launcher debug flow runs pregrasp, approach, close, and retreat; use `--pregrasp-only` to stop after pregrasp.
 - The launcher exposes face selection with `--grasp-face {pos_x,neg_x,pos_y,neg_y,pos_z,neg_z}`, `--pregrasp-offset`, and `--tcp-to-grasp-offset`.
+- The fixed TCP offset `(0, 0, -0.045)` was verified from the spawned Isaac asset; do not keep re-tuning it blindly.
+- The main residual problem was arm drive tracking under load, not offline IK or TCP frame conversion.
 - Keep environment work separate from controller work when possible.
 
 ## Docker Notes
