@@ -38,6 +38,8 @@ Current scope:
 - Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
 - Mesh antipodal grasp defaults now live in `configs/mesh_antipodal_grasp_debug.yaml`; CLI flags should stay as per-run overrides.
 - STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
+- The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
+- For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
 
 ## Docker Notes
 
