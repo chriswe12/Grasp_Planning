@@ -160,3 +160,20 @@ Notes:
 - the container exports `PYTHONPATH` automatically for the mounted workspace and Isaac Lab source tree,
 - for GUI mode, `docker_env.sh run` grants the container's root user temporary X11 access with `xhost +SI:localuser:root` when `DISPLAY` and `xhost` are available,
 - that X11 access is revoked automatically when `docker_env.sh run` exits.
+## Mesh Antipodal Grasp Debug
+
+The arbitrary-object grasp debug path is driven by `scripts/debug_mesh_antipodal_grasps.py`.
+
+Default settings live in `configs/mesh_antipodal_grasp_debug.yaml`. Run with the default config:
+
+```bash
+python scripts/debug_mesh_antipodal_grasps.py
+```
+
+To evaluate an STL from `assets/stl/`, either edit the YAML file or override selected values on the command line:
+
+```bash
+python scripts/debug_mesh_antipodal_grasps.py --geometry stl --stl-path my_part.stl --stl-scale 0.001
+```
+
+CLI flags override the YAML values for that run only.

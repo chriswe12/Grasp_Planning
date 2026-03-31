@@ -11,6 +11,7 @@ import struct
 import sys
 
 import numpy as np
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -25,7 +26,36 @@ from grasp_planning.grasping import (  # noqa: E402
 
 
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "mesh_antipodal_grasp_debug.yaml"
 DEFAULT_STL_DIR = REPO_ROOT / "assets" / "stl"
+
+_DEFAULT_CONFIG = {
+    "geometry": {
+        "type": "cube",
+        "cube_side": 0.05,
+        "cylinder_radius": 0.02,
+        "cylinder_height": 0.05,
+        "cylinder_segments": 24,
+        "stl_path": None,
+        "stl_scale": 1.0,
+    },
+    "generator": {
+        "num_samples": 192,
+        "min_jaw_width": 0.02,
+        "max_jaw_width": 0.08,
+        "antipodal_cosine_threshold": 0.94,
+        "roll_angles_rad": [0.0],
+        "max_pair_checks": 4096,
+        "finger_depth": 0.008,
+        "finger_length": 0.012,
+        "finger_thickness": 0.01,
+        "finger_clearance": 0.002,
+        "contact_patch_radius": 0.006,
+        "collision_sample_count": 256,
+        "rng_seed": 0,
+    },
+    "output_html": str(DEFAULT_OUTPUT_HTML),
+}
 
 
 def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
@@ -48,6 +78,113 @@ def _parse_rolls(raw: str) -> tuple[float, ...]:
     if not values:
         raise argparse.ArgumentTypeError("Expected at least one roll angle.")
     return values
+
+
+def _deep_merge(base: dict[str, object], override: dict[str, object]) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_yaml_config(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Config file not found: '{path}'.")
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Config file '{path}' must contain a YAML mapping at the top level.")
+    return loaded
+
+
+def _coerce_roll_angles(value: object) -> tuple[float, ...]:
+    if isinstance(value, str):
+        return _parse_rolls(value)
+    if isinstance(value, (list, tuple)):
+        values = tuple(float(item) for item in value)
+        if not values:
+            raise ValueError("roll_angles_rad must contain at least one value.")
+        return values
+    raise ValueError("roll_angles_rad must be a comma-separated string or a YAML list of numbers.")
+
+
+def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
+    config_path = args.config.expanduser().resolve()
+    merged = _deep_merge(_DEFAULT_CONFIG, _load_yaml_config(config_path))
+
+    geometry = merged.get("geometry")
+    generator = merged.get("generator")
+    if not isinstance(geometry, dict) or not isinstance(generator, dict):
+        raise ValueError("Config must define 'geometry' and 'generator' mappings.")
+
+    resolved = argparse.Namespace(
+        config=config_path,
+        geometry=str(geometry.get("type", _DEFAULT_CONFIG["geometry"]["type"])),
+        cube_side=float(geometry.get("cube_side", _DEFAULT_CONFIG["geometry"]["cube_side"])),
+        cylinder_radius=float(geometry.get("cylinder_radius", _DEFAULT_CONFIG["geometry"]["cylinder_radius"])),
+        cylinder_height=float(geometry.get("cylinder_height", _DEFAULT_CONFIG["geometry"]["cylinder_height"])),
+        cylinder_segments=int(geometry.get("cylinder_segments", _DEFAULT_CONFIG["geometry"]["cylinder_segments"])),
+        stl_path=None if geometry.get("stl_path") in (None, "") else Path(str(geometry["stl_path"])),
+        stl_scale=float(geometry.get("stl_scale", _DEFAULT_CONFIG["geometry"]["stl_scale"])),
+        num_samples=int(generator.get("num_samples", _DEFAULT_CONFIG["generator"]["num_samples"])),
+        min_jaw_width=float(generator.get("min_jaw_width", _DEFAULT_CONFIG["generator"]["min_jaw_width"])),
+        max_jaw_width=float(generator.get("max_jaw_width", _DEFAULT_CONFIG["generator"]["max_jaw_width"])),
+        antipodal_cosine_threshold=float(
+            generator.get(
+                "antipodal_cosine_threshold",
+                _DEFAULT_CONFIG["generator"]["antipodal_cosine_threshold"],
+            )
+        ),
+        roll_angles_rad=_coerce_roll_angles(generator.get("roll_angles_rad", _DEFAULT_CONFIG["generator"]["roll_angles_rad"])),
+        max_pair_checks=int(generator.get("max_pair_checks", _DEFAULT_CONFIG["generator"]["max_pair_checks"])),
+        finger_depth=float(generator.get("finger_depth", _DEFAULT_CONFIG["generator"]["finger_depth"])),
+        finger_length=float(generator.get("finger_length", _DEFAULT_CONFIG["generator"]["finger_length"])),
+        finger_thickness=float(generator.get("finger_thickness", _DEFAULT_CONFIG["generator"]["finger_thickness"])),
+        finger_clearance=float(generator.get("finger_clearance", _DEFAULT_CONFIG["generator"]["finger_clearance"])),
+        contact_patch_radius=float(
+            generator.get("contact_patch_radius", _DEFAULT_CONFIG["generator"]["contact_patch_radius"])
+        ),
+        collision_sample_count=int(
+            generator.get("collision_sample_count", _DEFAULT_CONFIG["generator"]["collision_sample_count"])
+        ),
+        rng_seed=int(generator.get("rng_seed", _DEFAULT_CONFIG["generator"]["rng_seed"])),
+        output_html=Path(str(merged.get("output_html", _DEFAULT_CONFIG["output_html"]))),
+    )
+
+    for name in (
+        "geometry",
+        "cube_side",
+        "cylinder_radius",
+        "cylinder_height",
+        "cylinder_segments",
+        "stl_path",
+        "stl_scale",
+        "num_samples",
+        "min_jaw_width",
+        "max_jaw_width",
+        "antipodal_cosine_threshold",
+        "roll_angles_rad",
+        "max_pair_checks",
+        "finger_depth",
+        "finger_length",
+        "finger_thickness",
+        "finger_clearance",
+        "contact_patch_radius",
+        "collision_sample_count",
+        "rng_seed",
+        "output_html",
+    ):
+        override = getattr(args, name)
+        if override is not None:
+            setattr(resolved, name, override)
+
+    if resolved.geometry not in {"cube", "cylinder", "stl"}:
+        raise ValueError(f"Unsupported geometry type '{resolved.geometry}'. Expected cube, cylinder, or stl.")
+    return resolved
 
 
 def _dedupe_triangle_vertices(triangles: np.ndarray) -> TriangleMesh:
@@ -275,15 +412,21 @@ def _finger_box_corners(
 
 parser = argparse.ArgumentParser(description="Generate an HTML debug view for object-frame antipodal grasps.")
 parser.add_argument(
+    "--config",
+    type=Path,
+    default=DEFAULT_CONFIG_PATH,
+    help=f"YAML config path. Default: {DEFAULT_CONFIG_PATH}",
+)
+parser.add_argument(
     "--geometry",
     choices=("cube", "cylinder", "stl"),
-    default="cube",
+    default=None,
     help="Mesh source: procedural cube/cylinder or an STL file.",
 )
-parser.add_argument("--cube-side", type=float, default=0.05, help="Cube side length in meters.")
-parser.add_argument("--cylinder-radius", type=float, default=0.02, help="Cylinder radius in meters.")
-parser.add_argument("--cylinder-height", type=float, default=0.05, help="Cylinder height in meters.")
-parser.add_argument("--cylinder-segments", type=int, default=24, help="Cylinder radial segment count.")
+parser.add_argument("--cube-side", type=float, default=None, help="Cube side length in meters.")
+parser.add_argument("--cylinder-radius", type=float, default=None, help="Cylinder radius in meters.")
+parser.add_argument("--cylinder-height", type=float, default=None, help="Cylinder height in meters.")
+parser.add_argument("--cylinder-segments", type=int, default=None, help="Cylinder radial segment count.")
 parser.add_argument(
     "--stl-path",
     type=Path,
@@ -293,23 +436,23 @@ parser.add_argument(
 parser.add_argument(
     "--stl-scale",
     type=float,
-    default=1.0,
+    default=None,
     help="Uniform scale applied to STL vertices after loading. Use this to convert units to meters if needed.",
 )
-parser.add_argument("--num-samples", type=int, default=192, help="Number of surface samples.")
-parser.add_argument("--min-jaw-width", type=float, default=0.02, help="Minimum jaw width in meters.")
-parser.add_argument("--max-jaw-width", type=float, default=0.08, help="Maximum jaw width in meters.")
-parser.add_argument("--antipodal-cosine-threshold", type=float, default=0.94, help="Minimum cosine alignment for antipodal normals.")
-parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians.")
-parser.add_argument("--max-pair-checks", type=int, default=4096, help="Maximum contact pairs to evaluate.")
-parser.add_argument("--finger-depth", type=float, default=0.008, help="Finger box depth in meters.")
-parser.add_argument("--finger-length", type=float, default=0.012, help="Finger box length along the closing axis.")
-parser.add_argument("--finger-thickness", type=float, default=0.01, help="Finger box thickness in meters.")
-parser.add_argument("--finger-clearance", type=float, default=0.002, help="Contact-plane finger clearance in meters.")
-parser.add_argument("--contact-patch-radius", type=float, default=0.006, help="Ignored contact neighborhood radius.")
-parser.add_argument("--collision-sample-count", type=int, default=256, help="Auxiliary surface samples for coarse clearance checks.")
-parser.add_argument("--rng-seed", type=int, default=0, help="Random seed for deterministic sampling.")
-parser.add_argument("--output-html", type=Path, default=DEFAULT_OUTPUT_HTML, help=f"Output HTML path. Default: {DEFAULT_OUTPUT_HTML}")
+parser.add_argument("--num-samples", type=int, default=None, help="Number of surface samples.")
+parser.add_argument("--min-jaw-width", type=float, default=None, help="Minimum jaw width in meters.")
+parser.add_argument("--max-jaw-width", type=float, default=None, help="Maximum jaw width in meters.")
+parser.add_argument("--antipodal-cosine-threshold", type=float, default=None, help="Minimum cosine alignment for antipodal normals.")
+parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=None, help="Comma-separated roll angles in radians.")
+parser.add_argument("--max-pair-checks", type=int, default=None, help="Maximum contact pairs to evaluate.")
+parser.add_argument("--finger-depth", type=float, default=None, help="Finger box depth in meters.")
+parser.add_argument("--finger-length", type=float, default=None, help="Finger box length along the closing axis.")
+parser.add_argument("--finger-thickness", type=float, default=None, help="Finger box thickness in meters.")
+parser.add_argument("--finger-clearance", type=float, default=None, help="Contact-plane finger clearance in meters.")
+parser.add_argument("--contact-patch-radius", type=float, default=None, help="Ignored contact neighborhood radius.")
+parser.add_argument("--collision-sample-count", type=int, default=None, help="Auxiliary surface samples for coarse clearance checks.")
+parser.add_argument("--rng-seed", type=int, default=None, help="Random seed for deterministic sampling.")
+parser.add_argument("--output-html", type=Path, default=None, help=f"Output HTML path. Default from YAML: {DEFAULT_OUTPUT_HTML}")
 
 
 @dataclass(frozen=True)
@@ -1090,7 +1233,7 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
 
 
 def main() -> None:
-    args = parser.parse_args()
+    args = _config_from_sources(parser.parse_args())
     state = _build_viewer_state(args)
     mins = state.mesh.vertices_obj.min(axis=0)
     maxs = state.mesh.vertices_obj.max(axis=0)

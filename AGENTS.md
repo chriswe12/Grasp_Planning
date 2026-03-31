@@ -36,6 +36,7 @@ Current scope:
 - The main residual problem was arm drive tracking under load, not offline IK or TCP frame conversion.
 - Keep environment work separate from controller work when possible.
 - Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
+- Mesh antipodal grasp defaults now live in `configs/mesh_antipodal_grasp_debug.yaml`; CLI flags should stay as per-run overrides.
 - STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
 
 ## Docker Notes
