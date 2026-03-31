@@ -44,6 +44,8 @@ _DEFAULT_CONFIG = {
         "min_jaw_width": 0.02,
         "max_jaw_width": 0.08,
         "antipodal_cosine_threshold": 0.94,
+        "roll_step_deg": 360.0,
+        "roll_angles_deg": None,
         "roll_angles_rad": [0.0],
         "max_pair_checks": 4096,
         "finger_depth": 0.008,
@@ -112,6 +114,36 @@ def _coerce_roll_angles(value: object) -> tuple[float, ...]:
     raise ValueError("roll_angles_rad must be a comma-separated string or a YAML list of numbers.")
 
 
+def _coerce_roll_angles_deg(value: object) -> tuple[float, ...]:
+    if isinstance(value, str):
+        values = tuple(math.radians(float(part.strip())) for part in value.split(",") if part.strip())
+        if not values:
+            raise ValueError("roll_angles_deg must contain at least one value.")
+        return values
+    if isinstance(value, (list, tuple)):
+        values = tuple(math.radians(float(item)) for item in value)
+        if not values:
+            raise ValueError("roll_angles_deg must contain at least one value.")
+        return values
+    raise ValueError("roll_angles_deg must be a comma-separated string or a YAML list of numbers.")
+
+
+def _roll_angles_from_step_deg(step_deg: object) -> tuple[float, ...]:
+    step = float(step_deg)
+    if step <= 0.0:
+        raise ValueError("roll_step_deg must be > 0.")
+    if step >= 360.0:
+        return (0.0,)
+
+    angles_deg: list[float] = []
+    angle = 0.0
+    # Build [0, 360) in fixed increments without duplicating 360 == 0.
+    while angle < 360.0 - 1.0e-9:
+        angles_deg.append(angle)
+        angle += step
+    return tuple(math.radians(value) for value in angles_deg)
+
+
 def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
     config_path = args.config.expanduser().resolve()
     merged = _deep_merge(_DEFAULT_CONFIG, _load_yaml_config(config_path))
@@ -120,6 +152,17 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
     generator = merged.get("generator")
     if not isinstance(geometry, dict) or not isinstance(generator, dict):
         raise ValueError("Config must define 'geometry' and 'generator' mappings.")
+
+    roll_step_deg = generator.get("roll_step_deg")
+    roll_angles_deg = generator.get("roll_angles_deg")
+    if roll_step_deg not in (None, ""):
+        roll_angles_rad = _roll_angles_from_step_deg(roll_step_deg)
+    elif roll_angles_deg not in (None, ""):
+        roll_angles_rad = _coerce_roll_angles_deg(roll_angles_deg)
+    else:
+        roll_angles_rad = _coerce_roll_angles(
+            generator.get("roll_angles_rad", _DEFAULT_CONFIG["generator"]["roll_angles_rad"])
+        )
 
     resolved = argparse.Namespace(
         config=config_path,
@@ -139,7 +182,7 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
                 _DEFAULT_CONFIG["generator"]["antipodal_cosine_threshold"],
             )
         ),
-        roll_angles_rad=_coerce_roll_angles(generator.get("roll_angles_rad", _DEFAULT_CONFIG["generator"]["roll_angles_rad"])),
+        roll_angles_rad=roll_angles_rad,
         max_pair_checks=int(generator.get("max_pair_checks", _DEFAULT_CONFIG["generator"]["max_pair_checks"])),
         finger_depth=float(generator.get("finger_depth", _DEFAULT_CONFIG["generator"]["finger_depth"])),
         finger_length=float(generator.get("finger_length", _DEFAULT_CONFIG["generator"]["finger_length"])),
@@ -385,6 +428,13 @@ def _finger_box_corners(
         finger_x = contact_normal / np.linalg.norm(contact_normal)
         finger_y = -closing_axis if invert_closing_axis else closing_axis
         finger_y = finger_y - float(np.dot(finger_y, finger_x)) * finger_x
+        if np.linalg.norm(finger_y) <= 1.0e-8:
+            reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
+            if abs(float(np.dot(reference_axis, finger_x))) > 0.95:
+                reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+            finger_y = reference_axis - float(np.dot(reference_axis, finger_x)) * finger_x
+            if invert_closing_axis:
+                finger_y = -finger_y
         finger_y /= np.linalg.norm(finger_y)
         finger_z = np.cross(finger_x, finger_y)
         finger_z /= np.linalg.norm(finger_z)
@@ -444,7 +494,12 @@ parser.add_argument("--min-jaw-width", type=float, default=None, help="Minimum j
 parser.add_argument("--max-jaw-width", type=float, default=None, help="Maximum jaw width in meters.")
 parser.add_argument("--antipodal-cosine-threshold", type=float, default=None, help="Minimum cosine alignment for antipodal normals.")
 parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=None, help="Comma-separated roll angles in radians.")
-parser.add_argument("--max-pair-checks", type=int, default=None, help="Maximum contact pairs to evaluate.")
+parser.add_argument(
+    "--max-pair-checks",
+    type=int,
+    default=None,
+    help="Maximum nearby contact pairs to evaluate after KD-tree preselection.",
+)
 parser.add_argument("--finger-depth", type=float, default=None, help="Finger box depth in meters.")
 parser.add_argument("--finger-length", type=float, default=None, help="Finger box length along the closing axis.")
 parser.add_argument("--finger-thickness", type=float, default=None, help="Finger box thickness in meters.")
@@ -1254,7 +1309,7 @@ def main() -> None:
         print(
             "[WARN] No grasp candidates passed the current filters. "
             "If scale is correct, try more samples and a looser antipodal threshold, "
-            "for example: --num-samples 1024 --max-pair-checks 60000 "
+            "for example: --num-samples 1024 "
             "--antipodal-cosine-threshold 0.8 --min-jaw-width 0.005",
             flush=True,
         )

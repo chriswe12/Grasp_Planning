@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -154,8 +155,7 @@ class AntipodalMeshGraspGenerator:
     def generate(self, mesh: TriangleMesh) -> list[ObjectFrameGraspCandidate]:
         surface_samples = self.sample_surface(mesh, num_samples=self._config.num_surface_samples)
         collision_points = self._surface_collision_points(mesh)
-
-        pair_indices = self._candidate_pair_indices(len(surface_samples))
+        pair_indices = self._candidate_pair_indices(surface_samples)
         candidates: list[ObjectFrameGraspCandidate] = []
         seen_keys: set[tuple[float, ...]] = set()
 
@@ -253,12 +253,31 @@ class AntipodalMeshGraspGenerator:
         sampled_points = np.array([sample.point_obj for sample in extra_samples], dtype=float)
         return np.vstack((vertices, centroids, sampled_points))
 
-    def _candidate_pair_indices(self, sample_count: int) -> list[tuple[int, int]]:
-        all_pairs = [(i, j) for i in range(sample_count) for j in range(i + 1, sample_count)]
-        if len(all_pairs) <= self._config.max_pair_checks:
-            return all_pairs
-        step = max(1, len(all_pairs) // self._config.max_pair_checks)
-        return all_pairs[::step][: self._config.max_pair_checks]
+    def _candidate_pair_indices(self, samples: list[SurfaceSample]) -> list[tuple[int, int]]:
+        if len(samples) < 2:
+            return []
+
+        points = np.array([sample.point_obj for sample in samples], dtype=float)
+        tree = cKDTree(points)
+        max_radius = self._config.max_jaw_width
+        pair_indices: list[tuple[int, int]] = []
+        seen_pairs: set[tuple[int, int]] = set()
+
+        for i, point in enumerate(points):
+            neighbors = tree.query_ball_point(point, r=max_radius)
+            for j in neighbors:
+                if j <= i:
+                    continue
+                pair = (i, j)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                pair_indices.append(pair)
+
+        if len(pair_indices) <= self._config.max_pair_checks:
+            return pair_indices
+        step = max(1, len(pair_indices) // self._config.max_pair_checks)
+        return pair_indices[::step][: self._config.max_pair_checks]
 
     def _canonicalize_pair(
         self,
@@ -336,6 +355,13 @@ class AntipodalMeshGraspGenerator:
         finger_x = _normalize(contact_normal)
         finger_y = -closing_axis if invert_closing_axis else closing_axis
         finger_y = finger_y - float(np.dot(finger_y, finger_x)) * finger_x
+        if np.linalg.norm(finger_y) <= 1.0e-8:
+            reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
+            if abs(float(np.dot(reference_axis, finger_x))) > 0.95:
+                reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+            finger_y = reference_axis - float(np.dot(reference_axis, finger_x)) * finger_x
+            if invert_closing_axis:
+                finger_y = -finger_y
         finger_y = _normalize(finger_y)
         finger_z = _normalize(np.cross(finger_x, finger_y))
         rotation = np.column_stack((finger_x, finger_y, finger_z))

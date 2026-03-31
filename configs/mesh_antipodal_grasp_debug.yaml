@@ -12,8 +12,9 @@ generator:
   min_jaw_width: 0.02
   max_jaw_width: 0.08
   antipodal_cosine_threshold: 0.94
-  roll_angles_rad:
-    - 0.0
+  # Roll samples are generated as 0, step, 2*step, ... up to but excluding 360.
+  # 360 means "only 0 deg".
+  roll_step_deg: 36
   max_pair_checks: 40960
   finger_depth: 0.008
   finger_length: 0.012

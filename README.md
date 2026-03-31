@@ -110,7 +110,7 @@ Mesh antipodal grasp path:
 - lives separately from the existing cube-face grasp generator,
 - uses object geometry only and returns grasps in the object frame,
 - samples surface points and normals on a triangle mesh,
-- forms approximate antipodal contact pairs for a parallel-jaw gripper,
+- uses a KD-tree to find nearby sampled contact pairs within the jaw-width limit,
 - filters only on jaw width, antipodal consistency, and coarse finger clearance,
 - can export typed grasp candidates with pose, contacts, normals, and jaw width.
 
@@ -177,3 +177,7 @@ python scripts/debug_mesh_antipodal_grasps.py --geometry stl --stl-path my_part.
 ```
 
 CLI flags override the YAML values for that run only.
+
+For roll sampling in YAML, set `generator.roll_step_deg`.
+This generates roll samples at `0, step, 2*step, ...` up to but excluding `360`.
+If you still use the older `roll_angles_deg` or `roll_angles_rad` keys, they remain supported for compatibility.
