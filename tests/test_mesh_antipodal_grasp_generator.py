@@ -12,6 +12,7 @@ from grasp_planning.grasping import (
     AntipodalMeshGraspGenerator,
     TriangleMesh,
     export_grasp_candidates_json,
+    finger_boxes_from_grasp,
 )
 
 
@@ -152,17 +153,22 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         rolled_candidates = AntipodalMeshGraspGenerator(rolled_config).generate(cube_mesh)
 
         self.assertTrue(base_candidates)
-        self.assertEqual(len(rolled_candidates), 2 * len(base_candidates))
+        self.assertGreaterEqual(len(rolled_candidates), len(base_candidates))
 
-        base_groups = {
-            tuple(np.round(np.array([*candidate.contact_point_a_obj, *candidate.contact_point_b_obj, candidate.jaw_width]), 6))
-            for candidate in base_candidates
-        }
-        rolled_groups = {
-            tuple(np.round(np.array([*candidate.contact_point_a_obj, *candidate.contact_point_b_obj, candidate.jaw_width]), 6))
-            for candidate in rolled_candidates
-        }
-        self.assertSetEqual(base_groups, rolled_groups)
+        def group_key(candidate: object) -> tuple[float, ...]:
+            return tuple(
+                np.round(np.array([*candidate.contact_point_a_obj, *candidate.contact_point_b_obj, candidate.jaw_width]), 6)
+            )
+
+        base_groups = {group_key(candidate) for candidate in base_candidates}
+        rolled_group_counts: dict[tuple[float, ...], int] = {}
+        for candidate in rolled_candidates:
+            key = group_key(candidate)
+            rolled_group_counts[key] = rolled_group_counts.get(key, 0) + 1
+
+        self.assertTrue(base_groups.issubset(set(rolled_group_counts)))
+        for count in rolled_group_counts.values():
+            self.assertIn(count, {1, 2})
 
     def test_cylinder_generation_finds_side_grasps(self) -> None:
         cylinder_mesh = _make_cylinder_mesh(radius=0.02, height=0.05, radial_segments=24)
@@ -247,6 +253,66 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         self.assertEqual(sorted(first["grasp_pose_obj"].keys()), ["orientation_xyzw", "position"])
         self.assertEqual(len(first["contact_points_obj"]), 2)
         self.assertEqual(len(first["contact_normals_obj"]), 2)
+
+    def test_finger_boxes_follow_the_grasp_pose_frame(self) -> None:
+        point_a = np.array([0.0, -0.02, 0.0], dtype=float)
+        point_b = np.array([0.0, 0.02, 0.0], dtype=float)
+        rotation = np.eye(3, dtype=float)
+
+        box_a, box_b = finger_boxes_from_grasp(
+            grasp_rotmat=rotation,
+            contact_point_a=point_a,
+            contact_point_b=point_b,
+            finger_depth=0.01,
+            finger_length=0.02,
+            finger_thickness=0.004,
+            finger_clearance=0.002,
+        )
+
+        expected_offset = np.array([0.006, 0.0, 0.0], dtype=float)
+        np.testing.assert_allclose(box_a[0], point_a + expected_offset, atol=1e-8)
+        np.testing.assert_allclose(box_b[0], point_b + expected_offset, atol=1e-8)
+        np.testing.assert_allclose(box_a[1], rotation, atol=1e-8)
+        np.testing.assert_allclose(box_b[1], rotation, atol=1e-8)
+
+    def test_clearance_is_checked_per_roll_pose(self) -> None:
+        generator = AntipodalMeshGraspGenerator(
+            AntipodalGraspGeneratorConfig(
+                finger_depth=0.01,
+                finger_length=0.02,
+                finger_thickness=0.004,
+                finger_clearance=0.002,
+            )
+        )
+        point_a = np.array([0.0, -0.02, 0.0], dtype=float)
+        point_b = np.array([0.0, 0.02, 0.0], dtype=float)
+        collision_points = np.array([[0.006, -0.02, 0.001]], dtype=float)
+        identity = np.eye(3, dtype=float)
+        ninety_deg_roll = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        )
+
+        self.assertFalse(
+            generator._passes_finger_clearance(
+                collision_points=collision_points,
+                grasp_rotmat=identity,
+                contact_point_a=point_a,
+                contact_point_b=point_b,
+            )
+        )
+        self.assertTrue(
+            generator._passes_finger_clearance(
+                collision_points=collision_points,
+                grasp_rotmat=ninety_deg_roll,
+                contact_point_a=point_a,
+                contact_point_b=point_b,
+            )
+        )
 
 
 if __name__ == "__main__":

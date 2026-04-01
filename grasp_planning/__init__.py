@@ -9,6 +9,8 @@ from .grasping import (
     ObjectFrameGraspCandidate,
     TriangleMesh,
     export_grasp_candidates_json,
+    finger_box_corners,
+    finger_boxes_from_grasp,
 )
 from .planning import AdmittanceControllerCfg, FR3AdmittanceController, FR3MoveToPoseController, JointTrajectory, PlanResult, PoseCommand
 
@@ -27,4 +29,6 @@ __all__ = [
     "PoseCommand",
     "TriangleMesh",
     "export_grasp_candidates_json",
+    "finger_box_corners",
+    "finger_boxes_from_grasp",
 ]

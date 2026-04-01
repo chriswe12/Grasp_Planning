@@ -22,6 +22,8 @@ from grasp_planning.grasping import (  # noqa: E402
     AntipodalMeshGraspGenerator,
     ObjectFrameGraspCandidate,
     TriangleMesh,
+    finger_box_corners,
+    finger_boxes_from_grasp,
 )
 
 
@@ -410,56 +412,6 @@ def _unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
     return sorted(edges)
 
 
-def _finger_box_corners(
-    candidate: ObjectFrameGraspCandidate,
-    *,
-    depth: float,
-    length: float,
-    thickness: float,
-    clearance: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
-    point_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
-    normal_a = np.asarray(candidate.contact_normal_a_obj, dtype=float)
-    normal_b = np.asarray(candidate.contact_normal_b_obj, dtype=float)
-    closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
-
-    def build(contact_point: np.ndarray, contact_normal: np.ndarray, invert_closing_axis: bool) -> np.ndarray:
-        finger_x = contact_normal / np.linalg.norm(contact_normal)
-        finger_y = -closing_axis if invert_closing_axis else closing_axis
-        finger_y = finger_y - float(np.dot(finger_y, finger_x)) * finger_x
-        if np.linalg.norm(finger_y) <= 1.0e-8:
-            reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
-            if abs(float(np.dot(reference_axis, finger_x))) > 0.95:
-                reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
-            finger_y = reference_axis - float(np.dot(reference_axis, finger_x)) * finger_x
-            if invert_closing_axis:
-                finger_y = -finger_y
-        finger_y /= np.linalg.norm(finger_y)
-        finger_z = np.cross(finger_x, finger_y)
-        finger_z /= np.linalg.norm(finger_z)
-        rotation = np.column_stack((finger_x, finger_y, finger_z))
-        half_extents = 0.5 * np.array([depth, length, thickness], dtype=float)
-        center = contact_point + finger_x * (0.5 * clearance)
-        signs = np.array(
-            [
-                [-1, -1, -1],
-                [1, -1, -1],
-                [1, 1, -1],
-                [-1, 1, -1],
-                [-1, -1, 1],
-                [1, -1, 1],
-                [1, 1, 1],
-                [-1, 1, 1],
-            ],
-            dtype=float,
-        )
-        local_corners = signs * half_extents[None, :]
-        return center[None, :] + local_corners @ rotation.T
-
-    return build(point_a, normal_a, False), build(point_b, normal_b, True)
-
-
 parser = argparse.ArgumentParser(description="Generate an HTML debug view for object-frame antipodal grasps.")
 parser.add_argument(
     "--config",
@@ -530,17 +482,19 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
         point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
         point_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
         center = np.asarray(candidate.grasp_position_obj, dtype=float)
-        normal_a = np.asarray(candidate.contact_normal_a_obj, dtype=float)
-        normal_b = np.asarray(candidate.contact_normal_b_obj, dtype=float)
         closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
         rotation = _quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
-        finger_box_a, finger_box_b = _finger_box_corners(
-            candidate,
-            depth=state.config.finger_depth,
-            length=state.config.finger_length,
-            thickness=state.config.finger_thickness,
-            clearance=state.config.finger_clearance,
+        box_a, box_b = finger_boxes_from_grasp(
+            grasp_rotmat=rotation,
+            contact_point_a=point_a,
+            contact_point_b=point_b,
+            finger_depth=state.config.finger_depth,
+            finger_length=state.config.finger_length,
+            finger_thickness=state.config.finger_thickness,
+            finger_clearance=state.config.finger_clearance,
         )
+        finger_box_a = finger_box_corners(*box_a)
+        finger_box_b = finger_box_corners(*box_b)
         candidates.append(
             {
                 "rank": index,

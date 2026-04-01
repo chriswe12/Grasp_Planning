@@ -40,6 +40,7 @@ Current scope:
 - STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
 - For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
+- Mesh antipodal finger clearance is evaluated per rolled grasp pose, and the HTML viewer uses that same finger-box geometry; do not reconstruct finger boxes from contact normals in parallel codepaths.
 
 ## Docker Notes
 

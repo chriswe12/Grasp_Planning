@@ -7,6 +7,8 @@ from .mesh_antipodal_grasp_generator import (
     ObjectFrameGraspCandidate,
     TriangleMesh,
     export_grasp_candidates_json,
+    finger_box_corners,
+    finger_boxes_from_grasp,
 )
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "ObjectFrameGraspCandidate",
     "TriangleMesh",
     "export_grasp_candidates_json",
+    "finger_box_corners",
+    "finger_boxes_from_grasp",
 ]

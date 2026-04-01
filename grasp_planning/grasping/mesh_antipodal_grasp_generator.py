@@ -146,6 +146,51 @@ class AntipodalGraspGeneratorConfig:
     rng_seed: int = 0
 
 
+def finger_boxes_from_grasp(
+    grasp_rotmat: np.ndarray,
+    contact_point_a: np.ndarray,
+    contact_point_b: np.ndarray,
+    *,
+    finger_depth: float,
+    finger_length: float,
+    finger_thickness: float,
+    finger_clearance: float,
+) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Build coarse finger boxes from a rolled grasp pose."""
+
+    grasp_x = _normalize(grasp_rotmat[:, 0])
+    half_extents = 0.5 * np.array(
+        [
+            finger_depth,
+            finger_length,
+            finger_thickness,
+        ],
+        dtype=float,
+    )
+    offset = grasp_x * (0.5 * finger_clearance + half_extents[0])
+    box_a = (contact_point_a + offset, grasp_rotmat, half_extents)
+    box_b = (contact_point_b + offset, grasp_rotmat, half_extents)
+    return box_a, box_b
+
+
+def finger_box_corners(center: np.ndarray, rotation: np.ndarray, half_extents: np.ndarray) -> np.ndarray:
+    signs = np.array(
+        [
+            [-1, -1, -1],
+            [1, -1, -1],
+            [1, 1, -1],
+            [-1, 1, -1],
+            [-1, -1, 1],
+            [1, -1, 1],
+            [1, 1, 1],
+            [-1, 1, 1],
+        ],
+        dtype=float,
+    )
+    local_corners = signs * half_extents[None, :]
+    return center[None, :] + local_corners @ rotation.T
+
+
 class AntipodalMeshGraspGenerator:
     """Generate minimal antipodal parallel-jaw grasps from object geometry."""
 
@@ -173,19 +218,17 @@ class AntipodalMeshGraspGenerator:
 
             grasp_center = 0.5 * (point_a + point_b)
             base_rotmat = self._base_grasp_rotmat(closing_axis)
-            if not self._passes_finger_clearance(
-                collision_points=collision_points,
-                contact_point_a=point_a,
-                contact_point_b=point_b,
-                contact_normal_a=normal_a,
-                contact_normal_b=normal_b,
-                closing_axis=closing_axis,
-            ):
-                continue
 
             for roll_angle_rad in self._config.roll_angles_rad:
                 roll_rotmat = _axis_angle_to_rotmat(closing_axis, float(roll_angle_rad))
                 grasp_rotmat = roll_rotmat @ base_rotmat
+                if not self._passes_finger_clearance(
+                    collision_points=collision_points,
+                    grasp_rotmat=grasp_rotmat,
+                    contact_point_a=point_a,
+                    contact_point_b=point_b,
+                ):
+                    continue
                 grasp_quat = _rotmat_to_quat_xyzw(grasp_rotmat)
                 candidate = ObjectFrameGraspCandidate(
                     grasp_position_obj=tuple(float(v) for v in grasp_center),
@@ -319,23 +362,18 @@ class AntipodalMeshGraspGenerator:
         self,
         *,
         collision_points: np.ndarray,
+        grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
-        contact_normal_a: np.ndarray,
-        contact_normal_b: np.ndarray,
-        closing_axis: np.ndarray,
     ) -> bool:
-        box_a = self._finger_box(
-            contact_point=contact_point_a,
-            contact_normal=contact_normal_a,
-            closing_axis=closing_axis,
-            invert_closing_axis=False,
-        )
-        box_b = self._finger_box(
-            contact_point=contact_point_b,
-            contact_normal=contact_normal_b,
-            closing_axis=closing_axis,
-            invert_closing_axis=True,
+        box_a, box_b = finger_boxes_from_grasp(
+            grasp_rotmat=grasp_rotmat,
+            contact_point_a=contact_point_a,
+            contact_point_b=contact_point_b,
+            finger_depth=self._config.finger_depth,
+            finger_length=self._config.finger_length,
+            finger_thickness=self._config.finger_thickness,
+            finger_clearance=self._config.finger_clearance,
         )
         exclusion_radius = self._config.contact_patch_radius
         distances_to_a = np.linalg.norm(collision_points - contact_point_a[None, :], axis=1)
@@ -343,40 +381,6 @@ class AntipodalMeshGraspGenerator:
         collision_mask = (distances_to_a > exclusion_radius) & (distances_to_b > exclusion_radius)
         relevant_points = collision_points[collision_mask]
         return not (self._points_in_box(relevant_points, *box_a) or self._points_in_box(relevant_points, *box_b))
-
-    def _finger_box(
-        self,
-        *,
-        contact_point: np.ndarray,
-        contact_normal: np.ndarray,
-        closing_axis: np.ndarray,
-        invert_closing_axis: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        finger_x = _normalize(contact_normal)
-        finger_y = -closing_axis if invert_closing_axis else closing_axis
-        finger_y = finger_y - float(np.dot(finger_y, finger_x)) * finger_x
-        if np.linalg.norm(finger_y) <= 1.0e-8:
-            reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
-            if abs(float(np.dot(reference_axis, finger_x))) > 0.95:
-                reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
-            finger_y = reference_axis - float(np.dot(reference_axis, finger_x)) * finger_x
-            if invert_closing_axis:
-                finger_y = -finger_y
-        finger_y = _normalize(finger_y)
-        finger_z = _normalize(np.cross(finger_x, finger_y))
-        rotation = np.column_stack((finger_x, finger_y, finger_z))
-        half_extents = 0.5 * np.array(
-            [
-                self._config.finger_depth,
-                self._config.finger_length,
-                self._config.finger_thickness,
-            ],
-            dtype=float,
-        )
-        # Keep the box centered near the contact plane so broad finger pads are
-        # conservatively rejected when nearby object geometry crowds the pair.
-        center = contact_point + finger_x * (0.5 * self._config.finger_clearance)
-        return center, rotation, half_extents
 
     @staticmethod
     def _points_in_box(points: np.ndarray, center: np.ndarray, rotation: np.ndarray, half_extents: np.ndarray) -> bool:
