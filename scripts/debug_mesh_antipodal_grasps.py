@@ -13,6 +13,11 @@ import sys
 import numpy as np
 import yaml
 
+try:
+    import trimesh
+except Exception:  # pragma: no cover - optional dependency path
+    trimesh = None
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -30,6 +35,9 @@ from grasp_planning.grasping import (  # noqa: E402
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "mesh_antipodal_grasp_debug.yaml"
 DEFAULT_STL_DIR = REPO_ROOT / "assets" / "stl"
+FRANKA_HAND_MESH_PATH = (
+    REPO_ROOT / "assets" / "urdf" / "franka_description" / "meshes" / "robot_ee" / "franka_hand_black" / "collision" / "hand.stl"
+)
 
 _DEFAULT_CONFIG = {
     "geometry": {
@@ -60,6 +68,65 @@ _DEFAULT_CONFIG = {
 }
 
 
+@dataclass(frozen=True)
+class _CollisionBoxSpec:
+    name: str
+    center_local: tuple[float, float, float]
+    size_local: tuple[float, float, float]
+    rpy_local: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+# Mirrors the explicit finger collision boxes defined in
+# assets/urdf/franka_description/end_effectors/common/franka_hand.xacro.
+_FRANKA_LEFT_FINGER_BOX_SPECS = (
+    _CollisionBoxSpec(
+        name="screw_mount",
+        center_local=(0.0, 18.5e-3, 11.0e-3),
+        size_local=(22.0e-3, 15.0e-3, 20.0e-3),
+    ),
+    _CollisionBoxSpec(
+        name="carriage_sledge",
+        center_local=(0.0, 6.8e-3, 2.2e-3),
+        size_local=(22.0e-3, 8.8e-3, 3.8e-3),
+    ),
+    _CollisionBoxSpec(
+        name="diagonal_finger",
+        center_local=(0.0, 15.9e-3, 28.35e-3),
+        size_local=(17.5e-3, 7.0e-3, 23.5e-3),
+        rpy_local=(math.pi / 6.0, 0.0, 0.0),
+    ),
+    _CollisionBoxSpec(
+        name="rubber_tip",
+        center_local=(0.0, 7.58e-3, 45.25e-3),
+        size_local=(17.5e-3, 15.2e-3, 18.5e-3),
+    ),
+)
+_FRANKA_RIGHT_FINGER_BOX_SPECS = (
+    _CollisionBoxSpec(
+        name="screw_mount",
+        center_local=(0.0, 18.5e-3, 11.0e-3),
+        size_local=(22.0e-3, 15.0e-3, 20.0e-3),
+    ),
+    _CollisionBoxSpec(
+        name="carriage_sledge",
+        center_local=(0.0, 6.8e-3, 2.2e-3),
+        size_local=(22.0e-3, 8.8e-3, 3.8e-3),
+    ),
+    _CollisionBoxSpec(
+        name="diagonal_finger",
+        center_local=(0.0, 15.9e-3, 28.35e-3),
+        size_local=(17.5e-3, 7.0e-3, 23.5e-3),
+        rpy_local=(-math.pi / 6.0, 0.0, math.pi),
+    ),
+    _CollisionBoxSpec(
+        name="rubber_tip",
+        center_local=(0.0, 7.58e-3, 45.25e-3),
+        size_local=(17.5e-3, 15.2e-3, 18.5e-3),
+    ),
+)
+_FRANKA_FINGER_JOINT_Z_M = 58.4e-3
+_FRANKA_TIP_CONTACT_Z_M = 45.25e-3
+_FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
     x, y, z, w = [float(v) for v in quat_xyzw]
     xx, yy, zz = x * x, y * y, z * z
@@ -73,6 +140,106 @@ def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.nda
         ],
         dtype=float,
     )
+
+
+def _rpy_to_rotmat(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    rot_x = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]], dtype=float)
+    rot_y = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]], dtype=float)
+    rot_z = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+    return rot_z @ rot_y @ rot_x
+
+
+def _box_corners_from_pose(
+    center_obj: np.ndarray,
+    rotation_obj: np.ndarray,
+    size_xyz: tuple[float, float, float],
+) -> np.ndarray:
+    half_extents = 0.5 * np.asarray(size_xyz, dtype=float)
+    return finger_box_corners(center_obj, rotation_obj, half_extents)
+
+
+def _load_franka_hand_mesh() -> tuple[np.ndarray, np.ndarray]:
+    global _FRANKA_HAND_MESH_CACHE
+    if _FRANKA_HAND_MESH_CACHE is not None:
+        return _FRANKA_HAND_MESH_CACHE
+    if trimesh is None:
+        raise RuntimeError("trimesh is required to load the Franka hand collision mesh.")
+    if not FRANKA_HAND_MESH_PATH.is_file():
+        raise FileNotFoundError(f"Franka hand collision mesh not found: '{FRANKA_HAND_MESH_PATH}'.")
+    mesh = trimesh.load(FRANKA_HAND_MESH_PATH, force="mesh")
+    vertices = np.asarray(mesh.vertices, dtype=float)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    _FRANKA_HAND_MESH_CACHE = (vertices, faces)
+    return _FRANKA_HAND_MESH_CACHE
+
+
+def _franka_finger_collision_boxes(
+    *,
+    grasp_rotmat: np.ndarray,
+    grasp_center: np.ndarray,
+    jaw_width: float,
+    contact_point_a: np.ndarray,
+    contact_point_b: np.ndarray,
+) -> dict[str, list[dict[str, object]]]:
+    grasp_center = np.asarray(grasp_center, dtype=float)
+    fingertip_contact_offset = np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    right_finger_rotmat = grasp_rotmat @ _rpy_to_rotmat(0.0, 0.0, math.pi)
+    left_finger_origin = contact_point_b - grasp_rotmat @ fingertip_contact_offset
+    right_finger_origin = contact_point_a - right_finger_rotmat @ fingertip_contact_offset
+    hand_origin_left = left_finger_origin - grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
+    hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
+
+    def _boxes_for_finger(
+        *,
+        prefix: str,
+        contact_origin_obj: np.ndarray,
+        base_rotmat: np.ndarray,
+        specs: tuple[_CollisionBoxSpec, ...],
+    ) -> list[dict[str, object]]:
+        boxes: list[dict[str, object]] = []
+        for spec in specs:
+            local_rotmat = _rpy_to_rotmat(*spec.rpy_local)
+            world_rotmat = base_rotmat @ local_rotmat
+            center_obj = contact_origin_obj + base_rotmat @ np.asarray(spec.center_local, dtype=float)
+            boxes.append(
+                {
+                    "name": f"{prefix}_{spec.name}",
+                    "corners": [_fmt_vec(corner.tolist()) for corner in _box_corners_from_pose(center_obj, world_rotmat, spec.size_local)],
+                }
+            )
+        return boxes
+
+    left_tip_anchor = left_finger_origin + grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    right_tip_anchor = right_finger_origin + right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    hand_origin = 0.5 * (hand_origin_left + hand_origin_right)
+    hand_reference = grasp_center
+    hand_vertices_local, hand_faces = _load_franka_hand_mesh()
+    hand_vertices_obj = hand_origin[None, :] + hand_vertices_local @ grasp_rotmat.T
+    return {
+        "left": _boxes_for_finger(
+            prefix="left",
+            contact_origin_obj=left_finger_origin,
+            base_rotmat=grasp_rotmat,
+            specs=_FRANKA_LEFT_FINGER_BOX_SPECS,
+        ),
+        "right": _boxes_for_finger(
+            prefix="right",
+            contact_origin_obj=right_finger_origin,
+            base_rotmat=right_finger_rotmat,
+            specs=_FRANKA_RIGHT_FINGER_BOX_SPECS,
+        ),
+        "hand_origin_obj": _fmt_vec(hand_origin.tolist()),
+        "hand_reference_obj": _fmt_vec(hand_reference.tolist()),
+        "hand_vertices_obj": [_fmt_vec(vertex.tolist()) for vertex in hand_vertices_obj],
+        "hand_faces": [[int(v) for v in face] for face in hand_faces.tolist()],
+        "left_tip_anchor_obj": _fmt_vec(left_tip_anchor.tolist()),
+        "right_tip_anchor_obj": _fmt_vec(right_tip_anchor.tolist()),
+        "left_anchor_error_m": round(float(np.linalg.norm(left_tip_anchor - contact_point_b)), 8),
+        "right_anchor_error_m": round(float(np.linalg.norm(right_tip_anchor - contact_point_a)), 8),
+    }
 
 
 def _parse_rolls(raw: str) -> tuple[float, ...]:
@@ -551,6 +718,13 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
         )
         finger_box_a = finger_box_corners(*box_a)
         finger_box_b = finger_box_corners(*box_b)
+        franka_boxes = _franka_finger_collision_boxes(
+            grasp_rotmat=rotation,
+            grasp_center=center,
+            jaw_width=float(candidate.jaw_width),
+            contact_point_a=point_a,
+            contact_point_b=point_b,
+        )
         candidates.append(
             {
                 "rank": index,
@@ -570,6 +744,16 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
                 "approach_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
                 "finger_box_a": [_fmt_vec(corner.tolist()) for corner in finger_box_a],
                 "finger_box_b": [_fmt_vec(corner.tolist()) for corner in finger_box_b],
+                "franka_left_boxes": franka_boxes["left"],
+                "franka_right_boxes": franka_boxes["right"],
+                "franka_hand_origin_obj": franka_boxes["hand_origin_obj"],
+                "franka_hand_reference_obj": franka_boxes["hand_reference_obj"],
+                "franka_hand_vertices_obj": franka_boxes["hand_vertices_obj"],
+                "franka_hand_faces": franka_boxes["hand_faces"],
+                "franka_left_tip_anchor_obj": franka_boxes["left_tip_anchor_obj"],
+                "franka_right_tip_anchor_obj": franka_boxes["right_tip_anchor_obj"],
+                "franka_left_anchor_error_m": franka_boxes["left_anchor_error_m"],
+                "franka_right_anchor_error_m": franka_boxes["right_anchor_error_m"],
                 "contact_midpoint_error": round(float(np.linalg.norm(center - 0.5 * (point_a + point_b))), 8),
             }
         )
@@ -619,6 +803,8 @@ def _html_document(payload: dict[str, object]) -> str:
       --contact-a: #c8452d;
       --contact-b: #1f7c60;
       --box: #6d3cc6;
+      --franka-box: #d97706;
+      --hand: #8f5a12;
       --axis: #1397a6;
     }}
     * {{ box-sizing: border-box; }}
@@ -809,7 +995,8 @@ def _html_document(payload: dict[str, object]) -> str:
       <h1 class="title">Mesh Antipodal Grasp Debug</h1>
       <p class="subtitle">
         Object-frame antipodal grasp candidates generated from procedural object geometry only.
-        Select a candidate to inspect contacts, normals, gripper axes, and the coarse finger boxes.
+        Select a candidate to inspect contacts, normals, gripper axes, the coarse finger boxes,
+        and the upstream Franka finger collision boxes overlaid from the hand description.
       </p>
       <div class="controls">
         <button id="prevBtn" type="button">Prev</button>
@@ -828,11 +1015,14 @@ def _html_document(payload: dict[str, object]) -> str:
             <span><i class="swatch" style="background: var(--accent)"></i>Grasp center</span>
             <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A / normal</span>
             <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B / normal</span>
-            <span><i class="swatch" style="background: var(--box)"></i>Finger boxes</span>
+            <span><i class="swatch" style="background: var(--box)"></i>Current coarse boxes</span>
+            <span><i class="swatch" style="background: var(--franka-box)"></i>Franka finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Franka hand mesh</span>
             <span><i class="swatch" style="background: var(--axis)"></i>Gripper frame axes</span>
           </div>
           <p class="caption">
-            The viewer uses the same coarse finger-box geometry as the object-only clearance filter.
+            Purple boxes are the current simplified collision model. Orange boxes come from
+            Franka's published finger collision primitives so you can compare the interpretations directly.
           </p>
         </section>
         <section class="card">
@@ -889,6 +1079,13 @@ def _html_document(payload: dict[str, object]) -> str:
         candidate.contact_point_b_obj,
         ...candidate.finger_box_a,
         ...candidate.finger_box_b,
+        candidate.franka_hand_origin_obj,
+        candidate.franka_hand_reference_obj,
+        ...candidate.franka_hand_vertices_obj,
+        candidate.franka_left_tip_anchor_obj,
+        candidate.franka_right_tip_anchor_obj,
+        ...candidate.franka_left_boxes.flatMap((box) => box.corners),
+        ...candidate.franka_right_boxes.flatMap((box) => box.corners),
       ]),
     ];
 
@@ -1037,6 +1234,53 @@ def _html_document(payload: dict[str, object]) -> str:
       }});
     }}
 
+    function drawHandMesh(candidate) {{
+      if (state.meshRenderMode === "solid") {{
+        const faces = candidate.franka_hand_faces.map((face) => {{
+          const points = face.map((index) => candidate.franka_hand_vertices_obj[index]);
+          const rotated = points.map((point) => rotate(point));
+          const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+          const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+          const normal = [
+            edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+            edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+            edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+          ];
+          const depth = rotated.reduce((sum, point) => sum + point[2], 0) / rotated.length;
+          return {{ points, normal, depth }};
+        }});
+        faces
+          .filter((face) => face.normal[2] > 0)
+          .sort((a, b) => a.depth - b.depth)
+          .forEach((face) => {{
+            const norm = Math.hypot(face.normal[0], face.normal[1], face.normal[2]) || 1;
+            const light = 0.45 + 0.55 * (face.normal[2] / norm);
+            drawPolygon(face.points, {{
+              fill: shadeColor("#8f5a12", 0.7 + light * 0.45),
+              fillOpacity: 0.35,
+              stroke: "#8f5a12",
+              strokeWidth: 0.8,
+              strokeOpacity: 0.25,
+            }});
+          }});
+        return;
+      }}
+
+      candidate.franka_hand_faces.forEach((face) => {{
+        drawLine(candidate.franka_hand_vertices_obj[face[0]], candidate.franka_hand_vertices_obj[face[1]], {{ stroke: "#8f5a12", strokeWidth: 1.2, opacity: 0.35 }});
+        drawLine(candidate.franka_hand_vertices_obj[face[1]], candidate.franka_hand_vertices_obj[face[2]], {{ stroke: "#8f5a12", strokeWidth: 1.2, opacity: 0.35 }});
+        drawLine(candidate.franka_hand_vertices_obj[face[2]], candidate.franka_hand_vertices_obj[face[0]], {{ stroke: "#8f5a12", strokeWidth: 1.2, opacity: 0.35 }});
+      }});
+    }}
+
+    function drawNamedBoxes(boxes, color) {{
+      boxes.forEach((box, index) => {{
+        drawFingerBox(box.corners, color);
+        const labelCorner = box.corners[6] || box.corners[0];
+        drawLabel(labelCorner, String(index + 1), color, 6, -4);
+      }});
+    }}
+
     function drawMesh() {{
       if (state.meshRenderMode === "solid") {{
         const faces = data.faces.map((face) => {{
@@ -1109,6 +1353,9 @@ def _html_document(payload: dict[str, object]) -> str:
         `grasp_orientation_xyzw:  ${fmtVec(candidate.grasp_orientation_xyzw_obj)}\\n` +
         `contact_point_a_obj:     ${fmtVec(candidate.contact_point_a_obj)}\\n` +
         `contact_point_b_obj:     ${fmtVec(candidate.contact_point_b_obj)}\\n` +
+        `franka_hand_origin_obj:  ${fmtVec(candidate.franka_hand_origin_obj)}\\n` +
+        `franka_left_tip_anchor:  ${fmtVec(candidate.franka_left_tip_anchor_obj)}\\n` +
+        `franka_right_tip_anchor: ${fmtVec(candidate.franka_right_tip_anchor_obj)}\\n` +
         `contact_normal_a_obj:    ${fmtVec(candidate.contact_normal_a_obj)}\\n` +
         `contact_normal_b_obj:    ${fmtVec(candidate.contact_normal_b_obj)}\\n` +
         `closing_axis_obj:        ${fmtVec(candidate.closing_axis_obj)}\\n` +
@@ -1125,7 +1372,9 @@ def _html_document(payload: dict[str, object]) -> str:
         `rolls:           ${data.config.roll_angles_rad.map((v) => Number(v).toFixed(3)).join(", ")}\\n` +
         `finger_extents:  lateral_x=${data.config.finger_extent_lateral.toFixed(4)}, closing_y=${data.config.finger_extent_closing.toFixed(4)}, approach_z=${data.config.finger_extent_approach.toFixed(4)}\\n` +
         `finger_clear:    ${data.config.finger_clearance.toFixed(4)}\\n` +
-        `collision_backend: ${data.config.collision_backend}`;
+        `collision_backend: ${data.config.collision_backend}\\n` +
+        `franka_boxes:    left=${candidate.franka_left_boxes.length} right=${candidate.franka_right_boxes.length}\\n` +
+        `anchor_error_m:  left=${candidate.franka_left_anchor_error_m.toFixed(6)} right=${candidate.franka_right_anchor_error_m.toFixed(6)}`;
     }}
 
     function renderScene(candidate) {{
@@ -1142,14 +1391,38 @@ def _html_document(payload: dict[str, object]) -> str:
       defs.appendChild(marker);
 
       drawMesh();
+      drawHandMesh(candidate);
 
       drawFingerBox(candidate.finger_box_a, "#6d3cc6");
       drawFingerBox(candidate.finger_box_b, "#6d3cc6");
+      drawNamedBoxes(candidate.franka_left_boxes, "#d97706");
+      drawNamedBoxes(candidate.franka_right_boxes, "#d97706");
       drawLine(candidate.contact_point_a_obj, candidate.contact_point_b_obj, {{ stroke: "#b43f2c", strokeWidth: 3, opacity: 0.9 }});
+      drawLine(candidate.franka_hand_origin_obj, candidate.franka_hand_reference_obj, {{
+        stroke: "#d97706",
+        strokeWidth: 2,
+        opacity: 0.6,
+        dash: "6 5",
+      }});
 
       drawPoint(candidate.grasp_position_obj, {{ fill: "#b43f2c", radius: 7 }});
       drawPoint(candidate.contact_point_a_obj, {{ fill: "#c8452d", radius: 6 }});
       drawPoint(candidate.contact_point_b_obj, {{ fill: "#1f7c60", radius: 6 }});
+      drawPoint(candidate.franka_hand_origin_obj, {{ fill: "#d97706", radius: 4, opacity: 0.85 }});
+      drawPoint(candidate.franka_left_tip_anchor_obj, {{ fill: "#d97706", radius: 3, opacity: 0.95, strokeWidth: 1.5 }});
+      drawPoint(candidate.franka_right_tip_anchor_obj, {{ fill: "#d97706", radius: 3, opacity: 0.95, strokeWidth: 1.5 }});
+      drawLine(candidate.contact_point_b_obj, candidate.franka_left_tip_anchor_obj, {{
+        stroke: "#d97706",
+        strokeWidth: 1.5,
+        opacity: 0.7,
+        dash: "4 4",
+      }});
+      drawLine(candidate.contact_point_a_obj, candidate.franka_right_tip_anchor_obj, {{
+        stroke: "#d97706",
+        strokeWidth: 1.5,
+        opacity: 0.7,
+        dash: "4 4",
+      }});
 
       drawArrow(candidate.contact_point_a_obj, candidate.contact_normal_a_obj, 0.03, "#c8452d", 2.5, "nA");
       drawArrow(candidate.contact_point_b_obj, candidate.contact_normal_b_obj, 0.03, "#1f7c60", 2.5, "nB");
@@ -1160,6 +1433,7 @@ def _html_document(payload: dict[str, object]) -> str:
       drawLabel(candidate.grasp_position_obj, "g", "#b43f2c");
       drawLabel(candidate.contact_point_a_obj, "A", "#c8452d", 10, 14);
       drawLabel(candidate.contact_point_b_obj, "B", "#1f7c60", 10, 14);
+      drawLabel(candidate.franka_hand_origin_obj, "h", "#d97706", 10, 14);
     }}
 
     function render() {{

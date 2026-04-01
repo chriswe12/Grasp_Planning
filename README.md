@@ -112,8 +112,8 @@ Mesh antipodal grasp path:
 - samples surface points and normals on a triangle mesh,
 - uses a KD-tree to find nearby sampled contact pairs within the jaw-width limit,
 - applies `max_pair_checks` after that KD-tree preselection,
-- filters only on jaw width, antipodal consistency, and exact finger-box collision checks,
-- evaluates finger collision per rolled grasp pose, not once per unrolled contact pair,
+- filters on jaw width, antipodal consistency, coarse finger-box collision, and a Franka hand-mesh palm check,
+- evaluates gripper collision per rolled grasp pose, not once per unrolled contact pair,
 - uses an FCL-backed `trimesh` collision scene built once per `generate(mesh)` call,
 - can export typed grasp candidates with pose, contacts, normals, and jaw width.
 
@@ -200,7 +200,9 @@ This generates roll samples at `0, step, 2*step, ...` up to but excluding `360`.
 Use `360` for a single `0 deg` sample.
 For per-run overrides, `--roll-angles-rad` still works from the CLI.
 Do not rely on legacy YAML `roll_angles_deg` or `roll_angles_rad` keys while `roll_step_deg` is present, because the merged config currently gives `roll_step_deg` precedence.
-The HTML viewer renders the same finger-box geometry and grasp-frame convention used by the generator collision check:
+The HTML viewer renders the same grasp-frame convention used by the generator collision check:
 - local `x`: lateral
 - local `y`: closing
 - local `z`: approach
+- purple: current coarse finger boxes used by the runtime collision filter
+- orange/brown: Franka finger boxes and hand mesh overlays for geometry debugging

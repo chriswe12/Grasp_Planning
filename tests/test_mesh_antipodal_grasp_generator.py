@@ -11,6 +11,8 @@ from grasp_planning.grasping import (
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
     FingerBoxGripperCollisionModel,
+    FingerBoxWithHandMeshCollisionModel,
+    FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
     TriangleMesh,
     export_grasp_candidates_json,
@@ -90,6 +92,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
     def test_collision_scene_is_prepared_once_per_mesh_generation(self) -> None:
         class _Scene:
             def intersects_box(self, primitive) -> bool:
+                return False
+
+            def intersects_mesh(self, primitive) -> bool:
                 return False
 
         class _Backend:
@@ -312,8 +317,8 @@ generator:
         self.assertEqual(len(first["contact_normals_obj"]), 2)
 
     def test_finger_boxes_follow_the_grasp_pose_frame(self) -> None:
-        point_a = np.array([0.0, -0.02, 0.0], dtype=float)
-        point_b = np.array([0.0, 0.02, 0.0], dtype=float)
+        point_a = np.array([0.0, -0.02, 0.08], dtype=float)
+        point_b = np.array([0.0, 0.02, 0.08], dtype=float)
         rotation = np.eye(3, dtype=float)
 
         box_a, box_b = finger_boxes_from_grasp(
@@ -376,6 +381,28 @@ generator:
             evaluator.is_grasp_collision_free(
                 scene=evaluator.build_scene(mesh),
                 grasp_rotmat=ninety_deg_roll,
+                contact_point_a=point_a,
+                contact_point_b=point_b,
+            )
+        )
+
+    def test_hand_mesh_collision_rejects_grasp(self) -> None:
+        mesh = _make_cube_mesh(side_length=0.08)
+        evaluator = GraspCollisionEvaluator(
+            FingerBoxWithHandMeshCollisionModel(
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.02,
+                finger_extent_approach=0.004,
+                finger_clearance=0.002,
+            )
+        )
+        point_a = np.array([0.0, -0.02, 0.0], dtype=float)
+        point_b = np.array([0.0, 0.02, 0.0], dtype=float)
+
+        self.assertFalse(
+            evaluator.is_grasp_collision_free(
+                scene=evaluator.build_scene(mesh),
+                grasp_rotmat=np.eye(3, dtype=float),
                 contact_point_a=point_a,
                 contact_point_b=point_b,
             )

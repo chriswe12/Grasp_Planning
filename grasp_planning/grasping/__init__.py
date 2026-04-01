@@ -1,6 +1,11 @@
 """Grasp generation utilities."""
 
-from .collision import FingerBoxGripperCollisionModel, GraspCollisionEvaluator
+from .collision import (
+    FingerBoxGripperCollisionModel,
+    FingerBoxWithHandMeshCollisionModel,
+    FrankaHandFingerCollisionModel,
+    GraspCollisionEvaluator,
+)
 from .cube_grasp_generator import CubeFaceGraspGenerator, GraspCandidate
 from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
 from .mesh_antipodal_grasp_generator import (
@@ -16,6 +21,8 @@ __all__ = [
     "AntipodalMeshGraspGenerator",
     "CubeFaceGraspGenerator",
     "FingerBoxGripperCollisionModel",
+    "FingerBoxWithHandMeshCollisionModel",
+    "FrankaHandFingerCollisionModel",
     "GraspCandidate",
     "GraspCollisionEvaluator",
     "ObjectFrameGraspCandidate",

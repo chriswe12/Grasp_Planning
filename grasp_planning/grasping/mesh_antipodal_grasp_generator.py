@@ -11,7 +11,7 @@ from typing import Iterable
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .collision import FingerBoxGripperCollisionModel, GraspCollisionEvaluator
+from .collision import FingerBoxWithHandMeshCollisionModel, GraspCollisionEvaluator
 from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
 
 
@@ -153,7 +153,7 @@ class AntipodalMeshGraspGenerator:
     def __init__(self, config: AntipodalGraspGeneratorConfig | None = None) -> None:
         self._config = config or AntipodalGraspGeneratorConfig()
         self._collision_evaluator = GraspCollisionEvaluator(
-            FingerBoxGripperCollisionModel(
+            FingerBoxWithHandMeshCollisionModel(
                 finger_extent_lateral=self._config.finger_extent_lateral,
                 finger_extent_closing=self._config.finger_extent_closing,
                 finger_extent_approach=self._config.finger_extent_approach,
