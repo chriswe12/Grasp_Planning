@@ -24,8 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     git-lfs \
+    libccd-dev \
     libasound2t64 \
     libegl1 \
+    libfcl-dev \
     libglib2.0-0 \
     libglvnd0 \
     libgl1 \
@@ -47,6 +49,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     flatdict==4.0.0 \
     h5py \
     "isaaclab==${ISAACLAB_VERSION}" \
+    trimesh \
+    python-fcl \
     --extra-index-url https://pypi.nvidia.com
 RUN /isaac-sim/python.sh - <<'PY'
 import os

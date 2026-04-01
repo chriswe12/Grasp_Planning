@@ -9,12 +9,14 @@ Current scope:
 - one dynamic cube with fixed pose from the launcher,
 - a debug pickup path in the launcher with optional `--pregrasp-only`,
 - a standalone teleport-based pickup debug script,
+- a separate object-frame antipodal grasp debug path for procedural mesh geometry and STL input,
 - pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
 
 - `scripts/launch_fr3_cube_env.py`
 - `scripts/debug_cube_grasps.py`
+- `scripts/debug_mesh_antipodal_grasps.py`
 - `scripts/teleport_fr3_pickup.py`
 - `scripts/inspect_fr3_tcp_geometry.py`
 - `scripts/diagnose_fr3_top_grasp.py`
@@ -33,6 +35,15 @@ Current scope:
 - The fixed TCP offset `(0, 0, -0.045)` was verified from the spawned Isaac asset; do not keep re-tuning it blindly.
 - The main residual problem was arm drive tracking under load, not offline IK or TCP frame conversion.
 - Keep environment work separate from controller work when possible.
+- Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
+- Mesh antipodal grasp defaults now live in `configs/mesh_antipodal_grasp_debug.yaml`; CLI flags should stay as per-run overrides.
+- STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
+- The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
+- For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
+- Mesh antipodal finger collision is evaluated per rolled grasp pose with an FCL-backed `trimesh` scene built once per `generate(mesh)` call.
+- The mesh antipodal runtime filter now uses coarse finger boxes plus a Franka hand mesh palm check; keep that hand-mesh dependency lazily loaded so generator construction and config/debug imports still work without assets or `trimesh`.
+- Mesh antipodal finger box / viewer convention is: local `x` lateral, local `y` closing, local `z` approach.
+- Mesh antipodal finger dimension config now uses semantic names: `finger_extent_lateral`, `finger_extent_closing`, `finger_extent_approach`; keep legacy YAML / CLI names only as compatibility aliases.
 
 ## Docker Notes
 
