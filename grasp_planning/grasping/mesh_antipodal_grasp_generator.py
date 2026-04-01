@@ -11,6 +11,9 @@ from typing import Iterable
 import numpy as np
 from scipy.spatial import cKDTree
 
+from .collision import FingerBoxGripperCollisionModel, GraspCollisionEvaluator
+from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
+
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vec))
@@ -137,58 +140,11 @@ class AntipodalGraspGeneratorConfig:
     antipodal_cosine_threshold: float = 0.94
     roll_angles_rad: tuple[float, ...] = (0.0,)
     max_pair_checks: int = 4096
-    finger_depth: float = 0.008
-    finger_thickness: float = 0.01
-    finger_length: float = 0.012
+    finger_extent_lateral: float = 0.008
+    finger_extent_closing: float = 0.012
+    finger_extent_approach: float = 0.01
     finger_clearance: float = 0.002
-    contact_patch_radius: float = 0.006
-    collision_sample_count: int = 256
     rng_seed: int = 0
-
-
-def finger_boxes_from_grasp(
-    grasp_rotmat: np.ndarray,
-    contact_point_a: np.ndarray,
-    contact_point_b: np.ndarray,
-    *,
-    finger_depth: float,
-    finger_length: float,
-    finger_thickness: float,
-    finger_clearance: float,
-) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Build coarse finger boxes from a rolled grasp pose."""
-
-    grasp_x = _normalize(grasp_rotmat[:, 0])
-    half_extents = 0.5 * np.array(
-        [
-            finger_depth,
-            finger_length,
-            finger_thickness,
-        ],
-        dtype=float,
-    )
-    offset = grasp_x * (0.5 * finger_clearance + half_extents[0])
-    box_a = (contact_point_a + offset, grasp_rotmat, half_extents)
-    box_b = (contact_point_b + offset, grasp_rotmat, half_extents)
-    return box_a, box_b
-
-
-def finger_box_corners(center: np.ndarray, rotation: np.ndarray, half_extents: np.ndarray) -> np.ndarray:
-    signs = np.array(
-        [
-            [-1, -1, -1],
-            [1, -1, -1],
-            [1, 1, -1],
-            [-1, 1, -1],
-            [-1, -1, 1],
-            [1, -1, 1],
-            [1, 1, 1],
-            [-1, 1, 1],
-        ],
-        dtype=float,
-    )
-    local_corners = signs * half_extents[None, :]
-    return center[None, :] + local_corners @ rotation.T
 
 
 class AntipodalMeshGraspGenerator:
@@ -196,10 +152,22 @@ class AntipodalMeshGraspGenerator:
 
     def __init__(self, config: AntipodalGraspGeneratorConfig | None = None) -> None:
         self._config = config or AntipodalGraspGeneratorConfig()
+        self._collision_evaluator = GraspCollisionEvaluator(
+            FingerBoxGripperCollisionModel(
+                finger_extent_lateral=self._config.finger_extent_lateral,
+                finger_extent_closing=self._config.finger_extent_closing,
+                finger_extent_approach=self._config.finger_extent_approach,
+                finger_clearance=self._config.finger_clearance,
+            )
+        )
+
+    @property
+    def collision_backend_name(self) -> str:
+        return self._collision_evaluator.backend_name
 
     def generate(self, mesh: TriangleMesh) -> list[ObjectFrameGraspCandidate]:
         surface_samples = self.sample_surface(mesh, num_samples=self._config.num_surface_samples)
-        collision_points = self._surface_collision_points(mesh)
+        collision_scene = self._collision_evaluator.build_scene(mesh)
         pair_indices = self._candidate_pair_indices(surface_samples)
         candidates: list[ObjectFrameGraspCandidate] = []
         seen_keys: set[tuple[float, ...]] = set()
@@ -222,8 +190,8 @@ class AntipodalMeshGraspGenerator:
             for roll_angle_rad in self._config.roll_angles_rad:
                 roll_rotmat = _axis_angle_to_rotmat(closing_axis, float(roll_angle_rad))
                 grasp_rotmat = roll_rotmat @ base_rotmat
-                if not self._passes_finger_clearance(
-                    collision_points=collision_points,
+                if not self._passes_grasp_collision_check(
+                    collision_scene=collision_scene,
                     grasp_rotmat=grasp_rotmat,
                     contact_point_a=point_a,
                     contact_point_b=point_b,
@@ -288,14 +256,6 @@ class AntipodalMeshGraspGenerator:
             for sample_idx in range(num_samples)
         ]
 
-    def _surface_collision_points(self, mesh: TriangleMesh) -> np.ndarray:
-        face_vertices = mesh.face_vertices
-        centroids = face_vertices.mean(axis=1)
-        vertices = mesh.vertices_obj
-        extra_samples = self.sample_surface(mesh, num_samples=self._config.collision_sample_count)
-        sampled_points = np.array([sample.point_obj for sample in extra_samples], dtype=float)
-        return np.vstack((vertices, centroids, sampled_points))
-
     def _candidate_pair_indices(self, samples: list[SurfaceSample]) -> list[tuple[int, int]]:
         if len(samples) < 2:
             return []
@@ -348,6 +308,13 @@ class AntipodalMeshGraspGenerator:
         )
 
     def _base_grasp_rotmat(self, closing_axis: np.ndarray) -> np.ndarray:
+        """Build the grasp frame for the mesh antipodal path.
+
+        Frame convention:
+        - column 0 / local x: lateral axis orthogonal to closing and approach
+        - column 1 / local y: closing axis
+        - column 2 / local z: approach axis
+        """
         gripper_y = _normalize(closing_axis)
         reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
         if abs(float(np.dot(gripper_y, reference_axis))) > 0.95:
@@ -358,37 +325,20 @@ class AntipodalMeshGraspGenerator:
         gripper_x = _normalize(np.cross(gripper_y, gripper_z))
         return np.column_stack((gripper_x, gripper_y, gripper_z))
 
-    def _passes_finger_clearance(
+    def _passes_grasp_collision_check(
         self,
         *,
-        collision_points: np.ndarray,
+        collision_scene,
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
     ) -> bool:
-        box_a, box_b = finger_boxes_from_grasp(
+        return self._collision_evaluator.is_grasp_collision_free(
+            scene=collision_scene,
             grasp_rotmat=grasp_rotmat,
             contact_point_a=contact_point_a,
             contact_point_b=contact_point_b,
-            finger_depth=self._config.finger_depth,
-            finger_length=self._config.finger_length,
-            finger_thickness=self._config.finger_thickness,
-            finger_clearance=self._config.finger_clearance,
         )
-        exclusion_radius = self._config.contact_patch_radius
-        distances_to_a = np.linalg.norm(collision_points - contact_point_a[None, :], axis=1)
-        distances_to_b = np.linalg.norm(collision_points - contact_point_b[None, :], axis=1)
-        collision_mask = (distances_to_a > exclusion_radius) & (distances_to_b > exclusion_radius)
-        relevant_points = collision_points[collision_mask]
-        return not (self._points_in_box(relevant_points, *box_a) or self._points_in_box(relevant_points, *box_b))
-
-    @staticmethod
-    def _points_in_box(points: np.ndarray, center: np.ndarray, rotation: np.ndarray, half_extents: np.ndarray) -> bool:
-        if len(points) == 0:
-            return False
-        local_points = (points - center[None, :]) @ rotation
-        within = np.all(np.abs(local_points) <= (half_extents[None, :] + 1.0e-9), axis=1)
-        return bool(np.any(within))
 
 
 def export_grasp_candidates_json(

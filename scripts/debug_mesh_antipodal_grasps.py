@@ -50,12 +50,10 @@ _DEFAULT_CONFIG = {
         "roll_angles_deg": None,
         "roll_angles_rad": [0.0],
         "max_pair_checks": 4096,
-        "finger_depth": 0.008,
-        "finger_length": 0.012,
-        "finger_thickness": 0.01,
+        "finger_extent_lateral": 0.008,
+        "finger_extent_closing": 0.012,
+        "finger_extent_approach": 0.01,
         "finger_clearance": 0.002,
-        "contact_patch_radius": 0.006,
-        "collision_sample_count": 256,
         "rng_seed": 0,
     },
     "output_html": str(DEFAULT_OUTPUT_HTML),
@@ -146,14 +144,36 @@ def _roll_angles_from_step_deg(step_deg: object) -> tuple[float, ...]:
     return tuple(math.radians(value) for value in angles_deg)
 
 
+def _get_generator_value(
+    explicit_generator: dict[str, object],
+    generator: dict[str, object],
+    primary_key: str,
+    fallback_default: object,
+    *,
+    legacy_keys: tuple[str, ...] = (),
+) -> object:
+    if primary_key in explicit_generator and explicit_generator[primary_key] not in (None, ""):
+        return explicit_generator[primary_key]
+    for legacy_key in legacy_keys:
+        if legacy_key in explicit_generator and explicit_generator[legacy_key] not in (None, ""):
+            return explicit_generator[legacy_key]
+    if primary_key in generator and generator[primary_key] not in (None, ""):
+        return generator[primary_key]
+    return fallback_default
+
+
 def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
     config_path = args.config.expanduser().resolve()
-    merged = _deep_merge(_DEFAULT_CONFIG, _load_yaml_config(config_path))
+    loaded_config = _load_yaml_config(config_path)
+    merged = _deep_merge(_DEFAULT_CONFIG, loaded_config)
 
     geometry = merged.get("geometry")
     generator = merged.get("generator")
     if not isinstance(geometry, dict) or not isinstance(generator, dict):
         raise ValueError("Config must define 'geometry' and 'generator' mappings.")
+    loaded_generator = loaded_config.get("generator", {})
+    if not isinstance(loaded_generator, dict):
+        loaded_generator = {}
 
     roll_step_deg = generator.get("roll_step_deg")
     roll_angles_deg = generator.get("roll_angles_deg")
@@ -186,16 +206,34 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         ),
         roll_angles_rad=roll_angles_rad,
         max_pair_checks=int(generator.get("max_pair_checks", _DEFAULT_CONFIG["generator"]["max_pair_checks"])),
-        finger_depth=float(generator.get("finger_depth", _DEFAULT_CONFIG["generator"]["finger_depth"])),
-        finger_length=float(generator.get("finger_length", _DEFAULT_CONFIG["generator"]["finger_length"])),
-        finger_thickness=float(generator.get("finger_thickness", _DEFAULT_CONFIG["generator"]["finger_thickness"])),
+        finger_extent_lateral=float(
+            _get_generator_value(
+                loaded_generator,
+                generator,
+                "finger_extent_lateral",
+                _DEFAULT_CONFIG["generator"]["finger_extent_lateral"],
+                legacy_keys=("finger_depth",),
+            )
+        ),
+        finger_extent_closing=float(
+            _get_generator_value(
+                loaded_generator,
+                generator,
+                "finger_extent_closing",
+                _DEFAULT_CONFIG["generator"]["finger_extent_closing"],
+                legacy_keys=("finger_length",),
+            )
+        ),
+        finger_extent_approach=float(
+            _get_generator_value(
+                loaded_generator,
+                generator,
+                "finger_extent_approach",
+                _DEFAULT_CONFIG["generator"]["finger_extent_approach"],
+                legacy_keys=("finger_thickness",),
+            )
+        ),
         finger_clearance=float(generator.get("finger_clearance", _DEFAULT_CONFIG["generator"]["finger_clearance"])),
-        contact_patch_radius=float(
-            generator.get("contact_patch_radius", _DEFAULT_CONFIG["generator"]["contact_patch_radius"])
-        ),
-        collision_sample_count=int(
-            generator.get("collision_sample_count", _DEFAULT_CONFIG["generator"]["collision_sample_count"])
-        ),
         rng_seed=int(generator.get("rng_seed", _DEFAULT_CONFIG["generator"]["rng_seed"])),
         output_html=Path(str(merged.get("output_html", _DEFAULT_CONFIG["output_html"]))),
     )
@@ -214,12 +252,10 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         "antipodal_cosine_threshold",
         "roll_angles_rad",
         "max_pair_checks",
-        "finger_depth",
-        "finger_length",
-        "finger_thickness",
+        "finger_extent_lateral",
+        "finger_extent_closing",
+        "finger_extent_approach",
         "finger_clearance",
-        "contact_patch_radius",
-        "collision_sample_count",
         "rng_seed",
         "output_html",
     ):
@@ -452,12 +488,31 @@ parser.add_argument(
     default=None,
     help="Maximum nearby contact pairs to evaluate after KD-tree preselection.",
 )
-parser.add_argument("--finger-depth", type=float, default=None, help="Finger box depth in meters.")
-parser.add_argument("--finger-length", type=float, default=None, help="Finger box length along the closing axis.")
-parser.add_argument("--finger-thickness", type=float, default=None, help="Finger box thickness in meters.")
+parser.add_argument(
+    "--finger-extent-lateral",
+    "--finger-depth",
+    dest="finger_extent_lateral",
+    type=float,
+    default=None,
+    help="Finger box extent along the lateral grasp x-axis in meters.",
+)
+parser.add_argument(
+    "--finger-extent-closing",
+    "--finger-length",
+    dest="finger_extent_closing",
+    type=float,
+    default=None,
+    help="Finger box extent along the closing grasp y-axis in meters.",
+)
+parser.add_argument(
+    "--finger-extent-approach",
+    "--finger-thickness",
+    dest="finger_extent_approach",
+    type=float,
+    default=None,
+    help="Finger box extent along the approach grasp z-axis in meters.",
+)
 parser.add_argument("--finger-clearance", type=float, default=None, help="Contact-plane finger clearance in meters.")
-parser.add_argument("--contact-patch-radius", type=float, default=None, help="Ignored contact neighborhood radius.")
-parser.add_argument("--collision-sample-count", type=int, default=None, help="Auxiliary surface samples for coarse clearance checks.")
 parser.add_argument("--rng-seed", type=int, default=None, help="Random seed for deterministic sampling.")
 parser.add_argument("--output-html", type=Path, default=None, help=f"Output HTML path. Default from YAML: {DEFAULT_OUTPUT_HTML}")
 
@@ -469,6 +524,7 @@ class _ViewerState:
     candidates: list[ObjectFrameGraspCandidate]
     config: AntipodalGraspGeneratorConfig
     geometry_name: str
+    collision_backend: str
 
 
 def _fmt_vec(vec: tuple[float, ...] | list[float]) -> list[float]:
@@ -488,9 +544,9 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
             grasp_rotmat=rotation,
             contact_point_a=point_a,
             contact_point_b=point_b,
-            finger_depth=state.config.finger_depth,
-            finger_length=state.config.finger_length,
-            finger_thickness=state.config.finger_thickness,
+            finger_extent_lateral=state.config.finger_extent_lateral,
+            finger_extent_closing=state.config.finger_extent_closing,
+            finger_extent_approach=state.config.finger_extent_approach,
             finger_clearance=state.config.finger_clearance,
         )
         finger_box_a = finger_box_corners(*box_a)
@@ -510,6 +566,8 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
                 "gripper_x_axis_obj": _fmt_vec(rotation[:, 0].tolist()),
                 "gripper_y_axis_obj": _fmt_vec(rotation[:, 1].tolist()),
                 "gripper_z_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
+                "lateral_axis_obj": _fmt_vec(rotation[:, 0].tolist()),
+                "approach_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
                 "finger_box_a": [_fmt_vec(corner.tolist()) for corner in finger_box_a],
                 "finger_box_b": [_fmt_vec(corner.tolist()) for corner in finger_box_b],
                 "contact_midpoint_error": round(float(np.linalg.norm(center - 0.5 * (point_a + point_b))), 8),
@@ -530,10 +588,11 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
             "max_jaw_width": state.config.max_jaw_width,
             "antipodal_cosine_threshold": state.config.antipodal_cosine_threshold,
             "roll_angles_rad": [float(v) for v in state.config.roll_angles_rad],
-            "finger_depth": state.config.finger_depth,
-            "finger_length": state.config.finger_length,
-            "finger_thickness": state.config.finger_thickness,
+            "finger_extent_lateral": state.config.finger_extent_lateral,
+            "finger_extent_closing": state.config.finger_extent_closing,
+            "finger_extent_approach": state.config.finger_extent_approach,
             "finger_clearance": state.config.finger_clearance,
+            "collision_backend": state.collision_backend,
         },
         "candidates": candidates,
     }
@@ -1053,9 +1112,9 @@ def _html_document(payload: dict[str, object]) -> str:
         `contact_normal_a_obj:    ${fmtVec(candidate.contact_normal_a_obj)}\\n` +
         `contact_normal_b_obj:    ${fmtVec(candidate.contact_normal_b_obj)}\\n` +
         `closing_axis_obj:        ${fmtVec(candidate.closing_axis_obj)}\\n` +
-        `gripper_x_axis_obj:      ${fmtVec(candidate.gripper_x_axis_obj)}\\n` +
-        `gripper_y_axis_obj:      ${fmtVec(candidate.gripper_y_axis_obj)}\\n` +
-        `gripper_z_axis_obj:      ${fmtVec(candidate.gripper_z_axis_obj)}`;
+        `lateral_x_axis_obj:      ${fmtVec(candidate.lateral_axis_obj)}\\n` +
+        `closing_y_axis_obj:      ${fmtVec(candidate.gripper_y_axis_obj)}\\n` +
+        `approach_z_axis_obj:     ${fmtVec(candidate.approach_axis_obj)}`;
 
       configView.textContent =
         `vertices:        ${data.vertex_count}\\n` +
@@ -1064,8 +1123,9 @@ def _html_document(payload: dict[str, object]) -> str:
         `jaw_limits:      [${data.config.min_jaw_width.toFixed(4)}, ${data.config.max_jaw_width.toFixed(4)}]\\n` +
         `antipodal_cos:   ${data.config.antipodal_cosine_threshold.toFixed(4)}\\n` +
         `rolls:           ${data.config.roll_angles_rad.map((v) => Number(v).toFixed(3)).join(", ")}\\n` +
-        `finger_dims:     (${data.config.finger_depth.toFixed(4)}, ${data.config.finger_length.toFixed(4)}, ${data.config.finger_thickness.toFixed(4)})\\n` +
-        `finger_clear:    ${data.config.finger_clearance.toFixed(4)}`;
+        `finger_extents:  lateral_x=${data.config.finger_extent_lateral.toFixed(4)}, closing_y=${data.config.finger_extent_closing.toFixed(4)}, approach_z=${data.config.finger_extent_approach.toFixed(4)}\\n` +
+        `finger_clear:    ${data.config.finger_clearance.toFixed(4)}\\n` +
+        `collision_backend: ${data.config.collision_backend}`;
     }}
 
     function renderScene(candidate) {{
@@ -1221,12 +1281,10 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
         antipodal_cosine_threshold=args.antipodal_cosine_threshold,
         roll_angles_rad=args.roll_angles_rad,
         max_pair_checks=args.max_pair_checks,
-        finger_depth=args.finger_depth,
-        finger_length=args.finger_length,
-        finger_thickness=args.finger_thickness,
+        finger_extent_lateral=args.finger_extent_lateral,
+        finger_extent_closing=args.finger_extent_closing,
+        finger_extent_approach=args.finger_extent_approach,
         finger_clearance=args.finger_clearance,
-        contact_patch_radius=args.contact_patch_radius,
-        collision_sample_count=args.collision_sample_count,
         rng_seed=args.rng_seed,
     )
     mesh = _build_mesh(args)
@@ -1238,6 +1296,7 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
         candidates=candidates,
         config=config,
         geometry_name=args.geometry,
+        collision_backend=generator.collision_backend_name,
     )
 
 
@@ -1253,6 +1312,7 @@ def main() -> None:
         f"extents_m=({extents[0]:.6f}, {extents[1]:.6f}, {extents[2]:.6f})",
         flush=True,
     )
+    print(f"[INFO] Collision backend: {state.collision_backend}", flush=True)
     if np.max(np.abs(extents)) > 2.0:
         print(
             "[WARN] Mesh extents look very large for meter units. "

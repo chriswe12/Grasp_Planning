@@ -10,10 +10,14 @@ import numpy as np
 from grasp_planning.grasping import (
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
+    FingerBoxGripperCollisionModel,
+    GraspCollisionEvaluator,
     TriangleMesh,
     export_grasp_candidates_json,
     finger_boxes_from_grasp,
 )
+from grasp_planning.grasping.collision import CollisionManager, trimesh
+from scripts.debug_mesh_antipodal_grasps import _config_from_sources, parser
 
 
 def _make_cube_mesh(side_length: float) -> TriangleMesh:
@@ -81,7 +85,70 @@ def _make_cylinder_mesh(radius: float, height: float, radial_segments: int) -> T
     return TriangleMesh(vertices_obj=np.array(vertices, dtype=float), faces=np.array(faces, dtype=np.int64))
 
 
+@unittest.skipIf(trimesh is None or CollisionManager is None, "trimesh/FCL collision backend is required")
 class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
+    def test_collision_scene_is_prepared_once_per_mesh_generation(self) -> None:
+        class _Scene:
+            def intersects_box(self, primitive) -> bool:
+                return False
+
+        class _Backend:
+            backend_name = "test_backend"
+
+            def __init__(self) -> None:
+                self.build_count = 0
+
+            def build_scene(self, mesh) -> _Scene:
+                self.build_count += 1
+                return _Scene()
+
+        cube_mesh = _make_cube_mesh(side_length=0.05)
+        backend = _Backend()
+        generator = AntipodalMeshGraspGenerator(
+            AntipodalGraspGeneratorConfig(
+                num_surface_samples=64,
+                min_jaw_width=0.03,
+                max_jaw_width=0.06,
+                antipodal_cosine_threshold=0.98,
+                rng_seed=5,
+            )
+        )
+        generator._collision_evaluator = GraspCollisionEvaluator(  # type: ignore[attr-defined]
+            FingerBoxGripperCollisionModel(
+                finger_extent_lateral=generator._config.finger_extent_lateral,  # type: ignore[attr-defined]
+                finger_extent_closing=generator._config.finger_extent_closing,  # type: ignore[attr-defined]
+                finger_extent_approach=generator._config.finger_extent_approach,  # type: ignore[attr-defined]
+                finger_clearance=generator._config.finger_clearance,  # type: ignore[attr-defined]
+            ),
+            backend=backend,
+        )
+
+        generator.generate(cube_mesh)
+
+        self.assertEqual(backend.build_count, 1)
+
+    def test_config_accepts_legacy_finger_dimension_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "legacy.yaml"
+            config_path.write_text(
+                """
+geometry:
+  type: cube
+generator:
+  finger_depth: 0.021
+  finger_length: 0.022
+  finger_thickness: 0.023
+""".strip(),
+                encoding="utf-8",
+            )
+
+            args = parser.parse_args(["--config", str(config_path)])
+            resolved = _config_from_sources(args)
+
+        self.assertAlmostEqual(resolved.finger_extent_lateral, 0.021)
+        self.assertAlmostEqual(resolved.finger_extent_closing, 0.022)
+        self.assertAlmostEqual(resolved.finger_extent_approach, 0.023)
+
     def test_default_config_generates_candidates_for_cube_and_cylinder(self) -> None:
         cube_candidates = AntipodalMeshGraspGenerator().generate(_make_cube_mesh(side_length=0.05))
         cylinder_candidates = AntipodalMeshGraspGenerator().generate(
@@ -99,11 +166,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
                 min_jaw_width=0.03,
                 max_jaw_width=0.06,
                 antipodal_cosine_threshold=0.98,
-                finger_depth=0.01,
-                finger_length=0.012,
-                finger_thickness=0.012,
-                contact_patch_radius=0.006,
-                collision_sample_count=256,
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.012,
+                finger_extent_approach=0.012,
                 rng_seed=7,
             )
         )
@@ -135,11 +200,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
             min_jaw_width=0.03,
             max_jaw_width=0.06,
             antipodal_cosine_threshold=0.98,
-            finger_depth=0.01,
-            finger_length=0.012,
-            finger_thickness=0.012,
-            contact_patch_radius=0.006,
-            collision_sample_count=128,
+            finger_extent_lateral=0.01,
+            finger_extent_closing=0.012,
+            finger_extent_approach=0.012,
             rng_seed=3,
         )
         rolled_config = AntipodalGraspGeneratorConfig(
@@ -178,11 +241,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
                 min_jaw_width=0.03,
                 max_jaw_width=0.045,
                 antipodal_cosine_threshold=0.93,
-                finger_depth=0.008,
-                finger_length=0.012,
-                finger_thickness=0.01,
-                contact_patch_radius=0.006,
-                collision_sample_count=256,
+                finger_extent_lateral=0.008,
+                finger_extent_closing=0.012,
+                finger_extent_approach=0.01,
                 rng_seed=11,
             )
         )
@@ -210,11 +271,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
                 min_jaw_width=0.03,
                 max_jaw_width=0.06,
                 antipodal_cosine_threshold=0.98,
-                finger_depth=0.01,
-                finger_length=0.08,
-                finger_thickness=0.08,
-                contact_patch_radius=0.004,
-                collision_sample_count=512,
+                finger_extent_lateral=0.08,
+                finger_extent_closing=0.012,
+                finger_extent_approach=0.04,
                 rng_seed=7,
             )
         )
@@ -231,11 +290,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
                 min_jaw_width=0.03,
                 max_jaw_width=0.06,
                 antipodal_cosine_threshold=0.98,
-                finger_depth=0.01,
-                finger_length=0.012,
-                finger_thickness=0.012,
-                contact_patch_radius=0.006,
-                collision_sample_count=128,
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.012,
+                finger_extent_approach=0.012,
                 rng_seed=19,
             )
         )
@@ -263,30 +320,40 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
             grasp_rotmat=rotation,
             contact_point_a=point_a,
             contact_point_b=point_b,
-            finger_depth=0.01,
-            finger_length=0.02,
-            finger_thickness=0.004,
+            finger_extent_lateral=0.01,
+            finger_extent_closing=0.02,
+            finger_extent_approach=0.004,
             finger_clearance=0.002,
         )
 
-        expected_offset = np.array([0.006, 0.0, 0.0], dtype=float)
-        np.testing.assert_allclose(box_a[0], point_a + expected_offset, atol=1e-8)
+        expected_offset = np.array([0.0, 0.011, 0.0], dtype=float)
+        np.testing.assert_allclose(box_a[0], point_a - expected_offset, atol=1e-8)
         np.testing.assert_allclose(box_b[0], point_b + expected_offset, atol=1e-8)
         np.testing.assert_allclose(box_a[1], rotation, atol=1e-8)
         np.testing.assert_allclose(box_b[1], rotation, atol=1e-8)
 
     def test_clearance_is_checked_per_roll_pose(self) -> None:
-        generator = AntipodalMeshGraspGenerator(
-            AntipodalGraspGeneratorConfig(
-                finger_depth=0.01,
-                finger_length=0.02,
-                finger_thickness=0.004,
+        mesh = TriangleMesh(
+            vertices_obj=np.array(
+                [
+                    [0.004, -0.031, -0.001],
+                    [0.004, -0.029, -0.001],
+                    [0.004, -0.029, 0.001],
+                ],
+                dtype=float,
+            ),
+            faces=np.array([[0, 1, 2]], dtype=np.int64),
+        )
+        evaluator = GraspCollisionEvaluator(
+            FingerBoxGripperCollisionModel(
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.02,
+                finger_extent_approach=0.004,
                 finger_clearance=0.002,
             )
         )
         point_a = np.array([0.0, -0.02, 0.0], dtype=float)
         point_b = np.array([0.0, 0.02, 0.0], dtype=float)
-        collision_points = np.array([[0.006, -0.02, 0.001]], dtype=float)
         identity = np.eye(3, dtype=float)
         ninety_deg_roll = np.array(
             [
@@ -298,16 +365,16 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         )
 
         self.assertFalse(
-            generator._passes_finger_clearance(
-                collision_points=collision_points,
+            evaluator.is_grasp_collision_free(
+                scene=evaluator.build_scene(mesh),
                 grasp_rotmat=identity,
                 contact_point_a=point_a,
                 contact_point_b=point_b,
             )
         )
         self.assertTrue(
-            generator._passes_finger_clearance(
-                collision_points=collision_points,
+            evaluator.is_grasp_collision_free(
+                scene=evaluator.build_scene(mesh),
                 grasp_rotmat=ninety_deg_roll,
                 contact_point_a=point_a,
                 contact_point_b=point_b,

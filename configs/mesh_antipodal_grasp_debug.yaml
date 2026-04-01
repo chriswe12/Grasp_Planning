@@ -16,12 +16,10 @@ generator:
   # 360 means "only 0 deg".
   roll_step_deg: 36
   max_pair_checks: 40960
-  finger_depth: 0.008
-  finger_length: 0.012
-  finger_thickness: 0.01
+  finger_extent_lateral: 0.008
+  finger_extent_closing: 0.012
+  finger_extent_approach: 0.01
   finger_clearance: 0.002
-  contact_patch_radius: 0.006
-  collision_sample_count: 256
   rng_seed: 0
 
 output_html: artifacts/mesh_antipodal_grasp_debug.html

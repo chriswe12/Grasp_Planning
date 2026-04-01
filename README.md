@@ -112,8 +112,9 @@ Mesh antipodal grasp path:
 - samples surface points and normals on a triangle mesh,
 - uses a KD-tree to find nearby sampled contact pairs within the jaw-width limit,
 - applies `max_pair_checks` after that KD-tree preselection,
-- filters only on jaw width, antipodal consistency, and coarse finger clearance,
-- evaluates coarse finger clearance per rolled grasp pose, not once per unrolled contact pair,
+- filters only on jaw width, antipodal consistency, and exact finger-box collision checks,
+- evaluates finger collision per rolled grasp pose, not once per unrolled contact pair,
+- uses an FCL-backed `trimesh` collision scene built once per `generate(mesh)` call,
 - can export typed grasp candidates with pose, contacts, normals, and jaw width.
 
 Current grasp convention for the cube generator:
@@ -180,9 +181,26 @@ python scripts/debug_mesh_antipodal_grasps.py --geometry stl --stl-path my_part.
 
 CLI flags override the YAML values for that run only.
 
+Finger collision dimensions use semantic names:
+- `finger_extent_lateral`
+- `finger_extent_closing`
+- `finger_extent_approach`
+
+Matching CLI overrides are:
+- `--finger-extent-lateral`
+- `--finger-extent-closing`
+- `--finger-extent-approach`
+
+Legacy YAML keys `finger_depth`, `finger_length`, and `finger_thickness` still map to the new semantic fields when the new keys are absent. Legacy CLI flags with those names are also accepted as aliases for per-run overrides.
+
+The mesh antipodal debug path now requires `trimesh` with FCL support (`python-fcl`) for collision checking. In Docker this is provided by the repo `Dockerfile`; on a host install you need the native FCL libraries plus `trimesh` / `python-fcl`.
+
 For roll sampling in YAML, set `generator.roll_step_deg`.
 This generates roll samples at `0, step, 2*step, ...` up to but excluding `360`.
 Use `360` for a single `0 deg` sample.
 For per-run overrides, `--roll-angles-rad` still works from the CLI.
 Do not rely on legacy YAML `roll_angles_deg` or `roll_angles_rad` keys while `roll_step_deg` is present, because the merged config currently gives `roll_step_deg` precedence.
-The HTML viewer now renders the same coarse finger-box geometry used by the generator's clearance check.
+The HTML viewer renders the same finger-box geometry and grasp-frame convention used by the generator collision check:
+- local `x`: lateral
+- local `y`: closing
+- local `z`: approach
