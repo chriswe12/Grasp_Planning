@@ -8,10 +8,13 @@ import traceback
 
 from isaaclab.app import AppLauncher
 
-
-parser = argparse.ArgumentParser(description="Diagnose whether FR3 top-grasp failures come from target pose or tracking.")
+parser = argparse.ArgumentParser(
+    description="Diagnose whether FR3 top-grasp failures come from target pose or tracking."
+)
 parser.add_argument("--fr3-usd", type=str, default="", help="Optional override for the FR3 USD asset path.")
-parser.add_argument("--grasp-face", type=str, default="pos_z", choices=("pos_z", "pos_x", "neg_x", "pos_y", "neg_y", "neg_z"))
+parser.add_argument(
+    "--grasp-face", type=str, default="pos_z", choices=("pos_z", "pos_x", "neg_x", "pos_y", "neg_y", "neg_z")
+)
 parser.add_argument("--pregrasp-offset", type=float, default=0.20)
 parser.add_argument("--baselines-only", action="store_true", help="Only run the baseline pregrasp/grasp comparisons.")
 parser.add_argument(
@@ -28,17 +31,26 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
-from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
+from isaaclab.scene import InteractiveScene  # noqa: E402
+from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from grasp_planning import CubeFaceGraspGenerator, FR3AdmittanceController  # noqa: E402
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
-from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
+from grasp_planning.envs.fr3_cube_env import (  # noqa: E402
+    DEFAULT_ARM_START_JOINT_POS,
+    DEFAULT_CUBE_CFG,
+    DEFAULT_HAND_START_JOINT_POS,
+)
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.types import PoseCommand  # noqa: E402
-from grasp_planning.scene_defaults import CUBE_ORIENTATION_XYZW, CUBE_POSITION, ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BASE_POSITION  # noqa: E402
+from grasp_planning.scene_defaults import (  # noqa: E402
+    CUBE_ORIENTATION_XYZW,
+    CUBE_POSITION,
+    ROBOT_BASE_ORIENTATION_XYZW,
+    ROBOT_BASE_POSITION,
+)
 
 
 def resolve_fr3_usd_path() -> str:
@@ -50,7 +62,9 @@ def resolve_fr3_usd_path() -> str:
     return assets_root_path + "/Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd"
 
 
-def quat_mul_xyzw(q1: tuple[float, float, float, float], q2: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+def quat_mul_xyzw(
+    q1: tuple[float, float, float, float], q2: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
     x1, y1, z1, w1 = q1
     x2, y2, z2, w2 = q2
     return (
@@ -213,7 +227,9 @@ def run_admittance_pose(robot, scene, sim, pose: PoseCommand) -> dict[str, objec
     }
 
 
-def track_exact_q(context: FR3MotionContext, pose: PoseCommand, q_target: torch.Tensor, steps: int = 600) -> dict[str, object]:
+def track_exact_q(
+    context: FR3MotionContext, pose: PoseCommand, q_target: torch.Tensor, steps: int = 600
+) -> dict[str, object]:
     target_position = torch.tensor([pose.position_w], dtype=torch.float32, device=context.device)
     target_orientation = torch.tensor([pose.orientation_xyzw], dtype=torch.float32, device=context.device)
     context.hold_position(q_target, steps=steps)
@@ -288,10 +304,15 @@ def main() -> None:
         fixed_gripper_width=float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"]),
     )
     grasp = build_selected_grasp()
-    pre_tcp_pos, pre_tcp_quat = FR3MotionContext.grasp_pose_to_tcp_pose(grasp.pregrasp_position_w, grasp.orientation_xyzw)
+    pre_tcp_pos, pre_tcp_quat = FR3MotionContext.grasp_pose_to_tcp_pose(
+        grasp.pregrasp_position_w, grasp.orientation_xyzw
+    )
     grasp_tcp_pos, grasp_tcp_quat = FR3MotionContext.grasp_pose_to_tcp_pose(grasp.position_w, grasp.orientation_xyzw)
 
-    print(f"selected_grasp label={grasp.label} grasp_position={grasp.position_w} pregrasp_position={grasp.pregrasp_position_w}", flush=True)
+    print(
+        f"selected_grasp label={grasp.label} grasp_position={grasp.position_w} pregrasp_position={grasp.pregrasp_position_w}",
+        flush=True,
+    )
     print(f"pregrasp_tcp={pre_tcp_pos} quat={pre_tcp_quat}", flush=True)
     print(f"grasp_tcp={grasp_tcp_pos} quat={grasp_tcp_quat}", flush=True)
 
@@ -342,7 +363,9 @@ def main() -> None:
             offline = offline_solve_pose(context, pose)
             label = f"pos_sweep dx={x_offset:+.3f} dz={z_offset:+.3f}"
             summarize_case(label, pose, offline)
-            if best_position_case is None or (offline["pos"] + offline["rot"]) < (best_position_case[1]["pos"] + best_position_case[1]["rot"]):
+            if best_position_case is None or (offline["pos"] + offline["rot"]) < (
+                best_position_case[1]["pos"] + best_position_case[1]["rot"]
+            ):
                 best_position_case = (label, offline, pose)
 
     # Orientation sweep at the nominal final position.
@@ -357,7 +380,9 @@ def main() -> None:
             offline = offline_solve_pose(context, pose)
             label = f"ori_sweep roll={roll_deg:+.1f} pitch={pitch_deg:+.1f}"
             summarize_case(label, pose, offline)
-            if best_orientation_case is None or (offline["pos"] + offline["rot"]) < (best_orientation_case[1]["pos"] + best_orientation_case[1]["rot"]):
+            if best_orientation_case is None or (offline["pos"] + offline["rot"]) < (
+                best_orientation_case[1]["pos"] + best_orientation_case[1]["rot"]
+            ):
                 best_orientation_case = (label, offline, pose)
 
     if best_position_case is not None:

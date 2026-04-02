@@ -276,8 +276,12 @@ class FrankaHandFingerCollisionModel:
         fingertip_offset_left = left_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
         fingertip_offset_right = right_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
 
-        left_origin = np.asarray(contact_point_b, dtype=float) - fingertip_offset_left + closing_axis * self.contact_gap_m
-        right_origin = np.asarray(contact_point_a, dtype=float) - fingertip_offset_right - closing_axis * self.contact_gap_m
+        left_origin = (
+            np.asarray(contact_point_b, dtype=float) - fingertip_offset_left + closing_axis * self.contact_gap_m
+        )
+        right_origin = (
+            np.asarray(contact_point_a, dtype=float) - fingertip_offset_right - closing_axis * self.contact_gap_m
+        )
         hand_origin = 0.5 * (left_origin - left_rotmat[:, 2] * 58.4e-3 + right_origin - right_rotmat[:, 2] * 58.4e-3)
         hand_vertices_local = self.hand_vertices_local
         hand_faces = self.hand_faces

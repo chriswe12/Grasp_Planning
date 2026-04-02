@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
 import math
-from pathlib import Path
 import struct
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import yaml
@@ -34,12 +34,19 @@ from grasp_planning.grasping import (  # noqa: E402
     finger_box_corners,
 )
 
-
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "mesh_antipodal_grasp_debug.yaml"
 DEFAULT_STL_DIR = REPO_ROOT / "assets" / "stl"
 FRANKA_HAND_MESH_PATH = (
-    REPO_ROOT / "assets" / "urdf" / "franka_description" / "meshes" / "robot_ee" / "franka_hand_black" / "collision" / "hand.stl"
+    REPO_ROOT
+    / "assets"
+    / "urdf"
+    / "franka_description"
+    / "meshes"
+    / "robot_ee"
+    / "franka_hand_black"
+    / "collision"
+    / "hand.stl"
 )
 
 _DEFAULT_CONFIG = {
@@ -132,6 +139,8 @@ _FRANKA_RIGHT_FINGER_BOX_SPECS = (
 _FRANKA_FINGER_JOINT_Z_M = 58.4e-3
 _FRANKA_TIP_CONTACT_Z_M = 45.25e-3
 _FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
+
+
 def _quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
     x, y, z, w = [float(v) for v in quat_xyzw]
     xx, yy, zz = x * x, y * y, z * z
@@ -195,9 +204,13 @@ def _franka_finger_collision_boxes(
     closing_axis = np.asarray(grasp_rotmat, dtype=float)[:, 1]
     right_finger_rotmat = grasp_rotmat @ _rpy_to_rotmat(0.0, 0.0, math.pi)
     left_finger_origin = contact_point_b - grasp_rotmat @ fingertip_contact_offset + closing_axis * float(contact_gap_m)
-    right_finger_origin = contact_point_a - right_finger_rotmat @ fingertip_contact_offset - closing_axis * float(contact_gap_m)
+    right_finger_origin = (
+        contact_point_a - right_finger_rotmat @ fingertip_contact_offset - closing_axis * float(contact_gap_m)
+    )
     hand_origin_left = left_finger_origin - grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
-    hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
+    hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array(
+        [0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float
+    )
 
     def _boxes_for_finger(
         *,
@@ -214,13 +227,18 @@ def _franka_finger_collision_boxes(
             boxes.append(
                 {
                     "name": f"{prefix}_{spec.name}",
-                    "corners": [_fmt_vec(corner.tolist()) for corner in _box_corners_from_pose(center_obj, world_rotmat, spec.size_local)],
+                    "corners": [
+                        _fmt_vec(corner.tolist())
+                        for corner in _box_corners_from_pose(center_obj, world_rotmat, spec.size_local)
+                    ],
                 }
             )
         return boxes
 
     left_tip_anchor = left_finger_origin + grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
-    right_tip_anchor = right_finger_origin + right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    right_tip_anchor = right_finger_origin + right_finger_rotmat @ np.array(
+        [0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float
+    )
     hand_origin = 0.5 * (hand_origin_left + hand_origin_right)
     hand_reference = grasp_center
     hand_vertices_local, hand_faces = _load_franka_hand_mesh()
@@ -599,7 +617,9 @@ def _build_mesh(args: argparse.Namespace) -> TriangleMesh:
         return _load_stl_mesh(args.stl_path, scale=args.stl_scale)
     if args.geometry == "cube":
         return _make_cube_mesh(side_length=args.cube_side)
-    return _make_cylinder_mesh(radius=args.cylinder_radius, height=args.cylinder_height, radial_segments=args.cylinder_segments)
+    return _make_cylinder_mesh(
+        radius=args.cylinder_radius, height=args.cylinder_height, radial_segments=args.cylinder_segments
+    )
 
 
 def _unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
@@ -643,8 +663,12 @@ parser.add_argument(
 parser.add_argument("--num-samples", type=int, default=None, help="Number of surface samples.")
 parser.add_argument("--min-jaw-width", type=float, default=None, help="Minimum jaw width in meters.")
 parser.add_argument("--max-jaw-width", type=float, default=None, help="Maximum jaw width in meters.")
-parser.add_argument("--antipodal-cosine-threshold", type=float, default=None, help="Minimum cosine alignment for antipodal normals.")
-parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=None, help="Comma-separated roll angles in radians.")
+parser.add_argument(
+    "--antipodal-cosine-threshold", type=float, default=None, help="Minimum cosine alignment for antipodal normals."
+)
+parser.add_argument(
+    "--roll-angles-rad", type=_parse_rolls, default=None, help="Comma-separated roll angles in radians."
+)
 parser.add_argument(
     "--max-pair-checks",
     type=int,
@@ -676,7 +700,9 @@ parser.add_argument(
     default=None,
     help="Object world orientation as x,y,z,w.",
 )
-parser.add_argument("--output-html", type=Path, default=None, help=f"Output HTML path. Default from YAML: {DEFAULT_OUTPUT_HTML}")
+parser.add_argument(
+    "--output-html", type=Path, default=None, help=f"Output HTML path. Default from YAML: {DEFAULT_OUTPUT_HTML}"
+)
 
 
 @dataclass(frozen=True)

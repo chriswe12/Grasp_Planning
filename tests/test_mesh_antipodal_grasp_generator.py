@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -207,7 +207,9 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
 
         def group_key(candidate: object) -> tuple[float, ...]:
             return tuple(
-                np.round(np.array([*candidate.contact_point_a_obj, *candidate.contact_point_b_obj, candidate.jaw_width]), 6)
+                np.round(
+                    np.array([*candidate.contact_point_a_obj, *candidate.contact_point_b_obj, candidate.jaw_width]), 6
+                )
             )
 
         base_groups = {group_key(candidate) for candidate in base_candidates}
@@ -302,7 +304,10 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
 
         self.assertEqual(len(payload), 2)
         first = payload[0]
-        self.assertEqual(sorted(first.keys()), ["contact_normals_obj", "contact_points_obj", "grasp_pose_obj", "jaw_width", "roll_angle_rad"])
+        self.assertEqual(
+            sorted(first.keys()),
+            ["contact_normals_obj", "contact_points_obj", "grasp_pose_obj", "jaw_width", "roll_angle_rad"],
+        )
         self.assertEqual(sorted(first["grasp_pose_obj"].keys()), ["orientation_xyzw", "position"])
         self.assertEqual(len(first["contact_points_obj"]), 2)
         self.assertEqual(len(first["contact_normals_obj"]), 2)

@@ -12,7 +12,6 @@ import traceback
 
 from isaaclab.app import AppLauncher
 
-
 parser = argparse.ArgumentParser(description="Teleport the FR3 to grasp poses for isolated pickup debugging.")
 parser.add_argument(
     "--fr3-usd",
@@ -79,14 +78,18 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
-from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
+from isaaclab.scene import InteractiveScene  # noqa: E402
+from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from grasp_planning import CubeFaceGraspGenerator  # noqa: E402
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
-from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
+from grasp_planning.envs.fr3_cube_env import (  # noqa: E402
+    DEFAULT_ARM_START_JOINT_POS,
+    DEFAULT_CUBE_CFG,
+    DEFAULT_HAND_START_JOINT_POS,
+)
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.types import PoseCommand  # noqa: E402
 from grasp_planning.scene_defaults import (  # noqa: E402
@@ -323,18 +326,24 @@ def command_gripper_width(*, sim, scene, context: FR3MotionContext, width: float
         scene.update(physics_dt)
 
 
-def animate_arm_to_q(*, sim, scene, context: FR3MotionContext, target_q: torch.Tensor, hand_width: float, duration_s: float) -> None:
+def animate_arm_to_q(
+    *, sim, scene, context: FR3MotionContext, target_q: torch.Tensor, hand_width: float, duration_s: float
+) -> None:
     """Retreat with real motion by interpolating joint targets over time."""
 
     start_q = context.get_arm_q()
     physics_dt = sim.get_physics_dt()
     steps = max(1, int(duration_s / physics_dt))
-    hand_targets = torch.full(
-        (1, int(context.hand_joint_ids.numel())),
-        float(hand_width),
-        dtype=torch.float32,
-        device=context.device,
-    ) if context.hand_joint_ids.numel() > 0 else None
+    hand_targets = (
+        torch.full(
+            (1, int(context.hand_joint_ids.numel())),
+            float(hand_width),
+            dtype=torch.float32,
+            device=context.device,
+        )
+        if context.hand_joint_ids.numel() > 0
+        else None
+    )
     for step_idx in range(1, steps + 1):
         alpha = float(step_idx) / float(steps)
         arm_targets = start_q + (target_q - start_q) * alpha

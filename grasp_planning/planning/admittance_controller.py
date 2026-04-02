@@ -9,8 +9,8 @@ This version is intentionally adapted to Isaac Sim / Isaac Lab:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import torch
 
@@ -93,7 +93,9 @@ def _integrate_orientation_xyzw(quat_xyzw: torch.Tensor, angular_velocity: torch
     axis = angular_velocity / torch.linalg.norm(angular_velocity, dim=-1, keepdim=True).clamp_min(1.0e-8)
     half_angle = 0.5 * angle
     delta = torch.cat((axis * torch.sin(half_angle), torch.cos(half_angle)), dim=-1)
-    delta = torch.where((angle > 1.0e-8).expand_as(delta), delta, torch.tensor([0.0, 0.0, 0.0, 1.0], device=quat_xyzw.device))
+    delta = torch.where(
+        (angle > 1.0e-8).expand_as(delta), delta, torch.tensor([0.0, 0.0, 0.0, 1.0], device=quat_xyzw.device)
+    )
     return _normalize_quat_xyzw(_quat_mul_xyzw(delta, quat_xyzw))
 
 
@@ -313,13 +315,17 @@ class FR3AdmittanceController:
         if wrench.ndim == 1:
             wrench = wrench.unsqueeze(0)
         self._filtered_wrench = (
-            (1.0 - self._cfg.wrench_filter) * self._filtered_wrench + self._cfg.wrench_filter * wrench.to(self._context.device)
-        )
+            1.0 - self._cfg.wrench_filter
+        ) * self._filtered_wrench + self._cfg.wrench_filter * wrench.to(self._context.device)
 
         position_error = self._virtual_position - self._reference_position
         linear_accel = torch.linalg.solve(
             self._inertia[:3, :3],
-            (self._filtered_wrench[:, :3] - self._twist[:, :3] @ self._damping[:3, :3].T - position_error @ self._stiffness[:3, :3].T).T,
+            (
+                self._filtered_wrench[:, :3]
+                - self._twist[:, :3] @ self._damping[:3, :3].T
+                - position_error @ self._stiffness[:3, :3].T
+            ).T,
         ).T
         self._twist[:, :3] = self._twist[:, :3] + linear_accel * self._context.physics_dt
         self._twist[:, 3:] = 0.0
@@ -365,8 +371,12 @@ class FR3AdmittanceController:
         self._reference_orientation = _quat_slerp_xyzw(self._reference_orientation, target_orientation, tau)
 
     def _estimate_external_wrench(self) -> torch.Tensor:
-        force = self._extract_body_vector(("body_net_forces_w", "body_force_w", "body_external_force_w"), expected_width=3)
-        torque = self._extract_body_vector(("body_net_torques_w", "body_torque_w", "body_external_torque_w"), expected_width=3)
+        force = self._extract_body_vector(
+            ("body_net_forces_w", "body_force_w", "body_external_force_w"), expected_width=3
+        )
+        torque = self._extract_body_vector(
+            ("body_net_torques_w", "body_torque_w", "body_external_torque_w"), expected_width=3
+        )
         if force is None and torque is None:
             return torch.zeros((1, 6), dtype=torch.float32, device=self._context.device)
         if force is None:
