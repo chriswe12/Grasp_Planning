@@ -14,12 +14,16 @@ from grasp_planning.grasping import (
     FingerBoxWithHandMeshCollisionModel,
     FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
+    HalfSpaceWorldConstraint,
+    ObjectFrameGraspCandidate,
+    ObjectWorldPose,
     TriangleMesh,
+    WorldCollisionConstraintEvaluator,
     export_grasp_candidates_json,
+    filter_grasp_candidates_above_plane,
     finger_boxes_from_grasp,
 )
 from grasp_planning.grasping.collision import CollisionManager, trimesh
-from scripts.debug_mesh_antipodal_grasps import _config_from_sources, parser
 
 
 def _make_cube_mesh(side_length: float) -> TriangleMesh:
@@ -120,10 +124,10 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         )
         generator._collision_evaluator = GraspCollisionEvaluator(  # type: ignore[attr-defined]
             FingerBoxGripperCollisionModel(
-                finger_extent_lateral=generator._config.finger_extent_lateral,  # type: ignore[attr-defined]
-                finger_extent_closing=generator._config.finger_extent_closing,  # type: ignore[attr-defined]
-                finger_extent_approach=generator._config.finger_extent_approach,  # type: ignore[attr-defined]
-                finger_clearance=generator._config.finger_clearance,  # type: ignore[attr-defined]
+                finger_extent_lateral=0.008,
+                finger_extent_closing=0.012,
+                finger_extent_approach=0.01,
+                finger_clearance=0.002,
             ),
             backend=backend,
         )
@@ -132,27 +136,11 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
 
         self.assertEqual(backend.build_count, 1)
 
-    def test_config_accepts_legacy_finger_dimension_keys(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            config_path = Path(tmp_dir) / "legacy.yaml"
-            config_path.write_text(
-                """
-geometry:
-  type: cube
-generator:
-  finger_depth: 0.021
-  finger_length: 0.022
-  finger_thickness: 0.023
-""".strip(),
-                encoding="utf-8",
-            )
+    def test_default_generator_uses_detailed_franka_collision_model(self) -> None:
+        generator = AntipodalMeshGraspGenerator()
 
-            args = parser.parse_args(["--config", str(config_path)])
-            resolved = _config_from_sources(args)
-
-        self.assertAlmostEqual(resolved.finger_extent_lateral, 0.021)
-        self.assertAlmostEqual(resolved.finger_extent_closing, 0.022)
-        self.assertAlmostEqual(resolved.finger_extent_approach, 0.023)
+        self.assertIsInstance(generator._collision_evaluator._collision_model, FrankaHandFingerCollisionModel)  # type: ignore[attr-defined]
+        self.assertAlmostEqual(generator._config.detailed_finger_contact_gap_m, 0.002)  # type: ignore[attr-defined]
 
     def test_default_config_generates_candidates_for_cube_and_cylinder(self) -> None:
         cube_candidates = AntipodalMeshGraspGenerator().generate(_make_cube_mesh(side_length=0.05))
@@ -171,9 +159,6 @@ generator:
                 min_jaw_width=0.03,
                 max_jaw_width=0.06,
                 antipodal_cosine_threshold=0.98,
-                finger_extent_lateral=0.01,
-                finger_extent_closing=0.012,
-                finger_extent_approach=0.012,
                 rng_seed=7,
             )
         )
@@ -205,9 +190,6 @@ generator:
             min_jaw_width=0.03,
             max_jaw_width=0.06,
             antipodal_cosine_threshold=0.98,
-            finger_extent_lateral=0.01,
-            finger_extent_closing=0.012,
-            finger_extent_approach=0.012,
             rng_seed=3,
         )
         rolled_config = AntipodalGraspGeneratorConfig(
@@ -246,9 +228,6 @@ generator:
                 min_jaw_width=0.03,
                 max_jaw_width=0.045,
                 antipodal_cosine_threshold=0.93,
-                finger_extent_lateral=0.008,
-                finger_extent_closing=0.012,
-                finger_extent_approach=0.01,
                 rng_seed=11,
             )
         )
@@ -268,24 +247,39 @@ generator:
             center = np.asarray(candidate.grasp_position_obj, dtype=float)
             self.assertLess(abs(float(center[2])), 0.02)
 
-    def test_large_fingers_can_reject_cube_grasps(self) -> None:
-        cube_mesh = _make_cube_mesh(side_length=0.05)
-        generator = AntipodalMeshGraspGenerator(
-            AntipodalGraspGeneratorConfig(
-                num_surface_samples=192,
-                min_jaw_width=0.03,
-                max_jaw_width=0.06,
-                antipodal_cosine_threshold=0.98,
-                finger_extent_lateral=0.08,
-                finger_extent_closing=0.012,
-                finger_extent_approach=0.04,
-                rng_seed=7,
+    def test_detailed_finger_contact_gap_can_change_collision_result(self) -> None:
+        mesh = TriangleMesh(
+            vertices_obj=np.array(
+                [
+                    [-0.004, 0.0202, -0.002],
+                    [0.004, 0.0202, -0.002],
+                    [0.004, 0.0212, 0.002],
+                ],
+                dtype=float,
+            ),
+            faces=np.array([[0, 1, 2]], dtype=np.int64),
+        )
+        point_a = np.array([0.0, -0.02, 0.0], dtype=float)
+        point_b = np.array([0.0, 0.02, 0.0], dtype=float)
+        zero_gap_evaluator = GraspCollisionEvaluator(FrankaHandFingerCollisionModel(contact_gap_m=0.0))
+        gap_evaluator = GraspCollisionEvaluator(FrankaHandFingerCollisionModel(contact_gap_m=0.002))
+
+        self.assertFalse(
+            zero_gap_evaluator.is_grasp_collision_free(
+                scene=zero_gap_evaluator.build_scene(mesh),
+                grasp_rotmat=np.eye(3, dtype=float),
+                contact_point_a=point_a,
+                contact_point_b=point_b,
             )
         )
-
-        candidates = generator.generate(cube_mesh)
-
-        self.assertEqual(candidates, [])
+        self.assertTrue(
+            gap_evaluator.is_grasp_collision_free(
+                scene=gap_evaluator.build_scene(mesh),
+                grasp_rotmat=np.eye(3, dtype=float),
+                contact_point_a=point_a,
+                contact_point_b=point_b,
+            )
+        )
 
     def test_export_writes_expected_fields(self) -> None:
         cube_mesh = _make_cube_mesh(side_length=0.05)
@@ -295,9 +289,6 @@ generator:
                 min_jaw_width=0.03,
                 max_jaw_width=0.06,
                 antipodal_cosine_threshold=0.98,
-                finger_extent_lateral=0.01,
-                finger_extent_closing=0.012,
-                finger_extent_approach=0.012,
                 rng_seed=19,
             )
         )
@@ -405,6 +396,96 @@ generator:
                 grasp_rotmat=np.eye(3, dtype=float),
                 contact_point_a=point_a,
                 contact_point_b=point_b,
+            )
+        )
+
+    def test_world_plane_filter_rejects_grasp_below_ground(self) -> None:
+        candidate = ObjectFrameGraspCandidate(
+            grasp_position_obj=(0.0, 0.0, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(0.0, -0.02, 0.0),
+            contact_point_b_obj=(0.0, 0.02, 0.0),
+            contact_normal_a_obj=(0.0, 1.0, 0.0),
+            contact_normal_b_obj=(0.0, -1.0, 0.0),
+            jaw_width=0.04,
+            roll_angle_rad=0.0,
+        )
+        evaluator = WorldCollisionConstraintEvaluator(
+            FingerBoxGripperCollisionModel(
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.02,
+                finger_extent_approach=0.004,
+                finger_clearance=0.002,
+            )
+        )
+        object_pose_world = ObjectWorldPose(
+            position_world=(0.0, 0.0, 0.001),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+
+        self.assertFalse(
+            evaluator.is_grasp_above_plane(
+                candidate,
+                object_pose_world=object_pose_world,
+                plane_constraint=HalfSpaceWorldConstraint(),
+            )
+        )
+
+    def test_world_plane_filter_keeps_grasp_above_ground(self) -> None:
+        candidate = ObjectFrameGraspCandidate(
+            grasp_position_obj=(0.0, 0.0, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(0.0, -0.02, 0.0),
+            contact_point_b_obj=(0.0, 0.02, 0.0),
+            contact_normal_a_obj=(0.0, 1.0, 0.0),
+            contact_normal_b_obj=(0.0, -1.0, 0.0),
+            jaw_width=0.04,
+            roll_angle_rad=0.0,
+        )
+        kept = filter_grasp_candidates_above_plane(
+            [candidate],
+            object_pose_world=ObjectWorldPose(
+                position_world=(0.0, 0.0, 0.2),
+                orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+            ),
+            collision_model=FingerBoxGripperCollisionModel(
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.02,
+                finger_extent_approach=0.004,
+                finger_clearance=0.002,
+            ),
+        )
+
+        self.assertEqual(kept, [candidate])
+
+    def test_world_plane_filter_respects_object_rotation(self) -> None:
+        candidate = ObjectFrameGraspCandidate(
+            grasp_position_obj=(0.0, 0.0, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(0.0, -0.02, 0.0),
+            contact_point_b_obj=(0.0, 0.02, 0.0),
+            contact_normal_a_obj=(0.0, 1.0, 0.0),
+            contact_normal_b_obj=(0.0, -1.0, 0.0),
+            jaw_width=0.04,
+            roll_angle_rad=0.0,
+        )
+        evaluator = WorldCollisionConstraintEvaluator(
+            FingerBoxGripperCollisionModel(
+                finger_extent_lateral=0.01,
+                finger_extent_closing=0.02,
+                finger_extent_approach=0.004,
+                finger_clearance=0.002,
+            )
+        )
+
+        self.assertFalse(
+            evaluator.is_grasp_above_plane(
+                candidate,
+                object_pose_world=ObjectWorldPose(
+                    position_world=(0.0, 0.0, 0.01),
+                    orientation_xyzw_world=(np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)),
+                ),
+                plane_constraint=HalfSpaceWorldConstraint(),
             )
         )
 

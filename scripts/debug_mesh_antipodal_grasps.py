@@ -25,10 +25,13 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping import (  # noqa: E402
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
+    FrankaHandFingerCollisionModel,
+    HalfSpaceWorldConstraint,
     ObjectFrameGraspCandidate,
+    ObjectWorldPose,
     TriangleMesh,
+    WorldCollisionConstraintEvaluator,
     finger_box_corners,
-    finger_boxes_from_grasp,
 )
 
 
@@ -58,11 +61,13 @@ _DEFAULT_CONFIG = {
         "roll_angles_deg": None,
         "roll_angles_rad": [0.0],
         "max_pair_checks": 4096,
-        "finger_extent_lateral": 0.008,
-        "finger_extent_closing": 0.012,
-        "finger_extent_approach": 0.01,
-        "finger_clearance": 0.002,
+        "detailed_finger_contact_gap_m": 0.002,
         "rng_seed": 0,
+    },
+    "environment": {
+        "enforce_ground_plane": False,
+        "object_position_world": [0.0, 0.0, 0.0],
+        "object_orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
     },
     "output_html": str(DEFAULT_OUTPUT_HTML),
 }
@@ -183,12 +188,14 @@ def _franka_finger_collision_boxes(
     jaw_width: float,
     contact_point_a: np.ndarray,
     contact_point_b: np.ndarray,
+    contact_gap_m: float,
 ) -> dict[str, list[dict[str, object]]]:
     grasp_center = np.asarray(grasp_center, dtype=float)
     fingertip_contact_offset = np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    closing_axis = np.asarray(grasp_rotmat, dtype=float)[:, 1]
     right_finger_rotmat = grasp_rotmat @ _rpy_to_rotmat(0.0, 0.0, math.pi)
-    left_finger_origin = contact_point_b - grasp_rotmat @ fingertip_contact_offset
-    right_finger_origin = contact_point_a - right_finger_rotmat @ fingertip_contact_offset
+    left_finger_origin = contact_point_b - grasp_rotmat @ fingertip_contact_offset + closing_axis * float(contact_gap_m)
+    right_finger_origin = contact_point_a - right_finger_rotmat @ fingertip_contact_offset - closing_axis * float(contact_gap_m)
     hand_origin_left = left_finger_origin - grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
     hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
 
@@ -246,6 +253,20 @@ def _parse_rolls(raw: str) -> tuple[float, ...]:
     values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
     if not values:
         raise argparse.ArgumentTypeError("Expected at least one roll angle.")
+    return values
+
+
+def _parse_vec3(raw: str) -> tuple[float, float, float]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if len(values) != 3:
+        raise argparse.ArgumentTypeError("Expected exactly 3 comma-separated values.")
+    return values
+
+
+def _parse_quat_xyzw(raw: str) -> tuple[float, float, float, float]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if len(values) != 4:
+        raise argparse.ArgumentTypeError("Expected exactly 4 comma-separated values.")
     return values
 
 
@@ -311,24 +332,6 @@ def _roll_angles_from_step_deg(step_deg: object) -> tuple[float, ...]:
     return tuple(math.radians(value) for value in angles_deg)
 
 
-def _get_generator_value(
-    explicit_generator: dict[str, object],
-    generator: dict[str, object],
-    primary_key: str,
-    fallback_default: object,
-    *,
-    legacy_keys: tuple[str, ...] = (),
-) -> object:
-    if primary_key in explicit_generator and explicit_generator[primary_key] not in (None, ""):
-        return explicit_generator[primary_key]
-    for legacy_key in legacy_keys:
-        if legacy_key in explicit_generator and explicit_generator[legacy_key] not in (None, ""):
-            return explicit_generator[legacy_key]
-    if primary_key in generator and generator[primary_key] not in (None, ""):
-        return generator[primary_key]
-    return fallback_default
-
-
 def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
     config_path = args.config.expanduser().resolve()
     loaded_config = _load_yaml_config(config_path)
@@ -336,11 +339,9 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
 
     geometry = merged.get("geometry")
     generator = merged.get("generator")
-    if not isinstance(geometry, dict) or not isinstance(generator, dict):
-        raise ValueError("Config must define 'geometry' and 'generator' mappings.")
-    loaded_generator = loaded_config.get("generator", {})
-    if not isinstance(loaded_generator, dict):
-        loaded_generator = {}
+    environment = merged.get("environment")
+    if not isinstance(geometry, dict) or not isinstance(generator, dict) or not isinstance(environment, dict):
+        raise ValueError("Config must define 'geometry', 'generator', and 'environment' mappings.")
 
     roll_step_deg = generator.get("roll_step_deg")
     roll_angles_deg = generator.get("roll_angles_deg")
@@ -373,35 +374,30 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         ),
         roll_angles_rad=roll_angles_rad,
         max_pair_checks=int(generator.get("max_pair_checks", _DEFAULT_CONFIG["generator"]["max_pair_checks"])),
-        finger_extent_lateral=float(
-            _get_generator_value(
-                loaded_generator,
-                generator,
-                "finger_extent_lateral",
-                _DEFAULT_CONFIG["generator"]["finger_extent_lateral"],
-                legacy_keys=("finger_depth",),
+        detailed_finger_contact_gap_m=float(
+            generator.get(
+                "detailed_finger_contact_gap_m",
+                _DEFAULT_CONFIG["generator"]["detailed_finger_contact_gap_m"],
             )
         ),
-        finger_extent_closing=float(
-            _get_generator_value(
-                loaded_generator,
-                generator,
-                "finger_extent_closing",
-                _DEFAULT_CONFIG["generator"]["finger_extent_closing"],
-                legacy_keys=("finger_length",),
-            )
-        ),
-        finger_extent_approach=float(
-            _get_generator_value(
-                loaded_generator,
-                generator,
-                "finger_extent_approach",
-                _DEFAULT_CONFIG["generator"]["finger_extent_approach"],
-                legacy_keys=("finger_thickness",),
-            )
-        ),
-        finger_clearance=float(generator.get("finger_clearance", _DEFAULT_CONFIG["generator"]["finger_clearance"])),
         rng_seed=int(generator.get("rng_seed", _DEFAULT_CONFIG["generator"]["rng_seed"])),
+        enforce_ground_plane=bool(
+            environment.get("enforce_ground_plane", _DEFAULT_CONFIG["environment"]["enforce_ground_plane"])
+        ),
+        object_position_world=tuple(
+            float(v)
+            for v in environment.get(
+                "object_position_world",
+                _DEFAULT_CONFIG["environment"]["object_position_world"],
+            )
+        ),
+        object_orientation_xyzw_world=tuple(
+            float(v)
+            for v in environment.get(
+                "object_orientation_xyzw_world",
+                _DEFAULT_CONFIG["environment"]["object_orientation_xyzw_world"],
+            )
+        ),
         output_html=Path(str(merged.get("output_html", _DEFAULT_CONFIG["output_html"]))),
     )
 
@@ -419,11 +415,11 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         "antipodal_cosine_threshold",
         "roll_angles_rad",
         "max_pair_checks",
-        "finger_extent_lateral",
-        "finger_extent_closing",
-        "finger_extent_approach",
-        "finger_clearance",
+        "detailed_finger_contact_gap_m",
         "rng_seed",
+        "enforce_ground_plane",
+        "object_position_world",
+        "object_orientation_xyzw_world",
         "output_html",
     ):
         override = getattr(args, name)
@@ -656,31 +652,30 @@ parser.add_argument(
     help="Maximum nearby contact pairs to evaluate after KD-tree preselection.",
 )
 parser.add_argument(
-    "--finger-extent-lateral",
-    "--finger-depth",
-    dest="finger_extent_lateral",
+    "--detailed-finger-contact-gap-m",
     type=float,
     default=None,
-    help="Finger box extent along the lateral grasp x-axis in meters.",
+    help="Closing-axis offset applied to the detailed Franka finger geometry away from the nominal contact points.",
 )
-parser.add_argument(
-    "--finger-extent-closing",
-    "--finger-length",
-    dest="finger_extent_closing",
-    type=float,
-    default=None,
-    help="Finger box extent along the closing grasp y-axis in meters.",
-)
-parser.add_argument(
-    "--finger-extent-approach",
-    "--finger-thickness",
-    dest="finger_extent_approach",
-    type=float,
-    default=None,
-    help="Finger box extent along the approach grasp z-axis in meters.",
-)
-parser.add_argument("--finger-clearance", type=float, default=None, help="Contact-plane finger clearance in meters.")
 parser.add_argument("--rng-seed", type=int, default=None, help="Random seed for deterministic sampling.")
+parser.add_argument(
+    "--enforce-ground-plane",
+    action="store_true",
+    default=None,
+    help="Apply a second-stage world-frame filter against the infinite ground plane z=0.",
+)
+parser.add_argument(
+    "--object-position-world",
+    type=_parse_vec3,
+    default=None,
+    help="Object world position as x,y,z in meters.",
+)
+parser.add_argument(
+    "--object-orientation-xyzw-world",
+    type=_parse_quat_xyzw,
+    default=None,
+    help="Object world orientation as x,y,z,w.",
+)
 parser.add_argument("--output-html", type=Path, default=None, help=f"Output HTML path. Default from YAML: {DEFAULT_OUTPUT_HTML}")
 
 
@@ -692,14 +687,57 @@ class _ViewerState:
     config: AntipodalGraspGeneratorConfig
     geometry_name: str
     collision_backend: str
+    enforce_ground_plane: bool
+    object_pose_world: ObjectWorldPose
+    candidate_count_before_world_filter: int
 
 
 def _fmt_vec(vec: tuple[float, ...] | list[float]) -> list[float]:
     return [round(float(value), 6) for value in vec]
 
 
+def _world_point_to_object(point_world: np.ndarray, object_pose_world: ObjectWorldPose) -> np.ndarray:
+    rotation_world_from_object = _quat_to_rotmat_xyzw(object_pose_world.orientation_xyzw_world)
+    translation_world = np.asarray(object_pose_world.position_world, dtype=float)
+    return rotation_world_from_object.T @ (np.asarray(point_world, dtype=float) - translation_world)
+
+
+def _ground_plane_overlay_obj(
+    state: _ViewerState,
+    *,
+    padding_scale: float = 1.8,
+) -> dict[str, object] | None:
+    if not state.enforce_ground_plane:
+        return None
+
+    mins = state.mesh.vertices_obj.min(axis=0)
+    maxs = state.mesh.vertices_obj.max(axis=0)
+    extents = np.maximum(maxs - mins, 1.0e-3)
+    radius = 0.5 * float(np.max(extents)) * float(padding_scale)
+
+    plane_points_world = np.array(
+        [
+            [-radius, -radius, 0.0],
+            [radius, -radius, 0.0],
+            [radius, radius, 0.0],
+            [-radius, radius, 0.0],
+        ],
+        dtype=float,
+    )
+    plane_points_obj = np.array(
+        [_world_point_to_object(point_world, state.object_pose_world) for point_world in plane_points_world],
+        dtype=float,
+    )
+    return {
+        "corners_obj": [_fmt_vec(point.tolist()) for point in plane_points_obj],
+        "plane_normal_world": [0.0, 0.0, 1.0],
+        "plane_origin_world": [0.0, 0.0, 0.0],
+    }
+
+
 def _build_payload(state: _ViewerState) -> dict[str, object]:
     vertices = [[round(float(v), 6) for v in vertex] for vertex in state.mesh.vertices_obj]
+    ground_plane_overlay = _ground_plane_overlay_obj(state)
     candidates = []
     for index, candidate in enumerate(state.candidates, start=1):
         point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
@@ -707,23 +745,13 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
         center = np.asarray(candidate.grasp_position_obj, dtype=float)
         closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
         rotation = _quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
-        box_a, box_b = finger_boxes_from_grasp(
-            grasp_rotmat=rotation,
-            contact_point_a=point_a,
-            contact_point_b=point_b,
-            finger_extent_lateral=state.config.finger_extent_lateral,
-            finger_extent_closing=state.config.finger_extent_closing,
-            finger_extent_approach=state.config.finger_extent_approach,
-            finger_clearance=state.config.finger_clearance,
-        )
-        finger_box_a = finger_box_corners(*box_a)
-        finger_box_b = finger_box_corners(*box_b)
         franka_boxes = _franka_finger_collision_boxes(
             grasp_rotmat=rotation,
             grasp_center=center,
             jaw_width=float(candidate.jaw_width),
             contact_point_a=point_a,
             contact_point_b=point_b,
+            contact_gap_m=state.config.detailed_finger_contact_gap_m,
         )
         candidates.append(
             {
@@ -742,8 +770,6 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
                 "gripper_z_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
                 "lateral_axis_obj": _fmt_vec(rotation[:, 0].tolist()),
                 "approach_axis_obj": _fmt_vec(rotation[:, 2].tolist()),
-                "finger_box_a": [_fmt_vec(corner.tolist()) for corner in finger_box_a],
-                "finger_box_b": [_fmt_vec(corner.tolist()) for corner in finger_box_b],
                 "franka_left_boxes": franka_boxes["left"],
                 "franka_right_boxes": franka_boxes["right"],
                 "franka_hand_origin_obj": franka_boxes["hand_origin_obj"],
@@ -772,12 +798,15 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
             "max_jaw_width": state.config.max_jaw_width,
             "antipodal_cosine_threshold": state.config.antipodal_cosine_threshold,
             "roll_angles_rad": [float(v) for v in state.config.roll_angles_rad],
-            "finger_extent_lateral": state.config.finger_extent_lateral,
-            "finger_extent_closing": state.config.finger_extent_closing,
-            "finger_extent_approach": state.config.finger_extent_approach,
-            "finger_clearance": state.config.finger_clearance,
+            "detailed_finger_contact_gap_m": state.config.detailed_finger_contact_gap_m,
             "collision_backend": state.collision_backend,
+            "collision_model": "franka_hand_mesh_plus_finger_boxes_with_contact_gap",
+            "enforce_ground_plane": state.enforce_ground_plane,
+            "object_position_world": _fmt_vec(state.object_pose_world.position_world),
+            "object_orientation_xyzw_world": _fmt_vec(state.object_pose_world.orientation_xyzw_world),
+            "candidate_count_before_world_filter": state.candidate_count_before_world_filter,
         },
+        "ground_plane_overlay": ground_plane_overlay,
         "candidates": candidates,
     }
 
@@ -995,8 +1024,8 @@ def _html_document(payload: dict[str, object]) -> str:
       <h1 class="title">Mesh Antipodal Grasp Debug</h1>
       <p class="subtitle">
         Object-frame antipodal grasp candidates generated from procedural object geometry only.
-        Select a candidate to inspect contacts, normals, gripper axes, the coarse finger boxes,
-        and the upstream Franka finger collision boxes overlaid from the hand description.
+        Select a candidate to inspect contacts, normals, gripper axes,
+        and the detailed Franka finger and hand collision geometry used by the filter.
       </p>
       <div class="controls">
         <button id="prevBtn" type="button">Prev</button>
@@ -1015,14 +1044,15 @@ def _html_document(payload: dict[str, object]) -> str:
             <span><i class="swatch" style="background: var(--accent)"></i>Grasp center</span>
             <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A / normal</span>
             <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B / normal</span>
-            <span><i class="swatch" style="background: var(--box)"></i>Current coarse boxes</span>
             <span><i class="swatch" style="background: var(--franka-box)"></i>Franka finger boxes</span>
             <span><i class="swatch" style="background: var(--hand)"></i>Franka hand mesh</span>
             <span><i class="swatch" style="background: var(--axis)"></i>Gripper frame axes</span>
+            <span><i class="swatch" style="background: #3b82f6"></i>Ground plane z=0</span>
           </div>
           <p class="caption">
-            Purple boxes are the current simplified collision model. Orange boxes come from
-            Franka's published finger collision primitives so you can compare the interpretations directly.
+            The orange finger boxes and brown hand mesh are the actual collision geometry used
+            by the runtime filter. A configurable closing-axis contact gap offsets the fingers slightly
+            away from the nominal contact points.
           </p>
         </section>
         <section class="card">
@@ -1073,12 +1103,11 @@ def _html_document(payload: dict[str, object]) -> str:
 
     const objectPoints = [
       ...data.vertices_obj,
+      ...(data.ground_plane_overlay ? data.ground_plane_overlay.corners_obj : []),
       ...data.candidates.flatMap((candidate) => [
         candidate.grasp_position_obj,
         candidate.contact_point_a_obj,
         candidate.contact_point_b_obj,
-        ...candidate.finger_box_a,
-        ...candidate.finger_box_b,
         candidate.franka_hand_origin_obj,
         candidate.franka_hand_reference_obj,
         ...candidate.franka_hand_vertices_obj,
@@ -1281,6 +1310,29 @@ def _html_document(payload: dict[str, object]) -> str:
       }});
     }}
 
+    function drawGroundPlane() {{
+      if (!data.ground_plane_overlay) {{
+        return;
+      }}
+      const corners = data.ground_plane_overlay.corners_obj;
+      drawPolygon(corners, {{
+        fill: "#3b82f6",
+        fillOpacity: 0.08,
+        stroke: "#3b82f6",
+        strokeWidth: 1.5,
+        strokeOpacity: 0.45,
+      }});
+      for (let i = 0; i < corners.length; i += 1) {{
+        drawLine(corners[i], corners[(i + 1) % corners.length], {{
+          stroke: "#3b82f6",
+          strokeWidth: 1.5,
+          opacity: 0.55,
+          dash: "7 5",
+        }});
+      }}
+      drawLabel(corners[0], "z=0 plane", "#3b82f6", 10, -8);
+    }}
+
     function drawMesh() {{
       if (state.meshRenderMode === "solid") {{
         const faces = data.faces.map((face) => {{
@@ -1370,9 +1422,13 @@ def _html_document(payload: dict[str, object]) -> str:
         `jaw_limits:      [${data.config.min_jaw_width.toFixed(4)}, ${data.config.max_jaw_width.toFixed(4)}]\\n` +
         `antipodal_cos:   ${data.config.antipodal_cosine_threshold.toFixed(4)}\\n` +
         `rolls:           ${data.config.roll_angles_rad.map((v) => Number(v).toFixed(3)).join(", ")}\\n` +
-        `finger_extents:  lateral_x=${data.config.finger_extent_lateral.toFixed(4)}, closing_y=${data.config.finger_extent_closing.toFixed(4)}, approach_z=${data.config.finger_extent_approach.toFixed(4)}\\n` +
-        `finger_clear:    ${data.config.finger_clearance.toFixed(4)}\\n` +
         `collision_backend: ${data.config.collision_backend}\\n` +
+        `collision_model: ${data.config.collision_model}\\n` +
+        `contact_gap_m:   ${data.config.detailed_finger_contact_gap_m.toFixed(4)}\\n` +
+        `ground_plane:    ${data.config.enforce_ground_plane ? "enabled" : "disabled"}\\n` +
+        `object_pos_w:    ${fmtVec(data.config.object_position_world)}\\n` +
+        `object_quat_w:   ${fmtVec(data.config.object_orientation_xyzw_world)}\\n` +
+        `pre_world_count: ${data.config.candidate_count_before_world_filter}\\n` +
         `franka_boxes:    left=${candidate.franka_left_boxes.length} right=${candidate.franka_right_boxes.length}\\n` +
         `anchor_error_m:  left=${candidate.franka_left_anchor_error_m.toFixed(6)} right=${candidate.franka_right_anchor_error_m.toFixed(6)}`;
     }}
@@ -1390,11 +1446,10 @@ def _html_document(payload: dict[str, object]) -> str:
       marker.innerHTML = '<path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path>';
       defs.appendChild(marker);
 
+      drawGroundPlane();
       drawMesh();
       drawHandMesh(candidate);
 
-      drawFingerBox(candidate.finger_box_a, "#6d3cc6");
-      drawFingerBox(candidate.finger_box_b, "#6d3cc6");
       drawNamedBoxes(candidate.franka_left_boxes, "#d97706");
       drawNamedBoxes(candidate.franka_right_boxes, "#d97706");
       drawLine(candidate.contact_point_a_obj, candidate.contact_point_b_obj, {{ stroke: "#b43f2c", strokeWidth: 3, opacity: 0.9 }});
@@ -1555,15 +1610,26 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
         antipodal_cosine_threshold=args.antipodal_cosine_threshold,
         roll_angles_rad=args.roll_angles_rad,
         max_pair_checks=args.max_pair_checks,
-        finger_extent_lateral=args.finger_extent_lateral,
-        finger_extent_closing=args.finger_extent_closing,
-        finger_extent_approach=args.finger_extent_approach,
-        finger_clearance=args.finger_clearance,
+        detailed_finger_contact_gap_m=args.detailed_finger_contact_gap_m,
         rng_seed=args.rng_seed,
     )
     mesh = _build_mesh(args)
     generator = AntipodalMeshGraspGenerator(config)
     candidates = generator.generate(mesh)
+    object_pose_world = ObjectWorldPose(
+        position_world=args.object_position_world,
+        orientation_xyzw_world=args.object_orientation_xyzw_world,
+    )
+    candidate_count_before_world_filter = len(candidates)
+    if args.enforce_ground_plane:
+        world_constraint_evaluator = WorldCollisionConstraintEvaluator(
+            FrankaHandFingerCollisionModel(contact_gap_m=config.detailed_finger_contact_gap_m)
+        )
+        candidates = world_constraint_evaluator.filter_grasps_above_plane(
+            candidates,
+            object_pose_world=object_pose_world,
+            plane_constraint=HalfSpaceWorldConstraint(),
+        )
     return _ViewerState(
         mesh=mesh,
         edges=_unique_edges(mesh.faces),
@@ -1571,6 +1637,9 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
         config=config,
         geometry_name=args.geometry,
         collision_backend=generator.collision_backend_name,
+        enforce_ground_plane=bool(args.enforce_ground_plane),
+        object_pose_world=object_pose_world,
+        candidate_count_before_world_filter=candidate_count_before_world_filter,
     )
 
 
@@ -1587,6 +1656,14 @@ def main() -> None:
         flush=True,
     )
     print(f"[INFO] Collision backend: {state.collision_backend}", flush=True)
+    if state.enforce_ground_plane:
+        print(
+            "[INFO] Ground-plane filter: "
+            f"kept {len(state.candidates)} / {state.candidate_count_before_world_filter} candidates "
+            f"for object pose position={state.object_pose_world.position_world} "
+            f"orientation_xyzw={state.object_pose_world.orientation_xyzw_world}",
+            flush=True,
+        )
     if np.max(np.abs(extents)) > 2.0:
         print(
             "[WARN] Mesh extents look very large for meter units. "

@@ -181,17 +181,11 @@ python scripts/debug_mesh_antipodal_grasps.py --geometry stl --stl-path my_part.
 
 CLI flags override the YAML values for that run only.
 
-Finger collision dimensions use semantic names:
-- `finger_extent_lateral`
-- `finger_extent_closing`
-- `finger_extent_approach`
+Detailed Franka finger collision now uses:
+- `detailed_finger_contact_gap_m`
 
-Matching CLI overrides are:
-- `--finger-extent-lateral`
-- `--finger-extent-closing`
-- `--finger-extent-approach`
-
-Legacy YAML keys `finger_depth`, `finger_length`, and `finger_thickness` still map to the new semantic fields when the new keys are absent. Legacy CLI flags with those names are also accepted as aliases for per-run overrides.
+Matching CLI override:
+- `--detailed-finger-contact-gap-m`
 
 The mesh antipodal debug path now requires `trimesh` with FCL support (`python-fcl`) for collision checking. In Docker this is provided by the repo `Dockerfile`; on a host install you need the native FCL libraries plus `trimesh` / `python-fcl`.
 

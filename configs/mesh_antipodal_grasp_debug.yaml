@@ -8,7 +8,7 @@ geometry:
   stl_scale: 1.0
 
 generator:
-  num_samples: 192
+  num_samples: 200
   min_jaw_width: 0.02
   max_jaw_width: 0.08
   antipodal_cosine_threshold: 0.94
@@ -16,10 +16,7 @@ generator:
   # 360 means "only 0 deg".
   roll_step_deg: 36
   max_pair_checks: 40960
-  finger_extent_lateral: 0.008
-  finger_extent_closing: 0.012
-  finger_extent_approach: 0.01
-  finger_clearance: 0.002
+  detailed_finger_contact_gap_m: 0.002
   rng_seed: 0
 
 output_html: artifacts/mesh_antipodal_grasp_debug.html
