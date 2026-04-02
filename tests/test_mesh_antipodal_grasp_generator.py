@@ -23,7 +23,7 @@ from grasp_planning.grasping import (
     filter_grasp_candidates_above_plane,
     finger_boxes_from_grasp,
 )
-from grasp_planning.grasping.collision import CollisionManager, trimesh
+from grasp_planning.grasping.collision import trimesh_fcl_backend_available
 
 
 def _make_cube_mesh(side_length: float) -> TriangleMesh:
@@ -91,7 +91,10 @@ def _make_cylinder_mesh(radius: float, height: float, radial_segments: int) -> T
     return TriangleMesh(vertices_obj=np.array(vertices, dtype=float), faces=np.array(faces, dtype=np.int64))
 
 
-@unittest.skipIf(trimesh is None or CollisionManager is None, "trimesh/FCL collision backend is required")
+@unittest.skipIf(
+    not trimesh_fcl_backend_available(),
+    "trimesh/FCL collision backend is required",
+)
 class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
     def test_collision_scene_is_prepared_once_per_mesh_generation(self) -> None:
         class _Scene:
