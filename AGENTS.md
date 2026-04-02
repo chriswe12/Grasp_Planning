@@ -41,9 +41,8 @@ Current scope:
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
 - For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
 - Mesh antipodal finger collision is evaluated per rolled grasp pose with an FCL-backed `trimesh` scene built once per `generate(mesh)` call.
-- The mesh antipodal runtime filter now uses coarse finger boxes plus a Franka hand mesh palm check; keep that hand-mesh dependency lazily loaded so generator construction and config/debug imports still work without assets or `trimesh`.
-- Mesh antipodal finger box / viewer convention is: local `x` lateral, local `y` closing, local `z` approach.
-- Mesh antipodal finger dimension config now uses semantic names: `finger_extent_lateral`, `finger_extent_closing`, `finger_extent_approach`; keep legacy YAML / CLI names only as compatibility aliases.
+- The mesh antipodal runtime filter now uses detailed Franka finger boxes plus a Franka hand mesh palm check, with a configurable `generator.detailed_finger_contact_gap_m`.
+- Keep the hand-mesh dependency lazily loaded so generator construction and config/debug imports still work without assets or `trimesh`.
 
 ## Docker Notes
 

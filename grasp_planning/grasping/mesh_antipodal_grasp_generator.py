@@ -11,8 +11,7 @@ from typing import Iterable
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .collision import FingerBoxWithHandMeshCollisionModel, GraspCollisionEvaluator
-from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
+from .collision import FrankaHandFingerCollisionModel, GraspCollisionEvaluator
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -140,10 +139,7 @@ class AntipodalGraspGeneratorConfig:
     antipodal_cosine_threshold: float = 0.94
     roll_angles_rad: tuple[float, ...] = (0.0,)
     max_pair_checks: int = 4096
-    finger_extent_lateral: float = 0.008
-    finger_extent_closing: float = 0.012
-    finger_extent_approach: float = 0.01
-    finger_clearance: float = 0.002
+    detailed_finger_contact_gap_m: float = 0.002
     rng_seed: int = 0
 
 
@@ -153,12 +149,7 @@ class AntipodalMeshGraspGenerator:
     def __init__(self, config: AntipodalGraspGeneratorConfig | None = None) -> None:
         self._config = config or AntipodalGraspGeneratorConfig()
         self._collision_evaluator = GraspCollisionEvaluator(
-            FingerBoxWithHandMeshCollisionModel(
-                finger_extent_lateral=self._config.finger_extent_lateral,
-                finger_extent_closing=self._config.finger_extent_closing,
-                finger_extent_approach=self._config.finger_extent_approach,
-                finger_clearance=self._config.finger_clearance,
-            )
+            FrankaHandFingerCollisionModel(contact_gap_m=self._config.detailed_finger_contact_gap_m)
         )
 
     @property

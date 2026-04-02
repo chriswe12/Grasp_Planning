@@ -255,11 +255,13 @@ class FrankaHandFingerCollisionModel:
 
     hand_vertices_local: np.ndarray | None = None
     hand_faces: np.ndarray | None = None
+    contact_gap_m: float = 0.002
 
     def __post_init__(self) -> None:
         if self.hand_vertices_local is not None and self.hand_faces is not None:
             object.__setattr__(self, "hand_vertices_local", np.asarray(self.hand_vertices_local, dtype=float))
             object.__setattr__(self, "hand_faces", np.asarray(self.hand_faces, dtype=np.int64))
+        object.__setattr__(self, "contact_gap_m", float(self.contact_gap_m))
 
     def primitives_for_grasp(
         self,
@@ -270,11 +272,12 @@ class FrankaHandFingerCollisionModel:
     ) -> tuple[CollisionPrimitive, ...]:
         left_rotmat = np.asarray(grasp_rotmat, dtype=float)
         right_rotmat = left_rotmat @ _rpy_to_rotmat(0.0, 0.0, np.pi)
+        closing_axis = left_rotmat[:, 1]
         fingertip_offset_left = left_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
         fingertip_offset_right = right_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
 
-        left_origin = np.asarray(contact_point_b, dtype=float) - fingertip_offset_left
-        right_origin = np.asarray(contact_point_a, dtype=float) - fingertip_offset_right
+        left_origin = np.asarray(contact_point_b, dtype=float) - fingertip_offset_left + closing_axis * self.contact_gap_m
+        right_origin = np.asarray(contact_point_a, dtype=float) - fingertip_offset_right - closing_axis * self.contact_gap_m
         hand_origin = 0.5 * (left_origin - left_rotmat[:, 2] * 58.4e-3 + right_origin - right_rotmat[:, 2] * 58.4e-3)
         hand_vertices_local = self.hand_vertices_local
         hand_faces = self.hand_faces
@@ -370,7 +373,9 @@ class GraspCollisionEvaluator:
 
     def __init__(
         self,
-        collision_model: FingerBoxGripperCollisionModel | FrankaHandFingerCollisionModel,
+        collision_model: FingerBoxGripperCollisionModel
+        | FingerBoxWithHandMeshCollisionModel
+        | FrankaHandFingerCollisionModel,
         backend: MeshCollisionBackend | None = None,
     ) -> None:
         self._collision_model = collision_model
