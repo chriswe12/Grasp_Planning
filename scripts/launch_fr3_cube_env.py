@@ -7,7 +7,6 @@ import traceback
 
 from isaaclab.app import AppLauncher
 
-
 parser = argparse.ArgumentParser(description="Launch an FR3 + cube motion-planning environment in Isaac Lab.")
 parser.add_argument(
     "--fr3-usd",
@@ -89,16 +88,25 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
-from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
+from isaaclab.scene import InteractiveScene  # noqa: E402
+from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
-from grasp_planning import CubeFaceGraspGenerator, FR3AdmittanceController, FR3MoveToPoseController, FR3PickController  # noqa: E402
+from grasp_planning import (  # noqa: E402
+    CubeFaceGraspGenerator,
+    FR3AdmittanceController,
+    FR3MoveToPoseController,
+    FR3PickController,
+)
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
-from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_CUBE_CFG, DEFAULT_HAND_START_JOINT_POS  # noqa: E402
-from grasp_planning.planning.goal_ik import GoalIKSolver  # noqa: E402
+from grasp_planning.envs.fr3_cube_env import (  # noqa: E402
+    DEFAULT_ARM_START_JOINT_POS,
+    DEFAULT_CUBE_CFG,
+    DEFAULT_HAND_START_JOINT_POS,
+)
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
+from grasp_planning.planning.goal_ik import GoalIKSolver  # noqa: E402
 from grasp_planning.planning.types import PoseCommand  # noqa: E402
 from grasp_planning.scene_defaults import (  # noqa: E402
     CUBE_ORIENTATION_XYZW,
@@ -107,11 +115,6 @@ from grasp_planning.scene_defaults import (  # noqa: E402
     ROBOT_BASE_POSITION,
 )
 
-
-ROBOT_BASE_POSITION = (0.0, 0.0, 0.0)
-ROBOT_BASE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
-CUBE_POSITION = (-0.45, 0.0, 0.025)
-CUBE_ORIENTATION_XYZW = (0.0, 0.0, 0.0, 1.0)
 SMOKE_TEST_TCP_TARGETS = (
     (-0.30, 0.00, 0.60),
     (-0.18, 0.14, 0.60),
@@ -172,8 +175,7 @@ def configure_grasp_tcp_calibration() -> None:
     FR3MotionContext._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
     FR3PickController._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
     print(
-        "[INFO]: Using TCP-to-grasp-center offset "
-        f"{tcp_to_grasp_offset}",
+        f"[INFO]: Using TCP-to-grasp-center offset {tcp_to_grasp_offset}",
         flush=True,
     )
 
@@ -285,8 +287,7 @@ def run_pick_sequence(sim, scene, robot, cube) -> None:
             restore_start_state=False,
         )
         print(
-            "[INFO]: Pregrasp IK finished. "
-            f"success={goal_q is not None}",
+            f"[INFO]: Pregrasp IK finished. success={goal_q is not None}",
             flush=True,
         )
         if goal_q is None:
@@ -475,10 +476,9 @@ def drive_robot_to_start_pose(sim, scene) -> None:
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
     arm_joint_names = tuple(DEFAULT_ARM_START_JOINT_POS.keys())
     arm_joint_ids = [joint_name_to_idx[name] for name in arm_joint_names]
-    arm_targets = torch.tensor([[
-        DEFAULT_ARM_START_JOINT_POS[name]
-        for name in arm_joint_names
-    ]], dtype=torch.float32, device=robot.device)
+    arm_targets = torch.tensor(
+        [[DEFAULT_ARM_START_JOINT_POS[name] for name in arm_joint_names]], dtype=torch.float32, device=robot.device
+    )
     hand_joint_names = tuple(name for name in robot.joint_names if name.startswith("fr3_finger_joint"))
     hand_target = float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"])
     physics_dt = sim.get_physics_dt()
@@ -499,8 +499,7 @@ def drive_robot_to_start_pose(sim, scene) -> None:
         scene.update(physics_dt)
 
     settled_joint_pos = {
-        name: float(robot.data.joint_pos[0, joint_name_to_idx[name]].item())
-        for name in arm_joint_names
+        name: float(robot.data.joint_pos[0, joint_name_to_idx[name]].item()) for name in arm_joint_names
     }
     print(f"[INFO]: Settled FR3 start joints: {settled_joint_pos}", flush=True)
 
@@ -523,8 +522,7 @@ def run() -> None:
     default_target_pos = (0.45, 0.0, 0.35)
     default_target_quat = (0.0, 1.0, 0.0, 0.0)
     using_default_target = (
-        tuple(args_cli.target_pos) == default_target_pos
-        and tuple(args_cli.target_quat) == default_target_quat
+        tuple(args_cli.target_pos) == default_target_pos and tuple(args_cli.target_quat) == default_target_quat
     )
     if not args_cli.test_multi_targets and using_default_target:
         run_pick_sequence(sim, scene, robot, cube)
@@ -557,8 +555,7 @@ def run() -> None:
 
     current_tcp_position_w, current_orientation_xyzw = controller.get_current_tcp_pose()
     print(
-        "[INFO]: Current TCP pose "
-        f"position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
+        f"[INFO]: Current TCP pose position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
         flush=True,
     )
     targets = build_target_sequence(current_orientation_xyzw)
@@ -586,8 +583,7 @@ def run() -> None:
 
         current_tcp_position_w, current_orientation_xyzw = controller.get_current_tcp_pose()
         print(
-            "[INFO]: Current TCP pose "
-            f"position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
+            f"[INFO]: Current TCP pose position={current_tcp_position_w} orientation_xyzw={current_orientation_xyzw}",
             flush=True,
         )
         print(

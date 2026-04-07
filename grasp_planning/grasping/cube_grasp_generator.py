@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable
 
-import math
 import numpy as np
 
 
@@ -40,7 +40,9 @@ class GraspCandidate:
         rotmat = _quat_to_rotmat_xyzw(self.orientation_xyzw)
         return rotmat[:, 0].copy(), rotmat[:, 1].copy(), rotmat[:, 2].copy()
 
-    def finger_positions_w(self, *, finger_span: float | None = None) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    def finger_positions_w(
+        self, *, finger_span: float | None = None
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
         """Return derived left/right finger locations for visualization."""
 
         _, closing_axis, _ = self.gripper_axes_w()

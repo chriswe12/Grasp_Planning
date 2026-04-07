@@ -7,7 +7,6 @@ import traceback
 
 from isaaclab.app import AppLauncher
 
-
 parser = argparse.ArgumentParser(description="Inspect FR3 TCP geometry from the Isaac asset.")
 parser.add_argument(
     "--fr3-usd",
@@ -22,10 +21,10 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab.scene import InteractiveScene  # noqa: E402
 import omni.usd  # noqa: E402
-from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 import torch  # noqa: E402
+from isaaclab.scene import InteractiveScene  # noqa: E402
+from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 from grasp_planning.scene_defaults import (  # noqa: E402

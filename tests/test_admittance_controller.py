@@ -5,8 +5,8 @@ import unittest
 import torch
 
 from grasp_planning.planning.admittance_controller import (
-    AdmittanceStepState,
     AdmittanceControllerCfg,
+    AdmittanceStepState,
     FR3AdmittanceController,
     integrate_admittance_step,
 )
@@ -123,8 +123,10 @@ class AdmittanceControllerMathTests(unittest.TestCase):
 
         torch.testing.assert_close(controller._filtered_wrench, torch.zeros((1, 6), dtype=torch.float32))
         controller._context.hold_position.assert_called_once()
-        _q_des, = controller._context.hold_position.call_args.args
-        self.assertEqual(controller._context.hold_position.call_args.kwargs["steps"], controller._cfg.inner_settle_steps)
+        (_q_des,) = controller._context.hold_position.call_args.args
+        self.assertEqual(
+            controller._context.hold_position.call_args.kwargs["steps"], controller._cfg.inner_settle_steps
+        )
 
 
 if __name__ == "__main__":

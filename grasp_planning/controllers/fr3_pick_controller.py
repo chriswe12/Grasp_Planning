@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 import torch
 
@@ -212,16 +212,13 @@ class FR3PickController:
         position_w: tuple[float, float, float],
         orientation_xyzw: tuple[float, float, float, float],
     ) -> None:
-        from isaaclab.utils.math import matrix_from_quat, quat_inv, subtract_frame_transforms
-        from isaaclab.utils.math import quat_apply, quat_mul
+        from isaaclab.utils.math import matrix_from_quat, quat_apply, quat_inv, quat_mul, subtract_frame_transforms
 
         desired_grasp_position_w = torch.tensor([position_w], dtype=torch.float32, device=self._device)
         desired_grasp_quat_w = quat_xyzw_to_wxyz(
             torch.tensor([orientation_xyzw], dtype=torch.float32, device=self._device)
         )
-        grasp_to_tcp_quat_w = torch.tensor(
-            [self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self._device
-        )
+        grasp_to_tcp_quat_w = torch.tensor([self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self._device)
         tcp_to_grasp_center_b = torch.tensor(
             [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self._device
         )
@@ -434,15 +431,20 @@ class FR3PickController:
         position_w: tuple[float, float, float],
         orientation_xyzw: tuple[float, float, float, float],
     ) -> None:
-        from isaaclab.utils.math import matrix_from_quat, quat_apply, quat_conjugate, quat_inv, quat_mul, subtract_frame_transforms
+        from isaaclab.utils.math import (
+            matrix_from_quat,
+            quat_apply,
+            quat_conjugate,
+            quat_inv,
+            quat_mul,
+            subtract_frame_transforms,
+        )
 
         desired_grasp_position_w = torch.tensor([position_w], dtype=torch.float32, device=self._device)
         desired_grasp_quat_w = quat_xyzw_to_wxyz(
             torch.tensor([orientation_xyzw], dtype=torch.float32, device=self._device)
         )
-        grasp_to_tcp_quat_w = torch.tensor(
-            [self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self._device
-        )
+        grasp_to_tcp_quat_w = torch.tensor([self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self._device)
         tcp_to_grasp_center_b = torch.tensor(
             [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self._device
         )
@@ -482,7 +484,7 @@ class FR3PickController:
 
         identity = torch.eye(6, dtype=torch.float32, device=self._device).unsqueeze(0)
         jj_t = torch.bmm(jacobian, jacobian.transpose(1, 2))
-        damped = jj_t + (self._DLS_LAMBDA ** 2) * identity
+        damped = jj_t + (self._DLS_LAMBDA**2) * identity
         q_dot = torch.bmm(
             jacobian.transpose(1, 2),
             torch.linalg.solve(damped, desired_twist_b.unsqueeze(-1)),
@@ -549,9 +551,7 @@ class FR3PickController:
                 if compiled.fullmatch(name):
                     return name, idx
 
-        raise RuntimeError(
-            "Could not find an end-effector body. Available bodies: " + ", ".join(body_names)
-        )
+        raise RuntimeError("Could not find an end-effector body. Available bodies: " + ", ".join(body_names))
 
     def _resolve_jacobi_body_idx(self, body_idx: int) -> int:
         if getattr(self._robot, "is_fixed_base", False):

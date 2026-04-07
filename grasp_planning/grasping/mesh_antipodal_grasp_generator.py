@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -292,11 +292,7 @@ class AntipodalMeshGraspGenerator:
         inward_alignment_a = float(np.dot(-normal_a, closing_axis))
         inward_alignment_b = float(np.dot(normal_b, closing_axis))
         normal_opposition = float(np.dot(normal_a, normal_b))
-        return (
-            inward_alignment_a >= threshold
-            and inward_alignment_b >= threshold
-            and normal_opposition <= -threshold
-        )
+        return inward_alignment_a >= threshold and inward_alignment_b >= threshold and normal_opposition <= -threshold
 
     def _base_grasp_rotmat(self, closing_axis: np.ndarray) -> np.ndarray:
         """Build the grasp frame for the mesh antipodal path.

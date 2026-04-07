@@ -21,7 +21,9 @@ def quat_wxyz_to_xyzw(quat_wxyz: torch.Tensor) -> torch.Tensor:
     return torch.cat((quat_wxyz[..., 1:4], quat_wxyz[..., 0:1]), dim=-1)
 
 
-def _quat_mul_wxyz(q1: tuple[float, float, float, float], q2: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+def _quat_mul_wxyz(
+    q1: tuple[float, float, float, float], q2: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
     """Multiply two quaternions stored in wxyz order."""
 
     w1, x1, y1, z1 = q1
@@ -281,14 +283,13 @@ class FR3MotionContext:
 
         current_pos_w, current_quat_w = self.get_tcp_pose_w()
         desired_grasp_quat_w = quat_xyzw_to_wxyz(target_orientation_xyzw)
-        grasp_to_tcp_quat_w = torch.tensor(
-            [self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self.device
-        )
+        grasp_to_tcp_quat_w = torch.tensor([self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self.device)
         tcp_to_grasp_center_b = torch.tensor(
             [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self.device
         )
         target_quat_w = quat_mul(desired_grasp_quat_w, grasp_to_tcp_quat_w)
         from isaaclab.utils.math import quat_apply
+
         target_tcp_position_w = target_position_w - quat_apply(target_quat_w, tcp_to_grasp_center_b)
         position_error = target_tcp_position_w - current_pos_w
         quat_error = quat_mul(target_quat_w, quat_conjugate(current_quat_w))
@@ -302,9 +303,7 @@ class FR3MotionContext:
         desired_grasp_quat_w = quat_xyzw_to_wxyz(
             torch.tensor([cmd.orientation_xyzw], dtype=torch.float32, device=self.device)
         )
-        grasp_to_tcp_quat_w = torch.tensor(
-            [self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self.device
-        )
+        grasp_to_tcp_quat_w = torch.tensor([self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self.device)
         tcp_to_grasp_center_b = torch.tensor(
             [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self.device
         )

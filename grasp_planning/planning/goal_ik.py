@@ -39,9 +39,7 @@ class GoalIKSolver:
         best_position_error = float("inf")
         best_orientation_error = float("inf")
         target_position_w = torch.tensor([cmd.position_w], dtype=torch.float32, device=self._context.device)
-        target_orientation_xyzw = torch.tensor(
-            [cmd.orientation_xyzw], dtype=torch.float32, device=self._context.device
-        )
+        target_orientation_xyzw = torch.tensor([cmd.orientation_xyzw], dtype=torch.float32, device=self._context.device)
 
         for _ in range(max_iters):
             q_des = self._context.command_pose_via_differential_ik(ik_controller, cmd)

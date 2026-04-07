@@ -61,7 +61,9 @@ class ObjectWorldPose:
         if float(np.linalg.norm(orientation)) < 1.0e-8:
             raise ValueError("orientation_xyzw_world must be non-zero.")
         object.__setattr__(self, "position_world", tuple(float(v) for v in position))
-        object.__setattr__(self, "orientation_xyzw_world", tuple(float(v) for v in orientation / np.linalg.norm(orientation)))
+        object.__setattr__(
+            self, "orientation_xyzw_world", tuple(float(v) for v in orientation / np.linalg.norm(orientation))
+        )
 
     @property
     def rotation_world_from_object(self) -> np.ndarray:

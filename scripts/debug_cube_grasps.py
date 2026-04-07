@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -17,7 +17,6 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping import CubeFaceGraspGenerator, GraspCandidate
 from grasp_planning.grasping.cube_grasp_generator import _quat_to_rotmat_xyzw
 from grasp_planning.scene_defaults import CUBE_ORIENTATION_XYZW, CUBE_POSITION, ROBOT_BASE_POSITION
-
 
 DEFAULT_CUBE_SIZE = (0.05, 0.05, 0.05)
 DEFAULT_CUBE_POSITION = CUBE_POSITION
@@ -135,11 +134,16 @@ def _score_parts(state: _ViewerState, grasp: GraspCandidate) -> dict[str, float]
 
 def _build_payload(state: _ViewerState) -> dict[str, object]:
     edge_ids = [
-        [0, 1], [0, 2], [0, 4],
-        [1, 3], [1, 5],
-        [2, 3], [2, 6],
+        [0, 1],
+        [0, 2],
+        [0, 4],
+        [1, 3],
+        [1, 5],
+        [2, 3],
+        [2, 6],
         [3, 7],
-        [4, 5], [4, 6],
+        [4, 5],
+        [4, 6],
         [5, 7],
         [6, 7],
     ]

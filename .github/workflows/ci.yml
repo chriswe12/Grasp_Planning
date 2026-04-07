@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install lint tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run tests
+        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+
+  tests-fcl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install native FCL dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libccd-dev libfcl-dev pkg-config
+
+      - name: Install test dependencies with python-fcl
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+          python -m pip install python-fcl
+
+      - name: Run FCL-backed grasp collision tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+          python -m pytest -q tests/test_mesh_antipodal_grasp_generator.py
