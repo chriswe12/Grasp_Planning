@@ -102,13 +102,17 @@ class _CollisionBoxSpec:
 _FRANKA_LEFT_FINGER_BOX_SPECS = (
     _CollisionBoxSpec("screw_mount", (0.0, 18.5e-3, 11.0e-3), (22.0e-3, 15.0e-3, 20.0e-3)),
     _CollisionBoxSpec("carriage_sledge", (0.0, 6.8e-3, 2.2e-3), (22.0e-3, 8.8e-3, 3.8e-3)),
-    _CollisionBoxSpec("diagonal_finger", (0.0, 15.9e-3, 28.35e-3), (17.5e-3, 7.0e-3, 23.5e-3), (math.pi / 6.0, 0.0, 0.0)),
+    _CollisionBoxSpec(
+        "diagonal_finger", (0.0, 15.9e-3, 28.35e-3), (17.5e-3, 7.0e-3, 23.5e-3), (math.pi / 6.0, 0.0, 0.0)
+    ),
     _CollisionBoxSpec("rubber_tip", (0.0, 7.58e-3, 45.25e-3), (17.5e-3, 15.2e-3, 18.5e-3)),
 )
 _FRANKA_RIGHT_FINGER_BOX_SPECS = (
     _CollisionBoxSpec("screw_mount", (0.0, 18.5e-3, 11.0e-3), (22.0e-3, 15.0e-3, 20.0e-3)),
     _CollisionBoxSpec("carriage_sledge", (0.0, 6.8e-3, 2.2e-3), (22.0e-3, 8.8e-3, 3.8e-3)),
-    _CollisionBoxSpec("diagonal_finger", (0.0, 15.9e-3, 28.35e-3), (17.5e-3, 7.0e-3, 23.5e-3), (-math.pi / 6.0, 0.0, math.pi)),
+    _CollisionBoxSpec(
+        "diagonal_finger", (0.0, 15.9e-3, 28.35e-3), (17.5e-3, 7.0e-3, 23.5e-3), (-math.pi / 6.0, 0.0, math.pi)
+    ),
     _CollisionBoxSpec("rubber_tip", (0.0, 7.58e-3, 45.25e-3), (17.5e-3, 15.2e-3, 18.5e-3)),
 )
 _FRANKA_FINGER_JOINT_Z_M = 58.4e-3
@@ -297,11 +301,16 @@ def unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
 
 
 def mesh_aabb_center(mesh: TriangleMesh) -> np.ndarray:
-    return 0.5 * (np.asarray(mesh.vertices_obj, dtype=float).min(axis=0) + np.asarray(mesh.vertices_obj, dtype=float).max(axis=0))
+    return 0.5 * (
+        np.asarray(mesh.vertices_obj, dtype=float).min(axis=0) + np.asarray(mesh.vertices_obj, dtype=float).max(axis=0)
+    )
 
 
 def shifted_mesh(mesh: TriangleMesh, offset: np.ndarray) -> TriangleMesh:
-    return TriangleMesh(vertices_obj=np.asarray(mesh.vertices_obj, dtype=float) + np.asarray(offset, dtype=float), faces=np.asarray(mesh.faces, dtype=np.int64))
+    return TriangleMesh(
+        vertices_obj=np.asarray(mesh.vertices_obj, dtype=float) + np.asarray(offset, dtype=float),
+        faces=np.asarray(mesh.faces, dtype=np.int64),
+    )
 
 
 def combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh | None:
@@ -356,7 +365,9 @@ def load_assembly_obstacle_mesh(
     return combine_triangle_meshes(meshes), tuple(str(path.relative_to(DEFAULT_STL_DIR)) for path in resolved_paths)
 
 
-def _box_corners_from_pose(center_obj: np.ndarray, rotation_obj: np.ndarray, size_xyz: tuple[float, float, float]) -> np.ndarray:
+def _box_corners_from_pose(
+    center_obj: np.ndarray, rotation_obj: np.ndarray, size_xyz: tuple[float, float, float]
+) -> np.ndarray:
     half_extents = 0.5 * np.asarray(size_xyz, dtype=float)
     return finger_box_corners(center_obj, rotation_obj, half_extents)
 
@@ -392,12 +403,24 @@ def franka_collision_geometry(
     )
     closing_axis = np.asarray(grasp_rotmat, dtype=float)[:, 1]
     right_finger_rotmat = grasp_rotmat @ rpy_to_rotmat(0.0, 0.0, math.pi)
-    left_finger_origin = np.asarray(contact_point_b, dtype=float) - grasp_rotmat @ fingertip_contact_offset_left + closing_axis * float(contact_gap_m)
-    right_finger_origin = np.asarray(contact_point_a, dtype=float) - right_finger_rotmat @ fingertip_contact_offset_right - closing_axis * float(contact_gap_m)
+    left_finger_origin = (
+        np.asarray(contact_point_b, dtype=float)
+        - grasp_rotmat @ fingertip_contact_offset_left
+        + closing_axis * float(contact_gap_m)
+    )
+    right_finger_origin = (
+        np.asarray(contact_point_a, dtype=float)
+        - right_finger_rotmat @ fingertip_contact_offset_right
+        - closing_axis * float(contact_gap_m)
+    )
     hand_origin_left = left_finger_origin - grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
-    hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float)
+    hand_origin_right = right_finger_origin - right_finger_rotmat @ np.array(
+        [0.0, 0.0, _FRANKA_FINGER_JOINT_Z_M], dtype=float
+    )
 
-    def _boxes_for_finger(prefix: str, contact_origin_obj: np.ndarray, base_rotmat: np.ndarray, specs: tuple[_CollisionBoxSpec, ...]) -> list[dict[str, object]]:
+    def _boxes_for_finger(
+        prefix: str, contact_origin_obj: np.ndarray, base_rotmat: np.ndarray, specs: tuple[_CollisionBoxSpec, ...]
+    ) -> list[dict[str, object]]:
         boxes: list[dict[str, object]] = []
         for spec in specs:
             local_rotmat = rpy_to_rotmat(*spec.rpy_local)
@@ -406,12 +429,17 @@ def franka_collision_geometry(
             boxes.append(
                 {
                     "name": f"{prefix}_{spec.name}",
-                    "corners": [fmt_vec(corner.tolist()) for corner in _box_corners_from_pose(center_obj, world_rotmat, spec.size_local)],
+                    "corners": [
+                        fmt_vec(corner.tolist())
+                        for corner in _box_corners_from_pose(center_obj, world_rotmat, spec.size_local)
+                    ],
                 }
             )
         return boxes
 
-    def _contact_grid_points(contact_origin_obj: np.ndarray, base_rotmat: np.ndarray, lateral_sign: float) -> list[list[float]]:
+    def _contact_grid_points(
+        contact_origin_obj: np.ndarray, base_rotmat: np.ndarray, lateral_sign: float
+    ) -> list[list[float]]:
         points: list[list[float]] = []
         for lateral_offset_m in DEFAULT_CONTACT_LATERAL_OFFSETS_M:
             for approach_offset_m in DEFAULT_CONTACT_APPROACH_OFFSETS_M:
@@ -424,13 +452,17 @@ def franka_collision_geometry(
         return points
 
     left_tip_anchor = left_finger_origin + grasp_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
-    right_tip_anchor = right_finger_origin + right_finger_rotmat @ np.array([0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float)
+    right_tip_anchor = right_finger_origin + right_finger_rotmat @ np.array(
+        [0.0, 0.0, _FRANKA_TIP_CONTACT_Z_M], dtype=float
+    )
     hand_origin = 0.5 * (hand_origin_left + hand_origin_right)
     hand_vertices_local, hand_faces = _load_franka_hand_mesh()
     hand_vertices_obj = hand_origin[None, :] + hand_vertices_local @ grasp_rotmat.T
     return {
         "franka_left_boxes": _boxes_for_finger("left", left_finger_origin, grasp_rotmat, _FRANKA_LEFT_FINGER_BOX_SPECS),
-        "franka_right_boxes": _boxes_for_finger("right", right_finger_origin, right_finger_rotmat, _FRANKA_RIGHT_FINGER_BOX_SPECS),
+        "franka_right_boxes": _boxes_for_finger(
+            "right", right_finger_origin, right_finger_rotmat, _FRANKA_RIGHT_FINGER_BOX_SPECS
+        ),
         "franka_hand_origin_obj": fmt_vec(hand_origin.tolist()),
         "franka_hand_reference_obj": fmt_vec(np.asarray(grasp_center, dtype=float).tolist()),
         "franka_hand_vertices_obj": [fmt_vec(vertex.tolist()) for vertex in hand_vertices_obj],
@@ -439,8 +471,12 @@ def franka_collision_geometry(
         "franka_right_tip_anchor_obj": fmt_vec(right_tip_anchor.tolist()),
         "franka_left_contact_grid_obj": _contact_grid_points(left_finger_origin, grasp_rotmat, 1.0),
         "franka_right_contact_grid_obj": _contact_grid_points(right_finger_origin, right_finger_rotmat, -1.0),
-        "franka_left_anchor_error_m": round(float(np.linalg.norm(left_tip_anchor - np.asarray(contact_point_b, dtype=float))), 8),
-        "franka_right_anchor_error_m": round(float(np.linalg.norm(right_tip_anchor - np.asarray(contact_point_a, dtype=float))), 8),
+        "franka_left_anchor_error_m": round(
+            float(np.linalg.norm(left_tip_anchor - np.asarray(contact_point_b, dtype=float))), 8
+        ),
+        "franka_right_anchor_error_m": round(
+            float(np.linalg.norm(right_tip_anchor - np.asarray(contact_point_a, dtype=float))), 8
+        ),
         "contact_patch_lateral_offset_m": round(float(contact_patch_lateral_offset_m), 6),
         "contact_patch_approach_offset_m": round(float(contact_patch_approach_offset_m), 6),
     }
@@ -530,7 +566,10 @@ def load_grasp_bundle(path: str | Path) -> SavedGraspBundle:
 
 
 def object_point_to_world(point_obj: np.ndarray, object_pose_world: ObjectWorldPose) -> np.ndarray:
-    return object_pose_world.rotation_world_from_object @ np.asarray(point_obj, dtype=float) + object_pose_world.translation_world
+    return (
+        object_pose_world.rotation_world_from_object @ np.asarray(point_obj, dtype=float)
+        + object_pose_world.translation_world
+    )
 
 
 def world_point_to_object(point_world: np.ndarray, object_pose_world: ObjectWorldPose) -> np.ndarray:
@@ -577,7 +616,9 @@ def _candidate_with_contact_offset(
         [float(lateral_offset_m), 0.0, float(approach_offset_m)],
         dtype=float,
     )
-    grasp_position_obj = np.asarray(candidate.grasp_position_obj, dtype=float) + previous_offset_obj - updated_offset_obj
+    grasp_position_obj = (
+        np.asarray(candidate.grasp_position_obj, dtype=float) + previous_offset_obj - updated_offset_obj
+    )
     return SavedGraspCandidate(
         grasp_id=candidate.grasp_id,
         grasp_position_obj=tuple(float(v) for v in grasp_position_obj),
@@ -606,9 +647,7 @@ def _ordered_contact_offset_pairs(
 
     ordered_laterals = sorted((float(v) for v in contact_lateral_offsets_m), key=_lateral_sort_key)
 
-    ordered = [
-        (float(candidate.contact_patch_lateral_offset_m), float(candidate.contact_patch_approach_offset_m))
-    ]
+    ordered = [(float(candidate.contact_patch_lateral_offset_m), float(candidate.contact_patch_approach_offset_m))]
     for lateral in ordered_laterals:
         for approach in contact_approach_offsets_m:
             pair = (float(lateral), float(approach))
@@ -784,7 +823,14 @@ def pickup_pose_for_support_face(
     )
 
 
-def ground_plane_overlay_obj(state_mesh: TriangleMesh, *, object_pose_world: ObjectWorldPose, enabled: bool, padding_scale: float = 6.0, min_radius_m: float = 0.2) -> dict[str, object] | None:
+def ground_plane_overlay_obj(
+    state_mesh: TriangleMesh,
+    *,
+    object_pose_world: ObjectWorldPose,
+    enabled: bool,
+    padding_scale: float = 6.0,
+    min_radius_m: float = 0.2,
+) -> dict[str, object] | None:
     if not enabled:
         return None
     mins = np.asarray(state_mesh.vertices_obj, dtype=float).min(axis=0)
@@ -795,7 +841,9 @@ def ground_plane_overlay_obj(state_mesh: TriangleMesh, *, object_pose_world: Obj
         [[-radius, -radius, 0.0], [radius, -radius, 0.0], [radius, radius, 0.0], [-radius, radius, 0.0]],
         dtype=float,
     )
-    plane_points_obj = np.array([world_point_to_object(point_world, object_pose_world) for point_world in plane_points_world], dtype=float)
+    plane_points_obj = np.array(
+        [world_point_to_object(point_world, object_pose_world) for point_world in plane_points_world], dtype=float
+    )
     return {"corners_obj": [fmt_vec(point.tolist()) for point in plane_points_obj]}
 
 
@@ -865,7 +913,9 @@ def write_debug_html(
         "vertices_obj": [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()],
         "edges": unique_edges(mesh_local.faces),
         "faces": [[int(v) for v in face] for face in mesh_local.faces.tolist()],
-        "obstacle_vertices_obj": [] if obstacle_mesh_local is None else [fmt_vec(vertex) for vertex in obstacle_mesh_local.vertices_obj.tolist()],
+        "obstacle_vertices_obj": []
+        if obstacle_mesh_local is None
+        else [fmt_vec(vertex) for vertex in obstacle_mesh_local.vertices_obj.tolist()],
         "obstacle_edges": [] if obstacle_mesh_local is None else unique_edges(obstacle_mesh_local.faces),
         "ground_plane_overlay": ground_plane,
         "metadata_lines": metadata_lines or [],

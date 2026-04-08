@@ -12,9 +12,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
-    CandidateStatus,
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    CandidateStatus,
     SavedGraspBundle,
     canonicalize_target_mesh,
     filter_grasps_against_assembly,
@@ -44,16 +44,27 @@ def _parse_offsets(raw: str) -> tuple[float, ...]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate assembly-feasible Fabrica grasps and save them to JSON.")
-    parser.add_argument("--stl-path", type=Path, required=True, help="Target STL path, relative to assets/stl or absolute.")
+    parser.add_argument(
+        "--stl-path", type=Path, required=True, help="Target STL path, relative to assets/stl or absolute."
+    )
     parser.add_argument("--assembly-glob", type=str, required=True, help="Sibling assembly glob under assets/stl.")
     parser.add_argument("--stl-scale", type=float, default=0.001, help="Uniform STL scale.")
     parser.add_argument("--num-samples", type=int, default=1024, help="Number of surface samples.")
     parser.add_argument("--min-jaw-width", type=float, default=0.002, help="Minimum jaw width in meters.")
     parser.add_argument("--max-jaw-width", type=float, default=0.09, help="Maximum jaw width in meters.")
-    parser.add_argument("--antipodal-cosine-threshold", type=float, default=0.984807753012208, help="Minimum antipodal cosine alignment.")
-    parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians.")
+    parser.add_argument(
+        "--antipodal-cosine-threshold",
+        type=float,
+        default=0.984807753012208,
+        help="Minimum antipodal cosine alignment.",
+    )
+    parser.add_argument(
+        "--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians."
+    )
     parser.add_argument("--max-pair-checks", type=int, default=40960, help="Maximum nearby sample pairs to evaluate.")
-    parser.add_argument("--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap.")
+    parser.add_argument(
+        "--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap."
+    )
     parser.add_argument(
         "--contact-lateral-offsets-m",
         type=_parse_offsets,
@@ -88,7 +99,9 @@ def main() -> None:
     target_mesh_local, target_pose_world = canonicalize_target_mesh(target_mesh_global)
     generator = AntipodalMeshGraspGenerator(config)
     raw_candidates = generator.generate(target_mesh_local)
-    serialized_raw = [serialize_saved_candidate(f"g{index:04d}", candidate) for index, candidate in enumerate(raw_candidates, start=1)]
+    serialized_raw = [
+        serialize_saved_candidate(f"g{index:04d}", candidate) for index, candidate in enumerate(raw_candidates, start=1)
+    ]
 
     obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
         assembly_glob=args.assembly_glob,
@@ -130,7 +143,10 @@ def main() -> None:
         title="Fabrica Assembly-Feasible Grasps",
         subtitle="Offline assembly collision screening. Candidates are stored and visualized in the target part-local frame.",
         mesh_local=target_mesh_local,
-        candidate_statuses=[CandidateStatus(grasp=candidate, status="accepted", reason="assembly_clear") for candidate in kept_candidates],
+        candidate_statuses=[
+            CandidateStatus(grasp=candidate, status="accepted", reason="assembly_clear")
+            for candidate in kept_candidates
+        ],
         output_html=args.output_html,
         contact_gap_m=args.detailed_finger_contact_gap_m,
         obstacle_mesh_local=obstacle_mesh_local,

@@ -29,7 +29,6 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     write_debug_html,
 )
 
-
 HARDCODED_PICKUP_SPECS: dict[str, dict[str, object]] = {
     "Fabrica/printing/beam/0.stl": {"support_face": "neg_x", "yaw_deg": 0.0, "xy_world": (0.0, 0.0)},
     "Fabrica/printing/beam/1.stl": {"support_face": "pos_y", "yaw_deg": 90.0, "xy_world": (0.0, 0.0)},
@@ -41,11 +40,19 @@ HARDCODED_PICKUP_SPECS: dict[str, dict[str, object]] = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Recheck saved Fabrica grasps against a pickup-ground constraint.")
-    parser.add_argument("--input-json", type=Path, required=True, help="Input grasp JSON from generate_fabrica_assembly_grasps.py")
+    parser.add_argument(
+        "--input-json", type=Path, required=True, help="Input grasp JSON from generate_fabrica_assembly_grasps.py"
+    )
     parser.add_argument("--output-json", type=Path, required=True, help="Output JSON for ground-feasible grasps")
-    parser.add_argument("--output-html", type=Path, required=True, help="Output HTML showing accepted and rejected grasps")
-    parser.add_argument("--stl-scale", type=float, default=None, help="Optional STL scale override; defaults to the bundle value")
-    parser.add_argument("--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap")
+    parser.add_argument(
+        "--output-html", type=Path, required=True, help="Output HTML showing accepted and rejected grasps"
+    )
+    parser.add_argument(
+        "--stl-scale", type=float, default=None, help="Optional STL scale override; defaults to the bundle value"
+    )
+    parser.add_argument(
+        "--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap"
+    )
     parser.add_argument(
         "--contact-lateral-offsets-m",
         type=lambda raw: tuple(float(part.strip()) for part in raw.split(",") if part.strip()),
@@ -76,7 +83,9 @@ def pickup_spec_for_stl(relative_path: str) -> dict[str, object]:
     return dict(HARDCODED_PICKUP_SPECS.get(relative_path, _fallback_pickup_spec(relative_path)))
 
 
-def _accepted_bundle(source_bundle: SavedGraspBundle, accepted: list[SavedGraspCandidate], pickup_spec: dict[str, object]) -> SavedGraspBundle:
+def _accepted_bundle(
+    source_bundle: SavedGraspBundle, accepted: list[SavedGraspCandidate], pickup_spec: dict[str, object]
+) -> SavedGraspBundle:
     metadata = dict(source_bundle.metadata)
     metadata.update(
         {

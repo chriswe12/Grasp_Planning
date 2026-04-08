@@ -839,7 +839,9 @@ def _load_assembly_obstacle_meshes(
             continue
         resolved_paths.append(resolved)
     obstacle_meshes = [_load_stl_mesh(path, scale=stl_scale) for path in resolved_paths]
-    return _combine_triangle_meshes(obstacle_meshes), tuple(str(path.relative_to(DEFAULT_STL_DIR)) for path in resolved_paths)
+    return _combine_triangle_meshes(obstacle_meshes), tuple(
+        str(path.relative_to(DEFAULT_STL_DIR)) for path in resolved_paths
+    )
 
 
 def _ground_plane_overlay_obj(
