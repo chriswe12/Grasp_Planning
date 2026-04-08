@@ -879,7 +879,10 @@ def _ground_plane_overlay_obj(
 def _build_payload(state: _ViewerState) -> dict[str, object]:
     vertices = [[round(float(v), 6) for v in vertex] for vertex in state.mesh.vertices_obj]
     assembly_obstacle_vertices = (
-        [[round(float(v), 6) for v in vertex] for vertex in state.assembly_obstacle_mesh.vertices_obj]
+        [
+            _fmt_vec(_world_point_to_object(vertex, state.object_pose_world).tolist())
+            for vertex in state.assembly_obstacle_mesh.vertices_obj
+        ]
         if state.assembly_obstacle_mesh is not None
         else []
     )
