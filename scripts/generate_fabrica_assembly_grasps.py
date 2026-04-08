@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-samples", type=int, default=1024, help="Number of surface samples.")
     parser.add_argument("--min-jaw-width", type=float, default=0.002, help="Minimum jaw width in meters.")
     parser.add_argument("--max-jaw-width", type=float, default=0.09, help="Maximum jaw width in meters.")
-    parser.add_argument("--antipodal-cosine-threshold", type=float, default=0.7, help="Minimum antipodal cosine alignment.")
+    parser.add_argument("--antipodal-cosine-threshold", type=float, default=0.984807753012208, help="Minimum antipodal cosine alignment.")
     parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians.")
     parser.add_argument("--max-pair-checks", type=int, default=40960, help="Maximum nearby sample pairs to evaluate.")
     parser.add_argument("--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap.")

@@ -46,7 +46,7 @@ python scripts/generate_fabrica_assembly_grasps.py \
   --assembly-glob 'Fabrica/printing/beam/*.stl' \
   --stl-scale 0.001 \
   --num-samples 204 \
-  --antipodal-cosine-threshold 0.7 \
+  --antipodal-cosine-threshold 0.984807753012208 \
   --min-jaw-width 0.002 \
   --max-jaw-width 0.09 \
   --output-json artifacts/fabrica_beam_2_assembly_grasps.json \
