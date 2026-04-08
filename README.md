@@ -149,8 +149,10 @@ Fabrica assembly / pickup path:
 - assembly STL files are assumed to already be in a shared global coordinate system,
 - the target part is recentered into a canonical local frame before grasps are saved,
 - saved grasp JSON remains in that local frame so stage 1 and stage 2 talk in the same coordinates,
+- saved grasp poses already include any accepted finger-pad contact offset refinement; downstream consumers should execute the stored pose directly rather than reapplying the offset,
+- both stages refine infeasible center-contact grasps over a 5x5 grid on the Franka rubber tip contact patch, with equal inset spacing from the pad edges in lateral and approach directions,
 - the pickup-ground stage is only trustworthy for STLs that have an explicit entry in `HARDCODED_PICKUP_SPECS` inside `scripts/check_fabrica_ground_feasible_grasps.py`,
-- accepted and rejected grasps are both rendered in the ground-recheck HTML viewer.
+- accepted and rejected grasps are both rendered in the ground-recheck HTML viewer, and the viewer can be toggled to show accepted grasps only.
 
 Current grasp convention for the cube generator:
 - each candidate represents a symmetric parallel-jaw pinch grasp,

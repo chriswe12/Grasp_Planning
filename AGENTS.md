@@ -43,6 +43,7 @@ Current scope:
 - STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
 - Fabrica assembly STL files are assumed to already be in shared global coordinates.
 - The Fabrica two-stage path saves grasps in the target part-local frame so the offline assembly stage and the pickup-ground stage use the same grasp coordinates.
+- Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
 - `scripts/check_fabrica_ground_feasible_grasps.py` is only trustworthy for parts with an explicit pickup spec entry in `HARDCODED_PICKUP_SPECS`; do not silently rely on guessed pickup poses.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
 - For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.

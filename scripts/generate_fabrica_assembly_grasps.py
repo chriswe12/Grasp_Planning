@@ -13,6 +13,8 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     CandidateStatus,
+    DEFAULT_CONTACT_APPROACH_OFFSETS_M,
+    DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     SavedGraspBundle,
     canonicalize_target_mesh,
     filter_grasps_against_assembly,
@@ -33,6 +35,13 @@ def _parse_rolls(raw: str) -> tuple[float, ...]:
     return values
 
 
+def _parse_offsets(raw: str) -> tuple[float, ...]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if not values:
+        raise argparse.ArgumentTypeError("Expected at least one offset value.")
+    return values
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate assembly-feasible Fabrica grasps and save them to JSON.")
     parser.add_argument("--stl-path", type=Path, required=True, help="Target STL path, relative to assets/stl or absolute.")
@@ -45,6 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--roll-angles-rad", type=_parse_rolls, default=(0.0,), help="Comma-separated roll angles in radians.")
     parser.add_argument("--max-pair-checks", type=int, default=40960, help="Maximum nearby sample pairs to evaluate.")
     parser.add_argument("--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap.")
+    parser.add_argument(
+        "--contact-lateral-offsets-m",
+        type=_parse_offsets,
+        default=DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+        help="Comma-separated pad-local lateral contact offsets to try when center contact collides.",
+    )
+    parser.add_argument(
+        "--contact-approach-offsets-m",
+        type=_parse_offsets,
+        default=DEFAULT_CONTACT_APPROACH_OFFSETS_M,
+        help="Comma-separated pad-local approach offsets to try when center contact collides.",
+    )
     parser.add_argument("--rng-seed", type=int, default=0, help="Random seed.")
     parser.add_argument("--output-json", type=Path, required=True, help="Output JSON path.")
     parser.add_argument("--output-html", type=Path, required=True, help="Output HTML path.")
@@ -79,6 +100,8 @@ def main() -> None:
         object_pose_world=target_pose_world,
         obstacle_mesh_world=obstacle_mesh_world,
         contact_gap_m=args.detailed_finger_contact_gap_m,
+        contact_lateral_offsets_m=args.contact_lateral_offsets_m,
+        contact_approach_offsets_m=args.contact_approach_offsets_m,
     )
 
     bundle = SavedGraspBundle(
@@ -94,6 +117,8 @@ def main() -> None:
             "raw_candidate_count": len(serialized_raw),
             "assembly_feasible_count": len(kept_candidates),
             "assembly_obstacle_paths": list(obstacle_paths),
+            "contact_lateral_offsets_m": list(args.contact_lateral_offsets_m),
+            "contact_approach_offsets_m": list(args.contact_approach_offsets_m),
         },
     )
     save_grasp_bundle(bundle, args.output_json)
@@ -115,6 +140,8 @@ def main() -> None:
             f"collision_backend:{generator.collision_backend_name}",
             f"raw_candidates:   {len(serialized_raw)}",
             f"assembly_feasible:{len(kept_candidates)}",
+            f"contact_offsets_x:{tuple(args.contact_lateral_offsets_m)}",
+            f"contact_offsets_z:{tuple(args.contact_approach_offsets_m)}",
             f"local_origin_w:   {tuple(round(v, 6) for v in target_pose_world.position_world)}",
         ],
     )

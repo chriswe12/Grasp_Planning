@@ -14,6 +14,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
+    DEFAULT_CONTACT_APPROACH_OFFSETS_M,
+    DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     SavedGraspBundle,
     SavedGraspCandidate,
     evaluate_grasps_against_ground,
@@ -31,7 +33,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
 HARDCODED_PICKUP_SPECS: dict[str, dict[str, object]] = {
     "Fabrica/printing/beam/0.stl": {"support_face": "neg_x", "yaw_deg": 0.0, "xy_world": (0.0, 0.0)},
     "Fabrica/printing/beam/1.stl": {"support_face": "pos_y", "yaw_deg": 90.0, "xy_world": (0.0, 0.0)},
-    "Fabrica/printing/beam/2.stl": {"support_face": "neg_x", "yaw_deg": 90.0, "xy_world": (0.0, 0.0)},
+    "Fabrica/printing/beam/2.stl": {"support_face": "neg_y", "yaw_deg": 90.0, "xy_world": (0.0, 0.0)},
     "Fabrica/printing/beam/3.stl": {"support_face": "pos_x", "yaw_deg": 180.0, "xy_world": (0.0, 0.0)},
     "Fabrica/printing/beam/6.stl": {"support_face": "neg_y", "yaw_deg": 270.0, "xy_world": (0.0, 0.0)},
 }
@@ -44,6 +46,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-html", type=Path, required=True, help="Output HTML showing accepted and rejected grasps")
     parser.add_argument("--stl-scale", type=float, default=None, help="Optional STL scale override; defaults to the bundle value")
     parser.add_argument("--detailed-finger-contact-gap-m", type=float, default=0.002, help="Detailed Franka finger contact gap")
+    parser.add_argument(
+        "--contact-lateral-offsets-m",
+        type=lambda raw: tuple(float(part.strip()) for part in raw.split(",") if part.strip()),
+        default=DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+        help="Comma-separated pad-local lateral contact offsets to try when center contact collides.",
+    )
+    parser.add_argument(
+        "--contact-approach-offsets-m",
+        type=lambda raw: tuple(float(part.strip()) for part in raw.split(",") if part.strip()),
+        default=DEFAULT_CONTACT_APPROACH_OFFSETS_M,
+        help="Comma-separated pad-local approach offsets to try when center contact collides.",
+    )
     return parser
 
 
@@ -99,6 +113,8 @@ def main() -> None:
         bundle.candidates,
         object_pose_world=pickup_pose_world,
         contact_gap_m=args.detailed_finger_contact_gap_m,
+        contact_lateral_offsets_m=args.contact_lateral_offsets_m,
+        contact_approach_offsets_m=args.contact_approach_offsets_m,
     )
     accepted = [entry.grasp for entry in statuses if entry.status == "accepted"]
     save_grasp_bundle(_accepted_bundle(bundle, accepted, pickup_spec), args.output_json)
@@ -116,6 +132,8 @@ def main() -> None:
             f"ground_feasible:  {len(accepted)}",
             f"support_face:     {pickup_spec['support_face']}",
             f"pickup_yaw_deg:   {float(pickup_spec['yaw_deg']):.1f}",
+            f"contact_offsets_x:{tuple(args.contact_lateral_offsets_m)}",
+            f"contact_offsets_z:{tuple(args.contact_approach_offsets_m)}",
             f"pickup_pos_w:     {tuple(round(v, 6) for v in pickup_pose_world.position_world)}",
         ],
     )
