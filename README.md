@@ -8,6 +8,7 @@ Current scope:
 - experimental move-to-pose and pickup debug paths in the launcher,
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
 - a separate minimal object-frame antipodal grasp generator for procedural mesh and STL debug,
+- a two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground rechecking,
 - pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
@@ -36,6 +37,30 @@ python scripts/debug_mesh_antipodal_grasps.py --geometry stl --stl-path my_part.
 This viewer is also browser-based. It writes a self-contained HTML file to
 `artifacts/mesh_antipodal_grasp_debug.html`; open that file from the host browser.
 Relative STL paths are resolved under `assets/stl/`.
+
+Fabrica two-stage grasp workflow:
+
+```bash
+python scripts/generate_fabrica_assembly_grasps.py \
+  --stl-path Fabrica/printing/beam/2.stl \
+  --assembly-glob 'Fabrica/printing/beam/*.stl' \
+  --stl-scale 0.001 \
+  --num-samples 204 \
+  --antipodal-cosine-threshold 0.984807753012208 \
+  --min-jaw-width 0.002 \
+  --max-jaw-width 0.09 \
+  --output-json artifacts/fabrica_beam_2_assembly_grasps.json \
+  --output-html artifacts/fabrica_beam_2_assembly_grasps.html
+
+python scripts/check_fabrica_ground_feasible_grasps.py \
+  --input-json artifacts/fabrica_beam_2_assembly_grasps.json \
+  --output-json artifacts/fabrica_beam_2_ground_feasible.json \
+  --output-html artifacts/fabrica_beam_2_ground_feasible.html
+```
+
+Stage 1 generates grasps on the target part, filters them against sibling STL meshes from the same Fabrica assembly, and saves the accepted grasps plus an HTML viewer.
+Stage 2 reloads those saved grasps, applies a hardcoded pickup pose for that exact STL, and filters them against the pickup ground plane only.
+Both stages use the same target part-local grasp frame in JSON and in the HTML viewers.
 
 Docker build:
 
@@ -117,6 +142,18 @@ Mesh antipodal grasp path:
 - uses an FCL-backed `trimesh` collision scene built once per `generate(mesh)` call,
 - can export typed grasp candidates with pose, contacts, normals, and jaw width.
 
+Fabrica assembly / pickup path:
+- `scripts/generate_fabrica_assembly_grasps.py` is the offline stage,
+- `scripts/check_fabrica_ground_feasible_grasps.py` is the pickup-ground recheck stage,
+- shared utilities and viewer generation live in `grasp_planning/grasping/fabrica_grasp_debug.py`,
+- assembly STL files are assumed to already be in a shared global coordinate system,
+- the target part is recentered into a canonical local frame before grasps are saved,
+- saved grasp JSON remains in that local frame so stage 1 and stage 2 talk in the same coordinates,
+- saved grasp poses already include any accepted finger-pad contact offset refinement; downstream consumers should execute the stored pose directly rather than reapplying the offset,
+- both stages refine infeasible center-contact grasps over a 5x5 grid on the Franka rubber tip contact patch, with equal inset spacing from the pad edges in lateral and approach directions,
+- the pickup-ground stage is only trustworthy for STLs that have an explicit entry in `HARDCODED_PICKUP_SPECS` inside `scripts/check_fabrica_ground_feasible_grasps.py`,
+- accepted and rejected grasps are both rendered in the ground-recheck HTML viewer, and the viewer can be toggled to show accepted grasps only.
+
 Current grasp convention for the cube generator:
 - each candidate represents a symmetric parallel-jaw pinch grasp,
 - `position_w` is the cube-center pinch midpoint,
@@ -147,6 +184,8 @@ Notes:
 - the cube pose is defined directly in `scripts/launch_fr3_cube_env.py`,
 - `scripts/debug_cube_grasps.py` is intended for local debug visualization and writes generated output into `artifacts/`,
 - `scripts/debug_mesh_antipodal_grasps.py` is a separate local viewer for the new object-frame antipodal grasp path and supports procedural cube/cylinder meshes plus STL input from `assets/stl/`,
+- `scripts/debug_mesh_antipodal_grasps.py` also supports assembly obstacle overlays with `--assembly-glob` and keeps those overlays in the target object frame for HTML visualization,
+- the Fabrica two-stage scripts are local debug tools; they do not move the robot and do not depend on Isaac,
 - the new mesh grasp generator lives under `grasp_planning/grasping/mesh_antipodal_grasp_generator.py` and is intentionally separate from the existing cube-face path,
 - by default the launcher uses Isaac Sim's built-in FR3 asset:
   `Isaac/Robots/FrankaRobotics/FrankaFR3/fr3.usd`,

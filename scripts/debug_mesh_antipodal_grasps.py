@@ -26,6 +26,7 @@ from grasp_planning.grasping import (  # noqa: E402
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
     FrankaHandFingerCollisionModel,
+    GraspCollisionEvaluator,
     HalfSpaceWorldConstraint,
     ObjectFrameGraspCandidate,
     ObjectWorldPose,
@@ -33,6 +34,7 @@ from grasp_planning.grasping import (  # noqa: E402
     WorldCollisionConstraintEvaluator,
     finger_box_corners,
 )
+from grasp_planning.grasping.collision import BoxCollisionPrimitive, MeshCollisionPrimitive  # noqa: E402
 
 DEFAULT_OUTPUT_HTML = REPO_ROOT / "artifacts" / "mesh_antipodal_grasp_debug.html"
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "mesh_antipodal_grasp_debug.yaml"
@@ -58,6 +60,7 @@ _DEFAULT_CONFIG = {
         "cylinder_segments": 24,
         "stl_path": None,
         "stl_scale": 1.0,
+        "assembly_glob": None,
     },
     "generator": {
         "num_samples": 192,
@@ -381,6 +384,7 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         cylinder_segments=int(geometry.get("cylinder_segments", _DEFAULT_CONFIG["geometry"]["cylinder_segments"])),
         stl_path=None if geometry.get("stl_path") in (None, "") else Path(str(geometry["stl_path"])),
         stl_scale=float(geometry.get("stl_scale", _DEFAULT_CONFIG["geometry"]["stl_scale"])),
+        assembly_glob=None if geometry.get("assembly_glob") in (None, "") else str(geometry["assembly_glob"]),
         num_samples=int(generator.get("num_samples", _DEFAULT_CONFIG["generator"]["num_samples"])),
         min_jaw_width=float(generator.get("min_jaw_width", _DEFAULT_CONFIG["generator"]["min_jaw_width"])),
         max_jaw_width=float(generator.get("max_jaw_width", _DEFAULT_CONFIG["generator"]["max_jaw_width"])),
@@ -427,6 +431,7 @@ def _config_from_sources(args: argparse.Namespace) -> argparse.Namespace:
         "cylinder_segments",
         "stl_path",
         "stl_scale",
+        "assembly_glob",
         "num_samples",
         "min_jaw_width",
         "max_jaw_width",
@@ -525,11 +530,7 @@ def _load_binary_stl(path: Path, *, scale: float) -> TriangleMesh:
 
 
 def _load_stl_mesh(path: Path, *, scale: float) -> TriangleMesh:
-    stl_path = path.expanduser()
-    if not stl_path.is_absolute():
-        stl_path = (DEFAULT_STL_DIR / stl_path).resolve()
-    else:
-        stl_path = stl_path.resolve()
+    stl_path = _resolve_stl_path(path)
     if not stl_path.is_file():
         raise FileNotFoundError(
             f"STL file not found at '{stl_path}'. Place it under '{DEFAULT_STL_DIR}' or pass an absolute path."
@@ -660,6 +661,15 @@ parser.add_argument(
     default=None,
     help="Uniform scale applied to STL vertices after loading. Use this to convert units to meters if needed.",
 )
+parser.add_argument(
+    "--assembly-glob",
+    type=str,
+    default=None,
+    help=(
+        "Glob under assets/stl for obstacle STL files already in shared world coordinates. "
+        "The target --stl-path is excluded automatically."
+    ),
+)
 parser.add_argument("--num-samples", type=int, default=None, help="Number of surface samples.")
 parser.add_argument("--min-jaw-width", type=float, default=None, help="Minimum jaw width in meters.")
 parser.add_argument("--max-jaw-width", type=float, default=None, help="Maximum jaw width in meters.")
@@ -709,6 +719,9 @@ parser.add_argument(
 class _ViewerState:
     mesh: TriangleMesh
     edges: list[tuple[int, int]]
+    assembly_obstacle_mesh: TriangleMesh | None
+    assembly_obstacle_edges: list[tuple[int, int]]
+    assembly_obstacle_paths: tuple[str, ...]
     candidates: list[ObjectFrameGraspCandidate]
     config: AntipodalGraspGeneratorConfig
     geometry_name: str
@@ -716,6 +729,7 @@ class _ViewerState:
     enforce_ground_plane: bool
     object_pose_world: ObjectWorldPose
     candidate_count_before_world_filter: int
+    candidate_count_before_assembly_filter: int
 
 
 def _fmt_vec(vec: tuple[float, ...] | list[float]) -> list[float]:
@@ -728,10 +742,113 @@ def _world_point_to_object(point_world: np.ndarray, object_pose_world: ObjectWor
     return rotation_world_from_object.T @ (np.asarray(point_world, dtype=float) - translation_world)
 
 
+def _object_point_to_world(point_obj: np.ndarray, object_pose_world: ObjectWorldPose) -> np.ndarray:
+    rotation_world_from_object = _quat_to_rotmat_xyzw(object_pose_world.orientation_xyzw_world)
+    translation_world = np.asarray(object_pose_world.position_world, dtype=float)
+    return rotation_world_from_object @ np.asarray(point_obj, dtype=float) + translation_world
+
+
+def _transform_primitive_to_world(
+    primitive_obj: BoxCollisionPrimitive | MeshCollisionPrimitive,
+    object_pose_world: ObjectWorldPose,
+) -> BoxCollisionPrimitive | MeshCollisionPrimitive:
+    rotation_world_from_object = object_pose_world.rotation_world_from_object
+    translation_world = object_pose_world.translation_world
+    if isinstance(primitive_obj, BoxCollisionPrimitive):
+        return BoxCollisionPrimitive(
+            name=primitive_obj.name,
+            center_obj=rotation_world_from_object @ primitive_obj.center_obj + translation_world,
+            rotation_obj=rotation_world_from_object @ primitive_obj.rotation_obj,
+            half_extents=primitive_obj.half_extents,
+        )
+    return MeshCollisionPrimitive(
+        name=primitive_obj.name,
+        vertices_obj=primitive_obj.vertices_obj @ rotation_world_from_object.T + translation_world,
+        faces=primitive_obj.faces,
+    )
+
+
+def _is_grasp_collision_free_in_world(
+    *,
+    obstacle_scene,
+    collision_model: FrankaHandFingerCollisionModel,
+    object_pose_world: ObjectWorldPose,
+    grasp_rotmat_obj: np.ndarray,
+    contact_point_a_obj: np.ndarray,
+    contact_point_b_obj: np.ndarray,
+) -> bool:
+    for primitive_obj in collision_model.primitives_for_grasp(
+        grasp_rotmat=grasp_rotmat_obj,
+        contact_point_a=contact_point_a_obj,
+        contact_point_b=contact_point_b_obj,
+    ):
+        primitive_world = _transform_primitive_to_world(primitive_obj, object_pose_world)
+        if isinstance(primitive_world, BoxCollisionPrimitive) and obstacle_scene.intersects_box(primitive_world):
+            return False
+        if isinstance(primitive_world, MeshCollisionPrimitive) and obstacle_scene.intersects_mesh(primitive_world):
+            return False
+    return True
+
+
+def _resolve_stl_path(path: Path) -> Path:
+    stl_path = path.expanduser()
+    if not stl_path.is_absolute():
+        stl_path = (DEFAULT_STL_DIR / stl_path).resolve()
+    else:
+        stl_path = stl_path.resolve()
+    return stl_path
+
+
+def _combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh | None:
+    if not meshes:
+        return None
+    vertices_list: list[np.ndarray] = []
+    faces_list: list[np.ndarray] = []
+    vertex_offset = 0
+    for mesh in meshes:
+        vertices = np.asarray(mesh.vertices_obj, dtype=float)
+        faces = np.asarray(mesh.faces, dtype=np.int64)
+        vertices_list.append(vertices)
+        faces_list.append(faces + vertex_offset)
+        vertex_offset += len(vertices)
+    return TriangleMesh(
+        vertices_obj=np.vstack(vertices_list),
+        faces=np.vstack(faces_list),
+    )
+
+
+def _load_assembly_obstacle_meshes(
+    *,
+    assembly_glob: str | None,
+    target_stl_path: Path | None,
+    stl_scale: float,
+) -> tuple[TriangleMesh | None, tuple[str, ...]]:
+    if not assembly_glob:
+        return None, ()
+    pattern = assembly_glob.strip()
+    if not pattern:
+        return None, ()
+    target_resolved = None if target_stl_path is None else _resolve_stl_path(target_stl_path)
+    obstacle_paths = sorted(DEFAULT_STL_DIR.glob(pattern))
+    resolved_paths = []
+    for path in obstacle_paths:
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if target_resolved is not None and resolved == target_resolved:
+            continue
+        resolved_paths.append(resolved)
+    obstacle_meshes = [_load_stl_mesh(path, scale=stl_scale) for path in resolved_paths]
+    return _combine_triangle_meshes(obstacle_meshes), tuple(
+        str(path.relative_to(DEFAULT_STL_DIR)) for path in resolved_paths
+    )
+
+
 def _ground_plane_overlay_obj(
     state: _ViewerState,
     *,
-    padding_scale: float = 1.8,
+    padding_scale: float = 6.0,
+    min_radius_m: float = 0.2,
 ) -> dict[str, object] | None:
     if not state.enforce_ground_plane:
         return None
@@ -739,7 +856,7 @@ def _ground_plane_overlay_obj(
     mins = state.mesh.vertices_obj.min(axis=0)
     maxs = state.mesh.vertices_obj.max(axis=0)
     extents = np.maximum(maxs - mins, 1.0e-3)
-    radius = 0.5 * float(np.max(extents)) * float(padding_scale)
+    radius = max(0.5 * float(np.max(extents)) * float(padding_scale), float(min_radius_m))
 
     plane_points_world = np.array(
         [
@@ -763,6 +880,14 @@ def _ground_plane_overlay_obj(
 
 def _build_payload(state: _ViewerState) -> dict[str, object]:
     vertices = [[round(float(v), 6) for v in vertex] for vertex in state.mesh.vertices_obj]
+    assembly_obstacle_vertices = (
+        [
+            _fmt_vec(_world_point_to_object(vertex, state.object_pose_world).tolist())
+            for vertex in state.assembly_obstacle_mesh.vertices_obj
+        ]
+        if state.assembly_obstacle_mesh is not None
+        else []
+    )
     ground_plane_overlay = _ground_plane_overlay_obj(state)
     candidates = []
     for index, candidate in enumerate(state.candidates, start=1):
@@ -814,6 +939,8 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
         "geometry_name": state.geometry_name,
         "vertices_obj": vertices,
         "edges": state.edges,
+        "assembly_obstacle_vertices_obj": assembly_obstacle_vertices,
+        "assembly_obstacle_edges": state.assembly_obstacle_edges,
         "faces": [[int(v) for v in face] for face in state.mesh.faces.tolist()],
         "triangle_count": int(len(state.mesh.faces)),
         "vertex_count": int(len(state.mesh.vertices_obj)),
@@ -831,6 +958,9 @@ def _build_payload(state: _ViewerState) -> dict[str, object]:
             "object_position_world": _fmt_vec(state.object_pose_world.position_world),
             "object_orientation_xyzw_world": _fmt_vec(state.object_pose_world.orientation_xyzw_world),
             "candidate_count_before_world_filter": state.candidate_count_before_world_filter,
+            "candidate_count_before_assembly_filter": state.candidate_count_before_assembly_filter,
+            "assembly_obstacle_count": len(state.assembly_obstacle_paths),
+            "assembly_obstacle_paths": list(state.assembly_obstacle_paths),
         },
         "ground_plane_overlay": ground_plane_overlay,
         "candidates": candidates,
@@ -855,6 +985,7 @@ def _html_document(payload: dict[str, object]) -> str:
       --muted: #6f6a5f;
       --line: #d9ceb8;
       --mesh: #4f6b5f;
+      --assembly: #64748b;
       --contact-a: #c8452d;
       --contact-b: #1f7c60;
       --box: #6d3cc6;
@@ -1067,6 +1198,7 @@ def _html_document(payload: dict[str, object]) -> str:
           <svg id="scene" viewBox="0 0 960 760" aria-label="Mesh antipodal grasp debug scene"></svg>
           <div class="legend">
             <span><i class="swatch" style="background: var(--mesh)"></i>Mesh wireframe</span>
+            <span><i class="swatch" style="background: var(--assembly)"></i>Assembly obstacles</span>
             <span><i class="swatch" style="background: var(--accent)"></i>Grasp center</span>
             <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A / normal</span>
             <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B / normal</span>
@@ -1129,6 +1261,7 @@ def _html_document(payload: dict[str, object]) -> str:
 
     const objectPoints = [
       ...data.vertices_obj,
+      ...data.assembly_obstacle_vertices_obj,
       ...(data.ground_plane_overlay ? data.ground_plane_overlay.corners_obj : []),
       ...data.candidates.flatMap((candidate) => [
         candidate.grasp_position_obj,
@@ -1343,19 +1476,31 @@ def _html_document(payload: dict[str, object]) -> str:
       const corners = data.ground_plane_overlay.corners_obj;
       drawPolygon(corners, {{
         fill: "#3b82f6",
-        fillOpacity: 0.08,
+        fillOpacity: 0.16,
         stroke: "#3b82f6",
-        strokeWidth: 1.5,
-        strokeOpacity: 0.45,
+        strokeWidth: 2,
+        strokeOpacity: 0.75,
       }});
       for (let i = 0; i < corners.length; i += 1) {{
         drawLine(corners[i], corners[(i + 1) % corners.length], {{
           stroke: "#3b82f6",
-          strokeWidth: 1.5,
-          opacity: 0.55,
-          dash: "7 5",
+          strokeWidth: 2,
+          opacity: 0.9,
+          dash: "10 6",
         }});
       }}
+      drawLine(corners[0], corners[2], {{
+        stroke: "#3b82f6",
+        strokeWidth: 1.5,
+        opacity: 0.45,
+        dash: "6 6",
+      }});
+      drawLine(corners[1], corners[3], {{
+        stroke: "#3b82f6",
+        strokeWidth: 1.5,
+        opacity: 0.45,
+        dash: "6 6",
+      }});
       drawLabel(corners[0], "z=0 plane", "#3b82f6", 10, -8);
     }}
 
@@ -1393,6 +1538,16 @@ def _html_document(payload: dict[str, object]) -> str:
 
       data.edges.forEach(([start, end]) => {{
         drawLine(data.vertices_obj[start], data.vertices_obj[end], {{ stroke: "#4f6b5f", strokeWidth: 2, opacity: 0.75 }});
+      }});
+    }}
+
+    function drawAssemblyObstacles() {{
+      data.assembly_obstacle_edges.forEach(([start, end]) => {{
+        drawLine(
+          data.assembly_obstacle_vertices_obj[start],
+          data.assembly_obstacle_vertices_obj[end],
+          {{ stroke: "#64748b", strokeWidth: 1.4, opacity: 0.45 }}
+        );
       }});
     }}
 
@@ -1452,9 +1607,11 @@ def _html_document(payload: dict[str, object]) -> str:
         `collision_model: ${data.config.collision_model}\\n` +
         `contact_gap_m:   ${data.config.detailed_finger_contact_gap_m.toFixed(4)}\\n` +
         `ground_plane:    ${data.config.enforce_ground_plane ? "enabled" : "disabled"}\\n` +
+        `assembly_parts:  ${data.config.assembly_obstacle_count}\\n` +
         `object_pos_w:    ${fmtVec(data.config.object_position_world)}\\n` +
         `object_quat_w:   ${fmtVec(data.config.object_orientation_xyzw_world)}\\n` +
         `pre_world_count: ${data.config.candidate_count_before_world_filter}\\n` +
+        `pre_assembly_count: ${data.config.candidate_count_before_assembly_filter}\\n` +
         `franka_boxes:    left=${candidate.franka_left_boxes.length} right=${candidate.franka_right_boxes.length}\\n` +
         `anchor_error_m:  left=${candidate.franka_left_anchor_error_m.toFixed(6)} right=${candidate.franka_right_anchor_error_m.toFixed(6)}`;
     }}
@@ -1473,6 +1630,7 @@ def _html_document(payload: dict[str, object]) -> str:
       defs.appendChild(marker);
 
       drawGroundPlane();
+      drawAssemblyObstacles();
       drawMesh();
       drawHandMesh(candidate);
 
@@ -1642,6 +1800,11 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
     mesh = _build_mesh(args)
     generator = AntipodalMeshGraspGenerator(config)
     candidates = generator.generate(mesh)
+    assembly_obstacle_mesh, assembly_obstacle_paths = _load_assembly_obstacle_meshes(
+        assembly_glob=args.assembly_glob,
+        target_stl_path=args.stl_path if args.geometry == "stl" else None,
+        stl_scale=args.stl_scale,
+    )
     object_pose_world = ObjectWorldPose(
         position_world=args.object_position_world,
         orientation_xyzw_world=args.object_orientation_xyzw_world,
@@ -1656,9 +1819,31 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
             object_pose_world=object_pose_world,
             plane_constraint=HalfSpaceWorldConstraint(),
         )
+    candidate_count_before_assembly_filter = len(candidates)
+    if assembly_obstacle_mesh is not None:
+        obstacle_scene = GraspCollisionEvaluator(
+            FrankaHandFingerCollisionModel(contact_gap_m=config.detailed_finger_contact_gap_m)
+        ).build_scene(assembly_obstacle_mesh)
+        collision_model = FrankaHandFingerCollisionModel(contact_gap_m=config.detailed_finger_contact_gap_m)
+        filtered_candidates: list[ObjectFrameGraspCandidate] = []
+        for candidate in candidates:
+            grasp_rotmat_obj = _quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+            if _is_grasp_collision_free_in_world(
+                obstacle_scene=obstacle_scene,
+                collision_model=collision_model,
+                object_pose_world=object_pose_world,
+                grasp_rotmat_obj=grasp_rotmat_obj,
+                contact_point_a_obj=np.asarray(candidate.contact_point_a_obj, dtype=float),
+                contact_point_b_obj=np.asarray(candidate.contact_point_b_obj, dtype=float),
+            ):
+                filtered_candidates.append(candidate)
+        candidates = filtered_candidates
     return _ViewerState(
         mesh=mesh,
         edges=_unique_edges(mesh.faces),
+        assembly_obstacle_mesh=assembly_obstacle_mesh,
+        assembly_obstacle_edges=[] if assembly_obstacle_mesh is None else _unique_edges(assembly_obstacle_mesh.faces),
+        assembly_obstacle_paths=assembly_obstacle_paths,
         candidates=candidates,
         config=config,
         geometry_name=args.geometry,
@@ -1666,6 +1851,7 @@ def _build_viewer_state(args: argparse.Namespace) -> _ViewerState:
         enforce_ground_plane=bool(args.enforce_ground_plane),
         object_pose_world=object_pose_world,
         candidate_count_before_world_filter=candidate_count_before_world_filter,
+        candidate_count_before_assembly_filter=candidate_count_before_assembly_filter,
     )
 
 
@@ -1688,6 +1874,13 @@ def main() -> None:
             f"kept {len(state.candidates)} / {state.candidate_count_before_world_filter} candidates "
             f"for object pose position={state.object_pose_world.position_world} "
             f"orientation_xyzw={state.object_pose_world.orientation_xyzw_world}",
+            flush=True,
+        )
+    if state.assembly_obstacle_mesh is not None:
+        print(
+            "[INFO] Assembly obstacle filter: "
+            f"loaded {len(state.assembly_obstacle_paths)} obstacle meshes; "
+            f"kept {len(state.candidates)} / {state.candidate_count_before_assembly_filter} candidates after assembly filtering.",
             flush=True,
         )
     if np.max(np.abs(extents)) > 2.0:

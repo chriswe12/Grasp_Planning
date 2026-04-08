@@ -250,15 +250,20 @@ _FRANKA_HAND_MESH_PATH = (
     / "collision"
     / "hand.stl"
 )
+_FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 
 
 def _load_franka_hand_mesh() -> tuple[np.ndarray, np.ndarray]:
+    global _FRANKA_HAND_MESH_CACHE
+    if _FRANKA_HAND_MESH_CACHE is not None:
+        return _FRANKA_HAND_MESH_CACHE
     if trimesh is None:
         raise RuntimeError("trimesh is required to load the Franka hand collision mesh.")
     if not _FRANKA_HAND_MESH_PATH.is_file():
         raise FileNotFoundError(f"Franka hand collision mesh not found at '{_FRANKA_HAND_MESH_PATH}'.")
     mesh = trimesh.load(_FRANKA_HAND_MESH_PATH, force="mesh")
-    return np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces, dtype=np.int64)
+    _FRANKA_HAND_MESH_CACHE = (np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces, dtype=np.int64))
+    return _FRANKA_HAND_MESH_CACHE
 
 
 @dataclass(frozen=True)
@@ -268,12 +273,16 @@ class FrankaHandFingerCollisionModel:
     hand_vertices_local: np.ndarray | None = None
     hand_faces: np.ndarray | None = None
     contact_gap_m: float = 0.002
+    contact_patch_lateral_offset_m: float = 0.0
+    contact_patch_approach_offset_m: float = 0.0
 
     def __post_init__(self) -> None:
         if self.hand_vertices_local is not None and self.hand_faces is not None:
             object.__setattr__(self, "hand_vertices_local", np.asarray(self.hand_vertices_local, dtype=float))
             object.__setattr__(self, "hand_faces", np.asarray(self.hand_faces, dtype=np.int64))
         object.__setattr__(self, "contact_gap_m", float(self.contact_gap_m))
+        object.__setattr__(self, "contact_patch_lateral_offset_m", float(self.contact_patch_lateral_offset_m))
+        object.__setattr__(self, "contact_patch_approach_offset_m", float(self.contact_patch_approach_offset_m))
 
     def primitives_for_grasp(
         self,
@@ -285,8 +294,24 @@ class FrankaHandFingerCollisionModel:
         left_rotmat = np.asarray(grasp_rotmat, dtype=float)
         right_rotmat = left_rotmat @ _rpy_to_rotmat(0.0, 0.0, np.pi)
         closing_axis = left_rotmat[:, 1]
-        fingertip_offset_left = left_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
-        fingertip_offset_right = right_rotmat @ np.array([0.0, 0.0, _FRANKA_FINGERTIP_CONTACT_Z_M], dtype=float)
+        fingertip_contact_offset_left = np.array(
+            [
+                self.contact_patch_lateral_offset_m,
+                0.0,
+                _FRANKA_FINGERTIP_CONTACT_Z_M + self.contact_patch_approach_offset_m,
+            ],
+            dtype=float,
+        )
+        fingertip_contact_offset_right = np.array(
+            [
+                -self.contact_patch_lateral_offset_m,
+                0.0,
+                _FRANKA_FINGERTIP_CONTACT_Z_M + self.contact_patch_approach_offset_m,
+            ],
+            dtype=float,
+        )
+        fingertip_offset_left = left_rotmat @ fingertip_contact_offset_left
+        fingertip_offset_right = right_rotmat @ fingertip_contact_offset_right
 
         left_origin = (
             np.asarray(contact_point_b, dtype=float) - fingertip_offset_left + closing_axis * self.contact_gap_m
