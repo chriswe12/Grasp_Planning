@@ -11,6 +11,7 @@ Current scope:
 - a standalone teleport-based pickup debug script,
 - a separate object-frame antipodal grasp debug path for procedural mesh geometry and STL input,
 - a separate two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground recheck,
+- a new integrated Fabrica-to-Isaac pickup path that loads saved grasps, converts STL to a simulator asset, rechecks floor feasibility, and executes the first feasible grasp,
 - pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
@@ -20,10 +21,13 @@ Current scope:
 - `scripts/debug_mesh_antipodal_grasps.py`
 - `scripts/generate_fabrica_assembly_grasps.py`
 - `scripts/check_fabrica_ground_feasible_grasps.py`
+- `scripts/convert_stl_to_usd.py`
+- `scripts/run_fabrica_pickup_in_isaac.py`
 - `scripts/teleport_fr3_pickup.py`
 - `scripts/inspect_fr3_tcp_geometry.py`
 - `scripts/diagnose_fr3_top_grasp.py`
 - `grasp_planning/envs/fr3_cube_env.py`
+- `grasp_planning/envs/fr3_part_env.py`
 - `grasp_planning/scene_defaults.py`
 - `Dockerfile`
 - `docker_env.sh`
@@ -43,13 +47,18 @@ Current scope:
 - STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
 - Fabrica assembly STL files are assumed to already be in shared global coordinates.
 - The Fabrica two-stage path saves grasps in the target part-local frame so the offline assembly stage and the pickup-ground stage use the same grasp coordinates.
+- The integrated Isaac pickup path also consumes those saved part-local grasps; world-frame execution targets are derived at runtime from the sampled object pose.
 - Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
 - `scripts/check_fabrica_ground_feasible_grasps.py` is only trustworthy for parts with an explicit pickup spec entry in `HARDCODED_PICKUP_SPECS`; do not silently rely on guessed pickup poses.
+- `scripts/run_fabrica_pickup_in_isaac.py` does not use `HARDCODED_PICKUP_SPECS`; it requires an explicit pose or samples support face / yaw / XY directly.
+- Negative `--xy-world` values must be passed as `--xy-world=-0.2,0.0` or `--xy-world "-0.2,0.0"` so `argparse` does not treat them as flags.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
 - For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
 - Mesh antipodal finger collision is evaluated per rolled grasp pose with an FCL-backed `trimesh` scene built once per `generate(mesh)` call.
 - The mesh antipodal runtime filter now uses detailed Franka finger boxes plus a Franka hand mesh palm check, with a configurable `generator.detailed_finger_contact_gap_m`.
 - Keep the hand-mesh dependency lazily loaded so generator construction and config/debug imports still work without assets or `trimesh`.
+- Do not hand-author part USDs for Isaac if you can avoid it; `scripts/convert_stl_to_usd.py` now uses Isaac Lab's `MeshConverter`, which fixed the previous scene-creation shutdown on custom part assets.
+- The current remaining integrated-pipeline issue is controller/pregrasp convergence under load; asset loading and offline-to-online grasp bridging are working.
 
 ## Docker Notes
 
@@ -62,6 +71,7 @@ Current scope:
   `/workspace/Grasp_Planning`
 
 Do not install `isaaclab[isaacsim]` on top of the Isaac Sim container image.
+- `docker_env.sh run` now checks host GPU runtime availability up front and launches Docker with `--runtime=nvidia`, `--gpus all`, and explicit NVIDIA capability env vars.
 
 ## GUI Notes
 

@@ -11,16 +11,15 @@ from typing import Iterable
 
 import numpy as np
 
-from . import (
+from .collision import (
+    BoxCollisionPrimitive,
     FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
-    ObjectFrameGraspCandidate,
-    ObjectWorldPose,
-    TriangleMesh,
-    WorldCollisionConstraintEvaluator,
-    finger_box_corners,
+    MeshCollisionPrimitive,
 )
-from .collision import BoxCollisionPrimitive, MeshCollisionPrimitive
+from .finger_geometry import finger_box_corners
+from .mesh_antipodal_grasp_generator import ObjectFrameGraspCandidate, TriangleMesh
+from .world_constraints import ObjectWorldPose, WorldCollisionConstraintEvaluator
 
 try:
     import trimesh
@@ -89,6 +88,13 @@ class CandidateStatus:
     grasp: SavedGraspCandidate
     status: str
     reason: str
+
+
+@dataclass(frozen=True)
+class PickupPlacementSpec:
+    support_face: str
+    yaw_deg: float
+    xy_world: tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -786,6 +792,78 @@ def evaluate_grasps_against_ground(
         else:
             statuses.append(CandidateStatus(grasp=candidate, status="rejected", reason="ground_collision"))
     return statuses
+
+
+def build_pickup_pose_world(
+    mesh_local: TriangleMesh,
+    *,
+    support_face: str,
+    yaw_deg: float,
+    xy_world: tuple[float, float],
+) -> ObjectWorldPose:
+    return pickup_pose_for_support_face(
+        mesh_local,
+        support_face=support_face,
+        yaw_deg=yaw_deg,
+        xy_world=xy_world,
+    )
+
+
+def evaluate_saved_grasps_against_pickup_pose(
+    grasps: Iterable[SavedGraspCandidate],
+    *,
+    object_pose_world: ObjectWorldPose,
+    contact_gap_m: float,
+    contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
+) -> list[CandidateStatus]:
+    return evaluate_grasps_against_ground(
+        grasps,
+        object_pose_world=object_pose_world,
+        contact_gap_m=contact_gap_m,
+        contact_lateral_offsets_m=contact_lateral_offsets_m,
+        contact_approach_offsets_m=contact_approach_offsets_m,
+    )
+
+
+def accepted_grasps(statuses: Iterable[CandidateStatus]) -> list[SavedGraspCandidate]:
+    return [entry.grasp for entry in statuses if entry.status == "accepted"]
+
+
+def select_first_feasible_grasp(statuses: Iterable[CandidateStatus]) -> SavedGraspCandidate | None:
+    for entry in statuses:
+        if entry.status == "accepted":
+            return entry.grasp
+    return None
+
+
+def sample_pickup_placement_spec(
+    *,
+    rng: np.random.Generator,
+    allowed_support_faces: tuple[str, ...],
+    allowed_yaw_deg: tuple[float, ...],
+    xy_min_world: tuple[float, float],
+    xy_max_world: tuple[float, float],
+) -> PickupPlacementSpec:
+    if not allowed_support_faces:
+        raise ValueError("allowed_support_faces must be non-empty.")
+    if not allowed_yaw_deg:
+        raise ValueError("allowed_yaw_deg must be non-empty.")
+    x_min, y_min = [float(v) for v in xy_min_world]
+    x_max, y_max = [float(v) for v in xy_max_world]
+    if x_max < x_min or y_max < y_min:
+        raise ValueError("xy_max_world must be >= xy_min_world component-wise.")
+    support_face = str(rng.choice(np.asarray(allowed_support_faces, dtype=object)))
+    yaw_deg = float(rng.choice(np.asarray(allowed_yaw_deg, dtype=float)))
+    xy_world = (
+        float(rng.uniform(x_min, x_max)),
+        float(rng.uniform(y_min, y_max)),
+    )
+    return PickupPlacementSpec(
+        support_face=support_face,
+        yaw_deg=yaw_deg,
+        xy_world=xy_world,
+    )
 
 
 def _rotation_for_support_face(face: str) -> np.ndarray:

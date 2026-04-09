@@ -9,6 +9,7 @@ Current scope:
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
 - a separate minimal object-frame antipodal grasp generator for procedural mesh and STL debug,
 - a two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground rechecking,
+- an integrated Fabrica-to-Isaac pickup path that converts the STL into an Isaac asset, reloads saved grasps, rechecks floor feasibility for the sampled pose, and executes the first feasible grasp,
 - pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
@@ -61,6 +62,40 @@ python scripts/check_fabrica_ground_feasible_grasps.py \
 Stage 1 generates grasps on the target part, filters them against sibling STL meshes from the same Fabrica assembly, and saves the accepted grasps plus an HTML viewer.
 Stage 2 reloads those saved grasps, applies a hardcoded pickup pose for that exact STL, and filters them against the pickup ground plane only.
 Both stages use the same target part-local grasp frame in JSON and in the HTML viewers.
+
+Integrated Fabrica-to-Isaac pickup flow:
+
+```bash
+/isaac-sim/python.sh scripts/convert_stl_to_usd.py \
+  --stl-path Fabrica/printing/beam/2.stl \
+  --stl-scale 0.001 \
+  --output-usd artifacts/converted/beam_2.usd \
+  --headless \
+  --device cuda
+
+/isaac-sim/python.sh scripts/run_fabrica_pickup_in_isaac.py \
+  --input-json /workspace/Grasp_Planning/artifacts/fabrica_beam_2_assembly_grasps.json \
+  --part-usd /workspace/Grasp_Planning/artifacts/converted/beam_2.usd \
+  --controller admittance \
+  --support-face neg_y \
+  --yaw-deg 90 \
+  --xy-world=-0.5,0.0 \
+  --headless \
+  --device cuda \
+  --run-seconds 5
+```
+
+This path:
+- consumes the saved stage-1 grasp JSON,
+- converts the STL to an Isaac-native rigid mesh asset with Isaac Lab's `MeshConverter`,
+- places the part in sim at the requested or sampled support pose,
+- rechecks the saved grasps against the floor for that exact pose,
+- selects the first feasible grasp and attempts execution,
+- writes an attempt artifact to `artifacts/isaac_pick_attempt.json`.
+
+Notes:
+- If `--xy-world` starts with a negative value, pass it as `--xy-world=-0.5,0.0` or quote it.
+- The current remaining failure mode is controller/pregrasp convergence, not STL-to-USD conversion or grasp loading.
 
 Docker build:
 

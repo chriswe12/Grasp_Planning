@@ -18,11 +18,12 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     SavedGraspBundle,
     SavedGraspCandidate,
-    evaluate_grasps_against_ground,
+    accepted_grasps,
+    build_pickup_pose_world,
+    evaluate_saved_grasps_against_pickup_pose,
     ground_plane_overlay_obj,
     load_grasp_bundle,
     load_stl_mesh,
-    pickup_pose_for_support_face,
     relative_stl_path,
     save_grasp_bundle,
     shifted_mesh,
@@ -112,20 +113,20 @@ def main() -> None:
     mesh_global = load_stl_mesh(bundle.target_stl_path, scale=stl_scale)
     mesh_local = shifted_mesh(mesh_global, -np.asarray(bundle.local_frame_origin_world, dtype=float))
     pickup_spec = pickup_spec_for_stl(bundle.target_stl_path)
-    pickup_pose_world = pickup_pose_for_support_face(
+    pickup_pose_world = build_pickup_pose_world(
         mesh_local,
         support_face=str(pickup_spec["support_face"]),
         yaw_deg=float(pickup_spec["yaw_deg"]),
         xy_world=tuple(float(v) for v in pickup_spec["xy_world"]),
     )
-    statuses = evaluate_grasps_against_ground(
+    statuses = evaluate_saved_grasps_against_pickup_pose(
         bundle.candidates,
         object_pose_world=pickup_pose_world,
         contact_gap_m=args.detailed_finger_contact_gap_m,
         contact_lateral_offsets_m=args.contact_lateral_offsets_m,
         contact_approach_offsets_m=args.contact_approach_offsets_m,
     )
-    accepted = [entry.grasp for entry in statuses if entry.status == "accepted"]
+    accepted = accepted_grasps(statuses)
     save_grasp_bundle(_accepted_bundle(bundle, accepted, pickup_spec), args.output_json)
     write_debug_html(
         title="Fabrica Pickup Ground Recheck",
