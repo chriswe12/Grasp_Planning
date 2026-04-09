@@ -23,6 +23,7 @@ from .grasping import (
     load_grasp_bundle,
     sample_pickup_placement_spec,
     saved_grasp_to_world_grasp,
+    score_grasps,
     select_first_feasible_grasp,
 )
 from .planning import (
@@ -63,5 +64,6 @@ __all__ = [
     "load_grasp_bundle",
     "sample_pickup_placement_spec",
     "saved_grasp_to_world_grasp",
+    "score_grasps",
     "select_first_feasible_grasp",
 ]

@@ -22,6 +22,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     load_stl_mesh,
     relative_stl_path,
     save_grasp_bundle,
+    score_grasps,
     serialize_saved_candidate,
     shifted_mesh,
     write_debug_html,
@@ -116,6 +117,7 @@ def main() -> None:
         contact_lateral_offsets_m=args.contact_lateral_offsets_m,
         contact_approach_offsets_m=args.contact_approach_offsets_m,
     )
+    kept_candidates = score_grasps(kept_candidates, mesh_local=target_mesh_local)
 
     bundle = SavedGraspBundle(
         target_stl_path=relative_stl_path(args.stl_path),
@@ -129,6 +131,7 @@ def main() -> None:
             "num_surface_samples": args.num_samples,
             "raw_candidate_count": len(serialized_raw),
             "assembly_feasible_count": len(kept_candidates),
+            "scored_feasible_count": len(kept_candidates),
             "assembly_obstacle_paths": list(obstacle_paths),
             "contact_lateral_offsets_m": list(args.contact_lateral_offsets_m),
             "contact_approach_offsets_m": list(args.contact_approach_offsets_m),

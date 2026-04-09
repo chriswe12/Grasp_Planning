@@ -95,6 +95,7 @@ from grasp_planning import (  # noqa: E402
     load_grasp_bundle,
     sample_pickup_placement_spec,
     saved_grasp_to_world_grasp,
+    score_grasps,
     select_first_feasible_grasp,
 )
 from grasp_planning.controllers.fr3_pick_controller import FR3PickController  # noqa: E402
@@ -284,6 +285,16 @@ def run() -> None:
         object_pose_world=object_pose_world,
         contact_gap_m=args_cli.detailed_finger_contact_gap_m,
     )
+    rescored_feasible = score_grasps(accepted_grasps(statuses), mesh_local=mesh_local)
+    rescored_by_id = {grasp.grasp_id: grasp for grasp in rescored_feasible}
+    statuses = [
+        type(entry)(
+            grasp=rescored_by_id.get(entry.grasp.grasp_id, entry.grasp),
+            status=entry.status,
+            reason=entry.reason,
+        )
+        for entry in statuses
+    ]
     feasible_grasps = accepted_grasps(statuses)
     selected_grasp = select_first_feasible_grasp(statuses)
     print(
