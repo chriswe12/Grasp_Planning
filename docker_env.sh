@@ -7,6 +7,21 @@ CONTAINER_NAME="${CONTAINER_NAME:-grasp-planning}"
 WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 XAUTH_FILE="${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}"
 
+check_gpu_runtime() {
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        echo "nvidia-smi is not available on the host." >&2
+        exit 1
+    fi
+    if ! nvidia-smi >/dev/null 2>&1; then
+        echo "Host GPU check failed: nvidia-smi could not communicate with the NVIDIA driver." >&2
+        exit 1
+    fi
+    if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+        echo "Docker does not report an 'nvidia' runtime. Configure NVIDIA Container Toolkit first." >&2
+        exit 1
+    fi
+}
+
 usage() {
     cat <<EOF
 Usage: $0 <command>
@@ -34,6 +49,8 @@ run_container() {
     local xauth_args=()
     local revoke_xhost=0
 
+    check_gpu_runtime
+
     if [[ -n "${DISPLAY:-}" ]] && command -v xhost >/dev/null 2>&1; then
         xhost +SI:localuser:root >/dev/null
         revoke_xhost=1
@@ -48,12 +65,15 @@ run_container() {
     fi
 
     docker run --name "${CONTAINER_NAME}" -it \
+        --runtime=nvidia \
         --gpus all \
         --network host \
         --ipc host \
         --entrypoint /bin/bash \
         -e ACCEPT_EULA=Y \
         -e PRIVACY_CONSENT=Y \
+        -e NVIDIA_VISIBLE_DEVICES=all \
+        -e NVIDIA_DRIVER_CAPABILITIES=all \
         -e DISPLAY="${DISPLAY:-:0}" \
         -e QT_X11_NO_MITSHM=1 \
         "${xauth_args[@]}" \

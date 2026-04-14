@@ -9,6 +9,7 @@ Current scope:
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
 - a separate minimal object-frame antipodal grasp generator for procedural mesh and STL debug,
 - a two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground rechecking,
+- an integrated Fabrica-to-Isaac pickup path that converts the STL into an Isaac asset, reloads saved grasps, rechecks floor feasibility for the sampled pose, and executes the first feasible grasp,
 - pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
@@ -56,11 +57,53 @@ python scripts/check_fabrica_ground_feasible_grasps.py \
   --input-json artifacts/fabrica_beam_2_assembly_grasps.json \
   --output-json artifacts/fabrica_beam_2_ground_feasible.json \
   --output-html artifacts/fabrica_beam_2_ground_feasible.html
+
+python scripts/check_fabrica_ground_feasible_grasps.py \
+  --input-json artifacts/fabrica_beam_2_assembly_grasps.json \
+  --output-json artifacts/fabrica_beam_2_ground_feasible_neg_z.json \
+  --output-html artifacts/fabrica_beam_2_ground_feasible_neg_z.html \
+  --support-face neg_z \
+  --yaw-deg 0 \
+  --xy-world 0.0,0.0
 ```
 
-Stage 1 generates grasps on the target part, filters them against sibling STL meshes from the same Fabrica assembly, and saves the accepted grasps plus an HTML viewer.
-Stage 2 reloads those saved grasps, applies a hardcoded pickup pose for that exact STL, and filters them against the pickup ground plane only.
-Both stages use the same target part-local grasp frame in JSON and in the HTML viewers.
+Stage 1 generates grasps on the target part, filters them against sibling STL meshes from the same Fabrica assembly, scores the surviving grasps geometrically, and saves the accepted grasps plus an HTML viewer in score order.
+Stage 2 reloads those saved grasps, applies a pickup pose, filters them against the pickup ground plane only, rescoring any surviving grasps before export.
+The saved grasp JSON stays in the target part-local frame, but the stage-2 HTML now renders the part and grasps in the selected pickup world pose so support-face and yaw overrides are visually obvious.
+
+Integrated Fabrica-to-Isaac pickup flow:
+
+```bash
+/isaac-sim/python.sh scripts/convert_stl_to_usd.py \
+  --stl-path Fabrica/printing/beam/2.stl \
+  --stl-scale 0.001 \
+  --output-usd artifacts/converted/beam_2.usd \
+  --headless \
+  --device cuda
+
+/isaac-sim/python.sh scripts/run_fabrica_pickup_in_isaac.py \
+  --input-json /workspace/Grasp_Planning/artifacts/fabrica_beam_2_assembly_grasps.json \
+  --part-usd /workspace/Grasp_Planning/artifacts/converted/beam_2.usd \
+  --controller admittance \
+  --support-face neg_y \
+  --yaw-deg 90 \
+  --xy-world=-0.5,0.0 \
+  --headless \
+  --device cuda \
+  --run-seconds 5
+```
+
+This path:
+- consumes the saved stage-1 grasp JSON,
+- converts the STL to an Isaac-native rigid mesh asset with Isaac Lab's `MeshConverter`,
+- places the part in sim at the requested or sampled support pose,
+- rechecks the saved grasps against the floor for that exact pose,
+- selects the first feasible grasp and attempts execution,
+- writes an attempt artifact to `artifacts/isaac_pick_attempt.json`.
+
+Notes:
+- If `--xy-world` starts with a negative value, pass it as `--xy-world=-0.5,0.0` or quote it.
+- The current remaining failure mode is controller/pregrasp convergence, not STL-to-USD conversion or grasp loading.
 
 Docker build:
 
@@ -151,7 +194,9 @@ Fabrica assembly / pickup path:
 - saved grasp JSON remains in that local frame so stage 1 and stage 2 talk in the same coordinates,
 - saved grasp poses already include any accepted finger-pad contact offset refinement; downstream consumers should execute the stored pose directly rather than reapplying the offset,
 - both stages refine infeasible center-contact grasps over a 5x5 grid on the Franka rubber tip contact patch, with equal inset spacing from the pad edges in lateral and approach directions,
-- the pickup-ground stage is only trustworthy for STLs that have an explicit entry in `HARDCODED_PICKUP_SPECS` inside `scripts/check_fabrica_ground_feasible_grasps.py`,
+- Fabrica scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset in the closing-plane,
+- stage 1 and stage 2 HTML viewers list grasps in score order,
+- `scripts/check_fabrica_ground_feasible_grasps.py` accepts `--support-face`, `--yaw-deg`, and `--xy-world` overrides for one-off pickup-pose checks,
 - accepted and rejected grasps are both rendered in the ground-recheck HTML viewer, and the viewer can be toggled to show accepted grasps only.
 
 Current grasp convention for the cube generator:
