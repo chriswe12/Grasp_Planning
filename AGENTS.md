@@ -49,7 +49,9 @@ Current scope:
 - The Fabrica two-stage path saves grasps in the target part-local frame so the offline assembly stage and the pickup-ground stage use the same grasp coordinates.
 - The integrated Isaac pickup path also consumes those saved part-local grasps; world-frame execution targets are derived at runtime from the sampled object pose.
 - Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
-- `scripts/check_fabrica_ground_feasible_grasps.py` is only trustworthy for parts with an explicit pickup spec entry in `HARDCODED_PICKUP_SPECS`; do not silently rely on guessed pickup poses.
+- Fabrica grasp scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset. Collision and approach checks stay as upstream hard filters.
+- Stage 1 and stage 2 Fabrica HTML viewers are score-sorted; stage 2 renders in the selected pickup world pose, not the canonical saved local frame.
+- `scripts/check_fabrica_ground_feasible_grasps.py` accepts `--support-face`, `--yaw-deg`, and `--xy-world` overrides; use those instead of editing `HARDCODED_PICKUP_SPECS` for one-off pose checks.
 - `scripts/run_fabrica_pickup_in_isaac.py` does not use `HARDCODED_PICKUP_SPECS`; it requires an explicit pose or samples support face / yaw / XY directly.
 - Negative `--xy-world` values must be passed as `--xy-world=-0.2,0.0` or `--xy-world "-0.2,0.0"` so `argparse` does not treat them as flags.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.

@@ -16,6 +16,7 @@ from .fabrica_grasp_debug import (
     evaluate_saved_grasps_against_pickup_pose,
     load_grasp_bundle,
     sample_pickup_placement_spec,
+    score_grasps,
     select_first_feasible_grasp,
 )
 from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
@@ -62,6 +63,7 @@ __all__ = [
     "grasp_approach_axis_world",
     "load_grasp_bundle",
     "sample_pickup_placement_spec",
+    "score_grasps",
     "saved_grasp_to_world_grasp",
     "select_first_feasible_grasp",
 ]
