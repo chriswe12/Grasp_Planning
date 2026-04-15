@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -20,6 +19,7 @@ from .collision import (
 )
 from .finger_geometry import finger_box_corners
 from .mesh_antipodal_grasp_generator import ObjectFrameGraspCandidate, TriangleMesh
+from .mesh_io import load_triangle_mesh, relative_mesh_path, resolve_mesh_path
 from .world_constraints import ObjectWorldPose, WorldCollisionConstraintEvaluator
 
 try:
@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover - optional dependency path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STL_DIR = REPO_ROOT / "assets" / "stl"
 FRANKA_HAND_MESH_PATH = (
     REPO_ROOT
     / "assets"
@@ -41,7 +40,7 @@ FRANKA_HAND_MESH_PATH = (
     / "collision"
     / "hand.stl"
 )
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FRANKA_CONTACT_PATCH_LATERAL_SIZE_M = 17.5e-3
 FRANKA_CONTACT_PATCH_APPROACH_SIZE_M = 18.5e-3
 DEFAULT_CONTACT_GRID_RESOLUTION = 5
@@ -78,12 +77,28 @@ class SavedGraspCandidate:
 
 @dataclass(frozen=True)
 class SavedGraspBundle:
-    target_stl_path: str
-    stl_scale: float
-    local_frame_origin_world: tuple[float, float, float]
-    local_frame_orientation_xyzw_world: tuple[float, float, float, float]
+    target_mesh_path: str
+    mesh_scale: float
+    source_frame_origin_obj_world: tuple[float, float, float]
+    source_frame_orientation_xyzw_obj_world: tuple[float, float, float, float]
     candidates: tuple[SavedGraspCandidate, ...]
     metadata: dict[str, object]
+
+    @property
+    def target_stl_path(self) -> str:
+        return self.target_mesh_path
+
+    @property
+    def stl_scale(self) -> float:
+        return self.mesh_scale
+
+    @property
+    def local_frame_origin_world(self) -> tuple[float, float, float]:
+        return self.source_frame_origin_obj_world
+
+    @property
+    def local_frame_orientation_xyzw_world(self) -> tuple[float, float, float, float]:
+        return self.source_frame_orientation_xyzw_obj_world
 
 
 @dataclass(frozen=True)
@@ -215,97 +230,27 @@ def rpy_to_rotmat(roll: float, pitch: float, yaw: float) -> np.ndarray:
 
 
 def resolve_stl_path(path: str | Path) -> Path:
-    stl_path = Path(path).expanduser()
-    if not stl_path.is_absolute():
-        stl_path = (DEFAULT_STL_DIR / stl_path).resolve()
-    else:
-        stl_path = stl_path.resolve()
-    return stl_path
+    return resolve_mesh_path(path)
 
 
 def relative_stl_path(path: str | Path) -> str:
-    resolved = resolve_stl_path(path)
-    try:
-        return str(resolved.relative_to(DEFAULT_STL_DIR))
-    except ValueError:
-        return str(resolved)
+    return relative_mesh_path(path)
 
 
-def _dedupe_triangle_vertices(triangles: np.ndarray) -> TriangleMesh:
-    vertex_map: dict[tuple[float, float, float], int] = {}
-    vertices: list[list[float]] = []
-    faces: list[list[int]] = []
-    for triangle in np.asarray(triangles, dtype=float):
-        face: list[int] = []
-        for vertex in triangle:
-            key = tuple(float(value) for value in vertex)
-            vertex_index = vertex_map.get(key)
-            if vertex_index is None:
-                vertex_index = len(vertices)
-                vertex_map[key] = vertex_index
-                vertices.append([float(value) for value in vertex])
-            face.append(vertex_index)
-        faces.append(face)
-    return TriangleMesh(vertices_obj=np.array(vertices, dtype=float), faces=np.array(faces, dtype=np.int64))
+def resolve_asset_mesh_path(path: str | Path) -> Path:
+    return resolve_mesh_path(path)
 
 
-def _load_ascii_stl(path: Path, *, scale: float) -> TriangleMesh:
-    triangles: list[np.ndarray] = []
-    current_vertices: list[list[float]] = []
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("vertex"):
-            parts = line.split()
-            if len(parts) != 4:
-                raise ValueError(f"Malformed ASCII STL vertex at line {line_number} in '{path}'.")
-            current_vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
-            if len(current_vertices) == 3:
-                triangles.append(np.asarray(current_vertices, dtype=float) * scale)
-                current_vertices = []
-    if current_vertices:
-        raise ValueError(f"Incomplete triangle in ASCII STL '{path}'.")
-    if not triangles:
-        raise ValueError(f"No triangles found in ASCII STL '{path}'.")
-    return _dedupe_triangle_vertices(np.stack(triangles, axis=0))
-
-
-def _load_binary_stl(path: Path, *, scale: float) -> TriangleMesh:
-    data = path.read_bytes()
-    if len(data) < 84:
-        raise ValueError(f"Binary STL '{path}' is too short.")
-    triangle_count = struct.unpack_from("<I", data, offset=80)[0]
-    expected_size = 84 + triangle_count * 50
-    if len(data) != expected_size:
-        raise ValueError(
-            f"Binary STL '{path}' has size {len(data)} bytes, expected {expected_size} bytes for {triangle_count} triangles."
-        )
-    triangles = np.empty((triangle_count, 3, 3), dtype=float)
-    offset = 84
-    for triangle_index in range(triangle_count):
-        offset += 12
-        vertices = struct.unpack_from("<9f", data, offset=offset)
-        triangles[triangle_index, :, :] = np.asarray(vertices, dtype=float).reshape(3, 3) * scale
-        offset += 36
-        offset += 2
-    if triangle_count == 0:
-        raise ValueError(f"Binary STL '{path}' does not contain any triangles.")
-    return _dedupe_triangle_vertices(triangles)
+def relative_asset_mesh_path(path: str | Path) -> str:
+    return relative_mesh_path(path)
 
 
 def load_stl_mesh(path: str | Path, *, scale: float) -> TriangleMesh:
-    stl_path = resolve_stl_path(path)
-    if not stl_path.is_file():
-        raise FileNotFoundError(f"STL file not found at '{stl_path}'.")
-    if scale <= 0.0:
-        raise ValueError("--stl-scale must be > 0.")
-    data = stl_path.read_bytes()
-    if len(data) >= 84:
-        triangle_count = struct.unpack_from("<I", data, offset=80)[0]
-        if len(data) == 84 + triangle_count * 50:
-            return _load_binary_stl(stl_path, scale=scale)
-    return _load_ascii_stl(stl_path, scale=scale)
+    return load_triangle_mesh(path, scale=scale)
+
+
+def load_asset_mesh(path: str | Path, *, scale: float) -> TriangleMesh:
+    return load_triangle_mesh(path, scale=scale)
 
 
 def unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
@@ -368,17 +313,17 @@ def load_assembly_obstacle_mesh(
 ) -> tuple[TriangleMesh | None, tuple[str, ...]]:
     if not assembly_glob:
         return None, ()
-    target_resolved = None if target_stl_path is None else resolve_stl_path(target_stl_path)
+    target_resolved = None if target_stl_path is None else resolve_mesh_path(target_stl_path)
     resolved_paths = []
-    for path in sorted(DEFAULT_STL_DIR.glob(assembly_glob)):
+    for path in sorted(REPO_ROOT.joinpath("assets").glob(assembly_glob)):
         if not path.is_file():
             continue
         resolved = path.resolve()
         if target_resolved is not None and resolved == target_resolved:
             continue
         resolved_paths.append(resolved)
-    meshes = [load_stl_mesh(path, scale=stl_scale) for path in resolved_paths]
-    return combine_triangle_meshes(meshes), tuple(str(path.relative_to(DEFAULT_STL_DIR)) for path in resolved_paths)
+    meshes = [load_triangle_mesh(path, scale=stl_scale) for path in resolved_paths]
+    return combine_triangle_meshes(meshes), tuple(relative_mesh_path(path) for path in resolved_paths)
 
 
 def _box_corners_from_pose(
@@ -518,10 +463,14 @@ def save_grasp_bundle(bundle: SavedGraspBundle, output_path: str | Path) -> None
     payload = {
         "schema_version": SCHEMA_VERSION,
         "target": {
-            "stl_path": bundle.target_stl_path,
-            "stl_scale": bundle.stl_scale,
-            "local_frame_origin_world": list(bundle.local_frame_origin_world),
-            "local_frame_orientation_xyzw_world": list(bundle.local_frame_orientation_xyzw_world),
+            "mesh_path": bundle.target_mesh_path,
+            "mesh_scale": bundle.mesh_scale,
+            "source_frame_origin_obj_world": list(bundle.source_frame_origin_obj_world),
+            "source_frame_orientation_xyzw_obj_world": list(bundle.source_frame_orientation_xyzw_obj_world),
+            "stl_path": bundle.target_mesh_path,
+            "stl_scale": bundle.mesh_scale,
+            "local_frame_origin_world": list(bundle.source_frame_origin_obj_world),
+            "local_frame_orientation_xyzw_world": list(bundle.source_frame_orientation_xyzw_obj_world),
         },
         "metadata": bundle.metadata,
         "candidates": [
@@ -552,7 +501,8 @@ def save_grasp_bundle(bundle: SavedGraspBundle, output_path: str | Path) -> None
 
 def load_grasp_bundle(path: str | Path) -> SavedGraspBundle:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", -1)) != SCHEMA_VERSION:
+    schema_version = int(payload.get("schema_version", -1))
+    if schema_version not in {1, SCHEMA_VERSION}:
         raise ValueError(f"Unsupported grasp bundle schema version: {payload.get('schema_version')}")
     target = payload["target"]
     candidates = []
@@ -580,10 +530,18 @@ def load_grasp_bundle(path: str | Path) -> SavedGraspBundle:
             )
         )
     return SavedGraspBundle(
-        target_stl_path=str(target["stl_path"]),
-        stl_scale=float(target["stl_scale"]),
-        local_frame_origin_world=tuple(float(v) for v in target["local_frame_origin_world"]),
-        local_frame_orientation_xyzw_world=tuple(float(v) for v in target["local_frame_orientation_xyzw_world"]),
+        target_mesh_path=str(target.get("mesh_path", target["stl_path"])),
+        mesh_scale=float(target.get("mesh_scale", target["stl_scale"])),
+        source_frame_origin_obj_world=tuple(
+            float(v) for v in target.get("source_frame_origin_obj_world", target["local_frame_origin_world"])
+        ),
+        source_frame_orientation_xyzw_obj_world=tuple(
+            float(v)
+            for v in target.get(
+                "source_frame_orientation_xyzw_obj_world",
+                target["local_frame_orientation_xyzw_world"],
+            )
+        ),
         candidates=tuple(candidates),
         metadata=dict(payload.get("metadata", {})),
     )

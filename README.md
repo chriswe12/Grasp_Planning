@@ -7,9 +7,10 @@ Current scope:
 - ground plane + dynamic cube + FR3 scene,
 - experimental move-to-pose and pickup debug paths in the launcher,
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
-- a separate minimal object-frame antipodal grasp generator for procedural mesh and STL debug,
-- a two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground rechecking,
-- an integrated Fabrica-to-Isaac pickup path that converts the STL into an Isaac asset, reloads saved grasps, rechecks floor feasibility for the sampled pose, and executes the first feasible grasp,
+- a separate minimal object-frame antipodal grasp generator for procedural mesh and mesh-asset debug,
+- a shared Fabrica-style planning pipeline for offline assembly filtering and pickup-ground rechecking,
+- a YAML-driven local pipeline path and a ROS2-backed planning-only path behind one bash launcher,
+- an integrated Fabrica-to-Isaac pickup path that reloads saved grasps, rechecks floor feasibility for the execution pose, and executes the first feasible grasp,
 - pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
 
 Main entrypoint:
@@ -27,6 +28,22 @@ python scripts/debug_cube_grasps.py
 The debug viewer is browser-based. It writes a self-contained HTML file to
 `artifacts/cube_grasp_debug.html`; open that file from the host browser.
 
+Unified planning entrypoint:
+
+```bash
+./run_pipeline.sh --mode local
+./run_pipeline.sh --mode real
+```
+
+The wrapper defaults to:
+- `configs/grasp_pipeline_local.yaml` for `--mode local`
+- `configs/grasp_pipeline_real.yaml` for `--mode real`
+
+It prefers `/isaac-sim/python.sh` inside the Isaac container and falls back to `python3` or `python` on the host.
+
+The local config is the current default path for OBJ-based Fabrica assets under `assets/obj/`.
+The default `mesh_scale` for those OBJ assets is `0.01`; `1.0` is too large for the current grasp-width thresholds.
+
 Standalone mesh antipodal grasp debug viewer:
 
 ```bash
@@ -43,9 +60,9 @@ Fabrica two-stage grasp workflow:
 
 ```bash
 python scripts/generate_fabrica_assembly_grasps.py \
-  --stl-path Fabrica/printing/beam/2.stl \
-  --assembly-glob 'Fabrica/printing/beam/*.stl' \
-  --stl-scale 0.001 \
+  --mesh-path obj/fabrica/beam/2.obj \
+  --assembly-glob 'obj/fabrica/beam/*.obj' \
+  --mesh-scale 0.01 \
   --num-samples 204 \
   --antipodal-cosine-threshold 0.984807753012208 \
   --min-jaw-width 0.002 \
@@ -67,9 +84,16 @@ python scripts/check_fabrica_ground_feasible_grasps.py \
   --xy-world 0.0,0.0
 ```
 
-Stage 1 generates grasps on the target part, filters them against sibling STL meshes from the same Fabrica assembly, scores the surviving grasps geometrically, and saves the accepted grasps plus an HTML viewer in score order.
+Stage 1 generates grasps on the target part, filters them against sibling assembly meshes from the same Fabrica assembly, scores the surviving grasps geometrically, and saves the accepted grasps plus an HTML viewer in score order.
 Stage 2 reloads those saved grasps, applies a pickup pose, filters them against the pickup ground plane only, rescoring any surviving grasps before export.
 The saved grasp JSON stays in the target part-local frame, but the stage-2 HTML now renders the part and grasps in the selected pickup world pose so support-face and yaw overrides are visually obvious.
+
+Current geometry conventions:
+- Fabrica assets now live under `assets/obj/`
+- individual OBJ files are authored in shared assembly coordinates
+- stage 1 canonicalizes the chosen target part into a saved local frame
+- stage 2 applies `local -> execution_world`
+- the floor is the execution-world plane with normal `+z` at `z=0`
 
 Integrated Fabrica-to-Isaac pickup flow:
 
@@ -122,8 +146,11 @@ This opens an interactive shell inside the container immediately.
 Inside the container:
 
 ```bash
-/isaac-sim/python.sh scripts/launch_fr3_cube_env.py --headless
+./run_pipeline.sh --mode local
 ```
+
+If `local_simulation.enabled: true` and `local_simulation.part_usd` is set in `configs/grasp_pipeline_local.yaml`,
+the local pipeline writes stage-1 and stage-2 artifacts first, then hands off to Isaac for the execution attempt.
 
 To run the new Isaac-side admittance controller instead of the joint-space planner:
 
@@ -188,15 +215,21 @@ Mesh antipodal grasp path:
 Fabrica assembly / pickup path:
 - `scripts/generate_fabrica_assembly_grasps.py` is the offline stage,
 - `scripts/check_fabrica_ground_feasible_grasps.py` is the pickup-ground recheck stage,
+- `scripts/run_grasp_pipeline.py` is the shared YAML-driven orchestration entrypoint,
+- `run_pipeline.sh` is the user-facing launcher for `local` and `real` modes,
+- shared pipeline code lives under `grasp_planning/pipeline/`,
+- ROS2 object-pose listening lives under `grasp_planning/ros2/`,
 - shared utilities and viewer generation live in `grasp_planning/grasping/fabrica_grasp_debug.py`,
-- assembly STL files are assumed to already be in a shared global coordinate system,
+- assembly OBJ files are assumed to already be in a shared global coordinate system,
 - the target part is recentered into a canonical local frame before grasps are saved,
 - saved grasp JSON remains in that local frame so stage 1 and stage 2 talk in the same coordinates,
+- saved grasp bundles now also store the source-frame origin/orientation used to define that local frame,
 - saved grasp poses already include any accepted finger-pad contact offset refinement; downstream consumers should execute the stored pose directly rather than reapplying the offset,
 - both stages refine infeasible center-contact grasps over a 5x5 grid on the Franka rubber tip contact patch, with equal inset spacing from the pad edges in lateral and approach directions,
 - Fabrica scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset in the closing-plane,
 - stage 1 and stage 2 HTML viewers list grasps in score order,
 - `scripts/check_fabrica_ground_feasible_grasps.py` accepts `--support-face`, `--yaw-deg`, and `--xy-world` overrides for one-off pickup-pose checks,
+- `scripts/check_fabrica_ground_feasible_grasps.py` and `scripts/run_fabrica_pickup_in_isaac.py` also accept explicit object world pose overrides,
 - accepted and rejected grasps are both rendered in the ground-recheck HTML viewer, and the viewer can be toggled to show accepted grasps only.
 
 Current grasp convention for the cube generator:
