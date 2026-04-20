@@ -91,6 +91,20 @@ class SavedGraspTransformTests(unittest.TestCase):
         np.testing.assert_allclose(world_grasp.normal_w, (0.0, 1.0, 0.0), atol=1e-6)
         np.testing.assert_allclose(world_grasp.pregrasp_position_w, (0.0, -0.1, 0.0), atol=1e-6)
 
+    def test_mesh_grasp_frame_preserves_saved_axes(self) -> None:
+        world_grasp = saved_grasp_to_world_grasp(
+            self._candidate(),
+            ObjectWorldPose(position_world=(0.0, 0.0, 0.0), orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0)),
+            pregrasp_offset=0.2,
+            gripper_width_clearance=0.01,
+            frame_convention="mesh_grasp",
+        )
+
+        rot = rotmat_to_quat_xyzw(np.eye(3, dtype=float))
+        np.testing.assert_allclose(world_grasp.orientation_xyzw, rot, atol=1e-6)
+        np.testing.assert_allclose(world_grasp.normal_w, (0.0, 0.0, 1.0), atol=1e-6)
+        np.testing.assert_allclose(world_grasp.pregrasp_position_w, (0.0, 0.0, -0.2), atol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

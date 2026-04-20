@@ -121,6 +121,29 @@ def pickup_spec_from_args(args: argparse.Namespace, *, relative_path: str) -> di
     return base_spec
 
 
+def _accepted_bundle(
+    source_bundle: SavedGraspBundle, accepted: list[SavedGraspCandidate], pickup_spec: dict[str, object]
+) -> SavedGraspBundle:
+    metadata = dict(source_bundle.metadata)
+    metadata.update(
+        {
+            "pickup_support_face": pickup_spec["support_face"],
+            "pickup_yaw_deg": float(pickup_spec["yaw_deg"]),
+            "pickup_xy_world": [float(v) for v in pickup_spec["xy_world"]],
+            "ground_input_count": len(source_bundle.candidates),
+            "ground_feasible_count": len(accepted),
+        }
+    )
+    return SavedGraspBundle(
+        target_stl_path=source_bundle.target_stl_path,
+        stl_scale=source_bundle.stl_scale,
+        local_frame_origin_world=source_bundle.local_frame_origin_world,
+        local_frame_orientation_xyzw_world=source_bundle.local_frame_orientation_xyzw_world,
+        candidates=tuple(accepted),
+        metadata=metadata,
+    )
+
+
 def main() -> None:
     args = build_parser().parse_args()
     bundle = load_grasp_bundle(args.input_json)

@@ -55,6 +55,7 @@ Current scope:
 - If you use the dual-topic real path, keep both subscriptions alive concurrently and pair stamped messages when possible; sequential waits can miss volatile or one-shot perception messages.
 - Preserve the saved source-frame rotation end to end; do not reconstruct local meshes with translation-only shifts in stage 2 or HTML/debug views.
 - The integrated Isaac pickup path also consumes those saved part-local grasps; world-frame execution targets are derived at runtime from the sampled object pose.
+- The planner collision checker must fail fast if the robot asset has no collision-enabled `UsdGeom.Gprim`s; do not silently skip scene queries and pretend all states are valid.
 - Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
 - Fabrica grasp scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset. Collision and approach checks stay as upstream hard filters.
 - Stage 1 and stage 2 Fabrica HTML viewers are score-sorted; stage 2 renders in the selected pickup world pose, not the canonical saved local frame.
@@ -62,6 +63,8 @@ Current scope:
 - `scripts/check_fabrica_ground_feasible_grasps.py` and `scripts/run_fabrica_pickup_in_isaac.py` also accept explicit object world pose overrides.
 - `scripts/run_fabrica_pickup_in_isaac.py` does not use `HARDCODED_PICKUP_SPECS`; it requires an explicit pose or samples support face / yaw / XY directly.
 - Negative `--xy-world` values must be passed as `--xy-world=-0.2,0.0` or `--xy-world "-0.2,0.0"` so `argparse` does not treat them as flags.
+- The MuJoCo grasp path should use the stage-2 bundle pickup pose as the source of truth; only override XY/face/yaw deliberately.
+- MuJoCo execution must rebuild the object mesh in the saved bundle-local frame; using the raw assembly-global STL misaligns saved grasps and world targets.
 - `run_pipeline.sh` defaults configs by mode and prefers `/isaac-sim/python.sh` inside Docker; do not assume `python3` exists in the Isaac container.
 - The current default OBJ scale in `configs/grasp_pipeline_{local,real}.yaml` is `0.01`; `1.0` makes the Fabrica parts far too large for the current jaw-width limits.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
@@ -71,6 +74,7 @@ Current scope:
 - Keep the hand-mesh dependency lazily loaded so generator construction and config/debug imports still work without assets or `trimesh`.
 - Do not hand-author part USDs for Isaac if you can avoid it; `scripts/convert_stl_to_usd.py` now uses Isaac Lab's `MeshConverter`, which fixed the previous scene-creation shutdown on custom part assets.
 - The current remaining integrated-pipeline issue is controller/pregrasp convergence under load; asset loading and offline-to-online grasp bridging are working.
+- MuJoCo Menagerie `franka_fr3` / `franka_fr3_v2` are arm-only; use `scripts/build_mujoco_fr3_hand_models.py` to generate the local FR3+Panda-hand XMLs under `.cache/generated_mujoco_models/`.
 
 ## Docker Notes
 

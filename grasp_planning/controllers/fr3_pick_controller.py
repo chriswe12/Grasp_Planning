@@ -9,6 +9,7 @@ import torch
 
 from grasp_planning.grasping import GraspCandidate
 from grasp_planning.planning.fr3_motion_context import tcp_pose_to_grasp_pose
+from grasp_planning.robot_naming import infer_robot_name_prefix_from_joint_names
 
 
 def quat_xyzw_to_wxyz(quat_xyzw: torch.Tensor) -> torch.Tensor:
@@ -80,10 +81,15 @@ class FR3PickController:
         self._phase = start_phase
         self._phase_elapsed_s = 0.0
         self._status = "running"
+        self._robot_name_prefix = infer_robot_name_prefix_from_joint_names(tuple(self._robot.joint_names))
         self._ee_body_name, self._ee_body_idx = self._resolve_ee_body()
         self._ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self._ee_body_idx)
-        self._arm_joint_names, self._arm_joint_ids = self._resolve_joint_ids(r"fr3_joint[1-7]")
-        self._hand_joint_names, self._hand_joint_ids = self._resolve_joint_ids(r"fr3_finger_joint[12]")
+        self._arm_joint_names, self._arm_joint_ids = self._resolve_joint_ids(
+            rf"{re.escape(self._robot_name_prefix)}_joint[1-7]"
+        )
+        self._hand_joint_names, self._hand_joint_ids = self._resolve_joint_ids(
+            rf"{re.escape(self._robot_name_prefix)}_finger_joint[12]"
+        )
         self._ik_controller = self._build_ik_controller()
         self._phase_start_pos_w, self._phase_start_quat_w = self._current_grasp_pose_w()
         self._phase_start_tcp_pos_w, self._phase_start_tcp_quat_w = self._current_tcp_pose_w()
