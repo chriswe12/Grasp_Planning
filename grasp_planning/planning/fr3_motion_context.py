@@ -151,10 +151,15 @@ class FR3MotionContext:
         self.scene = scene
         self.sim = sim
         self.fixed_gripper_width = float(fixed_gripper_width)
+        self.robot_name_prefix = self._resolve_robot_name_prefix()
         self.ee_body_name, self.ee_body_idx = self._resolve_ee_body()
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
-        self.arm_joint_names, self.arm_joint_ids = self._resolve_joint_ids(r"fr3_joint[1-7]")
-        self.hand_joint_names, self.hand_joint_ids = self._resolve_joint_ids(r"fr3_finger_joint[12]")
+        self.arm_joint_names, self.arm_joint_ids = self._resolve_joint_ids(
+            rf"{re.escape(self.robot_name_prefix)}_joint[1-7]"
+        )
+        self.hand_joint_names, self.hand_joint_ids = self._resolve_joint_ids(
+            rf"{re.escape(self.robot_name_prefix)}_finger_joint[12]"
+        )
 
     @property
     def device(self) -> str:
@@ -385,3 +390,14 @@ class FR3MotionContext:
         if not ids:
             raise RuntimeError(f"Could not resolve joints matching '{joint_pattern}' on the articulation.")
         return matched_names, torch.tensor(ids, dtype=torch.long, device=self.device)
+
+    def _resolve_robot_name_prefix(self) -> str:
+        joint_names = list(getattr(self.robot, "joint_names", []))
+        for name in joint_names:
+            match = re.fullmatch(r"(.+)_joint1", name)
+            if match is not None:
+                return match.group(1)
+        raise RuntimeError(
+            "Could not infer the robot joint-name prefix from the articulation. "
+            f"Available joints: {', '.join(joint_names)}"
+        )

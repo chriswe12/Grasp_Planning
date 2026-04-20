@@ -10,6 +10,7 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
+from ..robot_naming import infer_robot_name_prefix_from_asset_path, remap_joint_targets
 from .fr3_cube_env import (
     DEFAULT_ARM_START_JOINT_POS,
     DEFAULT_HAND_START_JOINT_POS,
@@ -95,9 +96,17 @@ def make_fr3_part_scene_cfg(
         return str(resolved)
 
     scene_cfg = FR3PartSceneCfg()
-    scene_cfg.robot.spawn.usd_path = _resolve_path(fr3_asset_path)
+    resolved_fr3_asset_path = _resolve_path(fr3_asset_path)
+    robot_name_prefix = infer_robot_name_prefix_from_asset_path(resolved_fr3_asset_path)
+    scene_cfg.robot.spawn.usd_path = resolved_fr3_asset_path
     scene_cfg.robot.init_state.pos = robot_base_position
     scene_cfg.robot.init_state.rot = robot_base_orientation_xyzw
+    scene_cfg.robot.init_state.joint_pos = remap_joint_targets(
+        {**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
+        robot_name_prefix,
+    )
+    scene_cfg.robot.actuators["fr3_arm"].joint_names_expr = [f"{robot_name_prefix}_joint[1-7]"]
+    scene_cfg.robot.actuators["fr3_hand"].joint_names_expr = [f"{robot_name_prefix}_finger_joint.*"]
     scene_cfg.part.spawn.usd_path = _resolve_path(part_usd_path)
     scene_cfg.part.init_state.pos = part_position
     scene_cfg.part.init_state.rot = part_orientation_xyzw

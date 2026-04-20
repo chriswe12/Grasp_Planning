@@ -41,6 +41,18 @@ parser.add_argument(
 parser.add_argument("--support-face", type=str, default="", help="Optional explicit support face.")
 parser.add_argument("--yaw-deg", type=float, default=None, help="Optional explicit pickup yaw in degrees.")
 parser.add_argument("--xy-world", type=str, default="", help="Optional explicit world XY as x,y.")
+parser.add_argument(
+    "--object-position-world",
+    type=str,
+    default="",
+    help="Optional explicit object world position as x,y,z. Overrides support-face/yaw sampling when paired with --object-orientation-xyzw.",
+)
+parser.add_argument(
+    "--object-orientation-xyzw",
+    type=str,
+    default="",
+    help="Optional explicit object world orientation as x,y,z,w. Overrides support-face/yaw sampling when paired with --object-position-world.",
+)
 parser.add_argument("--random-support-face", action="store_true", help="Sample support face from allowed set.")
 parser.add_argument("--random-yaw", action="store_true", help="Sample yaw from allowed set.")
 parser.add_argument(
@@ -101,6 +113,7 @@ from grasp_planning import (  # noqa: E402
 from grasp_planning.controllers.fr3_pick_controller import FR3PickController  # noqa: E402
 from grasp_planning.envs import make_fr3_part_scene_cfg  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import load_stl_mesh  # noqa: E402
+from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
     drive_robot_to_start_pose,
@@ -120,6 +133,20 @@ def _parse_float_tuple(raw: str) -> tuple[float, ...]:
     values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
     if not values:
         raise ValueError(f"Expected at least one comma-separated float, got '{raw}'.")
+    return values
+
+
+def _parse_vec3(raw: str) -> tuple[float, float, float]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if len(values) != 3:
+        raise ValueError(f"Expected exactly 3 comma-separated values, got '{raw}'.")
+    return values
+
+
+def _parse_quat_xyzw(raw: str) -> tuple[float, float, float, float]:
+    values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    if len(values) != 4:
+        raise ValueError(f"Expected exactly 4 comma-separated values, got '{raw}'.")
     return values
 
 
@@ -160,6 +187,13 @@ def _mesh_in_bundle_local_frame(bundle) -> object:
 
 
 def _resolve_placement_spec():
+    if args_cli.object_position_world or args_cli.object_orientation_xyzw:
+        if not (args_cli.object_position_world and args_cli.object_orientation_xyzw):
+            raise ValueError("--object-position-world and --object-orientation-xyzw must be provided together.")
+        return ObjectWorldPose(
+            position_world=_parse_vec3(args_cli.object_position_world),
+            orientation_xyzw_world=_parse_quat_xyzw(args_cli.object_orientation_xyzw),
+        )
     explicit_xy = _parse_vec2(args_cli.xy_world) if args_cli.xy_world else None
     if args_cli.support_face and args_cli.yaw_deg is not None and explicit_xy is not None:
         from grasp_planning.grasping.fabrica_grasp_debug import PickupPlacementSpec
@@ -256,6 +290,16 @@ def _write_attempt_artifact(
     output.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
 
 
+def _artifact_placement_spec(placement_spec) -> object:
+    if isinstance(placement_spec, ObjectWorldPose):
+        return type(
+            "PlacementSpec",
+            (),
+            {"support_face": "explicit_pose", "yaw_deg": 0.0, "xy_world": (0.0, 0.0)},
+        )()
+    return placement_spec
+
+
 def run() -> None:
     configure_grasp_tcp_calibration()
     print("[INFO]: Loading grasp bundle...", flush=True)
@@ -265,19 +309,28 @@ def run() -> None:
     mesh_local = _mesh_in_bundle_local_frame(bundle)
     print("[INFO]: Resolving pickup placement...", flush=True)
     placement_spec = _resolve_placement_spec()
-    object_pose_world = build_pickup_pose_world(
-        mesh_local,
-        support_face=placement_spec.support_face,
-        yaw_deg=placement_spec.yaw_deg,
-        xy_world=placement_spec.xy_world,
-    )
-    print(
-        "[INFO]: Pickup placement "
-        f"support_face={placement_spec.support_face} yaw_deg={placement_spec.yaw_deg:.1f} "
-        f"xy_world={placement_spec.xy_world} object_pose_world={object_pose_world.position_world} "
-        f"orientation_xyzw={object_pose_world.orientation_xyzw_world}",
-        flush=True,
-    )
+    if isinstance(placement_spec, ObjectWorldPose):
+        object_pose_world = placement_spec
+        print(
+            "[INFO]: Pickup placement "
+            f"explicit_object_pose_world={object_pose_world.position_world} "
+            f"orientation_xyzw={object_pose_world.orientation_xyzw_world}",
+            flush=True,
+        )
+    else:
+        object_pose_world = build_pickup_pose_world(
+            mesh_local,
+            support_face=placement_spec.support_face,
+            yaw_deg=placement_spec.yaw_deg,
+            xy_world=placement_spec.xy_world,
+        )
+        print(
+            "[INFO]: Pickup placement "
+            f"support_face={placement_spec.support_face} yaw_deg={placement_spec.yaw_deg:.1f} "
+            f"xy_world={placement_spec.xy_world} object_pose_world={object_pose_world.position_world} "
+            f"orientation_xyzw={object_pose_world.orientation_xyzw_world}",
+            flush=True,
+        )
 
     print("[INFO]: Rechecking saved grasps against the selected pickup pose...", flush=True)
     statuses = evaluate_saved_grasps_against_pickup_pose(
@@ -313,7 +366,7 @@ def run() -> None:
         )()
         _write_attempt_artifact(
             bundle=bundle,
-            placement_spec=placement_spec,
+            placement_spec=_artifact_placement_spec(placement_spec),
             object_pose_world=object_pose_world,
             statuses=statuses,
             selected_world_grasp=None,
@@ -362,7 +415,7 @@ def run() -> None:
     )
     _write_attempt_artifact(
         bundle=bundle,
-        placement_spec=placement_spec,
+        placement_spec=_artifact_placement_spec(placement_spec),
         object_pose_world=object_pose_world,
         statuses=statuses,
         selected_world_grasp=selected_world_grasp,
@@ -371,7 +424,8 @@ def run() -> None:
 
     print(
         "[INFO]: Fabrica Isaac pickup attempt "
-        f"support_face={placement_spec.support_face} yaw_deg={placement_spec.yaw_deg:.1f} "
+        f"support_face={placement_spec.support_face if not isinstance(placement_spec, ObjectWorldPose) else 'explicit_pose'} "
+        f"yaw_deg={placement_spec.yaw_deg if not isinstance(placement_spec, ObjectWorldPose) else 0.0:.1f} "
         f"saved={len(bundle.candidates)} feasible={len(feasible_grasps)} "
         f"selected={selected_grasp.grasp_id} status={execution_result.status} success={execution_result.success}",
         flush=True,

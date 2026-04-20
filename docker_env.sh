@@ -3,7 +3,7 @@
 set -euo pipefail
 
 IMAGE_NAME="${IMAGE_NAME:-grasp-planning-isaac}"
-CONTAINER_NAME="${CONTAINER_NAME:-grasp-planning}"
+CONTAINER_NAME="${CONTAINER_NAME:-grasp-planning-isaac-fix}"
 WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 XAUTH_FILE="${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}"
 

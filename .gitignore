@@ -19,3 +19,7 @@ htmlcov/
 
 
 artifacts/
+.cache/
+MUJOCO_LOG.TXT
+third_party/franka_description_tags/
+third_party/franka_description_upstream/

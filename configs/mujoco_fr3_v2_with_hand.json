@@ -1,0 +1,44 @@
+{
+  "robot_xml_path": "../.cache/generated_mujoco_models/fr3v2_with_panda_hand.xml",
+  "ee_site_name": "gripper",
+  "arm_joint_names": [
+    "fr3v2_joint1",
+    "fr3v2_joint2",
+    "fr3v2_joint3",
+    "fr3v2_joint4",
+    "fr3v2_joint5",
+    "fr3v2_joint6",
+    "fr3v2_joint7"
+  ],
+  "arm_actuator_names": [
+    "fr3v2_joint1",
+    "fr3v2_joint2",
+    "fr3v2_joint3",
+    "fr3v2_joint4",
+    "fr3v2_joint5",
+    "fr3v2_joint6",
+    "fr3v2_joint7"
+  ],
+  "gripper_actuator_names": [
+    "actuator8"
+  ],
+  "home_joint_positions": {
+    "fr3v2_joint1": 0.0,
+    "fr3v2_joint2": 0.0,
+    "fr3v2_joint3": 0.0,
+    "fr3v2_joint4": -1.57079,
+    "fr3v2_joint5": 0.0,
+    "fr3v2_joint6": 1.57079,
+    "fr3v2_joint7": -0.7853,
+    "finger_joint1": 0.04,
+    "finger_joint2": 0.04
+  },
+  "open_gripper_ctrl": [
+    255.0
+  ],
+  "closed_gripper_ctrl": [
+    0.0
+  ],
+  "timestep": 0.002,
+  "control_substeps": 8
+}

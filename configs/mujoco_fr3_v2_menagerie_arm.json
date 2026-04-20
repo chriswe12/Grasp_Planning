@@ -1,0 +1,36 @@
+{
+  "robot_xml_path": "../.cache/robot_descriptions/mujoco_menagerie/franka_fr3_v2/fr3v2.xml",
+  "ee_body_name": "fr3v2_link8",
+  "arm_joint_names": [
+    "fr3v2_joint1",
+    "fr3v2_joint2",
+    "fr3v2_joint3",
+    "fr3v2_joint4",
+    "fr3v2_joint5",
+    "fr3v2_joint6",
+    "fr3v2_joint7"
+  ],
+  "arm_actuator_names": [
+    "fr3v2_joint1",
+    "fr3v2_joint2",
+    "fr3v2_joint3",
+    "fr3v2_joint4",
+    "fr3v2_joint5",
+    "fr3v2_joint6",
+    "fr3v2_joint7"
+  ],
+  "gripper_actuator_names": [],
+  "open_gripper_ctrl": [],
+  "closed_gripper_ctrl": [],
+  "home_joint_positions": {
+    "fr3v2_joint1": 0.0,
+    "fr3v2_joint2": 0.0,
+    "fr3v2_joint3": 0.0,
+    "fr3v2_joint4": -1.57079,
+    "fr3v2_joint5": 0.0,
+    "fr3v2_joint6": 1.57079,
+    "fr3v2_joint7": -0.7853
+  },
+  "timestep": 0.002,
+  "control_substeps": 8
+}

@@ -103,11 +103,15 @@ from grasp_planning.envs import make_fr3_cube_scene_cfg  # noqa: E402
 from grasp_planning.envs.fr3_cube_env import (  # noqa: E402
     DEFAULT_ARM_START_JOINT_POS,
     DEFAULT_CUBE_CFG,
-    DEFAULT_HAND_START_JOINT_POS,
+    DEFAULT_HAND_START_WIDTH,
 )
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.goal_ik import GoalIKSolver  # noqa: E402
 from grasp_planning.planning.types import PoseCommand  # noqa: E402
+from grasp_planning.robot_naming import (  # noqa: E402
+    arm_joint_names_for_prefix,
+    infer_robot_name_prefix_from_joint_names,
+)
 from grasp_planning.scene_defaults import (  # noqa: E402
     CUBE_ORIENTATION_XYZW,
     CUBE_POSITION,
@@ -240,7 +244,7 @@ def run_pick_sequence(sim, scene, robot, cube) -> None:
         f"normal_w={grasp.normal_w} orientation_xyzw={grasp.orientation_xyzw} gripper_width={grasp.gripper_width}",
         flush=True,
     )
-    fixed_gripper_width = float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"])
+    fixed_gripper_width = float(DEFAULT_HAND_START_WIDTH)
     context = FR3MotionContext(
         robot=robot,
         scene=scene,
@@ -387,8 +391,9 @@ def _command_gripper_width(
     width: float,
     duration_s: float,
 ) -> None:
+    robot_name_prefix = infer_robot_name_prefix_from_joint_names(tuple(robot.joint_names))
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
-    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith("fr3_finger_joint"))
+    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith(f"{robot_name_prefix}_finger_joint"))
     if not hand_joint_names:
         return
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
@@ -473,14 +478,17 @@ def drive_robot_to_start_pose(sim, scene) -> None:
     """Actively settle the FR3 into a safe home pose before planning."""
 
     robot = scene["robot"]
+    robot_name_prefix = infer_robot_name_prefix_from_joint_names(tuple(robot.joint_names))
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
-    arm_joint_names = tuple(DEFAULT_ARM_START_JOINT_POS.keys())
+    arm_joint_names = arm_joint_names_for_prefix(robot_name_prefix)
     arm_joint_ids = [joint_name_to_idx[name] for name in arm_joint_names]
     arm_targets = torch.tensor(
-        [[DEFAULT_ARM_START_JOINT_POS[name] for name in arm_joint_names]], dtype=torch.float32, device=robot.device
+        [[DEFAULT_ARM_START_JOINT_POS[name.replace(f"{robot_name_prefix}_", "fr3_", 1)] for name in arm_joint_names]],
+        dtype=torch.float32,
+        device=robot.device,
     )
-    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith("fr3_finger_joint"))
-    hand_target = float(DEFAULT_HAND_START_JOINT_POS["fr3_finger_joint.*"])
+    hand_joint_names = tuple(name for name in robot.joint_names if name.startswith(f"{robot_name_prefix}_finger_joint"))
+    hand_target = float(DEFAULT_HAND_START_WIDTH)
     physics_dt = sim.get_physics_dt()
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
 
