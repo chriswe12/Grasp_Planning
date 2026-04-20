@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate local MuJoCo FR3 models augmented with the Menagerie Panda hand."""
+"""Generate the local MuJoCo FR3 model augmented with the Menagerie Panda hand."""
 
 from __future__ import annotations
 
@@ -41,18 +41,13 @@ def main() -> None:
     menagerie_root = args.menagerie_root.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     panda_hand_xml = menagerie_root / "franka_emika_panda" / "hand.xml"
-    variants = {
-        "fr3": menagerie_root / "franka_fr3" / "fr3.xml",
-        "fr3v2": menagerie_root / "franka_fr3_v2" / "fr3v2.xml",
-    }
-    for variant, arm_xml in variants.items():
-        output_path = output_dir / f"{variant}_with_panda_hand.xml"
-        build_fr3_with_panda_hand_xml(
-            arm_xml_path=arm_xml,
-            panda_hand_xml_path=panda_hand_xml,
-            output_xml_path=output_path,
-        )
-        print(output_path)
+    output_path = output_dir / "fr3_with_panda_hand.xml"
+    build_fr3_with_panda_hand_xml(
+        arm_xml_path=menagerie_root / "franka_fr3" / "fr3.xml",
+        panda_hand_xml_path=panda_hand_xml,
+        output_xml_path=output_path,
+    )
+    print(output_path)
 
 
 if __name__ == "__main__":

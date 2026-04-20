@@ -50,6 +50,20 @@ def _ensure_top_level_child(root: ET.Element, tag: str) -> ET.Element:
     return child
 
 
+def _ensure_nested_child(parent: ET.Element, tag: str) -> ET.Element:
+    child = parent.find(tag)
+    if child is None:
+        child = ET.SubElement(parent, tag)
+    return child
+
+
+def _ensure_named_child(parent: ET.Element, tag: str, *, name: str) -> ET.Element:
+    for child in parent.findall(tag):
+        if child.get("name") == name:
+            return child
+    return ET.SubElement(parent, tag, {"name": name})
+
+
 def build_scene_xml_text(
     *,
     robot_xml_path: str | Path,
@@ -82,6 +96,13 @@ def build_scene_xml_text(
     option.set("iterations", option.get("iterations", "100"))
     option.set("cone", option.get("cone", "elliptic"))
 
+    visual = _ensure_top_level_child(root, "visual")
+    headlight = _ensure_nested_child(visual, "headlight")
+    headlight.set("active", headlight.get("active", "1"))
+    headlight.set("ambient", headlight.get("ambient", "0.18 0.2 0.24"))
+    headlight.set("diffuse", headlight.get("diffuse", "0.55 0.55 0.55"))
+    headlight.set("specular", headlight.get("specular", "0.12 0.12 0.12"))
+
     asset = _ensure_top_level_child(root, "asset")
     mesh_name = "target_object_mesh"
     ET.SubElement(
@@ -95,6 +116,43 @@ def build_scene_xml_text(
     )
 
     worldbody = _ensure_top_level_child(root, "worldbody")
+    # A simple key/fill/rim setup makes the object and hand easier to read in the viewer.
+    for light_name, attributes in (
+        (
+            "scene_key_light",
+            {
+                "pos": "1.8 -1.6 3.2",
+                "dir": "-0.45 0.35 -1",
+                "directional": "true",
+                "diffuse": "0.95 0.9 0.82",
+                "specular": "0.25 0.25 0.25",
+                "castshadow": "true",
+            },
+        ),
+        (
+            "scene_fill_light",
+            {
+                "pos": "-2 1 2.1",
+                "dir": "0.55 -0.2 -1",
+                "directional": "true",
+                "diffuse": "0.45 0.5 0.62",
+                "specular": "0.08 0.08 0.08",
+            },
+        ),
+        (
+            "scene_rim_light",
+            {
+                "pos": "-0.4 -2.5 2.6",
+                "dir": "0.1 0.9 -0.9",
+                "directional": "true",
+                "diffuse": "0.3 0.32 0.38",
+                "specular": "0.12 0.12 0.12",
+            },
+        ),
+    ):
+        light = _ensure_named_child(worldbody, "light", name=light_name)
+        for key, value in attributes.items():
+            light.set(key, value)
     ET.SubElement(
         worldbody,
         "geom",
@@ -106,7 +164,7 @@ def build_scene_xml_text(
             ),
             "pos": "0 0 0",
             "friction": _format_vec(scene_cfg.ground_friction),
-            "rgba": "0.2 0.2 0.2 1",
+            "rgba": "0.3 0.32 0.36 1",
         },
     )
     object_body = ET.SubElement(
@@ -133,7 +191,7 @@ def build_scene_xml_text(
             "solimp": _format_vec(scene_cfg.object_solimp),
             "margin": f"{scene_cfg.object_margin:.9g}",
             "gap": f"{scene_cfg.object_gap:.9g}",
-            "rgba": "0.8 0.2 0.2 1",
+            "rgba": "0.86 0.34 0.26 1",
         },
     )
 

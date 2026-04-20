@@ -4,22 +4,21 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./run_pipeline.sh --mode local
+  ./run_pipeline.sh --mode sim
+  ./run_pipeline.sh --mode pitl
   ./run_pipeline.sh --mode real
-  ./run_pipeline.sh --mode local --config configs/grasp_pipeline_local.yaml
+  ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim.yaml
+  ./run_pipeline.sh --mode sim --headless
 EOF
 }
 
 MODE=""
 CONFIG=""
+HEADLESS=0
 
 resolve_python() {
   if [[ -n "${PIPELINE_PYTHON:-}" ]]; then
     printf '%s\n' "${PIPELINE_PYTHON}"
-    return 0
-  fi
-  if [[ -x "/isaac-sim/python.sh" ]]; then
-    printf '%s\n' "/isaac-sim/python.sh"
     return 0
   fi
   if command -v python3 >/dev/null 2>&1; then
@@ -44,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       CONFIG="${2:-}"
       shift 2
       ;;
+    --headless)
+      HEADLESS=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -61,10 +64,22 @@ if [[ -z "$MODE" ]]; then
   exit 1
 fi
 
+case "$MODE" in
+  simulation)
+    MODE="sim"
+    ;;
+  perception_in_the_loop|perception-in-the-loop)
+    MODE="pitl"
+    ;;
+esac
+
 if [[ -z "$CONFIG" ]]; then
   case "$MODE" in
-    local)
-      CONFIG="configs/grasp_pipeline_local.yaml"
+    sim)
+      CONFIG="configs/grasp_pipeline_sim.yaml"
+      ;;
+    pitl)
+      CONFIG="configs/grasp_pipeline_pitl.yaml"
       ;;
     real)
       CONFIG="configs/grasp_pipeline_real.yaml"
@@ -77,4 +92,8 @@ if [[ -z "$CONFIG" ]]; then
 fi
 
 PYTHON_BIN="$(resolve_python)"
-exec "${PYTHON_BIN}" scripts/run_grasp_pipeline.py --mode "$MODE" --config "$CONFIG"
+ARGS=(scripts/run_grasp_pipeline.py --mode "$MODE" --config "$CONFIG")
+if [[ "${HEADLESS}" -eq 1 ]]; then
+  ARGS+=(--headless)
+fi
+exec "${PYTHON_BIN}" "${ARGS[@]}"

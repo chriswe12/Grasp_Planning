@@ -1,12 +1,11 @@
-"""Shared pipeline helpers for offline, local-sim, and ROS2-backed planning flows."""
+"""Shared pipeline helpers for sim, pitl, and real planning flows."""
 
 from .fabrica_pipeline import (
     ExecutionWorldPoseConfig,
     GeometryConfig,
     GroundRecheckResult,
-    LocalSimulationConfig,
+    MujocoPipelineConfig,
     PickupPoseConfig,
-    PipelineArtifactsConfig,
     PlanningConfig,
     Ros2Config,
     Stage1Result,
@@ -20,9 +19,8 @@ __all__ = [
     "ExecutionWorldPoseConfig",
     "GeometryConfig",
     "GroundRecheckResult",
-    "LocalSimulationConfig",
+    "MujocoPipelineConfig",
     "PickupPoseConfig",
-    "PipelineArtifactsConfig",
     "PlanningConfig",
     "Ros2Config",
     "Stage1Result",

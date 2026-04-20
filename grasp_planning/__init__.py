@@ -1,12 +1,9 @@
-"""Grasp planning package."""
+"""Pipeline-facing grasp planning exports."""
 
-from .controllers import FR3PickController
 from .grasping import (
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
-    CubeFaceGraspGenerator,
     FingerBoxGripperCollisionModel,
-    GraspCandidate,
     GraspCollisionEvaluator,
     ObjectFrameGraspCandidate,
     PickupPlacementSpec,
@@ -26,31 +23,14 @@ from .grasping import (
     score_grasps,
     select_first_feasible_grasp,
 )
-from .planning import (
-    AdmittanceControllerCfg,
-    FR3AdmittanceController,
-    FR3MoveToPoseController,
-    JointTrajectory,
-    PlanResult,
-    PoseCommand,
-)
 
 __all__ = [
-    "AdmittanceControllerCfg",
     "AntipodalGraspGeneratorConfig",
     "AntipodalMeshGraspGenerator",
-    "CubeFaceGraspGenerator",
     "FingerBoxGripperCollisionModel",
-    "FR3AdmittanceController",
-    "FR3MoveToPoseController",
-    "FR3PickController",
-    "GraspCandidate",
     "GraspCollisionEvaluator",
-    "JointTrajectory",
     "ObjectFrameGraspCandidate",
-    "PlanResult",
     "PickupPlacementSpec",
-    "PoseCommand",
     "SavedGraspBundle",
     "SavedGraspCandidate",
     "TriangleMesh",
