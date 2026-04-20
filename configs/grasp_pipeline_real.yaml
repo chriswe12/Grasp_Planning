@@ -27,5 +27,10 @@ local_simulation:
 ros2:
   object_pose_topic: "/grasp_planning/object_pose"
   pose_message_type: "geometry_msgs/msg/Pose"
+  object_id: ""
+  local_frame_offset_topic: ""
+  local_frame_offset_message_type: "geometry_msgs/msg/Vector3Stamped"
+  execution_frame_topic: ""
+  execution_frame_message_type: "fp_debug_msgs/msg/DebugFrame"
   frame_id: "world"
   timeout_s: 10.0

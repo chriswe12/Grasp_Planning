@@ -16,7 +16,9 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    rotmat_to_quat_xyzw,
 )
+from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
     ExecutionWorldPoseConfig,
     GeometryConfig,
@@ -29,7 +31,10 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_stage1_artifacts,
     write_stage2_artifacts,
 )
-from grasp_planning.ros2 import wait_for_object_pose_message  # noqa: E402
+from grasp_planning.ros2 import (  # noqa: E402
+    wait_for_object_pose_message,
+    wait_for_real_frame_pair_messages,
+)
 
 
 def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[float, ...]:
@@ -121,6 +126,13 @@ def _ros2_config(payload: dict[str, object]) -> Ros2Config:
         pose_message_type=str(raw.get("pose_message_type", "geometry_msgs/msg/Pose")),
         frame_id=str(raw.get("frame_id", "world")),
         timeout_s=float(raw.get("timeout_s", 10.0)),
+        object_id=str(raw.get("object_id", "")),
+        local_frame_offset_topic=str(raw.get("local_frame_offset_topic", "")),
+        local_frame_offset_message_type=str(
+            raw.get("local_frame_offset_message_type", "geometry_msgs/msg/Vector3Stamped")
+        ),
+        execution_frame_topic=str(raw.get("execution_frame_topic", "")),
+        execution_frame_message_type=str(raw.get("execution_frame_message_type", "fp_debug_msgs/msg/DebugFrame")),
     )
 
 
@@ -132,6 +144,56 @@ def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
         "stage2_json": Path(str(raw["stage2_json"])),
         "stage2_html": Path(str(raw["stage2_html"])),
     }
+
+
+def _format_topic(topic_template: str, *, object_id: str) -> str:
+    if "{object_id}" in topic_template:
+        if not object_id:
+            raise ValueError(f"object_id is required to resolve ROS topic template '{topic_template}'.")
+        return topic_template.format(object_id=object_id)
+    return topic_template
+
+
+def _compose_object_world_poses(
+    parent_pose_world: ObjectWorldPose,
+    child_pose_parent: ObjectWorldPose,
+) -> ObjectWorldPose:
+    parent_rotation = parent_pose_world.rotation_world_from_object
+    child_rotation = child_pose_parent.rotation_world_from_object
+    composed_rotation = parent_rotation @ child_rotation
+    composed_translation = parent_rotation @ child_pose_parent.translation_world + parent_pose_world.translation_world
+    return ObjectWorldPose(
+        position_world=tuple(float(v) for v in composed_translation.tolist()),
+        orientation_xyzw_world=rotmat_to_quat_xyzw(composed_rotation),
+    )
+
+
+def _resolve_real_world_frames(ros2: Ros2Config):
+    if ros2.local_frame_offset_topic and ros2.execution_frame_topic and ros2.object_id:
+        local_frame_topic = _format_topic(ros2.local_frame_offset_topic, object_id=ros2.object_id)
+        execution_frame_topic = _format_topic(ros2.execution_frame_topic, object_id=ros2.object_id)
+        print("[PIPELINE] Waiting for source-frame offset and execution-frame pose.", flush=True)
+        frame_pair = wait_for_real_frame_pair_messages(
+            source_topic_name=local_frame_topic,
+            source_message_type=ros2.local_frame_offset_message_type,
+            execution_topic_name=execution_frame_topic,
+            execution_message_type=ros2.execution_frame_message_type,
+            object_id=ros2.object_id,
+            timeout_s=ros2.timeout_s,
+        )
+        source_frame_pose_world = _compose_object_world_poses(
+            frame_pair.execution_pose_world,
+            frame_pair.source_frame_pose_obj_world,
+        )
+        return frame_pair.source_frame_pose_obj_world, source_frame_pose_world
+
+    print("[PIPELINE] Waiting for legacy object pose topic.", flush=True)
+    object_pose_world = wait_for_object_pose_message(
+        topic_name=ros2.object_pose_topic,
+        message_type=ros2.pose_message_type,
+        timeout_s=ros2.timeout_s,
+    )
+    return None, object_pose_world
 
 
 def _run_local_simulation(
@@ -236,13 +298,13 @@ def run_real(payload: dict[str, object]) -> None:
     ros2 = _ros2_config(payload)
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
-    object_pose_world = wait_for_object_pose_message(
-        topic_name=ros2.object_pose_topic,
-        message_type=ros2.pose_message_type,
-        timeout_s=ros2.timeout_s,
-    )
+    source_frame_pose_obj_world, object_pose_world = _resolve_real_world_frames(ros2)
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
-    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
+    stage1 = generate_stage1_result(
+        geometry=geometry,
+        planning=planning,
+        source_frame_pose_obj_world=source_frame_pose_obj_world,
+    )
     print(
         f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
     )

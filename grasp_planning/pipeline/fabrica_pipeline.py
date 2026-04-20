@@ -26,7 +26,6 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     save_grasp_bundle,
     score_grasps,
     serialize_saved_candidate,
-    shifted_mesh,
     write_debug_html,
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
@@ -123,6 +122,11 @@ class Ros2Config:
     pose_message_type: str = "geometry_msgs/msg/Pose"
     frame_id: str = "world"
     timeout_s: float = 10.0
+    object_id: str = ""
+    local_frame_offset_topic: str = ""
+    local_frame_offset_message_type: str = "geometry_msgs/msg/Vector3Stamped"
+    execution_frame_topic: str = ""
+    execution_frame_message_type: str = "fp_debug_msgs/msg/DebugFrame"
 
 
 @dataclass(frozen=True)
@@ -146,13 +150,37 @@ class GroundRecheckResult:
     accepted: list[SavedGraspCandidate]
 
 
+def _mesh_in_source_frame(mesh_obj_world, source_frame_pose_obj_world: ObjectWorldPose):
+    rotation_obj_world_from_source = source_frame_pose_obj_world.rotation_world_from_object
+    translation_obj_world_from_source = source_frame_pose_obj_world.translation_world
+    vertices_source = (
+        np.asarray(mesh_obj_world.vertices_obj, dtype=float) - translation_obj_world_from_source[None, :]
+    ) @ rotation_obj_world_from_source
+    return type(mesh_obj_world)(
+        vertices_obj=vertices_source,
+        faces=np.asarray(mesh_obj_world.faces, dtype=np.int64),
+    )
+
+
+def _source_frame_pose_from_bundle(bundle: SavedGraspBundle) -> ObjectWorldPose:
+    return ObjectWorldPose(
+        position_world=bundle.source_frame_origin_obj_world,
+        orientation_xyzw_world=bundle.source_frame_orientation_xyzw_obj_world,
+    )
+
+
 def generate_stage1_result(
     *,
     geometry: GeometryConfig,
     planning: PlanningConfig,
+    source_frame_pose_obj_world: ObjectWorldPose | None = None,
 ) -> Stage1Result:
     target_mesh_obj_world = load_asset_mesh(geometry.target_mesh_path, scale=geometry.mesh_scale)
-    target_mesh_local, target_pose_in_obj_world = canonicalize_target_mesh(target_mesh_obj_world)
+    if source_frame_pose_obj_world is None:
+        target_mesh_local, target_pose_in_obj_world = canonicalize_target_mesh(target_mesh_obj_world)
+    else:
+        target_pose_in_obj_world = source_frame_pose_obj_world
+        target_mesh_local = _mesh_in_source_frame(target_mesh_obj_world, target_pose_in_obj_world)
     generator = AntipodalMeshGraspGenerator(planning.to_generator_config())
     raw_candidates = generator.generate(target_mesh_local)
     serialized_raw = [
@@ -208,9 +236,7 @@ def write_stage1_artifacts(
     save_grasp_bundle(result.bundle, output_json)
     obstacle_mesh_local = None
     if result.obstacle_mesh_world is not None:
-        obstacle_mesh_local = shifted_mesh(
-            result.obstacle_mesh_world, -result.target_pose_in_obj_world.translation_world
-        )
+        obstacle_mesh_local = _mesh_in_source_frame(result.obstacle_mesh_world, result.target_pose_in_obj_world)
     write_debug_html(
         title="Fabrica Assembly-Feasible Grasps",
         subtitle="Offline assembly collision screening. Candidates are stored and visualized in the target part-local frame.",
@@ -243,7 +269,7 @@ def recheck_stage2_result(
     object_pose_world: ObjectWorldPose | None = None,
 ) -> GroundRecheckResult:
     mesh_obj_world = load_asset_mesh(bundle.target_mesh_path, scale=bundle.mesh_scale)
-    mesh_local = shifted_mesh(mesh_obj_world, -np.asarray(bundle.source_frame_origin_obj_world, dtype=float))
+    mesh_local = _mesh_in_source_frame(mesh_obj_world, _source_frame_pose_from_bundle(bundle))
     if object_pose_world is None:
         if pickup_spec is None:
             raise ValueError("Either pickup_spec or object_pose_world must be provided.")

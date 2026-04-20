@@ -41,6 +41,13 @@ The wrapper defaults to:
 
 It prefers `/isaac-sim/python.sh` inside the Isaac container and falls back to `python3` or `python` on the host.
 
+`configs/grasp_pipeline_real.yaml` keeps the legacy single-topic pose listener runnable by default.
+If `ros2.object_id`, `ros2.local_frame_offset_topic`, and `ros2.execution_frame_topic` are all set,
+real mode switches to a dual-topic perception path that:
+- subscribes to both topics concurrently,
+- composes `.obj -> saved_local` with `saved_local -> execution_world`,
+- stays planning-only.
+
 The local config is the current default path for OBJ-based Fabrica assets under `assets/obj/`.
 The default `mesh_scale` for those OBJ assets is `0.01`; `1.0` is too large for the current grasp-width thresholds.
 
@@ -224,6 +231,7 @@ Fabrica assembly / pickup path:
 - the target part is recentered into a canonical local frame before grasps are saved,
 - saved grasp JSON remains in that local frame so stage 1 and stage 2 talk in the same coordinates,
 - saved grasp bundles now also store the source-frame origin/orientation used to define that local frame,
+- stage 1, stage 2, and the stage-1 HTML obstacle view all honor that stored source-frame rotation, not just translation,
 - saved grasp poses already include any accepted finger-pad contact offset refinement; downstream consumers should execute the stored pose directly rather than reapplying the offset,
 - both stages refine infeasible center-contact grasps over a 5x5 grid on the Franka rubber tip contact patch, with equal inset spacing from the pad edges in lateral and approach directions,
 - Fabrica scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset in the closing-plane,

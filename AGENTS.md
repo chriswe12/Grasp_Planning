@@ -51,6 +51,9 @@ Current scope:
 - Fabrica OBJ files are assumed to already be in shared global assembly coordinates.
 - The Fabrica two-stage path saves grasps in the target part-local frame so the offline assembly stage and the pickup-ground stage use the same grasp coordinates.
 - Keep the two transforms explicit: `obj_world -> saved_local` during canonicalization, then `saved_local -> execution_world` at runtime.
+- Real-mode dual-topic ROS2 input is optional; keep `configs/grasp_pipeline_real.yaml` runnable by leaving the new topic fields empty so it falls back to the legacy single-topic pose listener.
+- If you use the dual-topic real path, keep both subscriptions alive concurrently and pair stamped messages when possible; sequential waits can miss volatile or one-shot perception messages.
+- Preserve the saved source-frame rotation end to end; do not reconstruct local meshes with translation-only shifts in stage 2 or HTML/debug views.
 - The integrated Isaac pickup path also consumes those saved part-local grasps; world-frame execution targets are derived at runtime from the sampled object pose.
 - Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
 - Fabrica grasp scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset. Collision and approach checks stay as upstream hard filters.
