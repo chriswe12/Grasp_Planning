@@ -13,7 +13,6 @@ from scripts import run_fabrica_grasp_in_mujoco, run_grasp_pipeline
 
 class RunGraspPipelineModeTests(unittest.TestCase):
     def test_normalize_mode_maps_aliases(self) -> None:
-        self.assertEqual(run_grasp_pipeline._normalize_mode("local"), "sim")
         self.assertEqual(run_grasp_pipeline._normalize_mode("simulation"), "sim")
         self.assertEqual(run_grasp_pipeline._normalize_mode("perception_in_the_loop"), "pitl")
         self.assertEqual(run_grasp_pipeline._normalize_mode("perception-in-the-loop"), "pitl")
@@ -125,7 +124,7 @@ class MujocoBundleExecutionPoseTests(unittest.TestCase):
         self.assertEqual(sim_cfg["contact_gap_m"], 0.002)
         self.assertEqual(sim_cfg["robot_cfg_updates"]["control_substeps"], 8)
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["object_mass_kg"], 0.15)
-        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["arm_speed_scale"], 1.0)
+        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["arm_speed_scale"], 2.0)
 
 
 if __name__ == "__main__":

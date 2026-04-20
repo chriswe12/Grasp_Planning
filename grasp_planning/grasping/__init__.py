@@ -6,7 +6,6 @@ from .collision import (
     FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
 )
-from .cube_grasp_generator import CubeFaceGraspGenerator, GraspCandidate
 from .fabrica_grasp_debug import (
     PickupPlacementSpec,
     SavedGraspBundle,
@@ -38,11 +37,9 @@ from .world_constraints import (
 __all__ = [
     "AntipodalGraspGeneratorConfig",
     "AntipodalMeshGraspGenerator",
-    "CubeFaceGraspGenerator",
     "FingerBoxGripperCollisionModel",
     "FingerBoxWithHandMeshCollisionModel",
     "FrankaHandFingerCollisionModel",
-    "GraspCandidate",
     "GraspCollisionEvaluator",
     "HalfSpaceWorldConstraint",
     "ObjectFrameGraspCandidate",

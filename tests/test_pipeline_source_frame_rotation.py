@@ -36,7 +36,7 @@ class PipelineSourceFrameRotationTests(unittest.TestCase):
             orientation_xyzw_world=(0.0, 0.0, 0.70710678, 0.70710678),
         )
         bundle = SavedGraspBundle(
-            target_mesh_path="assets/obj/cooling_screw.obj",
+            target_mesh_path="obj/fabrica/beam/2.obj",
             mesh_scale=1.0,
             source_frame_origin_obj_world=source_frame_pose.position_world,
             source_frame_orientation_xyzw_obj_world=source_frame_pose.orientation_xyzw_world,
@@ -99,7 +99,7 @@ class PipelineSourceFrameRotationTests(unittest.TestCase):
             faces=np.array([[0, 1, 2]], dtype=np.int64),
         )
         bundle = SavedGraspBundle(
-            target_mesh_path="assets/obj/cooling_screw.obj",
+            target_mesh_path="obj/fabrica/beam/2.obj",
             mesh_scale=1.0,
             source_frame_origin_obj_world=source_frame_pose.position_world,
             source_frame_orientation_xyzw_obj_world=source_frame_pose.orientation_xyzw_world,
@@ -122,7 +122,7 @@ class PipelineSourceFrameRotationTests(unittest.TestCase):
         ):
             write_stage1_artifacts(
                 stage1,
-                geometry=GeometryConfig(target_mesh_path="assets/obj/cooling_screw.obj"),
+                geometry=GeometryConfig(target_mesh_path="obj/fabrica/beam/2.obj"),
                 planning=PlanningConfig(),
                 output_json=Path("/tmp/stage1.json"),
                 output_html=Path("/tmp/stage1.html"),

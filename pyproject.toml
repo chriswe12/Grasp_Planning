@@ -5,15 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grasp-planning"
 version = "0.1.0"
-description = "Task-aware grasp planning experiments for Franka Research 3 in Isaac Lab."
+description = "YAML-driven Fabrica grasp planning with MuJoCo execution and ROS2 pose intake."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "mujoco>=3.2",
     "numpy>=1.26",
     "PyYAML>=6.0",
     "scipy>=1.11",
     "tomli>=2.0; python_version < '3.11'",
-    "torch>=2.2",
     "trimesh>=4.0",
 ]
 

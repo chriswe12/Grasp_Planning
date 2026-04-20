@@ -21,10 +21,6 @@ resolve_python() {
     printf '%s\n' "${PIPELINE_PYTHON}"
     return 0
   fi
-  if [[ -x "/isaac-sim/python.sh" ]]; then
-    printf '%s\n' "/isaac-sim/python.sh"
-    return 0
-  fi
   if command -v python3 >/dev/null 2>&1; then
     command -v python3
     return 0
@@ -69,7 +65,7 @@ if [[ -z "$MODE" ]]; then
 fi
 
 case "$MODE" in
-  local|simulation)
+  simulation)
     MODE="sim"
     ;;
   perception_in_the_loop|perception-in-the-loop)

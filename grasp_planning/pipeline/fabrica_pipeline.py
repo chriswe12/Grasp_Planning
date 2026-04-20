@@ -1,4 +1,4 @@
-"""Shared Fabrica-style planning pipeline for local and ROS2-backed flows."""
+"""Shared Fabrica-style planning pipeline for sim, pitl, and real flows."""
 
 from __future__ import annotations
 
@@ -88,14 +88,6 @@ class ExecutionWorldPoseConfig:
             position_world=self.position_world,
             orientation_xyzw_world=self.orientation_xyzw_world,
         )
-
-
-@dataclass(frozen=True)
-class PipelineArtifactsConfig:
-    stage1_json: Path
-    stage1_html: Path
-    stage2_json: Path
-    stage2_html: Path
 
 
 @dataclass(frozen=True)

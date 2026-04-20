@@ -190,10 +190,6 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
     return defaults
 
 
-def _resolve_placement_spec(args_cli):
-    raise RuntimeError("bundle-aware placement resolution requires the input bundle.")
-
-
 def _bundle_execution_pose_world(bundle) -> ObjectWorldPose | None:
     metadata = dict(bundle.metadata)
     raw_pose = metadata.get("execution_world_pose")
@@ -434,7 +430,6 @@ def main() -> None:
         object_pose_world,
         pregrasp_offset=pregrasp_offset,
         gripper_width_clearance=gripper_width_clearance,
-        frame_convention="mesh_grasp",
     )
     robot_cfg = load_robot_config(args_cli.robot_config)
     robot_cfg_updates = dict(simulation_defaults["robot_cfg_updates"])

@@ -212,7 +212,6 @@ def _resolve_real_world_frames(ros2: Ros2Config):
 def _normalize_mode(raw_mode: str) -> str:
     normalized = str(raw_mode).strip().lower()
     aliases = {
-        "local": "sim",
         "perception_in_the_loop": "pitl",
         "perception-in-the-loop": "pitl",
         "simulation": "sim",
@@ -420,7 +419,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the shared grasp-planning pipeline.")
     parser.add_argument(
         "--mode",
-        choices=("sim", "pitl", "real", "local", "perception_in_the_loop", "perception-in-the-loop", "simulation"),
+        choices=("sim", "pitl", "real", "perception_in_the_loop", "perception-in-the-loop", "simulation"),
         required=True,
         help="Pipeline mode.",
     )

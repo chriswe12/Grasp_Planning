@@ -31,9 +31,8 @@ Environment:
 What this script does:
   1. Creates .cache directories under the repo root.
   2. Clones a sparse MuJoCo Menagerie checkout containing only:
-     - franka_fr3
-     - franka_fr3_v2
      - franka_emika_panda
+     - franka_fr3
   3. Builds the merged FR3+Panda-hand XMLs used by the MuJoCo pipeline.
 EOF
 }
@@ -46,11 +45,10 @@ require_cmd() {
   fi
 }
 
-ensure_vendored_franka_description() {
-  local vendor_dir="${REPO_ROOT}/assets/urdf/franka_description"
-  if [[ ! -d "${vendor_dir}" ]]; then
-    echo "Vendored franka_description assets are missing at '${vendor_dir}'." >&2
-    echo "This repo is expected to contain them already." >&2
+ensure_vendored_hand_mesh() {
+  local hand_mesh="${REPO_ROOT}/assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl"
+  if [[ ! -f "${hand_mesh}" ]]; then
+    echo "Vendored Franka hand collision mesh is missing at '${hand_mesh}'." >&2
     exit 1
   fi
 }
@@ -70,8 +68,7 @@ clone_or_update_menagerie() {
   echo "[INFO] Configuring sparse checkout"
   git -C "${MENAGERIE_ROOT}" sparse-checkout set \
     franka_emika_panda \
-    franka_fr3 \
-    franka_fr3_v2
+    franka_fr3
 
   echo "[INFO] Fetching MuJoCo Menagerie ref ${MENAGERIE_REF}"
   git -C "${MENAGERIE_ROOT}" fetch --depth 1 origin "${MENAGERIE_REF}"
@@ -80,8 +77,7 @@ clone_or_update_menagerie() {
 
 build_generated_models() {
   if [[ "${FORCE_REBUILD}" -eq 0 ]] && \
-     [[ -f "${GENERATED_MODELS_DIR}/fr3_with_panda_hand.xml" ]] && \
-     [[ -f "${GENERATED_MODELS_DIR}/fr3v2_with_panda_hand.xml" ]]; then
+     [[ -f "${GENERATED_MODELS_DIR}/fr3_with_panda_hand.xml" ]]; then
     echo "[INFO] Reusing generated MuJoCo models in ${GENERATED_MODELS_DIR}"
     return 0
   fi
@@ -96,9 +92,7 @@ verify_outputs() {
   local required_paths=(
     "${MENAGERIE_ROOT}/franka_emika_panda/hand.xml"
     "${MENAGERIE_ROOT}/franka_fr3/fr3.xml"
-    "${MENAGERIE_ROOT}/franka_fr3_v2/fr3v2.xml"
     "${GENERATED_MODELS_DIR}/fr3_with_panda_hand.xml"
-    "${GENERATED_MODELS_DIR}/fr3v2_with_panda_hand.xml"
   )
 
   local missing=0
@@ -138,7 +132,7 @@ done
 
 require_cmd git
 require_cmd python3
-ensure_vendored_franka_description
+ensure_vendored_hand_mesh
 clone_or_update_menagerie
 build_generated_models
 verify_outputs
