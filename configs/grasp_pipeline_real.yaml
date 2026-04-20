@@ -21,8 +21,20 @@ artifacts:
   stage2_json: "artifacts/real_pipeline_stage2_ground_feasible.json"
   stage2_html: "artifacts/real_pipeline_stage2_ground_feasible.html"
 
-local_simulation:
+mujoco_execution:
   enabled: false
+  python_executable: ""
+  robot_config: "configs/mujoco_fr3_with_hand.json"
+  simulation_config: "configs/mujoco_simulation.yaml"
+  grasp_id: ""
+  attempt_artifact: "artifacts/real_mujoco_pick_attempt.json"
+  viewer: false
+  viewer_left_ui: false
+  viewer_right_ui: false
+  viewer_no_realtime: false
+  viewer_hold_seconds: 8.0
+  viewer_block_at_end: false
+  keep_generated_scene: false
 
 ros2:
   object_pose_topic: "/grasp_planning/object_pose"

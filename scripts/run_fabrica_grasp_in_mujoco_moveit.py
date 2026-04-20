@@ -23,6 +23,7 @@ from grasp_planning import (
     saved_grasp_to_world_grasp,
     score_grasps,
 )
+from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.moveit import MoveItHeadlessFr3Server, MoveItJointPlanner, MoveItPlannerConfig
 from grasp_planning.mujoco import (
     MujocoAttemptResult,
@@ -90,6 +91,35 @@ def _resolve_placement_spec_from_bundle(args_cli, bundle, *, require_bundle_pose
         yaw_deg=float(args_cli.yaw_deg) if args_cli.yaw_deg is not None else float(base_spec.yaw_deg),
         xy_world=_parse_vec2(args_cli.xy_world) if args_cli.xy_world else tuple(float(v) for v in base_spec.xy_world),
     )
+
+
+def _bundle_execution_pose_world(bundle) -> ObjectWorldPose | None:
+    metadata = dict(bundle.metadata)
+    raw_pose = metadata.get("execution_world_pose")
+    if not isinstance(raw_pose, dict):
+        return None
+    position_world = raw_pose.get("position_world")
+    orientation_xyzw_world = raw_pose.get("orientation_xyzw_world")
+    if not isinstance(position_world, (list, tuple)) or not isinstance(orientation_xyzw_world, (list, tuple)):
+        return None
+    if len(position_world) != 3 or len(orientation_xyzw_world) != 4:
+        return None
+    return ObjectWorldPose(
+        position_world=tuple(float(v) for v in position_world),
+        orientation_xyzw_world=tuple(float(v) for v in orientation_xyzw_world),
+    )
+
+
+def _explicit_pose_spec(object_pose_world: ObjectWorldPose):
+    return type(
+        "PlacementSpec",
+        (),
+        {
+            "support_face": "explicit_pose",
+            "yaw_deg": 0.0,
+            "xy_world": tuple(float(v) for v in object_pose_world.position_world[:2]),
+        },
+    )()
 
 
 def _to_mujoco_points(plan) -> list[MujocoTrajectoryPoint]:
@@ -213,7 +243,7 @@ def _log_gripper_state(*, label: str, runtime) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-json", type=Path, required=True, help="Input grasp bundle from stage 1.")
+    parser.add_argument("--input-json", type=Path, required=True, help="Input grasp bundle, typically from stage 2.")
     parser.add_argument("--robot-config", type=Path, required=True, help="MuJoCo robot binding JSON.")
     parser.add_argument("--grasp-id", type=str, default="", help="Optional explicit grasp id to execute.")
     parser.add_argument("--support-face", type=str, default="", help="Optional explicit support face.")
@@ -299,17 +329,23 @@ def main() -> None:
     bundle = load_grasp_bundle(args_cli.input_json)
     mesh_local = build_bundle_local_mesh(bundle)
     object_mesh_path = write_temporary_triangle_mesh_stl(mesh_local, prefix=f"{args_cli.input_json.stem}_bundle_local_")
-    placement_spec = _resolve_placement_spec_from_bundle(
-        args_cli,
-        bundle,
-        require_bundle_pose=bool(args_cli.skip_ground_recheck),
-    )
-    object_pose_world = build_pickup_pose_world(
-        mesh_local,
-        support_face=placement_spec.support_face,
-        yaw_deg=placement_spec.yaw_deg,
-        xy_world=placement_spec.xy_world,
-    )
+    bundle_execution_pose_world = _bundle_execution_pose_world(bundle)
+    has_pickup_override = bool(args_cli.support_face or args_cli.yaw_deg is not None or args_cli.xy_world)
+    if bundle_execution_pose_world is not None and not has_pickup_override:
+        object_pose_world = bundle_execution_pose_world
+        placement_spec = _explicit_pose_spec(object_pose_world)
+    else:
+        placement_spec = _resolve_placement_spec_from_bundle(
+            args_cli,
+            bundle,
+            require_bundle_pose=bool(args_cli.skip_ground_recheck),
+        )
+        object_pose_world = build_pickup_pose_world(
+            mesh_local,
+            support_face=placement_spec.support_face,
+            yaw_deg=placement_spec.yaw_deg,
+            xy_world=placement_spec.xy_world,
+        )
     if args_cli.skip_ground_recheck:
         feasible = score_grasps(bundle.candidates, mesh_local=mesh_local)
         if not feasible:

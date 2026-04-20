@@ -67,12 +67,18 @@ class MujocoExecutionConfig:
     hold_steps: int = 240
     trajectory_waypoints: int = 25
     waypoint_settle_steps: int = 45
+    arm_speed_scale: float = 1.0
     trajectory_time_scale: float = 1.0
     trajectory_min_segment_duration_s: float = 0.0
     success_height_margin_m: float = 0.05
     object_mass_kg: float = 0.15
     object_scale: float = 1.0
     object_friction: tuple[float, float, float] = (2.2, 0.08, 0.01)
+    object_condim: int = 6
+    object_solref: tuple[float, float] = (0.003, 1.0)
+    object_solimp: tuple[float, float, float] = (0.95, 0.99, 0.001)
+    object_margin: float = 0.001
+    object_gap: float = 0.0005
     ground_friction: tuple[float, float, float] = (1.5, 0.04, 0.002)
     gripper_settle_position_delta_m: float = 1.0e-4
     gripper_settle_velocity_mps: float = 1.0e-3
@@ -197,6 +203,11 @@ class MujocoPickupRuntime:
             scene_cfg=MujocoObjectSceneConfig(
                 object_mass_kg=execution_cfg.object_mass_kg,
                 object_friction=execution_cfg.object_friction,
+                object_condim=execution_cfg.object_condim,
+                object_solref=execution_cfg.object_solref,
+                object_solimp=execution_cfg.object_solimp,
+                object_margin=execution_cfg.object_margin,
+                object_gap=execution_cfg.object_gap,
                 ground_friction=execution_cfg.ground_friction,
             ),
         )
@@ -358,6 +369,10 @@ class MujocoPickupRuntime:
             self._mujoco.mj_step(self._model, self._data)
             self._sync_viewer()
 
+    def _scaled_arm_steps(self, base_steps: int) -> int:
+        speed_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
+        return max(1, int(np.ceil(float(base_steps) / speed_scale)))
+
     def get_arm_qpos(self) -> np.ndarray:
         return np.asarray(self._data.qpos[self._arm_qpos_indices], dtype=float).copy()
 
@@ -432,7 +447,7 @@ class MujocoPickupRuntime:
         else:
             home_targets = self.get_arm_qpos()
         self._set_gripper_ctrl(self._robot_cfg.open_gripper_ctrl)
-        for _ in range(max(1, int(self._execution_cfg.settle_steps))):
+        for _ in range(self._scaled_arm_steps(self._execution_cfg.settle_steps)):
             self._set_arm_ctrl(home_targets)
             self._set_gripper_ctrl(self._robot_cfg.open_gripper_ctrl)
             self._step(self._robot_cfg.control_substeps)
@@ -496,7 +511,7 @@ class MujocoPickupRuntime:
         for step_idx in range(1, num_waypoints + 1):
             alpha = float(step_idx) / float(num_waypoints)
             q_target = (1.0 - alpha) * q_start + alpha * q_goal
-            for _ in range(max(1, int(self._execution_cfg.waypoint_settle_steps))):
+            for _ in range(self._scaled_arm_steps(self._execution_cfg.waypoint_settle_steps)):
                 self._set_arm_ctrl(q_target)
                 self._set_gripper_ctrl(gripper_ctrl)
                 self._step(self._robot_cfg.control_substeps)
@@ -539,7 +554,8 @@ class MujocoPickupRuntime:
             q_target = np.asarray(point.positions, dtype=float)
             dt = None if point.time_from_start_s is None else max(0.0, float(point.time_from_start_s) - prev_time)
             prev_time = prev_time if point.time_from_start_s is None else float(point.time_from_start_s)
-            time_scale = max(1.0e-6, float(self._execution_cfg.trajectory_time_scale))
+            speed_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
+            time_scale = max(1.0e-6, float(self._execution_cfg.trajectory_time_scale)) / speed_scale
             min_segment_duration_s = max(0.0, float(self._execution_cfg.trajectory_min_segment_duration_s))
             current_q = self.get_arm_qpos()
             if np.max(np.abs(current_q - q_target)) <= 1.0e-8 and (dt is None or dt <= 0.0):

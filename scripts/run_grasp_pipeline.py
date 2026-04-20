@@ -1,4 +1,4 @@
-"""Run the shared planning pipeline in local-sim or ROS2-backed modes."""
+"""Run the shared planning pipeline in sim, pitl, or real modes."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E
 from grasp_planning.pipeline import (  # noqa: E402
     ExecutionWorldPoseConfig,
     GeometryConfig,
-    LocalSimulationConfig,
+    MujocoPipelineConfig,
     PickupPoseConfig,
     PlanningConfig,
     Ros2Config,
@@ -51,6 +51,13 @@ def _load_yaml(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"Expected top-level mapping in '{path}'.")
     return payload
+
+
+def _optional_float(raw: dict[str, object], key: str) -> float | None:
+    value = raw.get(key)
+    if value in ("", None):
+        return None
+    return float(value)
 
 
 def _geometry_config(payload: dict[str, object]) -> GeometryConfig:
@@ -99,23 +106,29 @@ def _pickup_pose_config(payload: dict[str, object]) -> PickupPoseConfig | None:
     )
 
 
-def _local_simulation_config(payload: dict[str, object]) -> LocalSimulationConfig:
-    raw = dict(payload.get("local_simulation", {}))
-    return LocalSimulationConfig(
+def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig:
+    raw = dict(payload.get("mujoco_execution", {}))
+    return MujocoPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
-        python_executable=str(raw.get("python_executable", "/isaac-sim/python.sh")),
-        part_usd=str(raw.get("part_usd", "")),
-        fr3_usd=str(raw.get("fr3_usd", "")),
-        controller=str(raw.get("controller", "admittance")),
-        pregrasp_offset=float(raw.get("pregrasp_offset", 0.20)),
-        gripper_width_clearance=float(raw.get("gripper_width_clearance", 0.01)),
-        close_width=float(raw.get("close_width", 0.0)),
-        tcp_to_grasp_offset=_tuple_floats(raw.get("tcp_to_grasp_offset", [0.0, 0.0, -0.045]), expected_len=3),
-        headless=bool(raw.get("headless", True)),
-        device=str(raw.get("device", "cuda")),
-        pregrasp_only=bool(raw.get("pregrasp_only", False)),
-        run_seconds=float(raw.get("run_seconds", 5.0)),
-        attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
+        python_executable=str(raw.get("python_executable", "")),
+        robot_config=str(raw.get("robot_config", "")),
+        simulation_config=str(raw.get("simulation_config", "")),
+        grasp_id=str(raw.get("grasp_id", "")),
+        pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
+        gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
+        contact_gap_m=_optional_float(raw, "contact_gap_m"),
+        object_mass_kg=_optional_float(raw, "object_mass_kg"),
+        object_scale=_optional_float(raw, "object_scale"),
+        lift_height_m=_optional_float(raw, "lift_height_m"),
+        success_height_margin_m=_optional_float(raw, "success_height_margin_m"),
+        attempt_artifact=str(raw.get("attempt_artifact", "artifacts/mujoco_pick_attempt.json")),
+        viewer=bool(raw.get("viewer", True)),
+        viewer_left_ui=bool(raw.get("viewer_left_ui", False)),
+        viewer_right_ui=bool(raw.get("viewer_right_ui", False)),
+        viewer_no_realtime=bool(raw.get("viewer_no_realtime", False)),
+        viewer_hold_seconds=float(raw.get("viewer_hold_seconds", 8.0)),
+        viewer_block_at_end=bool(raw.get("viewer_block_at_end", False)),
+        keep_generated_scene=bool(raw.get("keep_generated_scene", False)),
     )
 
 
@@ -196,61 +209,88 @@ def _resolve_real_world_frames(ros2: Ros2Config):
     return None, object_pose_world
 
 
-def _run_local_simulation(
-    local_simulation: LocalSimulationConfig,
+def _normalize_mode(raw_mode: str) -> str:
+    normalized = str(raw_mode).strip().lower()
+    aliases = {
+        "local": "sim",
+        "perception_in_the_loop": "pitl",
+        "perception-in-the-loop": "pitl",
+        "simulation": "sim",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _effective_python_executable(raw_value: str) -> str:
+    value = str(raw_value).strip()
+    if value:
+        return value
+    if sys.executable:
+        return sys.executable
+    raise RuntimeError("Could not determine a Python executable for MuJoCo execution.")
+
+
+def _run_mujoco_execution(
+    mujoco_execution: MujocoPipelineConfig,
     *,
     input_json: Path,
-    position_world: tuple[float, ...],
-    orientation_xyzw_world: tuple[float, ...],
+    headless: bool,
 ) -> None:
-    if not local_simulation.enabled:
+    if not mujoco_execution.enabled:
         return
-    if not local_simulation.part_usd:
-        raise ValueError("local_simulation.part_usd is required when local simulation is enabled.")
+    if not mujoco_execution.robot_config:
+        raise ValueError("mujoco_execution.robot_config is required when MuJoCo execution is enabled.")
     command = [
-        local_simulation.python_executable,
-        "scripts/run_fabrica_pickup_in_isaac.py",
+        _effective_python_executable(mujoco_execution.python_executable),
+        "scripts/run_fabrica_grasp_in_mujoco.py",
         "--input-json",
         str(input_json),
-        "--part-usd",
-        local_simulation.part_usd,
-        "--controller",
-        local_simulation.controller,
-        "--pregrasp-offset",
-        str(local_simulation.pregrasp_offset),
-        "--gripper-width-clearance",
-        str(local_simulation.gripper_width_clearance),
-        "--close-width",
-        str(local_simulation.close_width),
-        "--tcp-to-grasp-offset",
-        *(str(value) for value in local_simulation.tcp_to_grasp_offset),
-        "--object-position-world",
-        ",".join(str(value) for value in position_world),
-        "--object-orientation-xyzw",
-        ",".join(str(value) for value in orientation_xyzw_world),
+        "--robot-config",
+        mujoco_execution.robot_config,
         "--attempt-artifact",
-        local_simulation.attempt_artifact,
-        "--run-seconds",
-        str(local_simulation.run_seconds),
-        "--device",
-        local_simulation.device,
+        mujoco_execution.attempt_artifact,
     ]
-    if local_simulation.fr3_usd:
-        command.extend(["--fr3-usd", local_simulation.fr3_usd])
-    if local_simulation.headless:
-        command.append("--headless")
-    if local_simulation.pregrasp_only:
-        command.append("--pregrasp-only")
-    print("[PIPELINE] Starting local Isaac simulation.", flush=True)
+    if mujoco_execution.simulation_config:
+        command.extend(["--simulation-config", mujoco_execution.simulation_config])
+    if mujoco_execution.grasp_id:
+        command.extend(["--grasp-id", mujoco_execution.grasp_id])
+    if mujoco_execution.pregrasp_offset is not None:
+        command.extend(["--pregrasp-offset", str(mujoco_execution.pregrasp_offset)])
+    if mujoco_execution.gripper_width_clearance is not None:
+        command.extend(["--gripper-width-clearance", str(mujoco_execution.gripper_width_clearance)])
+    if mujoco_execution.contact_gap_m is not None:
+        command.extend(["--contact-gap-m", str(mujoco_execution.contact_gap_m)])
+    if mujoco_execution.object_mass_kg is not None:
+        command.extend(["--object-mass-kg", str(mujoco_execution.object_mass_kg)])
+    if mujoco_execution.object_scale is not None:
+        command.extend(["--object-scale", str(mujoco_execution.object_scale)])
+    if mujoco_execution.lift_height_m is not None:
+        command.extend(["--lift-height-m", str(mujoco_execution.lift_height_m)])
+    if mujoco_execution.success_height_margin_m is not None:
+        command.extend(["--success-height-margin-m", str(mujoco_execution.success_height_margin_m)])
+    if mujoco_execution.viewer and not headless:
+        command.append("--viewer")
+    if mujoco_execution.viewer_left_ui:
+        command.append("--viewer-left-ui")
+    if mujoco_execution.viewer_right_ui:
+        command.append("--viewer-right-ui")
+    if mujoco_execution.viewer_no_realtime:
+        command.append("--viewer-no-realtime")
+    if mujoco_execution.viewer_block_at_end:
+        command.append("--viewer-block-at-end")
+    if mujoco_execution.keep_generated_scene:
+        command.append("--keep-generated-scene")
+    if mujoco_execution.viewer_hold_seconds != 8.0:
+        command.extend(["--viewer-hold-seconds", str(mujoco_execution.viewer_hold_seconds)])
+    print("[PIPELINE] Starting MuJoCo execution.", flush=True)
     subprocess.run(command, check=True, cwd=REPO_ROOT)
 
 
-def run_local(payload: dict[str, object]) -> None:
+def run_sim(payload: dict[str, object], *, headless: bool) -> None:
     geometry = _geometry_config(payload)
     planning = _planning_config(payload)
     execution_world_pose = _execution_pose_config(payload).to_object_pose_world()
     artifacts = _artifacts(payload)
-    local_simulation = _local_simulation_config(payload)
+    mujoco_execution = _mujoco_execution_config(payload)
     pickup_pose = _pickup_pose_config(payload)
 
     print("[PIPELINE] Loading geometry and generating raw grasps.", flush=True)
@@ -283,12 +323,53 @@ def run_local(payload: dict[str, object]) -> None:
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
-    _run_local_simulation(
-        local_simulation,
-        input_json=artifacts["stage1_json"],
-        position_world=stage2.pickup_pose_world.position_world,
-        orientation_xyzw_world=stage2.pickup_pose_world.orientation_xyzw_world,
+    _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
+
+
+def run_pitl(payload: dict[str, object], *, headless: bool) -> None:
+    geometry = _geometry_config(payload)
+    planning = _planning_config(payload)
+    artifacts = _artifacts(payload)
+    ros2 = _ros2_config(payload)
+    mujoco_execution = _mujoco_execution_config(payload)
+
+    print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
+    source_frame_pose_obj_world, object_pose_world = _resolve_real_world_frames(ros2)
+    print("[PIPELINE] Generating and filtering grasps.", flush=True)
+    stage1 = generate_stage1_result(
+        geometry=geometry,
+        planning=planning,
+        source_frame_pose_obj_world=source_frame_pose_obj_world,
     )
+    print(
+        f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
+    )
+    write_stage1_artifacts(
+        stage1,
+        geometry=geometry,
+        planning=planning,
+        output_json=artifacts["stage1_json"],
+        output_html=artifacts["stage1_html"],
+    )
+
+    print("[PIPELINE] Rechecking grasps against the real-world floor pose.", flush=True)
+    stage2 = recheck_stage2_result(
+        bundle=stage1.bundle,
+        pickup_spec=None,
+        planning=planning,
+        object_pose_world=object_pose_world,
+    )
+    print(
+        f"[PIPELINE] Planning complete: feasible {len(stage2.accepted)} / {len(stage2.source_bundle.candidates)}.",
+        flush=True,
+    )
+    write_stage2_artifacts(
+        stage2,
+        planning=planning,
+        output_json=artifacts["stage2_json"],
+        output_html=artifacts["stage2_html"],
+    )
+    _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
 
 
 def run_real(payload: dict[str, object]) -> None:
@@ -337,18 +418,37 @@ def run_real(payload: dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the shared grasp-planning pipeline.")
-    parser.add_argument("--mode", choices=("local", "real"), required=True, help="Pipeline mode.")
+    parser.add_argument(
+        "--mode",
+        choices=("sim", "pitl", "real", "local", "perception_in_the_loop", "perception-in-the-loop", "simulation"),
+        required=True,
+        help="Pipeline mode.",
+    )
     parser.add_argument("--config", type=Path, default=None, help="YAML config path.")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Disable the MuJoCo viewer for executing modes.",
+    )
     args = parser.parse_args()
+    mode = _normalize_mode(args.mode)
 
     if args.config is None:
-        default_name = "grasp_pipeline_local.yaml" if args.mode == "local" else "grasp_pipeline_real.yaml"
+        default_names = {
+            "sim": "grasp_pipeline_sim.yaml",
+            "pitl": "grasp_pipeline_pitl.yaml",
+            "real": "grasp_pipeline_real.yaml",
+        }
+        default_name = default_names[mode]
         config_path = REPO_ROOT / "configs" / default_name
     else:
         config_path = args.config
     payload = _load_yaml(config_path)
-    if args.mode == "local":
-        run_local(payload)
+    if mode == "sim":
+        run_sim(payload, headless=bool(args.headless))
+        return
+    if mode == "pitl":
+        run_pitl(payload, headless=bool(args.headless))
         return
     run_real(payload)
 

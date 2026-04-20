@@ -1,6 +1,6 @@
 # Grasp_Planning
 
-Minimal Isaac Lab scaffold for task-aware grasp planning experiments on Franka Research 3.
+Task-aware grasp planning experiments on Franka Research 3 with Fabrica planning, MuJoCo execution, and Isaac Lab debug utilities.
 
 Current scope:
 - interactive FR3 + cube environment,
@@ -9,9 +9,10 @@ Current scope:
 - a standalone teleport-based pickup debug script for isolating path-planning issues,
 - a separate minimal object-frame antipodal grasp generator for procedural mesh and mesh-asset debug,
 - a shared Fabrica-style planning pipeline for offline assembly filtering and pickup-ground rechecking,
-- a YAML-driven local pipeline path and a ROS2-backed planning-only path behind one bash launcher,
-- an integrated Fabrica-to-Isaac pickup path that reloads saved grasps, rechecks floor feasibility for the execution pose, and executes the first feasible grasp,
-- pickup is now possible in sim with tuning, but the stack is still experimental and not yet robust.
+- three YAML-driven pipeline modes behind one bash launcher: `sim`, `pitl`, and `real`,
+- `sim` uses offline execution-world transforms and executes the selected grasp in MuJoCo,
+- `pitl` uses live ROS2 transform topics and executes the selected grasp in MuJoCo,
+- `real` uses the same ROS2-backed planning path but remains planning-only for now.
 
 Main entrypoint:
 
@@ -31,24 +32,27 @@ The debug viewer is browser-based. It writes a self-contained HTML file to
 Unified planning entrypoint:
 
 ```bash
-./run_pipeline.sh --mode local
+./run_pipeline.sh --mode sim
+./run_pipeline.sh --mode pitl
 ./run_pipeline.sh --mode real
+./run_pipeline.sh --mode sim --headless
 ```
 
 The wrapper defaults to:
-- `configs/grasp_pipeline_local.yaml` for `--mode local`
+- `configs/grasp_pipeline_sim.yaml` for `--mode sim`
+- `configs/grasp_pipeline_pitl.yaml` for `--mode pitl`
 - `configs/grasp_pipeline_real.yaml` for `--mode real`
 
 It prefers `/isaac-sim/python.sh` inside the Isaac container and falls back to `python3` or `python` on the host.
 
 `configs/grasp_pipeline_real.yaml` keeps the legacy single-topic pose listener runnable by default.
 If `ros2.object_id`, `ros2.local_frame_offset_topic`, and `ros2.execution_frame_topic` are all set,
-real mode switches to a dual-topic perception path that:
+the ROS-backed modes switch to a dual-topic perception path that:
 - subscribes to both topics concurrently,
 - composes `.obj -> saved_local` with `saved_local -> execution_world`,
-- stays planning-only.
+- uses the resolved execution pose for stage-2 ground recheck.
 
-The local config is the current default path for OBJ-based Fabrica assets under `assets/obj/`.
+The `sim` config is the default offline path for OBJ-based Fabrica assets under `assets/obj/`.
 The default `mesh_scale` for those OBJ assets is `0.01`; `1.0` is too large for the current grasp-width thresholds.
 
 Standalone mesh antipodal grasp debug viewer:
@@ -102,43 +106,34 @@ Current geometry conventions:
 - stage 2 applies `local -> execution_world`
 - the floor is the execution-world plane with normal `+z` at `z=0`
 
-Integrated Fabrica-to-Isaac pickup flow:
+MuJoCo execution from a stage-2 grasp bundle:
 
 ```bash
-/isaac-sim/python.sh scripts/convert_stl_to_usd.py \
-  --stl-path Fabrica/printing/beam/2.stl \
-  --stl-scale 0.001 \
-  --output-usd artifacts/converted/beam_2.usd \
-  --headless \
-  --device cuda
+python3 scripts/build_mujoco_fr3_hand_models.py
 
-/isaac-sim/python.sh scripts/run_fabrica_pickup_in_isaac.py \
-  --input-json /workspace/Grasp_Planning/artifacts/fabrica_beam_2_assembly_grasps.json \
-  --part-usd /workspace/Grasp_Planning/artifacts/converted/beam_2.usd \
-  --controller admittance \
-  --support-face neg_y \
-  --yaw-deg 90 \
-  --xy-world=-0.5,0.0 \
-  --headless \
-  --device cuda \
-  --run-seconds 5
+python3 scripts/run_fabrica_grasp_in_mujoco.py \
+  --input-json artifacts/fabrica_beam_2_ground_feasible.json \
+  --robot-config configs/mujoco_fr3_with_hand.json \
+  --viewer
 ```
 
 This path:
-- consumes the saved stage-1 grasp JSON,
-- converts the STL to an Isaac-native rigid mesh asset with Isaac Lab's `MeshConverter`,
-- places the part in sim at the requested or sampled support pose,
-- rechecks the saved grasps against the floor for that exact pose,
-- selects the first feasible grasp and attempts execution,
-- writes an attempt artifact to `artifacts/isaac_pick_attempt.json`.
+- consumes the saved stage-2 grasp bundle,
+- rebuilds the object mesh in the saved bundle-local frame,
+- prefers the exact `execution_world_pose` stored in the bundle metadata,
+- rechecks the saved grasps against that pose unless explicitly overridden,
+- selects the first feasible grasp and attempts execution in MuJoCo,
+- writes an attempt artifact to `artifacts/mujoco_pick_attempt.json`.
 
 Notes:
 - If `--xy-world` starts with a negative value, pass it as `--xy-world=-0.5,0.0` or quote it.
-- The current remaining failure mode is controller/pregrasp convergence, not STL-to-USD conversion or grasp loading.
+- The MuJoCo executors now accept stage-2 bundles directly and use the stored execution pose as the default source of truth.
 
 MuJoCo + MoveIt grasp validation:
 
 ```bash
+bash scripts/download_required_assets.sh
+
 python3 scripts/build_mujoco_fr3_hand_models.py
 
 python3 scripts/view_mujoco_robot.py \
@@ -155,6 +150,7 @@ python3 scripts/run_fabrica_grasp_in_mujoco_moveit.py \
 ```
 
 Notes:
+- `bash scripts/download_required_assets.sh` bootstraps the required MuJoCo Menagerie checkout under `.cache/robot_descriptions/mujoco_menagerie` and generates the merged FR3+hand XMLs under `.cache/generated_mujoco_models/`,
 - the Menagerie `franka_fr3` and `franka_fr3_v2` assets are arm-only; `scripts/build_mujoco_fr3_hand_models.py` merges in the Menagerie Panda hand and writes local XML files under `.cache/generated_mujoco_models/`,
 - the MuJoCo scripts consume the stage-2 grasp bundle as the source of truth for support face and yaw unless explicitly overridden,
 - the MuJoCo object mesh is rebuilt in the saved bundle-local frame before execution; do not point the runtime at the raw assembly-global STL and expect the saved grasps to line up.
@@ -176,11 +172,12 @@ This opens an interactive shell inside the container immediately.
 Inside the container:
 
 ```bash
-./run_pipeline.sh --mode local
+./run_pipeline.sh --mode sim
 ```
 
-If `local_simulation.enabled: true` and `local_simulation.part_usd` is set in `configs/grasp_pipeline_local.yaml`,
-the local pipeline writes stage-1 and stage-2 artifacts first, then hands off to Isaac for the execution attempt.
+`sim` and `pitl` both write stage-1 and stage-2 artifacts first, then hand off the stage-2 bundle to MuJoCo execution.
+`real` writes the same artifacts but stays planning-only.
+The MuJoCo viewer is on by default for executing modes; pass `--headless` to disable it.
 
 To run the new Isaac-side admittance controller instead of the joint-space planner:
 
@@ -246,7 +243,7 @@ Fabrica assembly / pickup path:
 - `scripts/generate_fabrica_assembly_grasps.py` is the offline stage,
 - `scripts/check_fabrica_ground_feasible_grasps.py` is the pickup-ground recheck stage,
 - `scripts/run_grasp_pipeline.py` is the shared YAML-driven orchestration entrypoint,
-- `run_pipeline.sh` is the user-facing launcher for `local` and `real` modes,
+- `run_pipeline.sh` is the user-facing launcher for `sim`, `pitl`, and `real` modes,
 - shared pipeline code lives under `grasp_planning/pipeline/`,
 - ROS2 object-pose listening lives under `grasp_planning/ros2/`,
 - shared utilities and viewer generation live in `grasp_planning/grasping/fabrica_grasp_debug.py`,
@@ -260,7 +257,9 @@ Fabrica assembly / pickup path:
 - Fabrica scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset in the closing-plane,
 - stage 1 and stage 2 HTML viewers list grasps in score order,
 - `scripts/check_fabrica_ground_feasible_grasps.py` accepts `--support-face`, `--yaw-deg`, and `--xy-world` overrides for one-off pickup-pose checks,
-- `scripts/check_fabrica_ground_feasible_grasps.py` and `scripts/run_fabrica_pickup_in_isaac.py` also accept explicit object world pose overrides,
+- `sim` uses the configured `execution_world_pose`,
+- `pitl` and `real` use ROS2 object/world transforms, including the dual-topic source-frame path when configured,
+- `sim` and `pitl` execute via `scripts/run_fabrica_grasp_in_mujoco.py` using the stage-2 bundle as the handoff artifact,
 - accepted and rejected grasps are both rendered in the ground-recheck HTML viewer, and the viewer can be toggled to show accepted grasps only.
 
 Current grasp convention for the cube generator:

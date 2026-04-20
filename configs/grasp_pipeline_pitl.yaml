@@ -15,15 +15,11 @@ planning:
   contact_approach_offsets_m: [-0.006166666666666667, -0.0030833333333333333, 0.0, 0.0030833333333333333, 0.006166666666666667]
   rng_seed: 0
 
-execution_world_pose:
-  position_world: [0.0, 0.0, 0.007]
-  orientation_xyzw_world: [0.0, 0.70710678, 0.0, 0.70710678]
-
 artifacts:
-  stage1_json: "artifacts/pipeline_stage1_assembly_grasps.json"
-  stage1_html: "artifacts/pipeline_stage1_assembly_grasps.html"
-  stage2_json: "artifacts/pipeline_stage2_ground_feasible.json"
-  stage2_html: "artifacts/pipeline_stage2_ground_feasible.html"
+  stage1_json: "artifacts/pitl_pipeline_stage1_assembly_grasps.json"
+  stage1_html: "artifacts/pitl_pipeline_stage1_assembly_grasps.html"
+  stage2_json: "artifacts/pitl_pipeline_stage2_ground_feasible.json"
+  stage2_html: "artifacts/pitl_pipeline_stage2_ground_feasible.html"
 
 mujoco_execution:
   enabled: true
@@ -31,7 +27,7 @@ mujoco_execution:
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
   grasp_id: ""
-  attempt_artifact: "artifacts/sim_mujoco_pick_attempt.json"
+  attempt_artifact: "artifacts/pitl_mujoco_pick_attempt.json"
   viewer: true
   viewer_left_ui: false
   viewer_right_ui: false
@@ -43,5 +39,10 @@ mujoco_execution:
 ros2:
   object_pose_topic: "/grasp_planning/object_pose"
   pose_message_type: "geometry_msgs/msg/Pose"
+  object_id: ""
+  local_frame_offset_topic: ""
+  local_frame_offset_message_type: "geometry_msgs/msg/Vector3Stamped"
+  execution_frame_topic: ""
+  execution_frame_message_type: "fp_debug_msgs/msg/DebugFrame"
   frame_id: "world"
   timeout_s: 10.0

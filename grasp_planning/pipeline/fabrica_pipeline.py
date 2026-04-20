@@ -99,21 +99,27 @@ class PipelineArtifactsConfig:
 
 
 @dataclass(frozen=True)
-class LocalSimulationConfig:
+class MujocoPipelineConfig:
     enabled: bool = False
-    python_executable: str = "/isaac-sim/python.sh"
-    part_usd: str = ""
-    fr3_usd: str = ""
-    controller: str = "admittance"
-    pregrasp_offset: float = 0.20
-    gripper_width_clearance: float = 0.01
-    close_width: float = 0.0
-    tcp_to_grasp_offset: tuple[float, float, float] = (0.0, 0.0, -0.045)
-    headless: bool = True
-    device: str = "cuda"
-    pregrasp_only: bool = False
-    run_seconds: float = 5.0
-    attempt_artifact: str = "artifacts/isaac_pick_attempt.json"
+    python_executable: str = ""
+    robot_config: str = ""
+    simulation_config: str = ""
+    grasp_id: str = ""
+    pregrasp_offset: float | None = None
+    gripper_width_clearance: float | None = None
+    contact_gap_m: float | None = None
+    object_mass_kg: float | None = None
+    object_scale: float | None = None
+    lift_height_m: float | None = None
+    success_height_margin_m: float | None = None
+    attempt_artifact: str = "artifacts/mujoco_pick_attempt.json"
+    viewer: bool = True
+    viewer_left_ui: bool = False
+    viewer_right_ui: bool = False
+    viewer_no_realtime: bool = False
+    viewer_hold_seconds: float = 8.0
+    viewer_block_at_end: bool = False
+    keep_generated_scene: bool = False
 
 
 @dataclass(frozen=True)

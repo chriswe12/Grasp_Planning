@@ -1,6 +1,7 @@
 """Grasp planning package."""
 
-from .controllers import FR3PickController
+from importlib import import_module
+
 from .grasping import (
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,
@@ -26,14 +27,27 @@ from .grasping import (
     score_grasps,
     select_first_feasible_grasp,
 )
-from .planning import (
-    AdmittanceControllerCfg,
-    FR3AdmittanceController,
-    FR3MoveToPoseController,
-    JointTrajectory,
-    PlanResult,
-    PoseCommand,
-)
+
+_LAZY_EXPORTS = {
+    "FR3PickController": ("grasp_planning.controllers", "FR3PickController"),
+    "AdmittanceControllerCfg": ("grasp_planning.planning", "AdmittanceControllerCfg"),
+    "FR3AdmittanceController": ("grasp_planning.planning", "FR3AdmittanceController"),
+    "FR3MoveToPoseController": ("grasp_planning.planning", "FR3MoveToPoseController"),
+    "JointTrajectory": ("grasp_planning.planning", "JointTrajectory"),
+    "PlanResult": ("grasp_planning.planning", "PlanResult"),
+    "PoseCommand": ("grasp_planning.planning", "PoseCommand"),
+}
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'grasp_planning' has no attribute {name!r}")
+    module_name, attribute_name = _LAZY_EXPORTS[name]
+    module = import_module(module_name)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "AdmittanceControllerCfg",

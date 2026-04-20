@@ -1,0 +1,46 @@
+# Shared MuJoCo simulation defaults for the pipeline.
+# Edit this file to tune contact physics and execution behavior without changing code.
+
+grasp:
+  pregrasp_offset_m: 0.20
+  gripper_width_clearance_m: 0.01
+  contact_gap_m: 0.002
+
+scene:
+  object:
+    mass_kg: 0.15
+    scale: 1.0
+    friction: [5.2, 0.08, 0.01]
+    condim: 6
+    solref: [0.003, 1.0]
+    solimp: [0.95, 0.99, 0.001]
+    margin_m: 0.001
+    gap_m: 0.0005
+  ground:
+    friction: [1.5, 0.04, 0.002]
+
+robot:
+  timestep_s: 0.002
+  control_substeps: 8
+  speed_scale: 2.0
+  settle_steps: 120
+  ik_max_iters: 200
+  ik_damping: 0.001
+  ik_step_size: 0.7
+  ik_position_tolerance_m: 0.003
+  ik_orientation_tolerance_rad: 0.04
+  trajectory_waypoints: 25
+  waypoint_settle_steps: 45
+  trajectory_time_scale: 1.0
+  trajectory_min_segment_duration_s: 0.0
+  lift_height_m: 0.12
+  hold_steps: 240
+  success_height_margin_m: 0.05
+
+gripper:
+  open_ctrl: [255.0]
+  closed_ctrl: [0.0]
+  close_steps: 240
+  settle_position_delta_m: 0.0001
+  settle_velocity_mps: 0.001
+  settle_consecutive_steps: 12
