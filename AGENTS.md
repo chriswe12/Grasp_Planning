@@ -9,9 +9,10 @@ Current scope:
 - one dynamic cube with fixed pose from the launcher,
 - a debug pickup path in the launcher with optional `--pregrasp-only`,
 - a standalone teleport-based pickup debug script,
-- a separate object-frame antipodal grasp debug path for procedural mesh geometry and STL input,
-- a separate two-stage Fabrica grasp workflow for offline assembly filtering and pickup-ground recheck,
-- a new integrated Fabrica-to-Isaac pickup path that loads saved grasps, converts STL to a simulator asset, rechecks floor feasibility, and executes the first feasible grasp,
+- a separate object-frame antipodal grasp debug path for procedural mesh geometry and asset input,
+- a shared two-stage Fabrica planning pipeline for offline assembly filtering and pickup-ground recheck,
+- a local YAML-driven simulation pipeline and a ROS2-backed planning-only pipeline behind `run_pipeline.sh`,
+- a new integrated Fabrica-to-Isaac pickup path that loads saved grasps, rechecks floor feasibility, and executes the first feasible grasp,
 - pickup can work in sim with tuned admittance, but the stack is still experimental.
 
 ## Main Files
@@ -23,6 +24,8 @@ Current scope:
 - `scripts/check_fabrica_ground_feasible_grasps.py`
 - `scripts/convert_stl_to_usd.py`
 - `scripts/run_fabrica_pickup_in_isaac.py`
+- `scripts/run_grasp_pipeline.py`
+- `run_pipeline.sh`
 - `scripts/teleport_fr3_pickup.py`
 - `scripts/inspect_fr3_tcp_geometry.py`
 - `scripts/diagnose_fr3_top_grasp.py`
@@ -44,19 +47,26 @@ Current scope:
 - Keep environment work separate from controller work when possible.
 - Keep the mesh antipodal grasp path separate from the existing cube-face grasp path.
 - Mesh antipodal grasp defaults now live in `configs/mesh_antipodal_grasp_debug.yaml`; CLI flags should stay as per-run overrides.
-- STL files for the mesh antipodal debug path live under `assets/stl/`; relative `--stl-path` values resolve there.
-- Fabrica assembly STL files are assumed to already be in shared global coordinates.
+- Fabrica assets now live under `assets/obj/`; the default pipeline configs point there.
+- Fabrica OBJ files are assumed to already be in shared global assembly coordinates.
 - The Fabrica two-stage path saves grasps in the target part-local frame so the offline assembly stage and the pickup-ground stage use the same grasp coordinates.
+- Keep the two transforms explicit: `obj_world -> saved_local` during canonicalization, then `saved_local -> execution_world` at runtime.
+- Real-mode dual-topic ROS2 input is optional; keep `configs/grasp_pipeline_real.yaml` runnable by leaving the new topic fields empty so it falls back to the legacy single-topic pose listener.
+- If you use the dual-topic real path, keep both subscriptions alive concurrently and pair stamped messages when possible; sequential waits can miss volatile or one-shot perception messages.
+- Preserve the saved source-frame rotation end to end; do not reconstruct local meshes with translation-only shifts in stage 2 or HTML/debug views.
 - The integrated Isaac pickup path also consumes those saved part-local grasps; world-frame execution targets are derived at runtime from the sampled object pose.
 - The planner collision checker must fail fast if the robot asset has no collision-enabled `UsdGeom.Gprim`s; do not silently skip scene queries and pretend all states are valid.
 - Fabrica contact-offset refinement is part of the saved grasp definition: the stored grasp pose already includes the accepted finger-pad offset, and both Fabrica stages search a 5x5 inset grid on the rubber-tip contact patch.
 - Fabrica grasp scoring is geometric-only over already-feasible grasps: antipodal alignment, centering, local contact support, and COM offset. Collision and approach checks stay as upstream hard filters.
 - Stage 1 and stage 2 Fabrica HTML viewers are score-sorted; stage 2 renders in the selected pickup world pose, not the canonical saved local frame.
 - `scripts/check_fabrica_ground_feasible_grasps.py` accepts `--support-face`, `--yaw-deg`, and `--xy-world` overrides; use those instead of editing `HARDCODED_PICKUP_SPECS` for one-off pose checks.
+- `scripts/check_fabrica_ground_feasible_grasps.py` and `scripts/run_fabrica_pickup_in_isaac.py` also accept explicit object world pose overrides.
 - `scripts/run_fabrica_pickup_in_isaac.py` does not use `HARDCODED_PICKUP_SPECS`; it requires an explicit pose or samples support face / yaw / XY directly.
 - Negative `--xy-world` values must be passed as `--xy-world=-0.2,0.0` or `--xy-world "-0.2,0.0"` so `argparse` does not treat them as flags.
 - The MuJoCo grasp path should use the stage-2 bundle pickup pose as the source of truth; only override XY/face/yaw deliberately.
 - MuJoCo execution must rebuild the object mesh in the saved bundle-local frame; using the raw assembly-global STL misaligns saved grasps and world targets.
+- `run_pipeline.sh` defaults configs by mode and prefers `/isaac-sim/python.sh` inside Docker; do not assume `python3` exists in the Isaac container.
+- The current default OBJ scale in `configs/grasp_pipeline_{local,real}.yaml` is `0.01`; `1.0` makes the Fabrica parts far too large for the current jaw-width limits.
 - The mesh antipodal generator now KD-preselects nearby sample pairs within `max_jaw_width`; `max_pair_checks` applies after that preselection, not to the full Cartesian pair set.
 - For YAML roll sampling, prefer `generator.roll_step_deg`; do not casually claim legacy `roll_angles_deg` / `roll_angles_rad` YAML compatibility without checking merged-default precedence.
 - Mesh antipodal finger collision is evaluated per rolled grasp pose with an FCL-backed `trimesh` scene built once per `generate(mesh)` call.
@@ -78,6 +88,7 @@ Current scope:
 
 Do not install `isaaclab[isaacsim]` on top of the Isaac Sim container image.
 - `docker_env.sh run` now checks host GPU runtime availability up front and launches Docker with `--runtime=nvidia`, `--gpus all`, and explicit NVIDIA capability env vars.
+- The Docker image now needs the planning deps inside Isaac Python too: `numpy`, `PyYAML`, `scipy`, `tomli`, `trimesh`, and `python-fcl`.
 
 ## GUI Notes
 
