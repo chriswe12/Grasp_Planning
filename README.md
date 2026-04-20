@@ -65,7 +65,7 @@ Kept code is limited to the pipeline product:
 - `grasp_planning/ros2/`
 - `grasp_planning/mujoco/`
 
-The default Fabrica beam assets live under `assets/obj/fabrica/beam/`.
+Fabrica OBJ assets live under `assets/obj/fabrica/`.
 
 ## Notes
 
