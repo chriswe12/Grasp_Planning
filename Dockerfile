@@ -49,6 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     flatdict==4.0.0 \
     h5py \
     "isaaclab==${ISAACLAB_VERSION}" \
+    xacro \
     trimesh \
     python-fcl \
     --extra-index-url https://pypi.nvidia.com

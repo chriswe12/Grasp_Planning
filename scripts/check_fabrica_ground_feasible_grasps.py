@@ -114,6 +114,7 @@ def _accepted_bundle(
         {
             "pickup_support_face": pickup_spec["support_face"],
             "pickup_yaw_deg": float(pickup_spec["yaw_deg"]),
+            "pickup_xy_world": [float(v) for v in pickup_spec["xy_world"]],
             "ground_input_count": len(source_bundle.candidates),
             "ground_feasible_count": len(accepted),
         }

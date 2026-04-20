@@ -10,6 +10,8 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
+from ..robot_naming import infer_robot_name_prefix_from_asset_path, remap_joint_targets
+
 
 @configclass
 class DefaultRobotCfg:
@@ -41,7 +43,8 @@ DEFAULT_ARM_START_JOINT_POS = {
     "fr3_joint6": 1.25,
     "fr3_joint7": -1.2,
 }
-DEFAULT_HAND_START_JOINT_POS = {"fr3_finger_joint.*": 0.04}
+DEFAULT_HAND_START_WIDTH = 0.04
+DEFAULT_HAND_START_JOINT_POS = {"fr3_finger_joint.*": DEFAULT_HAND_START_WIDTH}
 
 
 @configclass
@@ -144,9 +147,16 @@ def make_fr3_cube_scene_cfg(
         asset_path_str = str(asset_path)
 
     scene_cfg = FR3CubeSceneCfg()
+    robot_name_prefix = infer_robot_name_prefix_from_asset_path(asset_path_str)
     scene_cfg.robot.spawn.usd_path = asset_path_str
     scene_cfg.robot.init_state.pos = robot_base_position
     scene_cfg.robot.init_state.rot = robot_base_orientation_xyzw
+    scene_cfg.robot.init_state.joint_pos = remap_joint_targets(
+        {**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
+        robot_name_prefix,
+    )
+    scene_cfg.robot.actuators["fr3_arm"].joint_names_expr = [f"{robot_name_prefix}_joint[1-7]"]
+    scene_cfg.robot.actuators["fr3_hand"].joint_names_expr = [f"{robot_name_prefix}_finger_joint.*"]
     scene_cfg.robot_base_marker.init_state.pos = (
         robot_base_position[0],
         robot_base_position[1],

@@ -105,6 +105,29 @@ Notes:
 - If `--xy-world` starts with a negative value, pass it as `--xy-world=-0.5,0.0` or quote it.
 - The current remaining failure mode is controller/pregrasp convergence, not STL-to-USD conversion or grasp loading.
 
+MuJoCo + MoveIt grasp validation:
+
+```bash
+python3 scripts/build_mujoco_fr3_hand_models.py
+
+python3 scripts/view_mujoco_robot.py \
+  --robot-config configs/mujoco_fr3_with_hand.json \
+  --print-summary
+
+python3 scripts/run_fabrica_grasp_in_mujoco_moveit.py \
+  --input-json artifacts/fabrica_beam_2_ground_feasible.json \
+  --robot-config configs/mujoco_fr3_with_hand.json \
+  --grasp-id g0023 \
+  --skip-ground-recheck \
+  --xy-world 0.35,0.0 \
+  --viewer
+```
+
+Notes:
+- the Menagerie `franka_fr3` and `franka_fr3_v2` assets are arm-only; `scripts/build_mujoco_fr3_hand_models.py` merges in the Menagerie Panda hand and writes local XML files under `.cache/generated_mujoco_models/`,
+- the MuJoCo scripts consume the stage-2 grasp bundle as the source of truth for support face and yaw unless explicitly overridden,
+- the MuJoCo object mesh is rebuilt in the saved bundle-local frame before execution; do not point the runtime at the raw assembly-global STL and expect the saved grasps to line up.
+
 Docker build:
 
 ```bash
