@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -10,6 +12,18 @@ from scripts import run_grasp_pipeline
 
 
 class RunGraspPipelineRealTests(unittest.TestCase):
+    def test_real_execution_config_parses_defaults_and_stop_after(self) -> None:
+        config = run_grasp_pipeline._real_execution_config({"real_execution": {"enabled": True, "stop_after": "grasp"}})
+
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.stop_after, "grasp")
+        self.assertEqual(config.frame_id, "base")
+        self.assertAlmostEqual(config.velocity_scale, 0.05)
+
+    def test_real_execution_config_rejects_invalid_stop_after(self) -> None:
+        with self.assertRaises(ValueError):
+            run_grasp_pipeline._real_execution_config({"real_execution": {"stop_after": "unsupported"}})
+
     def test_compose_object_world_poses_applies_translation(self) -> None:
         parent_pose_world = ObjectWorldPose(
             position_world=(1.0, 2.0, 3.0),
@@ -121,6 +135,51 @@ class RunGraspPipelineRealTests(unittest.TestCase):
             timeout_s=1.0,
         )
         wait_legacy.assert_not_called()
+
+    def test_run_real_executes_stage2_bundle_when_real_execution_enabled(self) -> None:
+        payload = {
+            "geometry": {"target_mesh_path": "obj/fabrica/beam/2.obj", "mesh_scale": 0.01},
+            "planning": {},
+            "artifacts": {
+                "stage1_json": "artifacts/test_stage1.json",
+                "stage1_html": "artifacts/test_stage1.html",
+                "stage2_json": "artifacts/test_stage2.json",
+                "stage2_html": "artifacts/test_stage2.html",
+            },
+            "ros2": {},
+            "real_execution": {"enabled": True, "require_confirmation": False, "stop_after": "pregrasp"},
+        }
+        object_pose_world = ObjectWorldPose(
+            position_world=(0.4, -0.1, 0.2),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+        stage1 = SimpleNamespace(bundle=SimpleNamespace(candidates=("g0001",)), raw_candidate_count=1)
+        stage2 = SimpleNamespace(source_bundle=SimpleNamespace(candidates=("g0001",)), accepted=("g0001",))
+        execution_result = SimpleNamespace(
+            success=True,
+            status="stopped_at_pregrasp",
+            grasp_id="g0001",
+            message="ok",
+            attempt_artifact_path=Path("artifacts/attempt.json"),
+        )
+
+        with (
+            mock.patch.object(run_grasp_pipeline, "_resolve_real_world_frames", return_value=(None, object_pose_world)),
+            mock.patch.object(run_grasp_pipeline, "generate_stage1_result", return_value=stage1),
+            mock.patch.object(run_grasp_pipeline, "write_stage1_artifacts"),
+            mock.patch.object(run_grasp_pipeline, "recheck_stage2_result", return_value=stage2),
+            mock.patch.object(run_grasp_pipeline, "write_stage2_artifacts"),
+            mock.patch.object(
+                run_grasp_pipeline,
+                "execute_real_grasp_from_bundle",
+                return_value=execution_result,
+            ) as execute_real,
+        ):
+            run_grasp_pipeline.run_real(payload)
+
+        execute_real.assert_called_once()
+        self.assertEqual(execute_real.call_args.kwargs["input_json"], Path("artifacts/test_stage2.json"))
+        self.assertTrue(execute_real.call_args.kwargs["config"].enabled)
 
 
 if __name__ == "__main__":

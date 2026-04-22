@@ -128,6 +128,40 @@ class Ros2Config:
 
 
 @dataclass(frozen=True)
+class RealExecutionConfig:
+    enabled: bool = False
+    grasp_id: str = ""
+    attempt_artifact: str = "artifacts/real_robot_pick_attempt.json"
+    planning_group: str = "fr3_arm"
+    pose_link: str = "fr3_hand_tcp"
+    frame_id: str = "base"
+    wait_for_moveit_timeout_s: float = 15.0
+    ik_timeout_s: float = 2.0
+    planning_time_s: float = 5.0
+    num_planning_attempts: int = 5
+    velocity_scale: float = 0.05
+    acceleration_scale: float = 0.05
+    execute_timeout_s: float = 120.0
+    post_execute_sleep_s: float = 0.5
+    pregrasp_offset_m: float = 0.10
+    gripper_width_clearance_m: float = 0.01
+    lift_height_m: float = 0.08
+    require_confirmation: bool = True
+    stop_after: str = "pregrasp"
+    allow_collisions: bool = False
+    gripper_enabled: bool = False
+    gripper_grasp_action: str = "/fr3_gripper/grasp"
+    gripper_move_action: str = "/fr3_gripper/move"
+    gripper_open_width: float = 0.08
+    gripper_grasp_speed: float = 0.03
+    gripper_grasp_force: float = 30.0
+    gripper_epsilon_inner: float = 0.002
+    gripper_epsilon_outer: float = 0.08
+    gripper_timeout_s: float = 10.0
+    grasp_settle_time_s: float = 0.5
+
+
+@dataclass(frozen=True)
 class Stage1Result:
     bundle: SavedGraspBundle
     target_mesh_local: object

@@ -25,6 +25,7 @@ from grasp_planning.pipeline import (  # noqa: E402
     MujocoPipelineConfig,
     PickupPoseConfig,
     PlanningConfig,
+    RealExecutionConfig,
     Ros2Config,
     generate_stage1_result,
     recheck_stage2_result,
@@ -32,6 +33,7 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_stage2_artifacts,
 )
 from grasp_planning.ros2 import (  # noqa: E402
+    execute_real_grasp_from_bundle,
     wait_for_object_pose_message,
     wait_for_real_frame_pair_messages,
 )
@@ -157,6 +159,45 @@ def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
         "stage2_json": Path(str(raw["stage2_json"])),
         "stage2_html": Path(str(raw["stage2_html"])),
     }
+
+
+def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
+    raw = dict(payload.get("real_execution", {}))
+    stop_after = str(raw.get("stop_after", "pregrasp")).strip().lower()
+    if stop_after not in {"pregrasp", "grasp", "lift", "full"}:
+        raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
+    return RealExecutionConfig(
+        enabled=bool(raw.get("enabled", False)),
+        grasp_id=str(raw.get("grasp_id", "")),
+        attempt_artifact=str(raw.get("attempt_artifact", "artifacts/real_robot_pick_attempt.json")),
+        planning_group=str(raw.get("planning_group", "fr3_arm")),
+        pose_link=str(raw.get("pose_link", "fr3_hand_tcp")),
+        frame_id=str(raw.get("frame_id", "base")),
+        wait_for_moveit_timeout_s=float(raw.get("wait_for_moveit_timeout_s", 15.0)),
+        ik_timeout_s=float(raw.get("ik_timeout_s", 2.0)),
+        planning_time_s=float(raw.get("planning_time_s", 5.0)),
+        num_planning_attempts=int(raw.get("num_planning_attempts", 5)),
+        velocity_scale=float(raw.get("velocity_scale", 0.05)),
+        acceleration_scale=float(raw.get("acceleration_scale", 0.05)),
+        execute_timeout_s=float(raw.get("execute_timeout_s", 120.0)),
+        post_execute_sleep_s=float(raw.get("post_execute_sleep_s", 0.5)),
+        pregrasp_offset_m=float(raw.get("pregrasp_offset_m", 0.10)),
+        gripper_width_clearance_m=float(raw.get("gripper_width_clearance_m", 0.01)),
+        lift_height_m=float(raw.get("lift_height_m", 0.08)),
+        require_confirmation=bool(raw.get("require_confirmation", True)),
+        stop_after=stop_after,
+        allow_collisions=bool(raw.get("allow_collisions", False)),
+        gripper_enabled=bool(raw.get("gripper_enabled", False)),
+        gripper_grasp_action=str(raw.get("gripper_grasp_action", "/fr3_gripper/grasp")),
+        gripper_move_action=str(raw.get("gripper_move_action", "/fr3_gripper/move")),
+        gripper_open_width=float(raw.get("gripper_open_width", 0.08)),
+        gripper_grasp_speed=float(raw.get("gripper_grasp_speed", 0.03)),
+        gripper_grasp_force=float(raw.get("gripper_grasp_force", 30.0)),
+        gripper_epsilon_inner=float(raw.get("gripper_epsilon_inner", 0.002)),
+        gripper_epsilon_outer=float(raw.get("gripper_epsilon_outer", 0.08)),
+        gripper_timeout_s=float(raw.get("gripper_timeout_s", 10.0)),
+        grasp_settle_time_s=float(raw.get("grasp_settle_time_s", 0.5)),
+    )
 
 
 def _format_topic(topic_template: str, *, object_id: str) -> str:
@@ -376,6 +417,7 @@ def run_real(payload: dict[str, object]) -> None:
     planning = _planning_config(payload)
     artifacts = _artifacts(payload)
     ros2 = _ros2_config(payload)
+    real_execution = _real_execution_config(payload)
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     source_frame_pose_obj_world, object_pose_world = _resolve_real_world_frames(ros2)
@@ -413,6 +455,17 @@ def run_real(payload: dict[str, object]) -> None:
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
+    if real_execution.enabled:
+        print("[PIPELINE] Starting real-robot execution from the stage-2 bundle.", flush=True)
+        result = execute_real_grasp_from_bundle(input_json=artifacts["stage2_json"], config=real_execution)
+        print(
+            f"[PIPELINE] Real execution finished success={result.success} status={result.status} "
+            f"grasp_id={result.grasp_id} message={result.message}",
+            flush=True,
+        )
+        print(f"[PIPELINE] Wrote real execution artifact to {result.attempt_artifact_path}", flush=True)
+        if not result.success:
+            raise RuntimeError(result.message)
 
 
 def main() -> None:
