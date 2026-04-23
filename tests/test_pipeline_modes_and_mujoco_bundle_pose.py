@@ -119,7 +119,7 @@ class MujocoBundleExecutionPoseTests(unittest.TestCase):
     def test_load_simulation_defaults_reads_shared_yaml(self) -> None:
         sim_cfg = run_fabrica_grasp_in_mujoco._load_simulation_defaults(Path("configs/mujoco_simulation.yaml"))
 
-        self.assertEqual(sim_cfg["pregrasp_offset"], 0.20)
+        self.assertEqual(sim_cfg["pregrasp_offset"], 0.02)
         self.assertEqual(sim_cfg["gripper_width_clearance"], 0.01)
         self.assertEqual(sim_cfg["contact_gap_m"], 0.002)
         self.assertEqual(sim_cfg["robot_cfg_updates"]["control_substeps"], 8)

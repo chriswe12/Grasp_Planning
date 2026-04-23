@@ -20,6 +20,10 @@ htmlcov/
 
 artifacts/
 .cache/
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/src/fp_debug_msgs/
 MUJOCO_LOG.TXT
 third_party/franka_description_tags/
 third_party/franka_description_upstream/

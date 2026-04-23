@@ -261,10 +261,11 @@ def unique_edges(faces: np.ndarray) -> list[tuple[int, int]]:
     return sorted(edges)
 
 
-def mesh_aabb_center(mesh: TriangleMesh) -> np.ndarray:
-    return 0.5 * (
-        np.asarray(mesh.vertices_obj, dtype=float).min(axis=0) + np.asarray(mesh.vertices_obj, dtype=float).max(axis=0)
-    )
+def mesh_vertex_average(mesh: TriangleMesh) -> np.ndarray:
+    vertices = np.asarray(mesh.vertices_obj, dtype=float)
+    if len(vertices) == 0:
+        raise ValueError("Cannot canonicalize a mesh with no vertices.")
+    return vertices.mean(axis=0)
 
 
 def shifted_mesh(mesh: TriangleMesh, offset: np.ndarray) -> TriangleMesh:
@@ -290,7 +291,7 @@ def combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh | None:
 
 
 def canonicalize_target_mesh(global_mesh: TriangleMesh) -> tuple[TriangleMesh, ObjectWorldPose]:
-    center_world = mesh_aabb_center(global_mesh)
+    center_world = mesh_vertex_average(global_mesh)
     local_mesh = shifted_mesh(global_mesh, -center_world)
     return local_mesh, ObjectWorldPose(
         position_world=tuple(float(v) for v in center_world),
