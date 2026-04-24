@@ -178,11 +178,7 @@ class MoveItPoseCommander(Node):
             f"quat=({target.qx:.5f}, {target.qy:.5f}, {target.qz:.5f}, {target.qw:.5f})"
         )
 
-        joints, message = self.compute_ik(target)
-        if joints is None:
-            return False, f"{label}: {message}"
-
-        trajectory, message = self.plan_to_joint_positions(joints, label=label)
+        trajectory, message = self.plan_to_pose(target, label=label)
         if trajectory is None:
             return False, f"{label}: {message}"
 
@@ -191,6 +187,17 @@ class MoveItPoseCommander(Node):
             return True, f"{label}: plan ready with {point_count} trajectory points"
 
         return self.execute_trajectory(trajectory, label=label)
+
+    def plan_to_pose(
+        self,
+        target: PoseTarget,
+        *,
+        label: str,
+    ):
+        joints, message = self.compute_ik(target)
+        if joints is None:
+            return None, message
+        return self.plan_to_joint_positions(joints, label=label)
 
     def get_current_pose(self, *, frame_id: str) -> PoseTarget:
         request = GetPositionFK.Request()
@@ -254,9 +261,15 @@ class MoveItPoseCommander(Node):
 
         return [float(name_to_position[joint_name]) for joint_name in self.config.joint_names], "ok"
 
-    def plan_to_joint_positions(self, joint_positions: Sequence[float], *, label: str):
-        if len(tuple(joint_positions)) != len(self.config.joint_names):
-            return None, f"Expected {len(self.config.joint_names)} joint targets, got {len(tuple(joint_positions))}"
+    def plan_to_joint_positions(
+        self,
+        joint_positions: Sequence[float],
+        *,
+        label: str,
+    ):
+        joint_positions = tuple(float(value) for value in joint_positions)
+        if len(joint_positions) != len(self.config.joint_names):
+            return None, f"Expected {len(self.config.joint_names)} joint targets, got {len(joint_positions)}"
 
         request = GetMotionPlan.Request()
         motion_request = request.motion_plan_request

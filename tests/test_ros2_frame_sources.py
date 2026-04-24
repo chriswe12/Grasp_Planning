@@ -5,23 +5,9 @@ import unittest
 import numpy as np
 
 from grasp_planning.grasping import ObjectWorldPose, TriangleMesh
+from grasp_planning.grasping.fabrica_grasp_debug import canonicalize_target_mesh
 from grasp_planning.pipeline.fabrica_pipeline import _mesh_in_source_frame
-from grasp_planning.ros2.pose_listener import (
-    centroid_offset_to_source_frame_pose,
-    extract_execution_pose_from_debug_frame,
-)
-
-
-class _Vector:
-    def __init__(self, x: float, y: float, z: float) -> None:
-        self.x = x
-        self.y = y
-        self.z = z
-
-
-class _Vector3Stamped:
-    def __init__(self, x: float, y: float, z: float) -> None:
-        self.vector = _Vector(x, y, z)
+from grasp_planning.ros2.pose_listener import extract_execution_pose_from_debug_frame
 
 
 class _Point:
@@ -64,11 +50,29 @@ class _DebugFrame:
 
 
 class Ros2FrameSourceTests(unittest.TestCase):
-    def test_centroid_offset_to_source_frame_pose_uses_identity_orientation(self) -> None:
-        pose = centroid_offset_to_source_frame_pose(_Vector3Stamped(0.12, -0.03, 0.45))
+    def test_canonicalize_target_mesh_uses_vertex_average_origin(self) -> None:
+        mesh_obj_world = TriangleMesh(
+            vertices_obj=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [4.0, 0.0, 0.0],
+                    [0.0, 2.0, 0.0],
+                    [0.0, 0.0, 2.0],
+                ],
+                dtype=float,
+            ),
+            faces=np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int64),
+        )
 
-        self.assertEqual(pose.position_world, (0.12, -0.03, 0.45))
-        self.assertEqual(pose.orientation_xyzw_world, (0.0, 0.0, 0.0, 1.0))
+        mesh_local, source_frame_pose = canonicalize_target_mesh(mesh_obj_world)
+
+        self.assertEqual(source_frame_pose.position_world, (1.0, 0.5, 0.5))
+        self.assertEqual(source_frame_pose.orientation_xyzw_world, (0.0, 0.0, 0.0, 1.0))
+        np.testing.assert_allclose(
+            mesh_local.vertices_obj,
+            np.asarray(mesh_obj_world.vertices_obj, dtype=float) - np.array([[1.0, 0.5, 0.5]], dtype=float),
+            atol=1.0e-6,
+        )
 
     def test_extract_execution_pose_from_debug_frame_picks_highest_score_for_object(self) -> None:
         debug_frame = _DebugFrame(

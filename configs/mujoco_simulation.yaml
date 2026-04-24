@@ -2,7 +2,7 @@
 # Edit this file to tune contact physics and execution behavior without changing code.
 
 grasp:
-  pregrasp_offset_m: 0.20
+  pregrasp_offset_m: 0.02
   gripper_width_clearance_m: 0.01
   contact_gap_m: 0.002
 
@@ -31,8 +31,6 @@ robot:
   ik_orientation_tolerance_rad: 0.04
   trajectory_waypoints: 25
   waypoint_settle_steps: 45
-  trajectory_time_scale: 1.0
-  trajectory_min_segment_duration_s: 0.0
   lift_height_m: 0.12
   hold_steps: 240
   success_height_margin_m: 0.05

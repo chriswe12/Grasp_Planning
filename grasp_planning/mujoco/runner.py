@@ -68,8 +68,6 @@ class MujocoExecutionConfig:
     trajectory_waypoints: int = 25
     waypoint_settle_steps: int = 45
     arm_speed_scale: float = 1.0
-    trajectory_time_scale: float = 1.0
-    trajectory_min_segment_duration_s: float = 0.0
     success_height_margin_m: float = 0.05
     object_mass_kg: float = 0.15
     object_scale: float = 1.0
@@ -101,14 +99,6 @@ class MujocoAttemptResult:
     position_error_m: float | None = None
     orientation_error_rad: float | None = None
     generated_scene_xml: str | None = None
-
-
-@dataclass(frozen=True)
-class MujocoTrajectoryPoint:
-    """A single arm-trajectory waypoint for MuJoCo execution."""
-
-    positions: tuple[float, ...]
-    time_from_start_s: float | None = None
 
 
 def load_robot_config(path: str | Path) -> MujocoRobotConfig:
@@ -517,61 +507,6 @@ class MujocoPickupRuntime:
                 self._step(self._robot_cfg.control_substeps)
         final_error = float(np.max(np.abs(self.get_arm_qpos() - q_goal)))
         return final_error <= 0.02
-
-    def execute_arm_trajectory(
-        self,
-        *,
-        joint_names: tuple[str, ...] | list[str],
-        points: tuple[MujocoTrajectoryPoint, ...] | list[MujocoTrajectoryPoint],
-        gripper_ctrl: tuple[float, ...],
-    ) -> bool:
-        """Execute an arm-only trajectory in MuJoCo."""
-
-        if not points:
-            return False
-        joint_names = tuple(joint_names)
-        if joint_names != self._robot_cfg.arm_joint_names:
-            index_by_name = {name: idx for idx, name in enumerate(joint_names)}
-            try:
-                reordered_points = []
-                for point in points:
-                    reordered_points.append(
-                        MujocoTrajectoryPoint(
-                            positions=tuple(
-                                point.positions[index_by_name[name]] for name in self._robot_cfg.arm_joint_names
-                            ),
-                            time_from_start_s=point.time_from_start_s,
-                        )
-                    )
-                points = reordered_points
-            except KeyError as exc:
-                raise ValueError(
-                    f"Trajectory joint names do not cover MuJoCo arm joints. got={joint_names} expected={self._robot_cfg.arm_joint_names}"
-                ) from exc
-        prev_time = 0.0
-        control_dt = float(self._robot_cfg.timestep) * float(self._robot_cfg.control_substeps)
-        for point in points:
-            q_target = np.asarray(point.positions, dtype=float)
-            dt = None if point.time_from_start_s is None else max(0.0, float(point.time_from_start_s) - prev_time)
-            prev_time = prev_time if point.time_from_start_s is None else float(point.time_from_start_s)
-            speed_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
-            time_scale = max(1.0e-6, float(self._execution_cfg.trajectory_time_scale)) / speed_scale
-            min_segment_duration_s = max(0.0, float(self._execution_cfg.trajectory_min_segment_duration_s))
-            current_q = self.get_arm_qpos()
-            if np.max(np.abs(current_q - q_target)) <= 1.0e-8 and (dt is None or dt <= 0.0):
-                continue
-            if dt is None or dt <= 0.0:
-                scaled_duration_s = float(self._execution_cfg.waypoint_settle_steps) * time_scale * control_dt
-            else:
-                scaled_duration_s = dt * time_scale
-            segment_duration_s = max(scaled_duration_s, min_segment_duration_s)
-            settle_steps = max(1, int(np.ceil(segment_duration_s / control_dt)))
-            for _ in range(settle_steps):
-                self._set_arm_ctrl(q_target)
-                self._set_gripper_ctrl(gripper_ctrl)
-                self._step(self._robot_cfg.control_substeps)
-        final_error = float(np.max(np.abs(self.get_arm_qpos() - np.asarray(points[-1].positions, dtype=float))))
-        return final_error <= 0.05
 
     def close_gripper(self) -> dict[str, object]:
         q_hold = self.get_arm_qpos()

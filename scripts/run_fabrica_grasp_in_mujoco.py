@@ -101,7 +101,6 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
     ground_raw = dict(scene.get("ground", {}))
     robot_raw = dict(payload.get("robot", {}))
     gripper_raw = dict(payload.get("gripper", {}))
-
     defaults["pregrasp_offset"] = float(grasp.get("pregrasp_offset_m", defaults["pregrasp_offset"]))
     defaults["gripper_width_clearance"] = float(
         grasp.get("gripper_width_clearance_m", defaults["gripper_width_clearance"])
@@ -166,12 +165,6 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
         execution_cfg_kwargs["waypoint_settle_steps"] = int(robot_raw["waypoint_settle_steps"])
     if "speed_scale" in robot_raw:
         execution_cfg_kwargs["arm_speed_scale"] = float(robot_raw["speed_scale"])
-    if "trajectory_time_scale" in robot_raw:
-        execution_cfg_kwargs["trajectory_time_scale"] = float(robot_raw["trajectory_time_scale"])
-    if "trajectory_min_segment_duration_s" in robot_raw:
-        execution_cfg_kwargs["trajectory_min_segment_duration_s"] = float(
-            robot_raw["trajectory_min_segment_duration_s"]
-        )
     if "lift_height_m" in robot_raw:
         execution_cfg_kwargs["lift_height_m"] = float(robot_raw["lift_height_m"])
     if "hold_steps" in robot_raw:

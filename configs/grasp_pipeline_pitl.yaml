@@ -1,10 +1,10 @@
 geometry:
-  target_mesh_path: "obj/fabrica/beam/2.obj"
+  target_mesh_path: "obj/fabrica/cooling_manifold/2.obj"
   mesh_scale: 0.01
-  assembly_glob: "obj/fabrica/beam/*.obj"
+  assembly_glob: "obj/fabrica/cooling_manifold/*.obj"
 
 planning:
-  num_surface_samples: 256
+  num_surface_samples: 2560
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208
@@ -37,12 +37,7 @@ mujoco_execution:
   keep_generated_scene: false
 
 ros2:
-  object_pose_topic: "/grasp_planning/object_pose"
-  pose_message_type: "geometry_msgs/msg/Pose"
-  object_id: ""
-  local_frame_offset_topic: ""
-  local_frame_offset_message_type: "geometry_msgs/msg/Vector3Stamped"
-  execution_frame_topic: ""
-  execution_frame_message_type: "fp_debug_msgs/msg/DebugFrame"
+  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
+  object_id: "cooling_base"
   frame_id: "world"
   timeout_s: 10.0

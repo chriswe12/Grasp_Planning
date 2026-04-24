@@ -39,6 +39,7 @@ Current scope:
 - The MuJoCo path consumes the stage-2 bundle as the source of truth.
 - The real-robot path also consumes the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
 - The MuJoCo object mesh must be rebuilt in the saved bundle-local frame before execution.
+- `sim` and `pitl` should stay MoveIt-free; MoveIt is only a dependency of the real-hardware path.
 - The vendored Franka hand collision mesh lives at `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`.
 - MuJoCo Menagerie `franka_fr3` is arm-only; use `scripts/build_mujoco_fr3_hand_models.py` to generate the local FR3+Panda-hand XML under `.cache/generated_mujoco_models/`.
 - Hardware-facing ROS2 code depends on an external FR3 / MoveIt workspace being sourced before running repo-local ROS2 nodes.

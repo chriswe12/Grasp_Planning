@@ -1,0 +1,5 @@
+repositories:
+  fp_debug_msgs:
+    type: git
+    url: https://github.com/Moreno-Nautilus/fp_debug_msgs.git
+    version: 7cab8c96effad8f3489fa509dfe5cd2795242c37

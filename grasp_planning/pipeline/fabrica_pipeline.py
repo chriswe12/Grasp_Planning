@@ -116,15 +116,10 @@ class MujocoPipelineConfig:
 
 @dataclass(frozen=True)
 class Ros2Config:
-    object_pose_topic: str = "/grasp_planning/object_pose"
-    pose_message_type: str = "geometry_msgs/msg/Pose"
+    debug_frame_topic: str = ""
     frame_id: str = "world"
     timeout_s: float = 10.0
     object_id: str = ""
-    local_frame_offset_topic: str = ""
-    local_frame_offset_message_type: str = "geometry_msgs/msg/Vector3Stamped"
-    execution_frame_topic: str = ""
-    execution_frame_message_type: str = "fp_debug_msgs/msg/DebugFrame"
 
 
 @dataclass(frozen=True)

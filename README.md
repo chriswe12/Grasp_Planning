@@ -21,13 +21,22 @@ Default configs:
 
 `sim` and `pitl` both run stage 1, write stage-1 artifacts, run stage 2, write stage-2 artifacts, then execute from the stage-2 bundle. `real` writes the same stage artifacts and can optionally execute the selected grasp on hardware when `real_execution.enabled: true`.
 
+For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugFrame` subscriber then treats the selected `pose_item.pose_base` as the world pose of that centroid-centered local frame.
+
 ## ROS2 Workspace
 
 The repo now contains a dedicated ROS2 workspace for hardware-facing integration:
 
 - `ros2_ws/src/robot_integration_ros`
+- `ros2_ws/dependencies.repos` for pinned external ROS2 package sources
 
 This keeps the real-robot entrypoints and ROS packaging under `colcon`, while the rest of the project stays a normal Python repo.
+
+Before building the overlay, fetch the pinned ROS2 source dependency used by `pitl` and `real` mode DebugFrame intake:
+
+```bash
+bash scripts/download_ros2_dependencies.sh
+```
 
 Build and source it as an overlay on top of your FR3 / MoveIt workspace:
 
@@ -36,7 +45,7 @@ source /opt/ros/<distro>/setup.bash
 source /path/to/your/fr3_moveit_ws/install/setup.bash
 
 cd ros2_ws
-colcon build --packages-select robot_integration_ros --symlink-install
+colcon build --packages-select fp_debug_msgs robot_integration_ros --symlink-install
 source install/setup.bash
 ```
 
@@ -68,7 +77,7 @@ Terminal 2: source the robot integration overlay and run the script
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
-source /media/pdz/Elements1/robot_integration/ros2_ws/install/setup.bash
+source /media/pdz/Elements1/perception_bag_test/ros2_ws/install/setup.bash
 export ROS_DOMAIN_ID=77
 export ROS_LOCALHOST_ONLY=1
 ```
@@ -128,6 +137,18 @@ This does two things:
 - sparse-clones the required MuJoCo Menagerie assets under `.cache/robot_descriptions/mujoco_menagerie`
 - builds `.cache/generated_mujoco_models/fr3_with_panda_hand.xml`
 
+Bootstrap the pinned ROS2 message dependency used by `pitl` / `real` DebugFrame intake:
+
+```bash
+bash scripts/download_ros2_dependencies.sh
+```
+
+This does two things:
+- imports `ros2_ws/dependencies.repos` when `vcstool` is available
+- ensures `ros2_ws/src/fp_debug_msgs` is present and pinned even without `vcstool`
+
+Override `FP_DEBUG_MSGS_REMOTE` and `FP_DEBUG_MSGS_REF` if you need to bootstrap from a mirror, a local bare repo, or a different pinned ref.
+
 The pipeline expects the vendored Franka hand collision mesh at:
 - `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`
 
@@ -158,6 +179,7 @@ Kept code is limited to the pipeline product:
 - `scripts/run_fabrica_grasp_in_mujoco.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
 - `scripts/download_required_assets.sh`
+- `scripts/download_ros2_dependencies.sh`
 - `grasp_planning/grasping/`
 - `grasp_planning/pipeline/`
 - `grasp_planning/ros2/`
@@ -169,4 +191,4 @@ Fabrica OBJ assets live under `assets/obj/fabrica/`.
 
 - The default Fabrica OBJ scale in the pipeline configs is `0.01`.
 - The MuJoCo runner uses the exact `execution_world_pose` stored in the stage-2 bundle unless you override placement explicitly.
-- ROS2 dual-topic intake is enabled when `object_id`, `local_frame_offset_topic`, and `execution_frame_topic` are all configured in the pipeline YAML.
+- `pitl` and `real` use one ROS2 subscriber: set `ros2.debug_frame_topic` and `ros2.object_id` in the pipeline YAML before running those modes.
