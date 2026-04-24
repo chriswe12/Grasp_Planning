@@ -41,7 +41,7 @@ mujoco_execution:
   keep_generated_scene: false
 
 ros2:
-  object_pose_topic: "/grasp_planning/object_pose"
-  pose_message_type: "geometry_msgs/msg/Pose"
+  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
+  object_id: ""
   frame_id: "world"
   timeout_s: 10.0

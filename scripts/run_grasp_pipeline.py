@@ -16,7 +16,6 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
-    rotmat_to_quat_xyzw,
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
@@ -25,6 +24,7 @@ from grasp_planning.pipeline import (  # noqa: E402
     MujocoPipelineConfig,
     PickupPoseConfig,
     PlanningConfig,
+    RealExecutionConfig,
     Ros2Config,
     generate_stage1_result,
     recheck_stage2_result,
@@ -32,9 +32,11 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_stage2_artifacts,
 )
 from grasp_planning.ros2 import (  # noqa: E402
-    wait_for_object_pose_message,
-    wait_for_real_frame_pair_messages,
+    execute_real_grasp_from_bundle,
+    wait_for_debug_frame_pose_message,
 )
+
+DEBUG_FRAME_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugFrame"
 
 
 def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[float, ...]:
@@ -135,17 +137,10 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
 def _ros2_config(payload: dict[str, object]) -> Ros2Config:
     raw = dict(payload.get("ros2", {}))
     return Ros2Config(
-        object_pose_topic=str(raw.get("object_pose_topic", "/grasp_planning/object_pose")),
-        pose_message_type=str(raw.get("pose_message_type", "geometry_msgs/msg/Pose")),
+        debug_frame_topic="" if raw.get("debug_frame_topic") in ("", None) else str(raw["debug_frame_topic"]),
         frame_id=str(raw.get("frame_id", "world")),
         timeout_s=float(raw.get("timeout_s", 10.0)),
         object_id=str(raw.get("object_id", "")),
-        local_frame_offset_topic=str(raw.get("local_frame_offset_topic", "")),
-        local_frame_offset_message_type=str(
-            raw.get("local_frame_offset_message_type", "geometry_msgs/msg/Vector3Stamped")
-        ),
-        execution_frame_topic=str(raw.get("execution_frame_topic", "")),
-        execution_frame_message_type=str(raw.get("execution_frame_message_type", "fp_debug_msgs/msg/DebugFrame")),
     )
 
 
@@ -159,6 +154,45 @@ def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
     }
 
 
+def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
+    raw = dict(payload.get("real_execution", {}))
+    stop_after = str(raw.get("stop_after", "pregrasp")).strip().lower()
+    if stop_after not in {"pregrasp", "grasp", "lift", "full"}:
+        raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
+    return RealExecutionConfig(
+        enabled=bool(raw.get("enabled", False)),
+        grasp_id=str(raw.get("grasp_id", "")),
+        attempt_artifact=str(raw.get("attempt_artifact", "artifacts/real_robot_pick_attempt.json")),
+        planning_group=str(raw.get("planning_group", "fr3_arm")),
+        pose_link=str(raw.get("pose_link", "fr3_hand_tcp")),
+        frame_id=str(raw.get("frame_id", "base")),
+        wait_for_moveit_timeout_s=float(raw.get("wait_for_moveit_timeout_s", 15.0)),
+        ik_timeout_s=float(raw.get("ik_timeout_s", 2.0)),
+        planning_time_s=float(raw.get("planning_time_s", 5.0)),
+        num_planning_attempts=int(raw.get("num_planning_attempts", 5)),
+        velocity_scale=float(raw.get("velocity_scale", 0.05)),
+        acceleration_scale=float(raw.get("acceleration_scale", 0.05)),
+        execute_timeout_s=float(raw.get("execute_timeout_s", 120.0)),
+        post_execute_sleep_s=float(raw.get("post_execute_sleep_s", 0.5)),
+        pregrasp_offset_m=float(raw.get("pregrasp_offset_m", 0.10)),
+        gripper_width_clearance_m=float(raw.get("gripper_width_clearance_m", 0.01)),
+        lift_height_m=float(raw.get("lift_height_m", 0.08)),
+        require_confirmation=bool(raw.get("require_confirmation", True)),
+        stop_after=stop_after,
+        allow_collisions=bool(raw.get("allow_collisions", False)),
+        gripper_enabled=bool(raw.get("gripper_enabled", False)),
+        gripper_grasp_action=str(raw.get("gripper_grasp_action", "/fr3_gripper/grasp")),
+        gripper_move_action=str(raw.get("gripper_move_action", "/fr3_gripper/move")),
+        gripper_open_width=float(raw.get("gripper_open_width", 0.08)),
+        gripper_grasp_speed=float(raw.get("gripper_grasp_speed", 0.03)),
+        gripper_grasp_force=float(raw.get("gripper_grasp_force", 30.0)),
+        gripper_epsilon_inner=float(raw.get("gripper_epsilon_inner", 0.002)),
+        gripper_epsilon_outer=float(raw.get("gripper_epsilon_outer", 0.08)),
+        gripper_timeout_s=float(raw.get("gripper_timeout_s", 10.0)),
+        grasp_settle_time_s=float(raw.get("grasp_settle_time_s", 0.5)),
+    )
+
+
 def _format_topic(topic_template: str, *, object_id: str) -> str:
     if "{object_id}" in topic_template:
         if not object_id:
@@ -167,46 +201,20 @@ def _format_topic(topic_template: str, *, object_id: str) -> str:
     return topic_template
 
 
-def _compose_object_world_poses(
-    parent_pose_world: ObjectWorldPose,
-    child_pose_parent: ObjectWorldPose,
-) -> ObjectWorldPose:
-    parent_rotation = parent_pose_world.rotation_world_from_object
-    child_rotation = child_pose_parent.rotation_world_from_object
-    composed_rotation = parent_rotation @ child_rotation
-    composed_translation = parent_rotation @ child_pose_parent.translation_world + parent_pose_world.translation_world
-    return ObjectWorldPose(
-        position_world=tuple(float(v) for v in composed_translation.tolist()),
-        orientation_xyzw_world=rotmat_to_quat_xyzw(composed_rotation),
-    )
+def _resolve_object_pose_world(ros2: Ros2Config) -> ObjectWorldPose:
+    if not ros2.debug_frame_topic:
+        raise ValueError("ros2.debug_frame_topic must be non-empty for pitl and real modes.")
+    if not ros2.object_id:
+        raise ValueError("ros2.object_id must be non-empty for pitl and real modes.")
 
-
-def _resolve_real_world_frames(ros2: Ros2Config):
-    if ros2.local_frame_offset_topic and ros2.execution_frame_topic and ros2.object_id:
-        local_frame_topic = _format_topic(ros2.local_frame_offset_topic, object_id=ros2.object_id)
-        execution_frame_topic = _format_topic(ros2.execution_frame_topic, object_id=ros2.object_id)
-        print("[PIPELINE] Waiting for source-frame offset and execution-frame pose.", flush=True)
-        frame_pair = wait_for_real_frame_pair_messages(
-            source_topic_name=local_frame_topic,
-            source_message_type=ros2.local_frame_offset_message_type,
-            execution_topic_name=execution_frame_topic,
-            execution_message_type=ros2.execution_frame_message_type,
-            object_id=ros2.object_id,
-            timeout_s=ros2.timeout_s,
-        )
-        source_frame_pose_world = _compose_object_world_poses(
-            frame_pair.execution_pose_world,
-            frame_pair.source_frame_pose_obj_world,
-        )
-        return frame_pair.source_frame_pose_obj_world, source_frame_pose_world
-
-    print("[PIPELINE] Waiting for legacy object pose topic.", flush=True)
-    object_pose_world = wait_for_object_pose_message(
-        topic_name=ros2.object_pose_topic,
-        message_type=ros2.pose_message_type,
+    debug_frame_topic = _format_topic(ros2.debug_frame_topic, object_id=ros2.object_id)
+    print("[PIPELINE] Waiting for object pose on DebugFrame topic.", flush=True)
+    return wait_for_debug_frame_pose_message(
+        topic_name=debug_frame_topic,
+        message_type=DEBUG_FRAME_MESSAGE_TYPE,
+        object_id=ros2.object_id,
         timeout_s=ros2.timeout_s,
     )
-    return None, object_pose_world
 
 
 def _normalize_mode(raw_mode: str) -> str:
@@ -333,13 +341,9 @@ def run_pitl(payload: dict[str, object], *, headless: bool) -> None:
     mujoco_execution = _mujoco_execution_config(payload)
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
-    source_frame_pose_obj_world, object_pose_world = _resolve_real_world_frames(ros2)
+    object_pose_world = _resolve_object_pose_world(ros2)
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
-    stage1 = generate_stage1_result(
-        geometry=geometry,
-        planning=planning,
-        source_frame_pose_obj_world=source_frame_pose_obj_world,
-    )
+    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
     print(
         f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
     )
@@ -376,15 +380,12 @@ def run_real(payload: dict[str, object]) -> None:
     planning = _planning_config(payload)
     artifacts = _artifacts(payload)
     ros2 = _ros2_config(payload)
+    real_execution = _real_execution_config(payload)
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
-    source_frame_pose_obj_world, object_pose_world = _resolve_real_world_frames(ros2)
+    object_pose_world = _resolve_object_pose_world(ros2)
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
-    stage1 = generate_stage1_result(
-        geometry=geometry,
-        planning=planning,
-        source_frame_pose_obj_world=source_frame_pose_obj_world,
-    )
+    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
     print(
         f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
     )
@@ -413,6 +414,17 @@ def run_real(payload: dict[str, object]) -> None:
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
+    if real_execution.enabled:
+        print("[PIPELINE] Starting real-robot execution from the stage-2 bundle.", flush=True)
+        result = execute_real_grasp_from_bundle(input_json=artifacts["stage2_json"], config=real_execution)
+        print(
+            f"[PIPELINE] Real execution finished success={result.success} status={result.status} "
+            f"grasp_id={result.grasp_id} message={result.message}",
+            flush=True,
+        )
+        print(f"[PIPELINE] Wrote real execution artifact to {result.attempt_artifact_path}", flush=True)
+        if not result.success:
+            raise RuntimeError(result.message)
 
 
 def main() -> None:
