@@ -75,6 +75,66 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("--simulation-config", command)
         self.assertIn("configs/mujoco_simulation.yaml", command)
 
+    def test_run_isaac_execution_uses_stage2_bundle(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(
+            enabled=True,
+            python_executable="/isaac-sim/python.sh",
+            part_usd="artifacts/beam.usd",
+            attempt_artifact="artifacts/test_isaac_attempt.json",
+            headless=True,
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=False,
+            )
+
+        subprocess_run.assert_called_once()
+        command = subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "/isaac-sim/python.sh")
+        self.assertIn("scripts/run_fabrica_grasp_in_isaac.py", command)
+        self.assertIn("artifacts/pipeline_stage2_ground_feasible.json", command)
+        self.assertIn("artifacts/beam.usd", command)
+        self.assertIn("--headless", command)
+        self.assertEqual(subprocess_run.call_args.kwargs["cwd"], run_grasp_pipeline.REPO_ROOT)
+        self.assertTrue(subprocess_run.call_args.kwargs["check"])
+
+    def test_run_isaac_execution_allows_generated_bundle_local_usd(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(enabled=True)
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertNotIn("--part-usd", command)
+        self.assertIn("--headless", command)
+
+    def test_backend_override_selects_one_execution_backend(self) -> None:
+        mujoco_cfg = run_grasp_pipeline.MujocoPipelineConfig(enabled=True)
+        isaac_cfg = run_grasp_pipeline.IsaacPipelineConfig(enabled=True)
+
+        mujoco_selected, isaac_selected = run_grasp_pipeline._execution_backend_configs(
+            mujoco_execution=mujoco_cfg,
+            isaac_execution=isaac_cfg,
+            backend="isaac",
+        )
+        self.assertFalse(mujoco_selected.enabled)
+        self.assertTrue(isaac_selected.enabled)
+
+        mujoco_selected, isaac_selected = run_grasp_pipeline._execution_backend_configs(
+            mujoco_execution=mujoco_cfg,
+            isaac_execution=isaac_cfg,
+            backend="mujoco",
+        )
+        self.assertTrue(mujoco_selected.enabled)
+        self.assertFalse(isaac_selected.enabled)
+
 
 class MujocoBundleExecutionPoseTests(unittest.TestCase):
     def test_resolve_object_pose_world_from_bundle_prefers_exact_execution_pose(self) -> None:

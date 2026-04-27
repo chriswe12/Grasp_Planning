@@ -27,7 +27,7 @@ artifacts:
   stage2_html: "artifacts/pipeline_stage2_ground_feasible.html"
 
 mujoco_execution:
-  enabled: true
+  enabled: false
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
@@ -42,13 +42,13 @@ mujoco_execution:
   keep_generated_scene: false
 
 isaac_execution:
-  enabled: false
+  enabled: true
   python_executable: "/isaac-sim/python.sh"
   part_usd: ""  # optional; runner generates a bundle-local USD by default
   fr3_usd: ""
   controller: "admittance"
   grasp_id: ""
-  pregrasp_offset: 0.02
+  pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   close_width: 0.0

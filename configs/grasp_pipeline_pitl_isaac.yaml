@@ -1,10 +1,10 @@
 geometry:
-  target_mesh_path: "obj/fabrica/beam/2.obj"
+  target_mesh_path: "obj/fabrica/cooling_manifold/2.obj"
   mesh_scale: 0.01
-  assembly_glob: "obj/fabrica/beam/*.obj"
+  assembly_glob: "obj/fabrica/cooling_manifold/*.obj"
 
 planning:
-  num_surface_samples: 256
+  num_surface_samples: 2560
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208
@@ -15,24 +15,19 @@ planning:
   contact_approach_offsets_m: [-0.006166666666666667, -0.0030833333333333333, 0.0, 0.0030833333333333333, 0.006166666666666667]
   rng_seed: 0
 
-pickup_pose:
-  support_face: "neg_z"
-  yaw_deg: 0.0
-  xy_world: [0.5, 0.0]
-
 artifacts:
-  stage1_json: "artifacts/pipeline_stage1_assembly_grasps.json"
-  stage1_html: "artifacts/pipeline_stage1_assembly_grasps.html"
-  stage2_json: "artifacts/pipeline_stage2_ground_feasible.json"
-  stage2_html: "artifacts/pipeline_stage2_ground_feasible.html"
+  stage1_json: "artifacts/pitl_pipeline_stage1_assembly_grasps.json"
+  stage1_html: "artifacts/pitl_pipeline_stage1_assembly_grasps.html"
+  stage2_json: "artifacts/pitl_pipeline_stage2_ground_feasible.json"
+  stage2_html: "artifacts/pitl_pipeline_stage2_ground_feasible.html"
 
 mujoco_execution:
-  enabled: true
+  enabled: false
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
   grasp_id: ""
-  attempt_artifact: "artifacts/sim_mujoco_pick_attempt.json"
+  attempt_artifact: "artifacts/pitl_mujoco_pick_attempt.json"
   viewer: true
   viewer_left_ui: false
   viewer_right_ui: false
@@ -42,24 +37,24 @@ mujoco_execution:
   keep_generated_scene: false
 
 isaac_execution:
-  enabled: false
+  enabled: true
   python_executable: "/isaac-sim/python.sh"
   part_usd: ""  # optional; runner generates a bundle-local USD by default
   fr3_usd: ""
   controller: "admittance"
   grasp_id: ""
-  pregrasp_offset: 0.02
+  pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   close_width: 0.0
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
-  attempt_artifact: "artifacts/sim_isaac_pick_attempt.json"
+  attempt_artifact: "artifacts/pitl_isaac_pick_attempt.json"
   pregrasp_only: false
   run_seconds: 0.0
   headless: false
 
 ros2:
   debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: ""
+  object_id: "cooling_base"
   frame_id: "world"
   timeout_s: 10.0

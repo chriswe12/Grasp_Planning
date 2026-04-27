@@ -1,8 +1,8 @@
 # Grasp Planning
 
 YAML-driven Fabrica grasp planning with three pipeline modes behind one entrypoint:
-- `sim`: offline execution-world pose from config, then MuJoCo execution
-- `pitl`: ROS2 perception pose intake, then MuJoCo execution
+- `sim`: offline execution-world pose from config, then optional MuJoCo and/or Isaac execution
+- `pitl`: ROS2 perception pose intake, then optional MuJoCo and/or Isaac execution
 - `real`: ROS2 perception pose intake, planning, and optional real-robot execution from the stage-2 bundle
 
 ## Entry Point
@@ -12,6 +12,7 @@ YAML-driven Fabrica grasp planning with three pipeline modes behind one entrypoi
 ./run_pipeline.sh --mode pitl
 ./run_pipeline.sh --mode real
 ./run_pipeline.sh --mode sim --headless
+./run_pipeline.sh --mode sim --backend isaac --headless
 ```
 
 Default configs:
@@ -19,7 +20,7 @@ Default configs:
 - `configs/grasp_pipeline_pitl.yaml`
 - `configs/grasp_pipeline_real.yaml`
 
-`sim` and `pitl` both run stage 1, write stage-1 artifacts, run stage 2, write stage-2 artifacts, then execute from the stage-2 bundle. `real` writes the same stage artifacts and can optionally execute the selected grasp on hardware when `real_execution.enabled: true`.
+`sim` and `pitl` both run stage 1, write stage-1 artifacts, run stage 2, write stage-2 artifacts, then execute from the stage-2 bundle with whichever simulation backends are enabled. Use `--backend {config,mujoco,isaac,both,none}` to override the YAML for one run. `real` writes the same stage artifacts and can optionally execute the selected grasp on hardware when `real_execution.enabled: true`.
 
 For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugFrame` subscriber then treats the selected `pose_item.pose_base` as the world pose of that centroid-centered local frame.
 
@@ -127,6 +128,12 @@ Notes:
 
 ## Setup
 
+For Isaac execution, build the repo-specific Isaac container:
+
+```bash
+./docker_env.sh build
+```
+
 Bootstrap the MuJoCo assets:
 
 ```bash
@@ -156,11 +163,19 @@ The pipeline expects the vendored Franka hand collision mesh at:
 
 Pipeline configs:
 - `configs/grasp_pipeline_sim.yaml`
+- `configs/grasp_pipeline_sim_isaac.yaml`
 - `configs/grasp_pipeline_pitl.yaml`
+- `configs/grasp_pipeline_pitl_isaac.yaml`
 - `configs/grasp_pipeline_real.yaml`
 
 Shared MuJoCo execution config:
 - `configs/mujoco_simulation.yaml`
+
+Isaac execution config:
+- `isaac_execution` block inside `configs/grasp_pipeline_sim.yaml`
+- `isaac_execution` block inside `configs/grasp_pipeline_pitl.yaml`
+- `scripts/run_fabrica_grasp_in_isaac.py`
+- `scripts/convert_stl_to_usd.py`
 
 Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
@@ -171,12 +186,30 @@ Use `configs/mujoco_simulation.yaml` to tune:
 - robot timing and speed such as `timestep_s`, `control_substeps`, `speed_scale`, IK and trajectory settings
 - gripper actuation and settle behavior such as `open_ctrl`, `closed_ctrl`, and `close_steps`
 
+For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only.
+
+Run Isaac-backed sim through the container:
+
+```bash
+./docker_env.sh run ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_isaac.yaml --headless
+```
+
+If you want the MuJoCo backend instead, bootstrap its generated robot XML first:
+
+```bash
+./docker_env.sh run bash scripts/download_required_assets.sh
+```
+
 ## Repo Shape
 
 Kept code is limited to the pipeline product:
 - `run_pipeline.sh`
+- `docker_env.sh`
+- `Dockerfile`
 - `scripts/run_grasp_pipeline.py`
 - `scripts/run_fabrica_grasp_in_mujoco.py`
+- `scripts/run_fabrica_grasp_in_isaac.py`
+- `scripts/convert_stl_to_usd.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
 - `scripts/download_required_assets.sh`
 - `scripts/download_ros2_dependencies.sh`
@@ -184,6 +217,8 @@ Kept code is limited to the pipeline product:
 - `grasp_planning/pipeline/`
 - `grasp_planning/ros2/`
 - `grasp_planning/mujoco/`
+- `grasp_planning/envs/`
+- `grasp_planning/planning/`
 
 Fabrica OBJ assets live under `assets/obj/fabrica/`.
 

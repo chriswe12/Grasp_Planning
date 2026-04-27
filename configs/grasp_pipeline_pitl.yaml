@@ -36,6 +36,23 @@ mujoco_execution:
   viewer_block_at_end: false
   keep_generated_scene: false
 
+isaac_execution:
+  enabled: false
+  python_executable: "/isaac-sim/python.sh"
+  part_usd: ""  # optional; runner generates a bundle-local USD by default
+  fr3_usd: ""
+  controller: "admittance"
+  grasp_id: ""
+  pregrasp_offset: 0.02
+  gripper_width_clearance: 0.01
+  contact_gap_m: 0.002
+  close_width: 0.0
+  tcp_to_grasp_offset: [0.0, 0.0, 0.0]
+  attempt_artifact: "artifacts/pitl_isaac_pick_attempt.json"
+  pregrasp_only: false
+  run_seconds: 0.0
+  headless: false
+
 ros2:
   debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
   object_id: "cooling_base"
