@@ -115,6 +115,25 @@ class MujocoPipelineConfig:
 
 
 @dataclass(frozen=True)
+class IsaacPipelineConfig:
+    enabled: bool = False
+    python_executable: str = ""
+    part_usd: str = ""
+    fr3_usd: str = ""
+    controller: str = "admittance"
+    grasp_id: str = ""
+    pregrasp_offset: float | None = None
+    gripper_width_clearance: float | None = None
+    contact_gap_m: float | None = None
+    close_width: float = 0.0
+    tcp_to_grasp_offset: tuple[float, float, float] | None = None
+    attempt_artifact: str = "artifacts/isaac_pick_attempt.json"
+    pregrasp_only: bool = False
+    run_seconds: float = 0.0
+    headless: bool = False
+
+
+@dataclass(frozen=True)
 class Ros2Config:
     debug_frame_topic: str = ""
     frame_id: str = "world"

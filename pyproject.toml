@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grasp-planning"
 version = "0.1.0"
-description = "YAML-driven Fabrica grasp planning with MuJoCo execution and ROS2 pose intake."
+description = "YAML-driven Fabrica grasp planning with MuJoCo/Isaac execution and ROS2 pose intake."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -9,11 +9,20 @@ Usage:
   ./run_pipeline.sh --mode real
   ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim.yaml
   ./run_pipeline.sh --mode sim --headless
+  ./run_pipeline.sh --mode sim --backend isaac --headless
+
+Backends for sim/pitl:
+  config  Honor YAML execution blocks
+  mujoco  Run MuJoCo only
+  isaac   Run Isaac only
+  both    Run MuJoCo then Isaac
+  none    Plan/write artifacts only
 EOF
 }
 
 MODE=""
 CONFIG=""
+BACKEND="config"
 HEADLESS=0
 
 resolve_python() {
@@ -41,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --config)
       CONFIG="${2:-}"
+      shift 2
+      ;;
+    --backend)
+      BACKEND="${2:-}"
       shift 2
       ;;
     --headless)
@@ -93,6 +106,7 @@ fi
 
 PYTHON_BIN="$(resolve_python)"
 ARGS=(scripts/run_grasp_pipeline.py --mode "$MODE" --config "$CONFIG")
+ARGS+=(--backend "$BACKEND")
 if [[ "${HEADLESS}" -eq 1 ]]; then
   ARGS+=(--headless)
 fi

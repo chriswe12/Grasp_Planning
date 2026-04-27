@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -21,6 +22,7 @@ from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E
 from grasp_planning.pipeline import (  # noqa: E402
     ExecutionWorldPoseConfig,
     GeometryConfig,
+    IsaacPipelineConfig,
     MujocoPipelineConfig,
     PickupPoseConfig,
     PlanningConfig,
@@ -37,6 +39,7 @@ from grasp_planning.ros2 import (  # noqa: E402
 )
 
 DEBUG_FRAME_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugFrame"
+BACKEND_CHOICES = ("config", "mujoco", "isaac", "both", "none")
 
 
 def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[float, ...]:
@@ -131,6 +134,33 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         viewer_hold_seconds=float(raw.get("viewer_hold_seconds", 8.0)),
         viewer_block_at_end=bool(raw.get("viewer_block_at_end", False)),
         keep_generated_scene=bool(raw.get("keep_generated_scene", False)),
+    )
+
+
+def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
+    raw = dict(payload.get("isaac_execution", {}))
+    tcp_to_grasp_offset = None
+    if raw.get("tcp_to_grasp_offset") not in ("", None):
+        tcp_to_grasp_offset = _tuple_floats(raw["tcp_to_grasp_offset"], expected_len=3)
+    controller = str(raw.get("controller", "admittance")).strip().lower()
+    if controller not in {"planner", "admittance"}:
+        raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'.")
+    return IsaacPipelineConfig(
+        enabled=bool(raw.get("enabled", False)),
+        python_executable=str(raw.get("python_executable", "")),
+        part_usd=str(raw.get("part_usd", "")),
+        fr3_usd=str(raw.get("fr3_usd", "")),
+        controller=controller,
+        grasp_id=str(raw.get("grasp_id", "")),
+        pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
+        gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
+        contact_gap_m=_optional_float(raw, "contact_gap_m"),
+        close_width=float(raw.get("close_width", 0.0)),
+        tcp_to_grasp_offset=tcp_to_grasp_offset,
+        attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
+        pregrasp_only=bool(raw.get("pregrasp_only", False)),
+        run_seconds=float(raw.get("run_seconds", 0.0)),
+        headless=bool(raw.get("headless", False)),
     )
 
 
@@ -233,7 +263,7 @@ def _effective_python_executable(raw_value: str) -> str:
         return value
     if sys.executable:
         return sys.executable
-    raise RuntimeError("Could not determine a Python executable for MuJoCo execution.")
+    raise RuntimeError("Could not determine a Python executable for simulation execution.")
 
 
 def _run_mujoco_execution(
@@ -292,13 +322,83 @@ def _run_mujoco_execution(
     subprocess.run(command, check=True, cwd=REPO_ROOT)
 
 
-def run_sim(payload: dict[str, object], *, headless: bool) -> None:
+def _run_isaac_execution(
+    isaac_execution: IsaacPipelineConfig,
+    *,
+    input_json: Path,
+    headless: bool,
+) -> None:
+    if not isaac_execution.enabled:
+        return
+    command = [
+        _effective_python_executable(isaac_execution.python_executable),
+        "scripts/run_fabrica_grasp_in_isaac.py",
+        "--input-json",
+        str(input_json),
+        "--controller",
+        isaac_execution.controller,
+        "--attempt-artifact",
+        isaac_execution.attempt_artifact,
+        "--close-width",
+        str(isaac_execution.close_width),
+        "--run-seconds",
+        str(isaac_execution.run_seconds),
+    ]
+    if isaac_execution.part_usd:
+        command.extend(["--part-usd", isaac_execution.part_usd])
+    if isaac_execution.fr3_usd:
+        command.extend(["--fr3-usd", isaac_execution.fr3_usd])
+    if isaac_execution.grasp_id:
+        command.extend(["--grasp-id", isaac_execution.grasp_id])
+    if isaac_execution.pregrasp_offset is not None:
+        command.extend(["--pregrasp-offset", str(isaac_execution.pregrasp_offset)])
+    if isaac_execution.gripper_width_clearance is not None:
+        command.extend(["--gripper-width-clearance", str(isaac_execution.gripper_width_clearance)])
+    if isaac_execution.contact_gap_m is not None:
+        command.extend(["--detailed-finger-contact-gap-m", str(isaac_execution.contact_gap_m)])
+    if isaac_execution.tcp_to_grasp_offset is not None:
+        command.extend(["--tcp-to-grasp-offset", *(str(value) for value in isaac_execution.tcp_to_grasp_offset)])
+    if isaac_execution.pregrasp_only:
+        command.append("--pregrasp-only")
+    if headless or isaac_execution.headless:
+        command.append("--headless")
+    print("[PIPELINE] Starting Isaac execution.", flush=True)
+    subprocess.run(command, check=True, cwd=REPO_ROOT)
+
+
+def _execution_backend_configs(
+    *,
+    mujoco_execution: MujocoPipelineConfig,
+    isaac_execution: IsaacPipelineConfig,
+    backend: str,
+) -> tuple[MujocoPipelineConfig, IsaacPipelineConfig]:
+    normalized = str(backend).strip().lower()
+    if normalized == "config":
+        return mujoco_execution, isaac_execution
+    if normalized == "mujoco":
+        return replace(mujoco_execution, enabled=True), replace(isaac_execution, enabled=False)
+    if normalized == "isaac":
+        return replace(mujoco_execution, enabled=False), replace(isaac_execution, enabled=True)
+    if normalized == "both":
+        return replace(mujoco_execution, enabled=True), replace(isaac_execution, enabled=True)
+    if normalized == "none":
+        return replace(mujoco_execution, enabled=False), replace(isaac_execution, enabled=False)
+    raise ValueError(f"Unsupported execution backend '{backend}'.")
+
+
+def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "config") -> None:
     geometry = _geometry_config(payload)
     planning = _planning_config(payload)
-    execution_world_pose = _execution_pose_config(payload).to_object_pose_world()
     artifacts = _artifacts(payload)
     mujoco_execution = _mujoco_execution_config(payload)
+    isaac_execution = _isaac_execution_config(payload)
+    mujoco_execution, isaac_execution = _execution_backend_configs(
+        mujoco_execution=mujoco_execution,
+        isaac_execution=isaac_execution,
+        backend=backend,
+    )
     pickup_pose = _pickup_pose_config(payload)
+    execution_world_pose = None if pickup_pose is not None else _execution_pose_config(payload).to_object_pose_world()
 
     print("[PIPELINE] Loading geometry and generating raw grasps.", flush=True)
     stage1 = generate_stage1_result(geometry=geometry, planning=planning)
@@ -331,14 +431,21 @@ def run_sim(payload: dict[str, object], *, headless: bool) -> None:
         output_html=artifacts["stage2_html"],
     )
     _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
+    _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
 
-def run_pitl(payload: dict[str, object], *, headless: bool) -> None:
+def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "config") -> None:
     geometry = _geometry_config(payload)
     planning = _planning_config(payload)
     artifacts = _artifacts(payload)
     ros2 = _ros2_config(payload)
     mujoco_execution = _mujoco_execution_config(payload)
+    isaac_execution = _isaac_execution_config(payload)
+    mujoco_execution, isaac_execution = _execution_backend_configs(
+        mujoco_execution=mujoco_execution,
+        isaac_execution=isaac_execution,
+        backend=backend,
+    )
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     object_pose_world = _resolve_object_pose_world(ros2)
@@ -373,6 +480,7 @@ def run_pitl(payload: dict[str, object], *, headless: bool) -> None:
         output_html=artifacts["stage2_html"],
     )
     _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
+    _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
 
 def run_real(payload: dict[str, object]) -> None:
@@ -441,6 +549,12 @@ def main() -> None:
         action="store_true",
         help="Disable the MuJoCo viewer for executing modes.",
     )
+    parser.add_argument(
+        "--backend",
+        choices=BACKEND_CHOICES,
+        default="config",
+        help="Override sim/pitl execution backend. Use 'config' to honor YAML.",
+    )
     args = parser.parse_args()
     mode = _normalize_mode(args.mode)
 
@@ -456,11 +570,13 @@ def main() -> None:
         config_path = args.config
     payload = _load_yaml(config_path)
     if mode == "sim":
-        run_sim(payload, headless=bool(args.headless))
+        run_sim(payload, headless=bool(args.headless), backend=args.backend)
         return
     if mode == "pitl":
-        run_pitl(payload, headless=bool(args.headless))
+        run_pitl(payload, headless=bool(args.headless), backend=args.backend)
         return
+    if args.backend != "config":
+        raise ValueError("--backend is only supported for sim and pitl modes.")
     run_real(payload)
 
 
