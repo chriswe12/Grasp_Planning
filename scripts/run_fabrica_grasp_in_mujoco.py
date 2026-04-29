@@ -23,7 +23,6 @@ from grasp_planning import (
     sample_pickup_placement_spec,
     saved_grasp_to_world_grasp,
     score_grasps,
-    select_first_feasible_grasp,
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.mujoco import (
@@ -260,15 +259,8 @@ def _resolve_object_pose_world_from_bundle(args_cli, bundle, mesh_local):
     return placement_spec, object_pose_world
 
 
-def _write_attempt_artifact(*, output_path: Path, placement_spec, object_pose_world, selected_grasp, result) -> None:
-    payload = {
-        "placement": {
-            "support_face": placement_spec.support_face,
-            "yaw_deg": placement_spec.yaw_deg,
-            "xy_world": list(placement_spec.xy_world),
-            "object_position_world": list(object_pose_world.position_world),
-            "object_orientation_xyzw_world": list(object_pose_world.orientation_xyzw_world),
-        },
+def _attempt_result_payload(*, selected_grasp, result) -> dict[str, object]:
+    return {
         "selected_grasp": {
             "grasp_id": selected_grasp.grasp_id,
             "position_w": list(selected_grasp.position_w),
@@ -292,8 +284,43 @@ def _write_attempt_artifact(*, output_path: Path, placement_spec, object_pose_wo
             "generated_scene_xml": result.generated_scene_xml,
         },
     }
+
+
+def _write_attempt_artifact(
+    *,
+    output_path: Path,
+    placement_spec,
+    object_pose_world,
+    selected_grasp,
+    result,
+    attempts: list[dict[str, object]] | None = None,
+) -> None:
+    attempt_payload = _attempt_result_payload(selected_grasp=selected_grasp, result=result)
+    payload = {
+        "placement": {
+            "support_face": placement_spec.support_face,
+            "yaw_deg": placement_spec.yaw_deg,
+            "xy_world": list(placement_spec.xy_world),
+            "object_position_world": list(object_pose_world.position_world),
+            "object_orientation_xyzw_world": list(object_pose_world.orientation_xyzw_world),
+        },
+        **attempt_payload,
+    }
+    if attempts is not None:
+        payload["attempts"] = attempts
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _ordered_feasible_grasps(*, feasible: list, requested_grasp_id: str) -> list:
+    if requested_grasp_id:
+        selected = next((grasp for grasp in feasible if grasp.grasp_id == requested_grasp_id), None)
+        if selected is None:
+            raise RuntimeError(
+                f"Requested grasp id '{requested_grasp_id}' is not ground-feasible for this pickup pose."
+            )
+        return [selected]
+    return list(feasible)
 
 
 def main() -> None:
@@ -408,22 +435,11 @@ def main() -> None:
     if not feasible:
         raise RuntimeError("No ground-feasible grasps remain for the requested pickup pose.")
 
-    score_grasps(feasible, mesh_local=mesh_local)
-    if args_cli.grasp_id:
-        selected_grasp = next((grasp for grasp in feasible if grasp.grasp_id == args_cli.grasp_id), None)
-        if selected_grasp is None:
-            raise RuntimeError(f"Requested grasp id '{args_cli.grasp_id}' is not ground-feasible for this pickup pose.")
-    else:
-        selected_grasp = select_first_feasible_grasp(statuses)
-        if selected_grasp is None:
-            raise RuntimeError("No feasible grasp could be selected after scoring.")
+    feasible = score_grasps(feasible, mesh_local=mesh_local)
+    selected_grasps = _ordered_feasible_grasps(feasible=feasible, requested_grasp_id=args_cli.grasp_id)
+    if not selected_grasps:
+        raise RuntimeError("No feasible grasp could be selected after scoring.")
 
-    selected_world_grasp = saved_grasp_to_world_grasp(
-        selected_grasp,
-        object_pose_world,
-        pregrasp_offset=pregrasp_offset,
-        gripper_width_clearance=gripper_width_clearance,
-    )
     robot_cfg = load_robot_config(args_cli.robot_config)
     robot_cfg_updates = dict(simulation_defaults["robot_cfg_updates"])
     if robot_cfg_updates:
@@ -439,39 +455,70 @@ def main() -> None:
         execution_cfg_kwargs["success_height_margin_m"] = float(args_cli.success_height_margin_m)
     execution_cfg = MujocoExecutionConfig(**execution_cfg_kwargs)
     try:
-        result = run_world_grasp_in_mujoco(
-            robot_cfg=robot_cfg,
-            execution_cfg=execution_cfg,
-            object_mesh_path=object_mesh_path,
-            object_pose_world=object_pose_world,
-            world_grasp=selected_world_grasp,
-            keep_generated_scene=args_cli.keep_generated_scene,
-            show_viewer=args_cli.viewer,
-            viewer_left_ui=args_cli.viewer_left_ui,
-            viewer_right_ui=args_cli.viewer_right_ui,
-            viewer_realtime=not args_cli.viewer_no_realtime,
-            viewer_hold_seconds=args_cli.viewer_hold_seconds,
-            viewer_block_at_end=args_cli.viewer_block_at_end,
-        )
+        attempts: list[dict[str, object]] = []
+        selected_world_grasp = None
+        result = None
+        for attempt_index, selected_grasp in enumerate(selected_grasps, start=1):
+            selected_world_grasp = saved_grasp_to_world_grasp(
+                selected_grasp,
+                object_pose_world,
+                pregrasp_offset=pregrasp_offset,
+                gripper_width_clearance=gripper_width_clearance,
+            )
+            print(
+                f"[INFO]: MuJoCo attempt {attempt_index}/{len(selected_grasps)} grasp_id={selected_grasp.grasp_id}",
+                flush=True,
+            )
+            result = run_world_grasp_in_mujoco(
+                robot_cfg=robot_cfg,
+                execution_cfg=execution_cfg,
+                object_mesh_path=object_mesh_path,
+                object_pose_world=object_pose_world,
+                world_grasp=selected_world_grasp,
+                keep_generated_scene=args_cli.keep_generated_scene,
+                show_viewer=args_cli.viewer,
+                viewer_left_ui=args_cli.viewer_left_ui,
+                viewer_right_ui=args_cli.viewer_right_ui,
+                viewer_realtime=not args_cli.viewer_no_realtime,
+                viewer_hold_seconds=args_cli.viewer_hold_seconds,
+                viewer_block_at_end=args_cli.viewer_block_at_end,
+            )
+            attempt_payload = _attempt_result_payload(selected_grasp=selected_world_grasp, result=result)
+            attempt_payload["attempt_index"] = attempt_index
+            attempts.append(attempt_payload)
+            print(
+                f"[INFO]: MuJoCo attempt {attempt_index}/{len(selected_grasps)} finished "
+                f"grasp_id={selected_grasp.grasp_id} success={result.success} status={result.status} "
+                f"lift_height_m={result.lift_height_m:.4f} message={result.message}",
+                flush=True,
+            )
+            if result.success:
+                break
     finally:
         if not args_cli.keep_generated_scene:
             try:
                 object_mesh_path.unlink()
             except FileNotFoundError:
                 pass
+    if selected_world_grasp is None or result is None:
+        raise RuntimeError("No MuJoCo grasp attempts were executed.")
     _write_attempt_artifact(
         output_path=args_cli.attempt_artifact,
         placement_spec=placement_spec,
         object_pose_world=object_pose_world,
         selected_grasp=selected_world_grasp,
         result=result,
+        attempts=attempts,
     )
     print(
         f"[INFO]: MuJoCo grasp attempt finished success={result.success} status={result.status} "
+        f"grasp_id={selected_world_grasp.grasp_id} attempts={len(attempts)}/{len(selected_grasps)} "
         f"lift_height_m={result.lift_height_m:.4f} message={result.message}",
         flush=True,
     )
     print(f"[INFO]: Wrote attempt artifact to {args_cli.attempt_artifact}", flush=True)
+    if not result.success:
+        raise RuntimeError(f"All {len(attempts)} MuJoCo grasp attempt(s) failed; last status={result.status}.")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 # Edit this file to tune contact physics and execution behavior without changing code.
 
 grasp:
-  pregrasp_offset_m: 0.02
+  pregrasp_offset_m: 0.05
   gripper_width_clearance_m: 0.01
   contact_gap_m: 0.002
 

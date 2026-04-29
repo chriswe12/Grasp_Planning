@@ -63,6 +63,25 @@ class GroundFilterReuseTests(unittest.TestCase):
 
         self.assertEqual(len(statuses), 1)
 
+    def test_floor_clearance_margin_rejects_low_grasp(self) -> None:
+        base_kwargs = {
+            "object_pose_world": ObjectWorldPose(
+                position_world=(0.0, 0.0, 0.20), orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0)
+            ),
+            "contact_gap_m": 0.002,
+        }
+
+        default_status = evaluate_saved_grasps_against_pickup_pose([self._candidate()], **base_kwargs)[0]
+        padded_status = evaluate_saved_grasps_against_pickup_pose(
+            [self._candidate()],
+            floor_clearance_margin_m=0.22,
+            **base_kwargs,
+        )[0]
+
+        self.assertEqual(default_status.status, "accepted")
+        self.assertEqual(padded_status.status, "rejected")
+        self.assertEqual(padded_status.reason, "ground_collision")
+
 
 if __name__ == "__main__":
     unittest.main()

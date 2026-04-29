@@ -134,6 +134,11 @@ For Isaac execution, build the repo-specific Isaac container:
 ./docker_env.sh build
 ```
 
+The container includes ROS2 Jazzy and a built `fp_debug_msgs` overlay for `pitl`
+pose intake. The top-level pipeline runs with the container venv at
+`/opt/grasp-pipeline-venv/bin/python`; Isaac execution still runs through
+`/isaac-sim/python.sh` from the `isaac_execution.python_executable` config.
+
 Bootstrap the MuJoCo assets:
 
 ```bash
@@ -177,8 +182,27 @@ Isaac execution config:
 - `scripts/run_fabrica_grasp_in_isaac.py`
 - `scripts/convert_stl_to_usd.py`
 
+Mesh/frame debug view:
+
+```bash
+./scripts/write_part_frame_debug_html.py \
+  --input-json artifacts/pitl_pipeline_stage2_ground_feasible.json \
+  --output-html artifacts/part_frame_debug.html
+```
+
+This writes a mesh-only HTML view showing the saved bundle-local part, its
+area-weighted centroid, and the transformed execution/world pose when the input
+bundle contains `metadata.execution_world_pose`.
+
 Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
+
+Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
+- `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
+- `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
+- `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
+- `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
+- `skip_stage1_collision_checks: true` keeps all generated stage-1 grasps and skips offline assembly collision filtering. For a one-off run, pass `--skip-stage1-collision-checks`.
 
 Use `configs/mujoco_simulation.yaml` to tune:
 - grasp approach settings such as `pregrasp_offset_m` and `gripper_width_clearance_m`

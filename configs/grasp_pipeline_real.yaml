@@ -8,9 +8,11 @@ planning:
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208
-  roll_angles_rad: [0.0]
+  roll_angle_step_deg: 15.0
   max_pair_checks: 40960
   detailed_finger_contact_gap_m: 0.002
+  floor_clearance_margin_m: 0.01
+  top_grasp_score_weight: 0.35
   contact_lateral_offsets_m: [-0.005833333333333334, -0.002916666666666667, 0.0, 0.002916666666666667, 0.005833333333333334]
   contact_approach_offsets_m: [-0.006166666666666667, -0.0030833333333333333, 0.0, 0.0030833333333333333, 0.006166666666666667]
   rng_seed: 0
@@ -20,6 +22,7 @@ artifacts:
   stage1_html: "artifacts/real_pipeline_stage1_assembly_grasps.html"
   stage2_json: "artifacts/real_pipeline_stage2_ground_feasible.json"
   stage2_html: "artifacts/real_pipeline_stage2_ground_feasible.html"
+  part_frame_html: "artifacts/real_pipeline_part_frame_debug.html"
 
 mujoco_execution:
   enabled: false
@@ -38,7 +41,7 @@ mujoco_execution:
 
 ros2:
   debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: ""  # required: matching pose_items.object_id
+  object_id: "pb_pipe"  # required: matching pose_items.object_id
   frame_id: "world"
   timeout_s: 10.0
 

@@ -20,7 +20,7 @@ from .collision import (
 from .finger_geometry import finger_box_corners
 from .mesh_antipodal_grasp_generator import ObjectFrameGraspCandidate, TriangleMesh
 from .mesh_io import load_triangle_mesh, relative_mesh_path, resolve_mesh_path
-from .world_constraints import ObjectWorldPose, WorldCollisionConstraintEvaluator
+from .world_constraints import HalfSpaceWorldConstraint, ObjectWorldPose, WorldCollisionConstraintEvaluator
 
 try:
     import trimesh
@@ -268,6 +268,20 @@ def mesh_vertex_average(mesh: TriangleMesh) -> np.ndarray:
     return vertices.mean(axis=0)
 
 
+def mesh_area_weighted_triangle_centroid(mesh: TriangleMesh) -> np.ndarray:
+    """Match trimesh.Trimesh.centroid: area-weighted triangle centroids."""
+    triangles = np.asarray(mesh.face_vertices, dtype=float)
+    if len(triangles) == 0:
+        return mesh_vertex_average(mesh)
+    raw_normals = np.cross(triangles[:, 1, :] - triangles[:, 0, :], triangles[:, 2, :] - triangles[:, 0, :])
+    double_areas = np.linalg.norm(raw_normals, axis=1)
+    valid = double_areas > 1.0e-12
+    if not np.any(valid):
+        return mesh_vertex_average(mesh)
+    triangle_centroids = triangles.mean(axis=1)
+    return np.average(triangle_centroids[valid], axis=0, weights=double_areas[valid])
+
+
 def shifted_mesh(mesh: TriangleMesh, offset: np.ndarray) -> TriangleMesh:
     return TriangleMesh(
         vertices_obj=np.asarray(mesh.vertices_obj, dtype=float) + np.asarray(offset, dtype=float),
@@ -291,7 +305,7 @@ def combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh | None:
 
 
 def canonicalize_target_mesh(global_mesh: TriangleMesh) -> tuple[TriangleMesh, ObjectWorldPose]:
-    center_world = mesh_vertex_average(global_mesh)
+    center_world = mesh_area_weighted_triangle_centroid(global_mesh)
     local_mesh = shifted_mesh(global_mesh, -center_world)
     return local_mesh, ObjectWorldPose(
         position_world=tuple(float(v) for v in center_world),
@@ -657,15 +671,7 @@ def _mesh_vertex_normals(mesh: TriangleMesh) -> np.ndarray:
 
 
 def _mesh_surface_centroid(mesh: TriangleMesh) -> np.ndarray:
-    triangles = np.asarray(mesh.face_vertices, dtype=float)
-    raw_normals = np.cross(triangles[:, 1, :] - triangles[:, 0, :], triangles[:, 2, :] - triangles[:, 0, :])
-    double_areas = np.linalg.norm(raw_normals, axis=1)
-    valid = double_areas > 1.0e-12
-    if not np.any(valid):
-        return np.asarray(mesh.vertices_obj, dtype=float).mean(axis=0)
-    centroids = triangles.mean(axis=1)
-    weights = double_areas[valid]
-    return np.average(centroids[valid], axis=0, weights=weights)
+    return mesh_area_weighted_triangle_centroid(mesh)
 
 
 def _mesh_center_of_mass(mesh: TriangleMesh) -> np.ndarray:
@@ -916,11 +922,13 @@ def evaluate_grasps_against_ground(
     *,
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
+    floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
 ) -> list[CandidateStatus]:
     statuses: list[CandidateStatus] = []
     hand_vertices_local, hand_faces = _load_franka_hand_mesh()
+    ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
     for candidate in candidates:
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
@@ -939,7 +947,11 @@ def evaluate_grasps_against_ground(
                 )
             )
             object_candidate = candidate.to_object_frame_candidate()
-            if evaluator.is_grasp_above_plane(object_candidate, object_pose_world=object_pose_world):
+            if evaluator.is_grasp_above_plane(
+                object_candidate,
+                object_pose_world=object_pose_world,
+                plane_constraint=ground_constraint,
+            ):
                 accepted_candidate = _candidate_with_contact_offset(
                     candidate,
                     lateral_offset_m=lateral_offset_m,
@@ -983,6 +995,7 @@ def evaluate_saved_grasps_against_pickup_pose(
     *,
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
+    floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
 ) -> list[CandidateStatus]:
@@ -990,6 +1003,7 @@ def evaluate_saved_grasps_against_pickup_pose(
         grasps,
         object_pose_world=object_pose_world,
         contact_gap_m=contact_gap_m,
+        floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=contact_lateral_offsets_m,
         contact_approach_offsets_m=contact_approach_offsets_m,
     )
@@ -1440,7 +1454,7 @@ def write_debug_html(
       const x1 = cy * shifted[0] + sy * shifted[1];
       const y1 = -sy * shifted[0] + cy * shifted[1];
       const z1 = shifted[2];
-      return [x1, cp * y1 - sp * z1, sp * y1 + cp * z1];
+      return [x1, cp * y1 + sp * z1, -sp * y1 + cp * z1];
     }
     function project(point) {
       const [x, y, z] = rotate(point);
@@ -1600,6 +1614,9 @@ def write_debug_html(
         `score_center:     ${candidate.score_components ? candidate.score_components.centering.toFixed(6) : "n/a"}`,
         `score_support:    ${candidate.score_components ? candidate.score_components.contact_support.toFixed(6) : "n/a"}`,
         `score_com:        ${candidate.score_components ? candidate.score_components.com_offset.toFixed(6) : "n/a"}`,
+        `score_object:     ${candidate.score_components && candidate.score_components.object_score !== undefined ? candidate.score_components.object_score.toFixed(6) : "n/a"}`,
+        `score_top_down:   ${candidate.score_components && candidate.score_components.top_down_approach !== undefined ? candidate.score_components.top_down_approach.toFixed(6) : "n/a"}`,
+        `world_approach_z: ${candidate.score_components && candidate.score_components.world_approach_z !== undefined ? candidate.score_components.world_approach_z.toFixed(6) : "n/a"}`,
         `jaw_width:        ${candidate.jaw_width.toFixed(6)} m`,
         `roll_angle_rad:   ${candidate.roll_angle_rad.toFixed(6)}`,
         `contact_offset_x: ${candidate.contact_patch_lateral_offset_m.toFixed(6)} m`,

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +39,7 @@ from grasp_planning.ros2 import (  # noqa: E402
     execute_real_grasp_from_bundle,
     wait_for_debug_frame_pose_message,
 )
+from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # noqa: E402
 
 DEBUG_FRAME_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugFrame"
 BACKEND_CHOICES = ("config", "mujoco", "isaac", "both", "none")
@@ -49,6 +52,16 @@ def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[f
     if expected_len is not None and len(result) != expected_len:
         raise ValueError(f"Expected {expected_len} values, got {len(result)}.")
     return result
+
+
+def _roll_angles_from_planning(raw: dict[str, object]) -> tuple[float, ...]:
+    if raw.get("roll_angle_step_deg") not in ("", None):
+        step_deg = float(raw["roll_angle_step_deg"])
+        if step_deg <= 0.0 or step_deg > 360.0:
+            raise ValueError("planning.roll_angle_step_deg must be > 0 and <= 360.")
+        count = max(1, int(math.ceil(360.0 / step_deg)))
+        return tuple(float(math.radians(index * step_deg)) for index in range(count) if index * step_deg < 360.0)
+    return _tuple_floats(raw.get("roll_angles_rad", [0.0]))
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
@@ -81,9 +94,12 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         min_jaw_width=float(raw.get("min_jaw_width", 0.002)),
         max_jaw_width=float(raw.get("max_jaw_width", 0.09)),
         antipodal_cosine_threshold=float(raw.get("antipodal_cosine_threshold", 0.984807753012208)),
-        roll_angles_rad=_tuple_floats(raw.get("roll_angles_rad", [0.0])),
+        roll_angles_rad=_roll_angles_from_planning(raw),
         max_pair_checks=int(raw.get("max_pair_checks", 40960)),
         detailed_finger_contact_gap_m=float(raw.get("detailed_finger_contact_gap_m", 0.002)),
+        floor_clearance_margin_m=float(raw.get("floor_clearance_margin_m", 0.0)),
+        skip_stage1_collision_checks=bool(raw.get("skip_stage1_collision_checks", False)),
+        top_grasp_score_weight=float(raw.get("top_grasp_score_weight", 0.35)),
         contact_lateral_offsets_m=_tuple_floats(raw.get("contact_lateral_offsets_m", []))
         or DEFAULT_CONTACT_LATERAL_OFFSETS_M,
         contact_approach_offsets_m=_tuple_floats(raw.get("contact_approach_offsets_m", []))
@@ -176,11 +192,15 @@ def _ros2_config(payload: dict[str, object]) -> Ros2Config:
 
 def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
     raw = dict(payload.get("artifacts", {}))
+    stage2_html = Path(str(raw["stage2_html"]))
     return {
         "stage1_json": Path(str(raw["stage1_json"])),
         "stage1_html": Path(str(raw["stage1_html"])),
         "stage2_json": Path(str(raw["stage2_json"])),
-        "stage2_html": Path(str(raw["stage2_html"])),
+        "stage2_html": stage2_html,
+        "part_frame_html": Path(
+            str(raw.get("part_frame_html", stage2_html.with_name(f"{stage2_html.stem}_part_frame.html")))
+        ),
     }
 
 
@@ -366,6 +386,39 @@ def _run_isaac_execution(
     subprocess.run(command, check=True, cwd=REPO_ROOT)
 
 
+def _write_part_frame_debug_artifact(*, input_json: Path, output_html: Path) -> None:
+    write_part_frame_debug_html(input_json=input_json, output_html=output_html)
+    print(f"[PIPELINE] Wrote part frame debug HTML to {output_html}.", flush=True)
+
+
+def _settle_object_pose_on_floor(
+    object_pose_world: ObjectWorldPose | None,
+    mesh_local: object,
+    *,
+    floor_z: float = 0.0,
+) -> ObjectWorldPose | None:
+    if object_pose_world is None:
+        return None
+    vertices_world = object_pose_world.transform_points_to_world(np.asarray(mesh_local.vertices_obj, dtype=float))
+    min_z = float(vertices_world[:, 2].min())
+    dz = float(floor_z) - min_z
+    if abs(dz) <= 1.0e-8:
+        return object_pose_world
+    settled_pose = ObjectWorldPose(
+        position_world=(
+            float(object_pose_world.position_world[0]),
+            float(object_pose_world.position_world[1]),
+            float(object_pose_world.position_world[2] + dz),
+        ),
+        orientation_xyzw_world=object_pose_world.orientation_xyzw_world,
+    )
+    print(
+        f"[PIPELINE] Settled object pose onto floor: mesh_min_z {min_z:.6f} -> {float(floor_z):.6f}, dz={dz:+.6f} m.",
+        flush=True,
+    )
+    return settled_pose
+
+
 def _execution_backend_configs(
     *,
     mujoco_execution: MujocoPipelineConfig,
@@ -412,6 +465,7 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
         output_json=artifacts["stage1_json"],
         output_html=artifacts["stage1_html"],
     )
+    execution_world_pose = _settle_object_pose_on_floor(execution_world_pose, stage1.target_mesh_local)
 
     print("[PIPELINE] Rechecking grasps against the execution-world floor.", flush=True)
     stage2 = recheck_stage2_result(
@@ -430,6 +484,7 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
+    _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
     _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
     _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
@@ -461,6 +516,7 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
         output_json=artifacts["stage1_json"],
         output_html=artifacts["stage1_html"],
     )
+    object_pose_world = _settle_object_pose_on_floor(object_pose_world, stage1.target_mesh_local)
 
     print("[PIPELINE] Rechecking grasps against the real-world floor pose.", flush=True)
     stage2 = recheck_stage2_result(
@@ -479,6 +535,7 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
+    _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
     _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
     _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
@@ -504,6 +561,7 @@ def run_real(payload: dict[str, object]) -> None:
         output_json=artifacts["stage1_json"],
         output_html=artifacts["stage1_html"],
     )
+    object_pose_world = _settle_object_pose_on_floor(object_pose_world, stage1.target_mesh_local)
 
     print("[PIPELINE] Rechecking grasps against the real-world floor pose.", flush=True)
     stage2 = recheck_stage2_result(
@@ -522,6 +580,7 @@ def run_real(payload: dict[str, object]) -> None:
         output_json=artifacts["stage2_json"],
         output_html=artifacts["stage2_html"],
     )
+    _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
     if real_execution.enabled:
         print("[PIPELINE] Starting real-robot execution from the stage-2 bundle.", flush=True)
         result = execute_real_grasp_from_bundle(input_json=artifacts["stage2_json"], config=real_execution)
@@ -555,6 +614,11 @@ def main() -> None:
         default="config",
         help="Override sim/pitl execution backend. Use 'config' to honor YAML.",
     )
+    parser.add_argument(
+        "--skip-stage1-collision-checks",
+        action="store_true",
+        help="Keep all stage-1 generated grasps and skip offline assembly collision filtering.",
+    )
     args = parser.parse_args()
     mode = _normalize_mode(args.mode)
 
@@ -569,6 +633,10 @@ def main() -> None:
     else:
         config_path = args.config
     payload = _load_yaml(config_path)
+    if args.skip_stage1_collision_checks:
+        planning_payload = dict(payload.get("planning", {}))
+        planning_payload["skip_stage1_collision_checks"] = True
+        payload["planning"] = planning_payload
     if mode == "sim":
         run_sim(payload, headless=bool(args.headless), backend=args.backend)
         return

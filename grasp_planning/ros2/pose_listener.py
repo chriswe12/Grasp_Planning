@@ -112,7 +112,10 @@ def wait_for_debug_frame_pose_message(
 ) -> ObjectWorldPose:
     if rclpy is None or DebugFrame is None:
         raise RuntimeError(
-            "ROS2 dependencies are unavailable. Install rclpy and fp_debug_msgs to use DebugFrame subscribers."
+            "ROS2 dependencies are unavailable. Source ROS2 and the repo overlay before using DebugFrame "
+            "subscribers. For example: source /opt/ros/<distro>/setup.bash; "
+            "cd ros2_ws && colcon build --packages-select fp_debug_msgs --symlink-install; "
+            "source install/setup.bash."
         )
     if not str(object_id):
         raise ValueError("object_id must be non-empty when subscribing to fp_debug_msgs/msg/DebugFrame.")

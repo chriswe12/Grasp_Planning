@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import numpy as np
+
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from scripts import run_grasp_pipeline
 
@@ -94,7 +96,11 @@ class RunGraspPipelineRealTests(unittest.TestCase):
             position_world=(0.4, -0.1, 0.2),
             orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
         )
-        stage1 = SimpleNamespace(bundle=SimpleNamespace(candidates=("g0001",)), raw_candidate_count=1)
+        stage1 = SimpleNamespace(
+            bundle=SimpleNamespace(candidates=("g0001",)),
+            raw_candidate_count=1,
+            target_mesh_local=SimpleNamespace(vertices_obj=np.array([[0.0, 0.0, -0.2]], dtype=float)),
+        )
         stage2 = SimpleNamespace(source_bundle=SimpleNamespace(candidates=("g0001",)), accepted=("g0001",))
         execution_result = SimpleNamespace(
             success=True,
@@ -110,6 +116,7 @@ class RunGraspPipelineRealTests(unittest.TestCase):
             mock.patch.object(run_grasp_pipeline, "write_stage1_artifacts"),
             mock.patch.object(run_grasp_pipeline, "recheck_stage2_result", return_value=stage2),
             mock.patch.object(run_grasp_pipeline, "write_stage2_artifacts"),
+            mock.patch.object(run_grasp_pipeline, "_write_part_frame_debug_artifact"),
             mock.patch.object(
                 run_grasp_pipeline,
                 "execute_real_grasp_from_bundle",
@@ -140,7 +147,11 @@ class RunGraspPipelineRealTests(unittest.TestCase):
             position_world=(0.4, -0.1, 0.2),
             orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
         )
-        stage1 = SimpleNamespace(bundle=SimpleNamespace(candidates=("g0001",)), raw_candidate_count=1)
+        stage1 = SimpleNamespace(
+            bundle=SimpleNamespace(candidates=("g0001",)),
+            raw_candidate_count=1,
+            target_mesh_local=SimpleNamespace(vertices_obj=np.array([[0.0, 0.0, -0.2]], dtype=float)),
+        )
         stage2 = SimpleNamespace(source_bundle=SimpleNamespace(candidates=("g0001",)), accepted=("g0001",))
 
         with (
@@ -149,6 +160,7 @@ class RunGraspPipelineRealTests(unittest.TestCase):
             mock.patch.object(run_grasp_pipeline, "write_stage1_artifacts"),
             mock.patch.object(run_grasp_pipeline, "recheck_stage2_result", return_value=stage2) as recheck_stage2,
             mock.patch.object(run_grasp_pipeline, "write_stage2_artifacts"),
+            mock.patch.object(run_grasp_pipeline, "_write_part_frame_debug_artifact"),
             mock.patch.object(run_grasp_pipeline, "_run_mujoco_execution"),
         ):
             run_grasp_pipeline.run_pitl(payload, headless=True)

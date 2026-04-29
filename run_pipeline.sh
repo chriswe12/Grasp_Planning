@@ -10,6 +10,7 @@ Usage:
   ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim.yaml
   ./run_pipeline.sh --mode sim --headless
   ./run_pipeline.sh --mode sim --backend isaac --headless
+  ./run_pipeline.sh --mode pitl --skip-stage1-collision-checks
 
 Backends for sim/pitl:
   config  Honor YAML execution blocks
@@ -24,6 +25,37 @@ MODE=""
 CONFIG=""
 BACKEND="config"
 HEADLESS=0
+SKIP_STAGE1_COLLISION_CHECKS=0
+
+source_if_exists() {
+  local setup_file="$1"
+  if [[ -f "${setup_file}" ]]; then
+    local nounset_was_enabled=0
+    case "$-" in
+      *u*) nounset_was_enabled=1 ;;
+    esac
+    set +u
+    # shellcheck source=/dev/null
+    source "${setup_file}"
+    if [[ "${nounset_was_enabled}" -eq 1 ]]; then
+      set -u
+    fi
+  fi
+}
+
+source_ros_environment() {
+  if [[ -n "${ROS_DISTRO:-}" ]]; then
+    source_if_exists "/opt/ros/${ROS_DISTRO}/setup.bash"
+  else
+    for distro in humble jazzy iron rolling; do
+      if [[ -f "/opt/ros/${distro}/setup.bash" ]]; then
+        source_if_exists "/opt/ros/${distro}/setup.bash"
+        break
+      fi
+    done
+  fi
+  source_if_exists "ros2_ws/install/setup.bash"
+}
 
 resolve_python() {
   if [[ -n "${PIPELINE_PYTHON:-}" ]]; then
@@ -58,6 +90,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --headless)
       HEADLESS=1
+      shift
+      ;;
+    --skip-stage1-collision-checks)
+      SKIP_STAGE1_COLLISION_CHECKS=1
       shift
       ;;
     -h|--help)
@@ -104,10 +140,14 @@ if [[ -z "$CONFIG" ]]; then
   esac
 fi
 
+source_ros_environment
 PYTHON_BIN="$(resolve_python)"
 ARGS=(scripts/run_grasp_pipeline.py --mode "$MODE" --config "$CONFIG")
 ARGS+=(--backend "$BACKEND")
 if [[ "${HEADLESS}" -eq 1 ]]; then
   ARGS+=(--headless)
+fi
+if [[ "${SKIP_STAGE1_COLLISION_CHECKS}" -eq 1 ]]; then
+  ARGS+=(--skip-stage1-collision-checks)
 fi
 exec "${PYTHON_BIN}" "${ARGS[@]}"

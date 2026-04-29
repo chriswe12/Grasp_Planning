@@ -82,7 +82,7 @@ run_container() {
         -e DISPLAY="${DISPLAY:-:0}"
         -e QT_X11_NO_MITSHM=1
         -e GRASP_WORKSPACE="${CONTAINER_WORKSPACE}"
-        -e PIPELINE_PYTHON=/isaac-sim/python.sh
+        -e PIPELINE_PYTHON=/opt/grasp-pipeline-venv/bin/python
         -e PYTHONPATH="${CONTAINER_WORKSPACE}:/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab"
         "${xauth_args[@]}"
         -v "${WORKSPACE_DIR}:${CONTAINER_WORKSPACE}"

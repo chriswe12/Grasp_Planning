@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     git-lfs \
+    gnupg \
     libccd-dev \
     libasound2t64 \
     libegl1 \
@@ -39,8 +40,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libxi6 \
     pkg-config \
+    python3 \
+    python3-pip \
+    python3-venv \
     wget \
     x11-apps \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu noble main" \
+      > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      python3-colcon-common-extensions \
+      python3-vcstool \
+      ros-jazzy-ros-base \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -54,6 +69,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY . /workspace/add_isaac
 WORKDIR /workspace/add_isaac
+
+RUN bash scripts/download_ros2_dependencies.sh \
+    && mkdir -p /opt/grasp_ros2_ws/src \
+    && cp -a ros2_ws/src/fp_debug_msgs /opt/grasp_ros2_ws/src/fp_debug_msgs \
+    && source /opt/ros/jazzy/setup.bash \
+    && cd /opt/grasp_ros2_ws \
+    && colcon build --packages-select fp_debug_msgs --symlink-install
+
+RUN python3 -m venv --system-site-packages /opt/grasp-pipeline-venv \
+    && /opt/grasp-pipeline-venv/bin/python -m pip install --upgrade pip \
+    && /opt/grasp-pipeline-venv/bin/python -m pip install -e ".[test]"
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     /isaac-sim/python.sh -m pip install -e ".[test]"
@@ -75,14 +101,19 @@ PY
 
 ENV GRASP_WORKSPACE=/workspace/add_isaac
 ENV ISAACLAB_PYTHON_ROOT=/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
-ENV PIPELINE_PYTHON=/isaac-sim/python.sh
+ENV PIPELINE_PYTHON=/opt/grasp-pipeline-venv/bin/python
 ENV PYTHONPATH=${GRASP_WORKSPACE}:${ISAACLAB_PYTHON_ROOT}
 
 RUN cat >/etc/profile.d/grasp_pythonpath.sh <<'EOF'
 export GRASP_WORKSPACE=/workspace/add_isaac
 export ISAACLAB_PYTHON_ROOT=/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
-export PIPELINE_PYTHON=/isaac-sim/python.sh
+export PIPELINE_PYTHON=/opt/grasp-pipeline-venv/bin/python
 export PYTHONPATH="${GRASP_WORKSPACE}:${ISAACLAB_PYTHON_ROOT}"
+source /opt/ros/jazzy/setup.bash
+source /opt/grasp_ros2_ws/install/setup.bash
+if [[ -f "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash" ]]; then
+  source "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash"
+fi
 EOF
 
 CMD ["/bin/bash"]

@@ -50,7 +50,7 @@ class _DebugFrame:
 
 
 class Ros2FrameSourceTests(unittest.TestCase):
-    def test_canonicalize_target_mesh_uses_vertex_average_origin(self) -> None:
+    def test_canonicalize_target_mesh_uses_trimesh_centroid_origin(self) -> None:
         mesh_obj_world = TriangleMesh(
             vertices_obj=np.array(
                 [
@@ -66,11 +66,12 @@ class Ros2FrameSourceTests(unittest.TestCase):
 
         mesh_local, source_frame_pose = canonicalize_target_mesh(mesh_obj_world)
 
-        self.assertEqual(source_frame_pose.position_world, (1.0, 0.5, 0.5))
+        expected_centroid = np.array([4.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], dtype=float)
+        np.testing.assert_allclose(source_frame_pose.position_world, expected_centroid, atol=1.0e-6)
         self.assertEqual(source_frame_pose.orientation_xyzw_world, (0.0, 0.0, 0.0, 1.0))
         np.testing.assert_allclose(
             mesh_local.vertices_obj,
-            np.asarray(mesh_obj_world.vertices_obj, dtype=float) - np.array([[1.0, 0.5, 0.5]], dtype=float),
+            np.asarray(mesh_obj_world.vertices_obj, dtype=float) - expected_centroid,
             atol=1.0e-6,
         )
 

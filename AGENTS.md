@@ -44,6 +44,7 @@ Current scope:
 - `run_pipeline.sh --backend {config,mujoco,isaac,both,none}` overrides sim/pitl execution backend for one run.
 - `configs/grasp_pipeline_sim_isaac.yaml` and `configs/grasp_pipeline_pitl_isaac.yaml` are Isaac-only convenience configs with MuJoCo disabled.
 - `real` uses the same ROS2 intake path, writes the same stage artifacts, and can optionally execute on hardware when `real_execution.enabled: true`.
+- Planning knobs: `roll_angle_step_deg` expands a full 360 degree roll sweep; `floor_clearance_margin_m` and `top_grasp_score_weight` are stage-2 world-pose filters/scorers; `--skip-stage1-collision-checks` bypasses only stage-1 assembly collision filtering.
 - The MuJoCo path consumes the stage-2 bundle as the source of truth.
 - The Isaac path consumes the stage-2 bundle as the source of truth.
 - The real-robot path also consumes the stage-2 bundle as the source of truth; do not create a second grasp serialization path.

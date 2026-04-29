@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +22,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     filter_grasps_against_assembly,
     load_assembly_obstacle_mesh,
     load_asset_mesh,
+    quat_to_rotmat_xyzw,
     relative_asset_mesh_path,
     save_grasp_bundle,
     score_grasps,
@@ -47,6 +48,9 @@ class PlanningConfig:
     roll_angles_rad: tuple[float, ...] = (0.0,)
     max_pair_checks: int = 40960
     detailed_finger_contact_gap_m: float = 0.002
+    floor_clearance_margin_m: float = 0.0
+    skip_stage1_collision_checks: bool = False
+    top_grasp_score_weight: float = 0.35
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
@@ -233,19 +237,24 @@ def generate_stage1_result(
         serialize_saved_candidate(f"g{index:04d}", candidate) for index, candidate in enumerate(raw_candidates, start=1)
     ]
 
-    obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
-        assembly_glob=geometry.assembly_glob,
-        target_stl_path=geometry.target_mesh_path,
-        stl_scale=geometry.mesh_scale,
-    )
-    kept_candidates = filter_grasps_against_assembly(
-        serialized_raw,
-        object_pose_world=target_pose_in_obj_world,
-        obstacle_mesh_world=obstacle_mesh_world,
-        contact_gap_m=planning.detailed_finger_contact_gap_m,
-        contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
-        contact_approach_offsets_m=planning.contact_approach_offsets_m,
-    )
+    obstacle_mesh_world = None
+    obstacle_paths: tuple[str, ...] = ()
+    if planning.skip_stage1_collision_checks:
+        kept_candidates = list(serialized_raw)
+    else:
+        obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
+            assembly_glob=geometry.assembly_glob,
+            target_stl_path=geometry.target_mesh_path,
+            stl_scale=geometry.mesh_scale,
+        )
+        kept_candidates = filter_grasps_against_assembly(
+            serialized_raw,
+            object_pose_world=target_pose_in_obj_world,
+            obstacle_mesh_world=obstacle_mesh_world,
+            contact_gap_m=planning.detailed_finger_contact_gap_m,
+            contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
+            contact_approach_offsets_m=planning.contact_approach_offsets_m,
+        )
     kept_candidates = score_grasps(kept_candidates, mesh_local=target_mesh_local)
 
     bundle = SavedGraspBundle(
@@ -257,6 +266,7 @@ def generate_stage1_result(
         metadata={
             "assembly_glob": geometry.assembly_glob,
             "collision_backend": generator.collision_backend_name,
+            "stage1_collision_checks_skipped": planning.skip_stage1_collision_checks,
             "num_surface_samples": planning.num_surface_samples,
             "raw_candidate_count": len(serialized_raw),
             "assembly_feasible_count": len(kept_candidates),
@@ -288,7 +298,11 @@ def write_stage1_artifacts(
         subtitle="Offline assembly collision screening. Candidates are stored and visualized in the target part-local frame.",
         mesh_local=result.target_mesh_local,
         candidate_statuses=[
-            CandidateStatus(grasp=candidate, status="accepted", reason="assembly_clear")
+            CandidateStatus(
+                grasp=candidate,
+                status="accepted",
+                reason="assembly_skipped" if planning.skip_stage1_collision_checks else "assembly_clear",
+            )
             for candidate in result.bundle.candidates
         ],
         output_html=output_html,
@@ -298,12 +312,55 @@ def write_stage1_artifacts(
             f"target_mesh:      {relative_asset_mesh_path(geometry.target_mesh_path)}",
             f"assembly_glob:    {geometry.assembly_glob}",
             f"collision_backend:{result.collision_backend_name}",
+            f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
             f"raw_candidates:   {result.raw_candidate_count}",
             f"assembly_feasible:{len(result.bundle.candidates)}",
             f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
             f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
             f"local_origin_src: {tuple(round(v, 6) for v in result.target_pose_in_obj_world.position_world)}",
         ],
+    )
+
+
+def _score_grasps_for_world_top_approach(
+    grasps: list[SavedGraspCandidate],
+    *,
+    mesh_local,
+    object_pose_world: ObjectWorldPose,
+    top_grasp_score_weight: float,
+) -> list[SavedGraspCandidate]:
+    object_scored = score_grasps(grasps, mesh_local=mesh_local)
+    weight = min(1.0, max(0.0, float(top_grasp_score_weight)))
+    if weight <= 0.0:
+        return object_scored
+
+    world_scored: list[SavedGraspCandidate] = []
+    for grasp in object_scored:
+        grasp_rot_obj = quat_to_rotmat_xyzw(grasp.grasp_orientation_xyzw_obj)
+        approach_axis_world = object_pose_world.rotation_world_from_object @ grasp_rot_obj[:, 2]
+        top_down_score = min(1.0, max(0.0, float(-approach_axis_world[2])))
+        object_score = 0.0 if grasp.score is None else float(grasp.score)
+        combined_score = (1.0 - weight) * object_score + weight * top_down_score
+        score_components = dict(grasp.score_components or {})
+        score_components["object_score"] = object_score
+        score_components["top_down_approach"] = top_down_score
+        score_components["world_approach_z"] = float(approach_axis_world[2])
+        score_components["top_grasp_score_weight"] = weight
+        score_components["score"] = float(combined_score)
+        world_scored.append(
+            replace(
+                grasp,
+                score=float(combined_score),
+                score_components=score_components,
+            )
+        )
+    return sorted(
+        world_scored,
+        key=lambda candidate: (
+            float("-inf") if candidate.score is None else float(candidate.score),
+            candidate.grasp_id,
+        ),
+        reverse=True,
     )
 
 
@@ -331,10 +388,16 @@ def recheck_stage2_result(
         bundle.candidates,
         object_pose_world=pickup_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        floor_clearance_margin_m=planning.floor_clearance_margin_m,
         contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
         contact_approach_offsets_m=planning.contact_approach_offsets_m,
     )
-    accepted = score_grasps(accepted_grasps(statuses), mesh_local=mesh_local)
+    accepted = _score_grasps_for_world_top_approach(
+        accepted_grasps(statuses),
+        mesh_local=mesh_local,
+        object_pose_world=pickup_pose_world,
+        top_grasp_score_weight=planning.top_grasp_score_weight,
+    )
     rescored_by_id = {grasp.grasp_id: grasp for grasp in accepted}
     rescored_statuses = [
         CandidateStatus(
@@ -356,6 +419,7 @@ def recheck_stage2_result(
             },
             "ground_input_count": len(bundle.candidates),
             "ground_feasible_count": len(accepted),
+            "top_grasp_score_weight": planning.top_grasp_score_weight,
         }
     )
     accepted_bundle = SavedGraspBundle(
@@ -404,6 +468,8 @@ def write_stage2_artifacts(
             else "pickup_yaw_deg:   n/a",
             f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
             f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
+            f"floor_clearance: {planning.floor_clearance_margin_m:.6f} m",
+            f"top_score_weight: {planning.top_grasp_score_weight:.3f}",
             f"pickup_pos_w:     {tuple(round(v, 6) for v in result.pickup_pose_world.position_world)}",
         ],
     )
