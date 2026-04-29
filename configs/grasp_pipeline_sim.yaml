@@ -34,6 +34,7 @@ mujoco_execution:
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
+  controller: "native"  # set to "moveit" to plan MuJoCo arm trajectories with MoveIt
   grasp_id: ""
   attempt_artifact: "artifacts/sim_mujoco_pick_attempt.json"
   viewer: true
@@ -43,6 +44,18 @@ mujoco_execution:
   viewer_hold_seconds: 8.0
   viewer_block_at_end: false
   keep_generated_scene: false
+  moveit_frame_id: "base"
+  moveit_planning_group: "fr3_arm"
+  moveit_pose_link: "fr3_hand_tcp"
+  moveit_planner_id: ""
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_execute_timeout_s: 120.0
+  moveit_allow_collisions: false
 
 isaac_execution:
   enabled: false

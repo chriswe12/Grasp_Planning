@@ -7,6 +7,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 
@@ -99,6 +100,9 @@ class MujocoAttemptResult:
     position_error_m: float | None = None
     orientation_error_rad: float | None = None
     generated_scene_xml: str | None = None
+
+
+MoveItJointTrajectories = Mapping[str, tuple[tuple[float, ...], ...]]
 
 
 def load_robot_config(path: str | Path) -> MujocoRobotConfig:
@@ -508,6 +512,27 @@ class MujocoPickupRuntime:
         final_error = float(np.max(np.abs(self.get_arm_qpos() - q_goal)))
         return final_error <= 0.02
 
+    def execute_joint_waypoints(
+        self,
+        waypoints: tuple[tuple[float, ...], ...],
+        *,
+        gripper_ctrl: tuple[float, ...],
+    ) -> bool:
+        if not waypoints:
+            return False
+        expected = len(self._robot_cfg.arm_joint_names)
+        for waypoint in waypoints:
+            q_target = np.asarray(waypoint, dtype=float)
+            if q_target.size != expected:
+                raise ValueError(f"Expected {expected} MoveIt joint positions, got {q_target.size}.")
+            for _ in range(self._scaled_arm_steps(self._execution_cfg.waypoint_settle_steps)):
+                self._set_arm_ctrl(q_target)
+                self._set_gripper_ctrl(gripper_ctrl)
+                self._step(self._robot_cfg.control_substeps)
+        final_goal = np.asarray(waypoints[-1], dtype=float)
+        final_error = float(np.max(np.abs(self.get_arm_qpos() - final_goal)))
+        return final_error <= 0.02
+
     def close_gripper(self) -> dict[str, object]:
         q_hold = self.get_arm_qpos()
         previous_qpos = None
@@ -656,6 +681,101 @@ class MujocoPickupRuntime:
             generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
         )
 
+    def run_moveit_joint_trajectories(
+        self,
+        *,
+        trajectories: MoveItJointTrajectories,
+    ) -> MujocoAttemptResult:
+        self._forward()
+        self.settle_home()
+        initial_object_position_world = self.object_position_world()
+
+        if self._gripper_actuator_ids.size == 0:
+            return MujocoAttemptResult(
+                success=False,
+                status="no_gripper_configured",
+                message=(
+                    "The selected MuJoCo robot model has no gripper actuators configured. "
+                    "This Menagerie FR3 asset supports reach validation, not pickup execution."
+                ),
+                pregrasp_reached=False,
+                grasp_reached=False,
+                initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                final_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                lift_height_m=0.0,
+                target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
+                generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            )
+
+        pregrasp_waypoints = tuple(trajectories.get("pregrasp", ()))
+        if not self.execute_joint_waypoints(
+            pregrasp_waypoints,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        ):
+            return MujocoAttemptResult(
+                success=False,
+                status="moveit_pregrasp_failed",
+                message="Failed to execute the MoveIt pregrasp trajectory in MuJoCo.",
+                pregrasp_reached=False,
+                grasp_reached=False,
+                initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                final_object_position_world=tuple(float(v) for v in self.object_position_world()),
+                lift_height_m=0.0,
+                target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
+                generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            )
+
+        grasp_waypoints = tuple(trajectories.get("grasp", ()))
+        if not self.execute_joint_waypoints(
+            grasp_waypoints,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        ):
+            return MujocoAttemptResult(
+                success=False,
+                status="moveit_grasp_failed",
+                message="Failed to execute the MoveIt grasp trajectory in MuJoCo.",
+                pregrasp_reached=True,
+                grasp_reached=False,
+                initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                final_object_position_world=tuple(float(v) for v in self.object_position_world()),
+                lift_height_m=0.0,
+                target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
+                generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            )
+
+        self.close_gripper()
+        lift_reached = self.execute_joint_waypoints(
+            tuple(trajectories.get("lift", ())),
+            gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+        )
+        self.hold_closed()
+
+        final_object_position_world = self.object_position_world()
+        lift_height_m = float(final_object_position_world[2] - initial_object_position_world[2])
+        target_lift_height_m = float(self._execution_cfg.success_height_margin_m)
+        success = bool(lift_reached and lift_height_m >= target_lift_height_m)
+        if success:
+            status = "ok"
+            message = f"Object lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+        elif not lift_reached:
+            status = "moveit_lift_failed"
+            message = "Failed to execute the MoveIt lift trajectory in MuJoCo."
+        else:
+            status = "lift_failed"
+            message = f"Object only lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+        return MujocoAttemptResult(
+            success=success,
+            status=status,
+            message=message,
+            pregrasp_reached=True,
+            grasp_reached=True,
+            initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+            final_object_position_world=tuple(float(v) for v in final_object_position_world),
+            lift_height_m=lift_height_m,
+            target_lift_height_m=target_lift_height_m,
+            generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+        )
+
 
 def run_world_grasp_in_mujoco(
     *,
@@ -671,6 +791,7 @@ def run_world_grasp_in_mujoco(
     viewer_realtime: bool = True,
     viewer_hold_seconds: float = 8.0,
     viewer_block_at_end: bool = False,
+    moveit_joint_trajectories: MoveItJointTrajectories | None = None,
 ) -> MujocoAttemptResult:
     """Execute one world-frame grasp in MuJoCo and return a pickup result."""
 
@@ -692,9 +813,14 @@ def run_world_grasp_in_mujoco(
                 show_right_ui=viewer_right_ui,
             ) as viewer:
                 runtime.attach_viewer(viewer, realtime=viewer_realtime)
-                result = runtime.run(world_grasp)
+                if moveit_joint_trajectories is None:
+                    result = runtime.run(world_grasp)
+                else:
+                    result = runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
                 runtime.hold_viewer_open(seconds=None if viewer_block_at_end else viewer_hold_seconds)
                 return result
-        return runtime.run(world_grasp)
+        if moveit_joint_trajectories is None:
+            return runtime.run(world_grasp)
+        return runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
     finally:
         runtime.close()

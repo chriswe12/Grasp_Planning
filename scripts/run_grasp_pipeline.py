@@ -129,11 +129,15 @@ def _pickup_pose_config(payload: dict[str, object]) -> PickupPoseConfig | None:
 
 def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig:
     raw = dict(payload.get("mujoco_execution", {}))
+    controller = str(raw.get("controller", "native")).strip().lower()
+    if controller not in {"native", "moveit"}:
+        raise ValueError(f"Unsupported mujoco_execution.controller value '{controller}'.")
     return MujocoPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
         robot_config=str(raw.get("robot_config", "")),
         simulation_config=str(raw.get("simulation_config", "")),
+        controller=controller,
         grasp_id=str(raw.get("grasp_id", "")),
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
@@ -150,6 +154,18 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         viewer_hold_seconds=float(raw.get("viewer_hold_seconds", 8.0)),
         viewer_block_at_end=bool(raw.get("viewer_block_at_end", False)),
         keep_generated_scene=bool(raw.get("keep_generated_scene", False)),
+        moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
+        moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
+        moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_planner_id=str(raw.get("moveit_planner_id", "")),
+        moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
+        moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
+        moveit_planning_time_s=float(raw.get("moveit_planning_time_s", 5.0)),
+        moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
+        moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
+        moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
+        moveit_execute_timeout_s=float(raw.get("moveit_execute_timeout_s", 120.0)),
+        moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
 
@@ -305,6 +321,8 @@ def _run_mujoco_execution(
         mujoco_execution.robot_config,
         "--attempt-artifact",
         mujoco_execution.attempt_artifact,
+        "--controller",
+        mujoco_execution.controller,
     ]
     if mujoco_execution.simulation_config:
         command.extend(["--simulation-config", mujoco_execution.simulation_config])
@@ -338,6 +356,35 @@ def _run_mujoco_execution(
         command.append("--keep-generated-scene")
     if mujoco_execution.viewer_hold_seconds != 8.0:
         command.extend(["--viewer-hold-seconds", str(mujoco_execution.viewer_hold_seconds)])
+    if mujoco_execution.controller == "moveit":
+        command.extend(
+            [
+                "--moveit-frame-id",
+                mujoco_execution.moveit_frame_id,
+                "--moveit-planning-group",
+                mujoco_execution.moveit_planning_group,
+                "--moveit-pose-link",
+                mujoco_execution.moveit_pose_link,
+                "--moveit-planner-id",
+                mujoco_execution.moveit_planner_id,
+                "--moveit-wait-for-moveit-timeout-s",
+                str(mujoco_execution.moveit_wait_for_moveit_timeout_s),
+                "--moveit-ik-timeout-s",
+                str(mujoco_execution.moveit_ik_timeout_s),
+                "--moveit-planning-time-s",
+                str(mujoco_execution.moveit_planning_time_s),
+                "--moveit-num-planning-attempts",
+                str(mujoco_execution.moveit_num_planning_attempts),
+                "--moveit-velocity-scale",
+                str(mujoco_execution.moveit_velocity_scale),
+                "--moveit-acceleration-scale",
+                str(mujoco_execution.moveit_acceleration_scale),
+                "--moveit-execute-timeout-s",
+                str(mujoco_execution.moveit_execute_timeout_s),
+            ]
+        )
+        if mujoco_execution.moveit_allow_collisions:
+            command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting MuJoCo execution.", flush=True)
     subprocess.run(command, check=True, cwd=REPO_ROOT)
 

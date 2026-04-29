@@ -80,6 +80,32 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("--simulation-config", command)
         self.assertIn("configs/mujoco_simulation.yaml", command)
 
+    def test_run_mujoco_execution_passes_moveit_controller_config(self) -> None:
+        cfg = run_grasp_pipeline.MujocoPipelineConfig(
+            enabled=True,
+            robot_config="configs/mujoco_fr3_with_hand.json",
+            controller="moveit",
+            moveit_frame_id="base",
+            moveit_planner_id="RRTConnectkConfigDefault",
+            moveit_allow_collisions=True,
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_mujoco_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertIn("--controller", command)
+        self.assertIn("moveit", command)
+        self.assertIn("--moveit-frame-id", command)
+        self.assertIn("base", command)
+        self.assertIn("--moveit-planner-id", command)
+        self.assertIn("RRTConnectkConfigDefault", command)
+        self.assertIn("--moveit-allow-collisions", command)
+
     def test_run_isaac_execution_uses_stage2_bundle(self) -> None:
         cfg = run_grasp_pipeline.IsaacPipelineConfig(
             enabled=True,
@@ -334,6 +360,23 @@ class MujocoBundleExecutionPoseTests(unittest.TestCase):
         self.assertEqual(sim_cfg["robot_cfg_updates"]["control_substeps"], 8)
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["object_mass_kg"], 0.15)
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["arm_speed_scale"], 2.0)
+
+    def test_trajectory_waypoints_for_joints_reorders_moveit_points(self) -> None:
+        point_a = SimpleNamespace(positions=(1.0, 2.0, 3.0))
+        point_b = SimpleNamespace(positions=(4.0, 5.0, 6.0))
+        trajectory = SimpleNamespace(
+            joint_trajectory=SimpleNamespace(
+                joint_names=("fr3_joint2", "fr3_joint1", "fr3_joint3"),
+                points=(point_a, point_b),
+            )
+        )
+
+        waypoints = run_fabrica_grasp_in_mujoco._trajectory_waypoints_for_joints(
+            trajectory,
+            joint_names=("fr3_joint1", "fr3_joint2", "fr3_joint3"),
+        )
+
+        self.assertEqual(waypoints, ((2.0, 1.0, 3.0), (5.0, 4.0, 6.0)))
 
     def test_mujoco_script_retries_next_grasp_after_failed_attempt(self) -> None:
         object_pose_world = ObjectWorldPose(

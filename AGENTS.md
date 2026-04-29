@@ -49,11 +49,13 @@ Current scope:
 - The Isaac path consumes the stage-2 bundle as the source of truth.
 - The real-robot path also consumes the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
 - The MuJoCo object mesh must be rebuilt in the saved bundle-local frame before execution.
-- `sim` and `pitl` should stay MoveIt-free; MoveIt is only a dependency of the real-hardware path.
+- MuJoCo can optionally use MoveIt for planning only via `mujoco_execution.controller: "moveit"`; MuJoCo still executes the planned joint waypoints and owns physics/viewer/contact evaluation.
+- Do not add MoveIt planning to Isaac execution without an explicit request. The supported Isaac controllers are currently `admittance` and `planner`.
 - Isaac execution generates a collision-enabled bundle-local USD from the stage-2 bundle by default; only use a provided USD if it is already authored in the saved bundle-local frame.
 - The vendored Franka hand collision mesh lives at `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`.
 - MuJoCo Menagerie `franka_fr3` is arm-only; use `scripts/build_mujoco_fr3_hand_models.py` to generate the local FR3+Panda-hand XML under `.cache/generated_mujoco_models/`.
 - Hardware-facing ROS2 code depends on an external FR3 / MoveIt workspace being sourced before running repo-local ROS2 nodes.
+- `run_pipeline.sh` resets ROS discovery to `ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}` and clears localhost-only/static discovery unless `GRASP_KEEP_ROS_DISCOVERY_ENV=1`.
 - Keep `configs/grasp_pipeline_real.yaml` safe by default: `real_execution.enabled: false`, `require_confirmation: true`, `stop_after: "pregrasp"`, `gripper_enabled: false`.
 
 ## General Guidance

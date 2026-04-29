@@ -55,6 +55,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     && apt-get install -y --no-install-recommends \
       python3-colcon-common-extensions \
       python3-vcstool \
+      ros-jazzy-moveit-msgs \
       ros-jazzy-ros-base \
     && rm -rf /var/lib/apt/lists/*
 
@@ -109,10 +110,16 @@ export GRASP_WORKSPACE=/workspace/add_isaac
 export ISAACLAB_PYTHON_ROOT=/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab
 export PIPELINE_PYTHON=/opt/grasp-pipeline-venv/bin/python
 export PYTHONPATH="${GRASP_WORKSPACE}:${ISAACLAB_PYTHON_ROOT}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
 source /opt/ros/jazzy/setup.bash
 source /opt/grasp_ros2_ws/install/setup.bash
-if [[ -f "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash" ]]; then
-  source "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash"
+if [[ "${GRASP_SOURCE_WORKSPACE_ROS_OVERLAY:-0}" == "1" ]]; then
+  if [[ -f "${GRASP_WORKSPACE}/ros2_ws/install/local_setup.bash" ]]; then
+    source "${GRASP_WORKSPACE}/ros2_ws/install/local_setup.bash"
+  elif [[ -f "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash" ]]; then
+    source "${GRASP_WORKSPACE}/ros2_ws/install/setup.bash"
+  fi
 fi
 EOF
 

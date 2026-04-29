@@ -54,7 +54,30 @@ source_ros_environment() {
       fi
     done
   fi
-  source_if_exists "ros2_ws/install/setup.bash"
+  if [[ "${GRASP_SKIP_WORKSPACE_ROS_OVERLAY:-0}" != "1" ]]; then
+    if [[ -f "ros2_ws/install/local_setup.bash" ]]; then
+      source_if_exists "ros2_ws/install/local_setup.bash"
+    else
+      source_if_exists "ros2_ws/install/setup.bash"
+    fi
+  fi
+}
+
+configure_ros_discovery() {
+  if [[ "${GRASP_KEEP_ROS_DISCOVERY_ENV:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+  unset ROS_LOCALHOST_ONLY
+  unset ROS_STATIC_PEERS
+  unset RMW_IMPLEMENTATION
+  unset CYCLONEDDS_URI
+  unset FASTRTPS_DEFAULT_PROFILES_FILE
+  export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
+  if [[ -n "${ROS_AUTOMATIC_DISCOVERY_RANGE:-}" ]]; then
+    unset ROS_AUTOMATIC_DISCOVERY_RANGE
+  fi
 }
 
 resolve_python() {
@@ -141,6 +164,7 @@ if [[ -z "$CONFIG" ]]; then
 fi
 
 source_ros_environment
+configure_ros_discovery
 PYTHON_BIN="$(resolve_python)"
 ARGS=(scripts/run_grasp_pipeline.py --mode "$MODE" --config "$CONFIG")
 ARGS+=(--backend "$BACKEND")

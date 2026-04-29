@@ -32,6 +32,8 @@ from grasp_planning.mujoco import (
     run_world_grasp_in_mujoco,
     write_temporary_triangle_mesh_stl,
 )
+from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, rclpy
+from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets
 
 
 def _parse_vec2(raw: str) -> tuple[float, float]:
@@ -323,6 +325,94 @@ def _ordered_feasible_grasps(*, feasible: list, requested_grasp_id: str) -> list
     return list(feasible)
 
 
+def _home_arm_joint_positions(robot_cfg) -> tuple[float, ...]:
+    missing = [name for name in robot_cfg.arm_joint_names if name not in robot_cfg.home_joint_positions]
+    if missing:
+        raise RuntimeError(
+            f"MoveIt-backed MuJoCo execution requires home_joint_positions for all arm joints; missing={missing}."
+        )
+    return tuple(float(robot_cfg.home_joint_positions[name]) for name in robot_cfg.arm_joint_names)
+
+
+def _trajectory_waypoints_for_joints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+    joint_trajectory = trajectory.joint_trajectory
+    source_joint_names = tuple(str(name) for name in joint_trajectory.joint_names)
+    name_to_index = {name: index for index, name in enumerate(source_joint_names)}
+    missing = [name for name in joint_names if name not in name_to_index]
+    if missing:
+        raise RuntimeError(f"MoveIt trajectory is missing MuJoCo arm joints: {missing}.")
+    ordered_indices = [name_to_index[name] for name in joint_names]
+    waypoints = tuple(
+        tuple(float(point.positions[index]) for index in ordered_indices) for point in tuple(joint_trajectory.points)
+    )
+    if not waypoints:
+        raise RuntimeError("MoveIt returned a trajectory with no points.")
+    return waypoints
+
+
+def _moveit_config_from_args(args_cli, *, joint_names: tuple[str, ...]) -> MoveItPoseCommanderConfig:
+    return MoveItPoseCommanderConfig(
+        planning_group=str(args_cli.moveit_planning_group),
+        pose_link=str(args_cli.moveit_pose_link),
+        joint_names=joint_names,
+        planner_id=str(args_cli.moveit_planner_id),
+        wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
+        ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
+        fk_timeout_s=float(args_cli.moveit_ik_timeout_s),
+        planning_time_s=float(args_cli.moveit_planning_time_s),
+        num_planning_attempts=int(args_cli.moveit_num_planning_attempts),
+        velocity_scale=float(args_cli.moveit_velocity_scale),
+        acceleration_scale=float(args_cli.moveit_acceleration_scale),
+        execute_timeout_s=float(args_cli.moveit_execute_timeout_s),
+        post_execute_sleep_s=0.0,
+        avoid_collisions=not bool(args_cli.moveit_allow_collisions),
+    )
+
+
+def _plan_moveit_joint_trajectories(
+    args_cli,
+    *,
+    robot_cfg,
+    execution_cfg,
+    world_grasp,
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    if rclpy is None:
+        raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
+    initialized_here = False
+    commander = None
+    try:
+        if not rclpy.ok():
+            rclpy.init()
+            initialized_here = True
+        moveit_config = _moveit_config_from_args(args_cli, joint_names=tuple(robot_cfg.arm_joint_names))
+        commander = MoveItPoseCommander(moveit_config, node_name="mujoco_moveit_trajectory_planner")
+        commander.wait_for_moveit(require_execute=False)
+        targets = world_grasp_pose_targets(
+            world_grasp,
+            frame_id=str(args_cli.moveit_frame_id),
+            lift_height_m=float(execution_cfg.lift_height_m),
+        )
+        start_joint_positions = _home_arm_joint_positions(robot_cfg)
+        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
+        for label in ("pregrasp", "grasp", "lift"):
+            trajectory, message = commander.plan_to_pose(
+                targets[label],
+                label=f"mujoco_{label}",
+                start_joint_positions=start_joint_positions,
+            )
+            if trajectory is None:
+                raise RuntimeError(f"MoveIt failed to plan {label}: {message}")
+            waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=tuple(robot_cfg.arm_joint_names))
+            planned[label] = waypoints
+            start_joint_positions = waypoints[-1]
+        return planned
+    finally:
+        if commander is not None:
+            commander.destroy_node()
+        if initialized_here and rclpy.ok():
+            rclpy.shutdown()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-json", type=Path, required=True, help="Input grasp bundle, typically from stage 2.")
@@ -352,6 +442,12 @@ def main() -> None:
     parser.add_argument("--xy-min-world", type=str, default="-0.45,-0.05", help="Random placement XY lower bound.")
     parser.add_argument("--xy-max-world", type=str, default="-0.35,0.05", help="Random placement XY upper bound.")
     parser.add_argument("--seed", type=int, default=0, help="Random seed.")
+    parser.add_argument(
+        "--controller",
+        choices=("native", "moveit"),
+        default="native",
+        help="Arm trajectory source: native MuJoCo IK or MoveIt-planned joint trajectories.",
+    )
     parser.add_argument("--pregrasp-offset", type=float, default=None, help="Optional pregrasp offset in meters.")
     parser.add_argument(
         "--gripper-width-clearance",
@@ -404,6 +500,18 @@ def main() -> None:
         action="store_true",
         help="Keep the generated MuJoCo scene XML for inspection.",
     )
+    parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
+    parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
+    parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+    parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
+    parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
+    parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
+    parser.add_argument("--moveit-planning-time-s", type=float, default=5.0)
+    parser.add_argument("--moveit-num-planning-attempts", type=int, default=5)
+    parser.add_argument("--moveit-velocity-scale", type=float, default=0.05)
+    parser.add_argument("--moveit-acceleration-scale", type=float, default=0.05)
+    parser.add_argument("--moveit-execute-timeout-s", type=float, default=120.0)
+    parser.add_argument("--moveit-allow-collisions", action="store_true")
     args_cli = parser.parse_args()
     simulation_defaults = _load_simulation_defaults(args_cli.simulation_config)
     pregrasp_offset = (
@@ -469,12 +577,22 @@ def main() -> None:
                 f"[INFO]: MuJoCo attempt {attempt_index}/{len(selected_grasps)} grasp_id={selected_grasp.grasp_id}",
                 flush=True,
             )
+            moveit_joint_trajectories = None
+            if args_cli.controller == "moveit":
+                print("[INFO]: Planning MuJoCo attempt with MoveIt.", flush=True)
+                moveit_joint_trajectories = _plan_moveit_joint_trajectories(
+                    args_cli,
+                    robot_cfg=robot_cfg,
+                    execution_cfg=execution_cfg,
+                    world_grasp=selected_world_grasp,
+                )
             result = run_world_grasp_in_mujoco(
                 robot_cfg=robot_cfg,
                 execution_cfg=execution_cfg,
                 object_mesh_path=object_mesh_path,
                 object_pose_world=object_pose_world,
                 world_grasp=selected_world_grasp,
+                moveit_joint_trajectories=moveit_joint_trajectories,
                 keep_generated_scene=args_cli.keep_generated_scene,
                 show_viewer=args_cli.viewer,
                 viewer_left_ui=args_cli.viewer_left_ui,

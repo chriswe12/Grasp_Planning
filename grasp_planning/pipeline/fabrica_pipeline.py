@@ -100,6 +100,7 @@ class MujocoPipelineConfig:
     python_executable: str = ""
     robot_config: str = ""
     simulation_config: str = ""
+    controller: str = "native"
     grasp_id: str = ""
     pregrasp_offset: float | None = None
     gripper_width_clearance: float | None = None
@@ -116,6 +117,18 @@ class MujocoPipelineConfig:
     viewer_hold_seconds: float = 8.0
     viewer_block_at_end: bool = False
     keep_generated_scene: bool = False
+    moveit_frame_id: str = "base"
+    moveit_planning_group: str = "fr3_arm"
+    moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_planner_id: str = ""
+    moveit_wait_for_moveit_timeout_s: float = 15.0
+    moveit_ik_timeout_s: float = 2.0
+    moveit_planning_time_s: float = 5.0
+    moveit_num_planning_attempts: int = 5
+    moveit_velocity_scale: float = 0.05
+    moveit_acceleration_scale: float = 0.05
+    moveit_execute_timeout_s: float = 120.0
+    moveit_allow_collisions: bool = False
 
 
 @dataclass(frozen=True)
