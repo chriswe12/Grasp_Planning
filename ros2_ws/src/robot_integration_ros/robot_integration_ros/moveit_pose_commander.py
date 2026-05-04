@@ -159,7 +159,7 @@ class MoveItPoseCommander(Node):
     def config(self) -> MoveItPoseCommanderConfig:
         return self._config
 
-    def wait_for_moveit(self) -> None:
+    def wait_for_moveit(self, *, require_execute: bool = True) -> None:
         self.get_logger().info("Waiting for MoveIt services and actions.")
         if not self._ik_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
             raise RuntimeError(f"MoveIt IK service '{self.config.ik_service_name}' is unavailable.")
@@ -167,7 +167,9 @@ class MoveItPoseCommander(Node):
             raise RuntimeError(f"MoveIt planning service '{self.config.planning_service_name}' is unavailable.")
         if not self._fk_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
             raise RuntimeError(f"MoveIt FK service '{self.config.fk_service_name}' is unavailable.")
-        if not self._execute_client.wait_for_server(timeout_sec=self.config.wait_for_moveit_timeout_s):
+        if require_execute and not self._execute_client.wait_for_server(
+            timeout_sec=self.config.wait_for_moveit_timeout_s
+        ):
             raise RuntimeError(f"MoveIt execute action '{self.config.execute_action_name}' is unavailable.")
         self.get_logger().info("MoveIt connection ready.")
 
@@ -193,11 +195,12 @@ class MoveItPoseCommander(Node):
         target: PoseTarget,
         *,
         label: str,
+        start_joint_positions: Sequence[float] | None = None,
     ):
-        joints, message = self.compute_ik(target)
+        joints, message = self.compute_ik(target, seed_joint_positions=start_joint_positions)
         if joints is None:
             return None, message
-        return self.plan_to_joint_positions(joints, label=label)
+        return self.plan_to_joint_positions(joints, label=label, start_joint_positions=start_joint_positions)
 
     def get_current_pose(self, *, frame_id: str) -> PoseTarget:
         request = GetPositionFK.Request()
@@ -232,12 +235,28 @@ class MoveItPoseCommander(Node):
             frame_id=pose_msg.header.frame_id or str(frame_id),
         )
 
-    def compute_ik(self, target: PoseTarget) -> tuple[list[float] | None, str]:
+    def compute_ik(
+        self,
+        target: PoseTarget,
+        *,
+        seed_joint_positions: Sequence[float] | None = None,
+    ) -> tuple[list[float] | None, str]:
+        if seed_joint_positions is not None:
+            seed_joint_positions = tuple(float(value) for value in seed_joint_positions)
+            if len(seed_joint_positions) != len(self.config.joint_names):
+                return (
+                    None,
+                    f"Expected {len(self.config.joint_names)} seed joint positions, got {len(seed_joint_positions)}",
+                )
         request = GetPositionIK.Request()
         request.ik_request.group_name = self.config.planning_group
         request.ik_request.ik_link_name = self.config.pose_link
         request.ik_request.pose_stamped = self._pose_stamped(target)
         request.ik_request.avoid_collisions = bool(self.config.avoid_collisions)
+        if seed_joint_positions is not None:
+            request.ik_request.robot_state.is_diff = False
+            request.ik_request.robot_state.joint_state.name = list(self.config.joint_names)
+            request.ik_request.robot_state.joint_state.position = list(seed_joint_positions)
 
         timeout_seconds = max(float(self.config.ik_timeout_s), 0.0)
         request.ik_request.timeout.sec = int(timeout_seconds)
@@ -266,10 +285,18 @@ class MoveItPoseCommander(Node):
         joint_positions: Sequence[float],
         *,
         label: str,
+        start_joint_positions: Sequence[float] | None = None,
     ):
         joint_positions = tuple(float(value) for value in joint_positions)
         if len(joint_positions) != len(self.config.joint_names):
             return None, f"Expected {len(self.config.joint_names)} joint targets, got {len(joint_positions)}"
+        if start_joint_positions is not None:
+            start_joint_positions = tuple(float(value) for value in start_joint_positions)
+            if len(start_joint_positions) != len(self.config.joint_names):
+                return (
+                    None,
+                    f"Expected {len(self.config.joint_names)} start joint positions, got {len(start_joint_positions)}",
+                )
 
         request = GetMotionPlan.Request()
         motion_request = request.motion_plan_request
@@ -279,6 +306,10 @@ class MoveItPoseCommander(Node):
         motion_request.max_velocity_scaling_factor = float(self.config.velocity_scale)
         motion_request.max_acceleration_scaling_factor = float(self.config.acceleration_scale)
         motion_request.start_state.is_diff = True
+        if start_joint_positions is not None:
+            motion_request.start_state.is_diff = False
+            motion_request.start_state.joint_state.name = list(self.config.joint_names)
+            motion_request.start_state.joint_state.position = list(start_joint_positions)
         if self.config.planner_id:
             motion_request.planner_id = self.config.planner_id
 

@@ -60,15 +60,13 @@ ros2 run robot_integration_ros move_real_robot_ee --x 0.35 --y 0.00 --z 0.40 --k
 
 ### Two-Shell Launch For Real Hardware
 
-Use two fresh terminals. In both terminals, use the same private ROS domain so you do not collide with other `move_group` instances on the network.
+Use normal ROS2 discovery unless you deliberately need an isolated domain. The repo launcher defaults to `ROS_DOMAIN_ID=0` and clears localhost-only discovery settings.
 
 Terminal 1: launch the FR3 MoveIt stack
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=77
-export ROS_LOCALHOST_ONLY=1
 
 ros2 launch franka_fr3_moveit_config moveit.launch.py robot_ip:=<robot_ip> use_fake_hardware:=false
 ```
@@ -79,8 +77,6 @@ Terminal 2: source the robot integration overlay and run the script
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
 source /media/pdz/Elements1/perception_bag_test/ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=77
-export ROS_LOCALHOST_ONLY=1
 ```
 
 Optional check:
@@ -209,6 +205,12 @@ Use `configs/mujoco_simulation.yaml` to tune:
 - scene contact settings such as object mass, friction, `solref`, `solimp`, margin, and gap
 - robot timing and speed such as `timestep_s`, `control_substeps`, `speed_scale`, IK and trajectory settings
 - gripper actuation and settle behavior such as `open_ctrl`, `closed_ctrl`, and `close_steps`
+
+MuJoCo can either use its native damped-IK arm controller or MoveIt-planned arm trajectories:
+- default: `mujoco_execution.controller: "native"`
+- MoveIt planning with MuJoCo physics/viewer: set `mujoco_execution.controller: "moveit"`
+
+The MoveIt-backed MuJoCo path requires the FR3 MoveIt stack to be running and sourced, but only uses MoveIt planning services. MoveIt plans `pregrasp`, `grasp`, and `lift` joint trajectories from the stage-2 bundle; MuJoCo still executes those joint waypoints, closes the gripper, simulates contacts, and evaluates pickup success by object lift height.
 
 For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only.
 

@@ -31,15 +31,13 @@ source install/setup.bash
 
 ## Run
 
-Use two fresh terminals. In both terminals, use the same private ROS domain so you do not collide with other `move_group` instances on the network.
+Use normal ROS2 discovery unless you deliberately need an isolated domain. The repo launcher defaults to `ROS_DOMAIN_ID=0` and clears localhost-only discovery settings.
 
 Terminal 1: launch the FR3 MoveIt stack
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=77
-export ROS_LOCALHOST_ONLY=1
 
 ros2 launch franka_fr3_moveit_config moveit.launch.py robot_ip:=<robot_ip> use_fake_hardware:=false
 ```
@@ -50,8 +48,6 @@ Terminal 2: source this overlay and run the motion script
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
 source /media/pdz/Elements1/perception_bag_test/ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=77
-export ROS_LOCALHOST_ONLY=1
 ```
 
 Optional check:
