@@ -25,6 +25,14 @@ from .regrasp_fallback import (
     plan_mujoco_regrasp_fallback,
     write_mujoco_regrasp_plan,
 )
+from .stable_orientations import (
+    StableOrientation,
+    StableOrientationCandidate,
+    StableOrientationConfig,
+    StableOrientationResult,
+    enumerate_stable_orientations,
+    stable_orientation_result_payload,
+)
 
 __all__ = [
     "ExecutionWorldPoseConfig",
@@ -40,10 +48,16 @@ __all__ = [
     "HullSupportFacet",
     "MujocoRegraspFallbackPlan",
     "MujocoRegraspPlacementOption",
+    "StableOrientation",
+    "StableOrientationCandidate",
+    "StableOrientationConfig",
+    "StableOrientationResult",
+    "enumerate_stable_orientations",
     "generate_stage1_result",
     "load_mujoco_regrasp_plan",
     "plan_mujoco_regrasp_fallback",
     "recheck_stage2_result",
+    "stable_orientation_result_payload",
     "write_mujoco_regrasp_plan",
     "write_mujoco_regrasp_debug_html",
     "write_stage1_artifacts",

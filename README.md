@@ -24,6 +24,17 @@ Default configs:
 
 For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugFrame` subscriber then treats the selected `pose_item.pose_base` as the world pose of that centroid-centered local frame.
 
+## Grasp Generation Benchmark
+
+Run the standalone benchmark to evaluate grasp generation over Fabrica OBJ parts and robust stable orientations without executing in MuJoCo, Isaac, MoveIt, or hardware:
+
+```bash
+python scripts/run_grasp_generation_benchmark.py --limit-parts 1
+python scripts/run_grasp_generation_benchmark.py --assembly plumbers_block --clean
+```
+
+The default config is `configs/grasp_generation_benchmark.yaml`; outputs go to `artifacts/grasp_generation_benchmark/` with `results.json`, `summary.csv`, `summary.md`, `index.html`, per-part stage artifacts, stable-orientation metadata, and optional generation-only fallback plans. The benchmark requires the same collision backend as normal stage-1 filtering.
+
 ## ROS2 Workspace
 
 The repo now contains a dedicated ROS2 workspace for hardware-facing integration:
@@ -276,8 +287,10 @@ Kept code is limited to the pipeline product:
 - `scripts/run_fabrica_grasp_in_isaac.py`
 - `scripts/convert_stl_to_usd.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
+- `scripts/run_grasp_generation_benchmark.py`
 - `scripts/download_required_assets.sh`
 - `scripts/download_ros2_dependencies.sh`
+- `configs/grasp_generation_benchmark.yaml`
 - `grasp_planning/grasping/`
 - `grasp_planning/pipeline/`
 - `grasp_planning/ros2/`
