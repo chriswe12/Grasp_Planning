@@ -16,6 +16,20 @@ Current scope:
 - internal ROS2 workspace for hardware-facing nodes in `ros2_ws/src/robot_integration_ros/`
 - MuJoCo robot model generation from Menagerie assets in `scripts/build_mujoco_fr3_hand_models.py`
 
+## Companion Wiki
+
+A companion LLM knowledge base lives at `../mt_wiki`.
+
+For broad architecture, pipeline, frame, backend, ROS2, config, asset, or safety changes:
+- read `../mt_wiki/index.md` before changing durable behavior;
+- keep code as the source of truth;
+- update the relevant wiki pages when code changes alter durable project behavior, invariants, decisions, data flow, setup, or known pitfalls;
+- add a short entry to `../mt_wiki/log.md` describing what changed and why.
+
+Do not update the wiki for trivial formatting, small local fixes with no durable conceptual impact, generated artifacts, or purely experimental scratch work.
+
+Agents operating from `../mt_wiki` are documentation agents: they may read this repository as source material, but they must not create, edit, format, delete, commit, or push files in this code repository.
+
 ## Main Files
 
 - `run_pipeline.sh`

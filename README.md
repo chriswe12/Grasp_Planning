@@ -160,6 +160,24 @@ Override `FP_DEBUG_MSGS_REMOTE` and `FP_DEBUG_MSGS_REF` if you need to bootstrap
 The pipeline expects the vendored Franka hand collision mesh at:
 - `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`
 
+### Copying Local State To A New Worktree
+
+Tracked assets are checked out by Git, but the MuJoCo cache, pinned ROS2 source dependency, and `colcon` build/install/log directories are ignored local state. After creating a new worktree, copy those directories from this worktree with:
+
+```bash
+git worktree add /path/to/new-worktree <branch>
+scripts/copy_worktree_local_state.sh --to /path/to/new-worktree
+```
+
+You can also opt into an automatic `post-checkout` hook for future worktrees:
+
+```bash
+git config core.hooksPath .githooks
+git config grasp-planning.localStateSource "$(pwd -P)"
+```
+
+Git does not enable repository hooks from tracked files by default. Once enabled, the hook runs after `git worktree add` performs the initial checkout and copies the ignored local state from `grasp-planning.localStateSource`.
+
 ## Config Layout
 
 Pipeline configs:

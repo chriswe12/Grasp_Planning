@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Opt-in helper for `git worktree add`.
+#
+# Enable from the source worktree once with:
+#   git config core.hooksPath .githooks
+#   git config grasp-planning.localStateSource "$(pwd -P)"
+#
+# Git runs post-checkout after `git worktree add` performs the initial checkout.
+# The third argument is "1" for branch checkouts and worktree checkouts.
+
+if [[ "${3:-}" != "1" ]]; then
+  exit 0
+fi
+
+source_root=$(git config --get grasp-planning.localStateSource || true)
+if [[ -z "$source_root" ]]; then
+  exit 0
+fi
+
+dest_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [[ -z "$dest_root" ]]; then
+  exit 0
+fi
+
+source_root=$(cd "$source_root" 2>/dev/null && pwd -P) || exit 0
+dest_root=$(cd "$dest_root" && pwd -P)
+
+if [[ "$source_root" == "$dest_root" ]]; then
+  exit 0
+fi
+
+needs_copy=0
+for rel in \
+  ".cache/generated_mujoco_models" \
+  ".cache/robot_descriptions" \
+  "ros2_ws/src/fp_debug_msgs" \
+  "ros2_ws/build" \
+  "ros2_ws/install" \
+  "ros2_ws/log"
+do
+  if [[ -e "$source_root/$rel" && ! -e "$dest_root/$rel" ]]; then
+    needs_copy=1
+    break
+  fi
+done
+
+if [[ "$needs_copy" != "1" ]]; then
+  exit 0
+fi
+
+"$source_root/scripts/copy_worktree_local_state.sh" --from "$source_root" --to "$dest_root"
