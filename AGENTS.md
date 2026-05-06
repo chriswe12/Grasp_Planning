@@ -15,6 +15,7 @@ Current scope:
 - optional real-robot execution from the stage-2 bundle in `grasp_planning/ros2/real_grasp_executor.py`
 - internal ROS2 workspace for hardware-facing nodes in `ros2_ws/src/robot_integration_ros/`
 - MuJoCo robot model generation from Menagerie assets in `scripts/build_mujoco_fr3_hand_models.py`
+- standalone grasp-generation benchmark over Fabrica OBJ parts in `scripts/run_grasp_generation_benchmark.py`
 
 ## Companion Wiki
 
@@ -23,10 +24,13 @@ A companion LLM knowledge base lives at `../mt_wiki`.
 For broad architecture, pipeline, frame, backend, ROS2, config, asset, or safety changes:
 - read `../mt_wiki/index.md` before changing durable behavior;
 - keep code as the source of truth;
-- update the relevant wiki pages when code changes alter durable project behavior, invariants, decisions, data flow, setup, or known pitfalls;
-- add a short entry to `../mt_wiki/log.md` describing what changed and why.
+- do not directly edit durable wiki pages or `../mt_wiki/log.md` from this code repository during coding work;
+- when wiki follow-up is needed, create a Markdown changelog entry under `../mt_wiki/agent-changelogs/`;
+- follow `../mt_wiki/agent-changelogs/README.md` and `../mt_wiki/agent-changelogs/TEMPLATE.md` for naming and content.
 
-Do not update the wiki for trivial formatting, small local fixes with no durable conceptual impact, generated artifacts, or purely experimental scratch work.
+Write an agent changelog when explicitly prompted or when committing changes. Include the source repo, branch, commit or PR when available, changed paths, behavior changes, verification, risks or open questions, and suggested wiki pages for later ingestion.
+
+Do not create a changelog for trivial formatting, small local fixes with no durable conceptual impact, generated artifacts, or purely experimental scratch work unless explicitly requested.
 
 Agents operating from `../mt_wiki` are documentation agents: they may read this repository as source material, but they must not create, edit, format, delete, commit, or push files in this code repository.
 
@@ -40,8 +44,11 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - `scripts/run_fabrica_grasp_in_isaac.py`
 - `scripts/convert_stl_to_usd.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
+- `scripts/run_grasp_generation_benchmark.py`
 - `scripts/download_required_assets.sh`
+- `configs/grasp_generation_benchmark.yaml`
 - `grasp_planning/pipeline/fabrica_pipeline.py`
+- `grasp_planning/pipeline/stable_orientations.py`
 - `grasp_planning/mujoco/runner.py`
 - `grasp_planning/mujoco/scene_builder.py`
 - `grasp_planning/ros2/pose_listener.py`
@@ -58,6 +65,7 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - `run_pipeline.sh --backend {config,mujoco,isaac,both,none}` overrides sim/pitl execution backend for one run.
 - `configs/grasp_pipeline_sim_isaac.yaml` and `configs/grasp_pipeline_pitl_isaac.yaml` are Isaac-only convenience configs with MuJoCo disabled.
 - `real` uses the same ROS2 intake path, writes the same stage artifacts, and can optionally execute on hardware when `real_execution.enabled: true`.
+- The generation benchmark is planning-only: `direct_success` and `fallback_success` do not imply MuJoCo, Isaac, MoveIt, or hardware execution success.
 - Planning knobs: `roll_angle_step_deg` expands a full 360 degree roll sweep; `floor_clearance_margin_m` and `top_grasp_score_weight` are stage-2 world-pose filters/scorers; `--skip-stage1-collision-checks` bypasses only stage-1 assembly collision filtering.
 - The MuJoCo path consumes the stage-2 bundle as the source of truth.
 - The Isaac path consumes the stage-2 bundle as the source of truth.
@@ -76,7 +84,7 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 
 ## General Guidance
 
-- Keep changes aligned with the three pipeline modes only.
+- Keep execution changes aligned with the three pipeline modes; keep standalone benchmarks separate from mode behavior.
 - Do not reintroduce the retired simulator stack, its configs, or its container setup.
 - Prefer updating `configs/mujoco_simulation.yaml` when exposing new MuJoCo tuning knobs.
 - Prefer updating the `isaac_execution` block in the sim/pitl configs when exposing Isaac tuning knobs.
