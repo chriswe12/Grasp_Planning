@@ -148,6 +148,7 @@ class AntipodalMeshGraspGenerator:
 
     def __init__(self, config: AntipodalGraspGeneratorConfig | None = None) -> None:
         self._config = config or AntipodalGraspGeneratorConfig()
+        self._last_surface_samples: tuple[SurfaceSample, ...] = ()
         self._collision_evaluator = GraspCollisionEvaluator(
             FrankaHandFingerCollisionModel(contact_gap_m=self._config.detailed_finger_contact_gap_m)
         )
@@ -156,8 +157,13 @@ class AntipodalMeshGraspGenerator:
     def collision_backend_name(self) -> str:
         return self._collision_evaluator.backend_name
 
+    @property
+    def last_surface_samples(self) -> tuple[SurfaceSample, ...]:
+        return self._last_surface_samples
+
     def generate(self, mesh: TriangleMesh) -> list[ObjectFrameGraspCandidate]:
         surface_samples = self.sample_surface(mesh, num_samples=self._config.num_surface_samples)
+        self._last_surface_samples = tuple(surface_samples)
         collision_scene = self._collision_evaluator.build_scene(mesh)
         pair_indices = self._candidate_pair_indices(surface_samples)
         candidates: list[ObjectFrameGraspCandidate] = []

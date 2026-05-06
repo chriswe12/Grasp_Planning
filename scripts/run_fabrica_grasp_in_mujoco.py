@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import replace
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterable, Mapping
 
 import numpy as np
 import yaml
@@ -27,13 +29,16 @@ from grasp_planning import (
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.mujoco import (
     MujocoExecutionConfig,
+    MujocoRegraspAttemptResult,
     build_bundle_local_mesh,
     load_robot_config,
+    run_regrasp_plan_in_mujoco,
     run_world_grasp_in_mujoco,
     write_temporary_triangle_mesh_stl,
 )
-from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, rclpy
-from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets
+from grasp_planning.pipeline.regrasp_fallback import load_mujoco_regrasp_plan
+from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, PoseTarget, rclpy
+from grasp_planning.ros2.moveit_world_grasp import pose_target_from_world, world_grasp_pose_targets
 
 
 def _parse_vec2(raw: str) -> tuple[float, float]:
@@ -168,6 +173,8 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
         execution_cfg_kwargs["arm_speed_scale"] = float(robot_raw["speed_scale"])
     if "lift_height_m" in robot_raw:
         execution_cfg_kwargs["lift_height_m"] = float(robot_raw["lift_height_m"])
+    if "regrasp_transport_clearance_m" in robot_raw:
+        execution_cfg_kwargs["regrasp_transport_clearance_m"] = float(robot_raw["regrasp_transport_clearance_m"])
     if "hold_steps" in robot_raw:
         execution_cfg_kwargs["hold_steps"] = int(robot_raw["hold_steps"])
     if "success_height_margin_m" in robot_raw:
@@ -314,6 +321,56 @@ def _write_attempt_artifact(
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _write_regrasp_attempt_artifact(
+    *,
+    output_path: Path,
+    input_json: Path,
+    regrasp_plan_json: Path,
+    plan,
+    transfer_initial_world_grasp,
+    transfer_staging_world_grasp,
+    final_world_grasp,
+    result,
+    attempts: list[dict[str, object]] | None = None,
+    planned_candidates: list[dict[str, object]] | None = None,
+) -> None:
+    payload = {
+        "mode": "mujoco_regrasp_fallback",
+        "input_json": str(input_json),
+        "regrasp_plan_json": str(regrasp_plan_json),
+        "initial_object_pose_world": {
+            "position_world": list(plan.initial_object_pose_world.position_world),
+            "orientation_xyzw_world": list(plan.initial_object_pose_world.orientation_xyzw_world),
+        },
+        "staging_object_pose_world": {
+            "position_world": list(plan.staging_object_pose_world.position_world),
+            "orientation_xyzw_world": list(plan.staging_object_pose_world.orientation_xyzw_world),
+        },
+        "support_facet": asdict(plan.support_facet),
+        "transfer_grasp_id": plan.transfer_grasp.grasp_id,
+        "final_grasp_id": plan.final_grasp.grasp_id,
+        "transfer_initial_world_grasp": asdict(transfer_initial_world_grasp),
+        "transfer_staging_world_grasp": asdict(transfer_staging_world_grasp),
+        "final_world_grasp": asdict(final_world_grasp),
+        "result": _object_payload(result),
+        "plan_metadata": dict(plan.metadata),
+    }
+    if attempts is not None:
+        payload["attempts"] = attempts
+    if planned_candidates is not None:
+        payload["planned_candidates"] = planned_candidates
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _object_payload(value) -> dict[str, object]:
+    if is_dataclass(value):
+        return asdict(value)
+    if hasattr(value, "__dict__"):
+        return dict(value.__dict__)
+    return dict(value)
+
+
 def _ordered_feasible_grasps(*, feasible: list, requested_grasp_id: str) -> list:
     if requested_grasp_id:
         selected = next((grasp for grasp in feasible if grasp.grasp_id == requested_grasp_id), None)
@@ -323,6 +380,47 @@ def _ordered_feasible_grasps(*, feasible: list, requested_grasp_id: str) -> list
             )
         return [selected]
     return list(feasible)
+
+
+def _ordered_regrasp_candidates(primary, candidates: tuple) -> list:
+    ordered = [primary]
+    seen = {str(primary.grasp_id)}
+    for candidate in candidates:
+        if str(candidate.grasp_id) in seen:
+            continue
+        ordered.append(candidate)
+        seen.add(str(candidate.grasp_id))
+    return ordered
+
+
+def _active_regrasp_plan_for_attempt(*, plan, placement_option, transfer_candidate, final_candidate):
+    updates = {
+        "staging_object_pose_world": placement_option.staging_object_pose_world,
+        "support_facet": placement_option.support_facet,
+        "transfer_grasp": transfer_candidate,
+        "final_grasp": final_candidate,
+        "transfer_grasp_candidates": placement_option.transfer_grasp_candidates,
+        "final_grasp_candidates": placement_option.final_grasp_candidates,
+    }
+    return replace(plan, **updates) if is_dataclass(plan) else SimpleNamespace(**(dict(vars(plan)) | updates))
+
+
+def _regrasp_failure_depends_on_transfer(status_or_message: str) -> bool:
+    text = str(status_or_message)
+    return any(
+        token in text
+        for token in (
+            "transfer_pregrasp",
+            "transfer_grasp",
+            "transfer_lift",
+            "transfer_transport_lift",
+            "transfer_transport_rotate",
+            "staging_transport",
+            "staging_preplace",
+            "placement",
+            "staging_retreat",
+        )
+    )
 
 
 def _home_arm_joint_positions(robot_cfg) -> tuple[float, ...]:
@@ -369,12 +467,12 @@ def _moveit_config_from_args(args_cli, *, joint_names: tuple[str, ...]) -> MoveI
     )
 
 
-def _plan_moveit_joint_trajectories(
+def _plan_moveit_target_sequence(
     args_cli,
     *,
     robot_cfg,
-    execution_cfg,
-    world_grasp,
+    targets: Mapping[str, PoseTarget],
+    labels: tuple[str, ...],
 ) -> dict[str, tuple[tuple[float, ...], ...]]:
     if rclpy is None:
         raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
@@ -387,14 +485,9 @@ def _plan_moveit_joint_trajectories(
         moveit_config = _moveit_config_from_args(args_cli, joint_names=tuple(robot_cfg.arm_joint_names))
         commander = MoveItPoseCommander(moveit_config, node_name="mujoco_moveit_trajectory_planner")
         commander.wait_for_moveit(require_execute=False)
-        targets = world_grasp_pose_targets(
-            world_grasp,
-            frame_id=str(args_cli.moveit_frame_id),
-            lift_height_m=float(execution_cfg.lift_height_m),
-        )
         start_joint_positions = _home_arm_joint_positions(robot_cfg)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
-        for label in ("pregrasp", "grasp", "lift"):
+        for label in labels:
             trajectory, message = commander.plan_to_pose(
                 targets[label],
                 label=f"mujoco_{label}",
@@ -413,9 +506,261 @@ def _plan_moveit_joint_trajectories(
             rclpy.shutdown()
 
 
+def _plan_moveit_joint_trajectories(
+    args_cli,
+    *,
+    robot_cfg,
+    execution_cfg,
+    world_grasp,
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    targets = world_grasp_pose_targets(
+        world_grasp,
+        frame_id=str(args_cli.moveit_frame_id),
+        lift_height_m=float(execution_cfg.lift_height_m),
+    )
+    return _plan_moveit_target_sequence(
+        args_cli,
+        robot_cfg=robot_cfg,
+        targets=targets,
+        labels=("pregrasp", "grasp", "lift"),
+    )
+
+
+def _regrasp_pose_targets(
+    *,
+    transfer_initial_world_grasp,
+    transfer_staging_world_grasp,
+    final_world_grasp,
+    frame_id: str,
+    lift_height_m: float,
+    transport_clearance_m: float,
+) -> dict[str, PoseTarget]:
+    transfer_initial_orientation = tuple(float(v) for v in transfer_initial_world_grasp.orientation_xyzw)
+    transfer_staging_orientation = tuple(float(v) for v in transfer_staging_world_grasp.orientation_xyzw)
+    final_orientation = tuple(float(v) for v in final_world_grasp.orientation_xyzw)
+    transport_z = max(
+        float(transfer_initial_world_grasp.position_w[2]),
+        float(transfer_staging_world_grasp.position_w[2]),
+    ) + max(float(lift_height_m), float(transport_clearance_m))
+    return {
+        "transfer_pregrasp": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in transfer_initial_world_grasp.pregrasp_position_w),
+            orientation_xyzw=transfer_initial_orientation,
+            frame_id=frame_id,
+        ),
+        "transfer_grasp": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in transfer_initial_world_grasp.position_w),
+            orientation_xyzw=transfer_initial_orientation,
+            frame_id=frame_id,
+        ),
+        "transfer_lift": pose_target_from_world(
+            position_xyz=(
+                float(transfer_initial_world_grasp.position_w[0]),
+                float(transfer_initial_world_grasp.position_w[1]),
+                float(transfer_initial_world_grasp.position_w[2] + lift_height_m),
+            ),
+            orientation_xyzw=transfer_initial_orientation,
+            frame_id=frame_id,
+        ),
+        "transfer_transport_lift": pose_target_from_world(
+            position_xyz=(
+                float(transfer_initial_world_grasp.position_w[0]),
+                float(transfer_initial_world_grasp.position_w[1]),
+                float(transport_z),
+            ),
+            orientation_xyzw=transfer_initial_orientation,
+            frame_id=frame_id,
+        ),
+        "transfer_transport_rotate": pose_target_from_world(
+            position_xyz=(
+                float(transfer_initial_world_grasp.position_w[0]),
+                float(transfer_initial_world_grasp.position_w[1]),
+                float(transport_z),
+            ),
+            orientation_xyzw=transfer_staging_orientation,
+            frame_id=frame_id,
+        ),
+        "staging_transport": pose_target_from_world(
+            position_xyz=(
+                float(transfer_staging_world_grasp.position_w[0]),
+                float(transfer_staging_world_grasp.position_w[1]),
+                float(transport_z),
+            ),
+            orientation_xyzw=transfer_staging_orientation,
+            frame_id=frame_id,
+        ),
+        "staging_preplace": pose_target_from_world(
+            position_xyz=(
+                float(transfer_staging_world_grasp.position_w[0]),
+                float(transfer_staging_world_grasp.position_w[1]),
+                float(transfer_staging_world_grasp.position_w[2] + lift_height_m),
+            ),
+            orientation_xyzw=transfer_staging_orientation,
+            frame_id=frame_id,
+        ),
+        "placement": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in transfer_staging_world_grasp.position_w),
+            orientation_xyzw=transfer_staging_orientation,
+            frame_id=frame_id,
+        ),
+        "staging_retreat": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in transfer_staging_world_grasp.pregrasp_position_w),
+            orientation_xyzw=transfer_staging_orientation,
+            frame_id=frame_id,
+        ),
+        "final_pregrasp": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in final_world_grasp.pregrasp_position_w),
+            orientation_xyzw=final_orientation,
+            frame_id=frame_id,
+        ),
+        "final_grasp": pose_target_from_world(
+            position_xyz=tuple(float(v) for v in final_world_grasp.position_w),
+            orientation_xyzw=final_orientation,
+            frame_id=frame_id,
+        ),
+        "final_lift": pose_target_from_world(
+            position_xyz=(
+                float(final_world_grasp.position_w[0]),
+                float(final_world_grasp.position_w[1]),
+                float(final_world_grasp.position_w[2] + lift_height_m),
+            ),
+            orientation_xyzw=final_orientation,
+            frame_id=frame_id,
+        ),
+    }
+
+
+def _plan_moveit_regrasp_joint_trajectories(
+    args_cli,
+    *,
+    robot_cfg,
+    execution_cfg,
+    transfer_initial_world_grasp,
+    transfer_staging_world_grasp,
+    final_world_grasp,
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    targets = _regrasp_pose_targets(
+        transfer_initial_world_grasp=transfer_initial_world_grasp,
+        transfer_staging_world_grasp=transfer_staging_world_grasp,
+        final_world_grasp=final_world_grasp,
+        frame_id=str(args_cli.moveit_frame_id),
+        lift_height_m=float(execution_cfg.lift_height_m),
+        transport_clearance_m=float(execution_cfg.regrasp_transport_clearance_m),
+    )
+    return _plan_moveit_target_sequence(
+        args_cli,
+        robot_cfg=robot_cfg,
+        targets=targets,
+        labels=(
+            "transfer_pregrasp",
+            "transfer_grasp",
+            "transfer_lift",
+            "transfer_transport_lift",
+            "transfer_transport_rotate",
+            "staging_transport",
+            "staging_preplace",
+            "placement",
+            "staging_retreat",
+            "final_pregrasp",
+            "final_grasp",
+            "final_lift",
+        ),
+    )
+
+
+def _moveit_joint_trajectory_diagnostics(
+    trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+) -> tuple[dict[str, object], ...]:
+    diagnostics: list[dict[str, object]] = []
+    for label, waypoints in trajectories.items():
+        diagnostic: dict[str, object] = {
+            "label": str(label),
+            "point_count": int(len(waypoints)),
+        }
+        if not waypoints:
+            diagnostic["joint_path_length_rad"] = 0.0
+            diagnostic["max_joint_step_rad"] = 0.0
+            diagnostics.append(diagnostic)
+            continue
+        q_matrix = np.asarray(waypoints, dtype=float)
+        if q_matrix.ndim == 1:
+            q_matrix = q_matrix.reshape(1, -1)
+        q_deltas = np.diff(q_matrix, axis=0)
+        if q_deltas.size:
+            diagnostic["joint_path_length_rad"] = float(np.sum(np.linalg.norm(q_deltas, axis=1)))
+            diagnostic["max_joint_step_rad"] = float(np.max(np.abs(q_deltas)))
+        else:
+            diagnostic["joint_path_length_rad"] = 0.0
+            diagnostic["max_joint_step_rad"] = 0.0
+        diagnostic["start_joint_positions"] = [float(v) for v in q_matrix[0]]
+        diagnostic["end_joint_positions"] = [float(v) for v in q_matrix[-1]]
+        diagnostics.append(diagnostic)
+    return tuple(diagnostics)
+
+
+def _moveit_joint_trajectory_summary(diagnostics: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    items = tuple(diagnostics)
+    return {
+        "segment_count": len(items),
+        "point_count": int(sum(int(item.get("point_count", 0)) for item in items)),
+        "joint_path_length_rad": float(sum(float(item.get("joint_path_length_rad", 0.0)) for item in items)),
+        "max_joint_step_rad": float(max((float(item.get("max_joint_step_rad", 0.0)) for item in items), default=0.0)),
+    }
+
+
+def _moveit_regrasp_trajectory_cost(
+    diagnostics: Iterable[Mapping[str, object]],
+    *,
+    placement_score: float = 0.0,
+) -> float:
+    carried_labels = {
+        "transfer_lift",
+        "transfer_transport_lift",
+        "transfer_transport_rotate",
+        "staging_transport",
+        "staging_preplace",
+        "placement",
+    }
+    cost = 0.0
+    max_joint_step_rad = 0.0
+    point_count = 0
+    for diagnostic in diagnostics:
+        label = str(diagnostic.get("label", ""))
+        joint_path_length_rad = float(diagnostic.get("joint_path_length_rad", 0.0))
+        max_joint_step_rad = max(max_joint_step_rad, float(diagnostic.get("max_joint_step_rad", 0.0)))
+        point_count += int(diagnostic.get("point_count", 0))
+        weight = 1.7 if label in carried_labels else 1.0
+        cost += weight * joint_path_length_rad
+    cost += 2.5 * max_joint_step_rad
+    cost += 0.002 * float(point_count)
+    cost -= 0.05 * float(placement_score)
+    return float(cost)
+
+
+def _print_moveit_joint_trajectory_diagnostics(
+    trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+    *,
+    prefix: str,
+) -> None:
+    for diagnostic in _moveit_joint_trajectory_diagnostics(trajectories):
+        print(
+            f"[INFO]: {prefix} {diagnostic['label']}: "
+            f"points={diagnostic['point_count']} "
+            f"joint_path={float(diagnostic['joint_path_length_rad']):.3f} rad "
+            f"max_step={float(diagnostic['max_joint_step_rad']):.3f} rad",
+            flush=True,
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-json", type=Path, required=True, help="Input grasp bundle, typically from stage 2.")
+    parser.add_argument(
+        "--regrasp-plan-json",
+        type=Path,
+        default=None,
+        help="Optional MuJoCo regrasp fallback plan artifact. When set, execute transfer-place-final-pick.",
+    )
     parser.add_argument("--robot-config", type=Path, required=True, help="MuJoCo robot binding JSON.")
     parser.add_argument(
         "--simulation-config",
@@ -512,6 +857,24 @@ def main() -> None:
     parser.add_argument("--moveit-acceleration-scale", type=float, default=0.05)
     parser.add_argument("--moveit-execute-timeout-s", type=float, default=120.0)
     parser.add_argument("--moveit-allow-collisions", action="store_true")
+    parser.add_argument(
+        "--regrasp-moveit-max-candidate-plans",
+        type=int,
+        default=36,
+        help="Maximum MoveIt regrasp candidate plans to score before execution; <=0 means unlimited.",
+    )
+    parser.add_argument(
+        "--regrasp-moveit-transfer-candidates-per-placement",
+        type=int,
+        default=3,
+        help="Maximum transfer grasps considered per placement option during MoveIt regrasp selection.",
+    )
+    parser.add_argument(
+        "--regrasp-moveit-final-candidates-per-placement",
+        type=int,
+        default=3,
+        help="Maximum final grasps considered per placement option during MoveIt regrasp selection.",
+    )
     args_cli = parser.parse_args()
     simulation_defaults = _load_simulation_defaults(args_cli.simulation_config)
     pregrasp_offset = (
@@ -533,21 +896,6 @@ def main() -> None:
     bundle = load_grasp_bundle(args_cli.input_json)
     mesh_local = build_bundle_local_mesh(bundle)
     object_mesh_path = write_temporary_triangle_mesh_stl(mesh_local, prefix=f"{args_cli.input_json.stem}_bundle_local_")
-    placement_spec, object_pose_world = _resolve_object_pose_world_from_bundle(args_cli, bundle, mesh_local)
-    statuses = evaluate_saved_grasps_against_pickup_pose(
-        bundle.candidates,
-        object_pose_world=object_pose_world,
-        contact_gap_m=contact_gap_m,
-    )
-    feasible = accepted_grasps(statuses)
-    if not feasible:
-        raise RuntimeError("No ground-feasible grasps remain for the requested pickup pose.")
-
-    feasible = score_grasps(feasible, mesh_local=mesh_local)
-    selected_grasps = _ordered_feasible_grasps(feasible=feasible, requested_grasp_id=args_cli.grasp_id)
-    if not selected_grasps:
-        raise RuntimeError("No feasible grasp could be selected after scoring.")
-
     robot_cfg = load_robot_config(args_cli.robot_config)
     robot_cfg_updates = dict(simulation_defaults["robot_cfg_updates"])
     if robot_cfg_updates:
@@ -563,6 +911,610 @@ def main() -> None:
         execution_cfg_kwargs["success_height_margin_m"] = float(args_cli.success_height_margin_m)
     execution_cfg = MujocoExecutionConfig(**execution_cfg_kwargs)
     try:
+        if args_cli.regrasp_plan_json is not None:
+            plan = load_mujoco_regrasp_plan(args_cli.regrasp_plan_json)
+            print(
+                "[INFO]: MuJoCo regrasp fallback "
+                f"transfer={plan.transfer_grasp.grasp_id} final={plan.final_grasp.grasp_id}",
+                flush=True,
+            )
+            placement_options = tuple(getattr(plan, "placement_options", ()) or ())
+            if not placement_options:
+                placement_options = (
+                    SimpleNamespace(
+                        staging_object_pose_world=plan.staging_object_pose_world,
+                        support_facet=getattr(plan, "support_facet", None),
+                        transfer_grasp=plan.transfer_grasp,
+                        final_grasp=plan.final_grasp,
+                        transfer_grasp_candidates=tuple(getattr(plan, "transfer_grasp_candidates", ()) or ()),
+                        final_grasp_candidates=tuple(getattr(plan, "final_grasp_candidates", ()) or ()),
+                        metadata={},
+                    ),
+                )
+            max_attempts = 0
+            for placement_option in placement_options:
+                transfer_candidates_for_option = _ordered_regrasp_candidates(
+                    placement_option.transfer_grasp,
+                    tuple(getattr(placement_option, "transfer_grasp_candidates", ()) or ()),
+                )
+                final_candidates_for_option = _ordered_regrasp_candidates(
+                    placement_option.final_grasp,
+                    tuple(getattr(placement_option, "final_grasp_candidates", ()) or ()),
+                )
+                max_attempts += len(transfer_candidates_for_option) * len(final_candidates_for_option)
+            attempts: list[dict[str, object]] = []
+            regrasp_result = None
+            transfer_initial_world_grasp = None
+            transfer_staging_world_grasp = None
+            final_world_grasp = None
+            active_plan = plan
+            attempt_index = 0
+            planned_candidate_records: list[dict[str, object]] = []
+            if args_cli.controller == "moveit":
+                placement_infos = []
+                transfer_limit = max(1, int(args_cli.regrasp_moveit_transfer_candidates_per_placement))
+                final_limit = max(1, int(args_cli.regrasp_moveit_final_candidates_per_placement))
+                max_candidate_plans = int(args_cli.regrasp_moveit_max_candidate_plans)
+                for placement_option_index, placement_option in enumerate(placement_options, start=1):
+                    option_plan = _active_regrasp_plan_for_attempt(
+                        plan=plan,
+                        placement_option=placement_option,
+                        transfer_candidate=placement_option.transfer_grasp,
+                        final_candidate=placement_option.final_grasp,
+                    )
+                    staging_xy = (
+                        float(placement_option.staging_object_pose_world.position_world[0]),
+                        float(placement_option.staging_object_pose_world.position_world[1]),
+                    )
+                    transfer_candidates = _ordered_regrasp_candidates(
+                        placement_option.transfer_grasp,
+                        placement_option.transfer_grasp_candidates,
+                    )[:transfer_limit]
+                    final_candidates = _ordered_regrasp_candidates(
+                        placement_option.final_grasp,
+                        placement_option.final_grasp_candidates,
+                    )[:final_limit]
+                    placement_infos.append(
+                        SimpleNamespace(
+                            placement_option_index=placement_option_index,
+                            placement_option=placement_option,
+                            active_plan=option_plan,
+                            staging_xy=staging_xy,
+                            transfer_candidates=transfer_candidates,
+                            final_candidates=final_candidates,
+                        )
+                    )
+
+                candidate_specs = []
+                max_transfer_rank = max((len(info.transfer_candidates) for info in placement_infos), default=0)
+                max_final_rank = max((len(info.final_candidates) for info in placement_infos), default=0)
+                rank_pairs = sorted(
+                    (
+                        (transfer_rank, final_rank)
+                        for transfer_rank in range(max_transfer_rank)
+                        for final_rank in range(max_final_rank)
+                    ),
+                    key=lambda pair: (pair[0] + pair[1], pair[1], pair[0]),
+                )
+                limit_reached = False
+                for transfer_rank, final_rank in rank_pairs:
+                    for info in placement_infos:
+                        if transfer_rank >= len(info.transfer_candidates) or final_rank >= len(info.final_candidates):
+                            continue
+                        candidate_specs.append(
+                            SimpleNamespace(
+                                info=info,
+                                transfer_rank=transfer_rank,
+                                final_rank=final_rank,
+                                transfer_candidate=info.transfer_candidates[transfer_rank],
+                                final_candidate=info.final_candidates[final_rank],
+                            )
+                        )
+                        if max_candidate_plans > 0 and len(candidate_specs) >= max_candidate_plans:
+                            limit_reached = True
+                            break
+                    if limit_reached:
+                        break
+
+                print(
+                    f"[INFO]: Planning and scoring {len(candidate_specs)} MoveIt regrasp candidate(s) "
+                    f"across {len(placement_infos)} placement option(s).",
+                    flush=True,
+                )
+                planned_moveit_candidates = []
+                transfer_planning_failures: set[tuple[int, str]] = set()
+                for spec in candidate_specs:
+                    info = spec.info
+                    transfer_candidate = spec.transfer_candidate
+                    final_candidate = spec.final_candidate
+                    transfer_key = (int(info.placement_option_index), str(transfer_candidate.grasp_id))
+                    if transfer_key in transfer_planning_failures:
+                        continue
+                    attempt_index += 1
+                    active_plan = _active_regrasp_plan_for_attempt(
+                        plan=plan,
+                        placement_option=info.placement_option,
+                        transfer_candidate=transfer_candidate,
+                        final_candidate=final_candidate,
+                    )
+                    transfer_initial_world_grasp = saved_grasp_to_world_grasp(
+                        transfer_candidate,
+                        plan.initial_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                    transfer_staging_world_grasp = saved_grasp_to_world_grasp(
+                        transfer_candidate,
+                        info.placement_option.staging_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                    final_world_grasp = saved_grasp_to_world_grasp(
+                        final_candidate,
+                        info.placement_option.staging_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                    print(
+                        f"[INFO]: Planning regrasp candidate {attempt_index}/{len(candidate_specs)} "
+                        f"placement={info.placement_option_index} "
+                        f"xy=({info.staging_xy[0]:.3f}, {info.staging_xy[1]:.3f}) "
+                        f"transfer={transfer_candidate.grasp_id} final={final_candidate.grasp_id}",
+                        flush=True,
+                    )
+                    try:
+                        moveit_joint_trajectories = _plan_moveit_regrasp_joint_trajectories(
+                            args_cli,
+                            robot_cfg=robot_cfg,
+                            execution_cfg=execution_cfg,
+                            transfer_initial_world_grasp=transfer_initial_world_grasp,
+                            transfer_staging_world_grasp=transfer_staging_world_grasp,
+                            final_world_grasp=final_world_grasp,
+                        )
+                    except RuntimeError as exc:
+                        message = str(exc)
+                        attempts.append(
+                            {
+                                "attempt_index": attempt_index,
+                                "placement_option_index": info.placement_option_index,
+                                "staging_xy_world": list(info.staging_xy),
+                                "transfer_grasp_id": transfer_candidate.grasp_id,
+                                "final_grasp_id": final_candidate.grasp_id,
+                                "success": False,
+                                "status": "moveit_planning_failed",
+                                "message": message,
+                            }
+                        )
+                        print(
+                            f"[WARN]: Regrasp candidate {attempt_index}/{len(candidate_specs)} planning failed: "
+                            f"{message}",
+                            flush=True,
+                        )
+                        if _regrasp_failure_depends_on_transfer(message):
+                            transfer_planning_failures.add(transfer_key)
+                        continue
+
+                    diagnostics = _moveit_joint_trajectory_diagnostics(moveit_joint_trajectories)
+                    summary = _moveit_joint_trajectory_summary(diagnostics)
+                    placement_score = float(info.placement_option.metadata.get("placement_score", 0.0))
+                    path_cost = _moveit_regrasp_trajectory_cost(diagnostics, placement_score=placement_score)
+                    record = {
+                        "planning_index": attempt_index,
+                        "placement_option_index": info.placement_option_index,
+                        "staging_xy_world": list(info.staging_xy),
+                        "transfer_grasp_id": transfer_candidate.grasp_id,
+                        "final_grasp_id": final_candidate.grasp_id,
+                        "path_cost": float(path_cost),
+                        "placement_score": placement_score,
+                        "trajectory_summary": summary,
+                        "trajectory_diagnostics": list(diagnostics),
+                    }
+                    planned_candidate_records.append(record)
+                    planned_moveit_candidates.append(
+                        SimpleNamespace(
+                            planning_index=attempt_index,
+                            placement_option_index=info.placement_option_index,
+                            staging_xy=info.staging_xy,
+                            placement_option=info.placement_option,
+                            active_plan=active_plan,
+                            transfer_candidate=transfer_candidate,
+                            final_candidate=final_candidate,
+                            transfer_initial_world_grasp=transfer_initial_world_grasp,
+                            transfer_staging_world_grasp=transfer_staging_world_grasp,
+                            final_world_grasp=final_world_grasp,
+                            moveit_joint_trajectories=moveit_joint_trajectories,
+                            path_cost=path_cost,
+                            trajectory_summary=summary,
+                            record=record,
+                        )
+                    )
+                    print(
+                        f"[INFO]: Planned regrasp candidate {attempt_index}/{len(candidate_specs)} "
+                        f"cost={path_cost:.3f} joint_path={float(summary['joint_path_length_rad']):.3f} rad "
+                        f"max_step={float(summary['max_joint_step_rad']):.3f} rad "
+                        f"points={int(summary['point_count'])}",
+                        flush=True,
+                    )
+
+                planned_moveit_candidates.sort(key=lambda candidate: float(candidate.path_cost))
+                if planned_moveit_candidates:
+                    best = planned_moveit_candidates[0]
+                    print(
+                        f"[INFO]: Selected cheapest MoveIt regrasp candidate "
+                        f"planning_index={best.planning_index} placement={best.placement_option_index} "
+                        f"xy=({best.staging_xy[0]:.3f}, {best.staging_xy[1]:.3f}) "
+                        f"cost={float(best.path_cost):.3f}",
+                        flush=True,
+                    )
+
+                for execution_rank, candidate in enumerate(planned_moveit_candidates, start=1):
+                    candidate.record["execution_rank"] = execution_rank
+                    candidate.record["execution_attempted"] = True
+                    active_plan = _active_regrasp_plan_for_attempt(
+                        plan=plan,
+                        placement_option=candidate.placement_option,
+                        transfer_candidate=candidate.transfer_candidate,
+                        final_candidate=candidate.final_candidate,
+                    )
+                    transfer_initial_world_grasp = candidate.transfer_initial_world_grasp
+                    transfer_staging_world_grasp = candidate.transfer_staging_world_grasp
+                    final_world_grasp = candidate.final_world_grasp
+                    print(
+                        f"[INFO]: Executing ranked MoveIt regrasp candidate "
+                        f"{execution_rank}/{len(planned_moveit_candidates)} "
+                        f"planning_index={candidate.planning_index} cost={float(candidate.path_cost):.3f}",
+                        flush=True,
+                    )
+                    regrasp_result = run_regrasp_plan_in_mujoco(
+                        robot_cfg=robot_cfg,
+                        execution_cfg=execution_cfg,
+                        object_mesh_path=object_mesh_path,
+                        initial_object_pose_world=plan.initial_object_pose_world,
+                        transfer_initial_grasp=transfer_initial_world_grasp,
+                        transfer_staging_grasp=transfer_staging_world_grasp,
+                        final_grasp=final_world_grasp,
+                        staging_object_pose_world=candidate.placement_option.staging_object_pose_world,
+                        final_grasp_candidate=candidate.final_candidate,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                        moveit_joint_trajectories=candidate.moveit_joint_trajectories,
+                        keep_generated_scene=args_cli.keep_generated_scene,
+                        show_viewer=args_cli.viewer,
+                        viewer_left_ui=args_cli.viewer_left_ui,
+                        viewer_right_ui=args_cli.viewer_right_ui,
+                        viewer_realtime=not args_cli.viewer_no_realtime,
+                        viewer_hold_seconds=args_cli.viewer_hold_seconds,
+                        viewer_block_at_end=args_cli.viewer_block_at_end,
+                    )
+                    attempts.append(
+                        {
+                            "attempt_index": candidate.planning_index,
+                            "execution_rank": execution_rank,
+                            "placement_option_index": candidate.placement_option_index,
+                            "staging_xy_world": list(candidate.staging_xy),
+                            "transfer_grasp_id": candidate.transfer_candidate.grasp_id,
+                            "final_grasp_id": candidate.final_candidate.grasp_id,
+                            "path_cost": float(candidate.path_cost),
+                            "trajectory_summary": candidate.trajectory_summary,
+                            "result": _object_payload(regrasp_result),
+                        }
+                    )
+                    print(
+                        f"[INFO]: Ranked MoveIt regrasp candidate {execution_rank}/{len(planned_moveit_candidates)} "
+                        f"finished success={regrasp_result.success} status={regrasp_result.status} "
+                        f"message={regrasp_result.message}",
+                        flush=True,
+                    )
+                    if regrasp_result.success:
+                        _write_regrasp_attempt_artifact(
+                            output_path=args_cli.attempt_artifact,
+                            input_json=args_cli.input_json,
+                            regrasp_plan_json=args_cli.regrasp_plan_json,
+                            plan=active_plan,
+                            transfer_initial_world_grasp=transfer_initial_world_grasp,
+                            transfer_staging_world_grasp=transfer_staging_world_grasp,
+                            final_world_grasp=final_world_grasp,
+                            result=regrasp_result,
+                            attempts=attempts,
+                            planned_candidates=planned_candidate_records,
+                        )
+                        print(f"[INFO]: Wrote attempt artifact to {args_cli.attempt_artifact}", flush=True)
+                        return
+
+                if regrasp_result is None:
+                    if (
+                        transfer_initial_world_grasp is None
+                        or transfer_staging_world_grasp is None
+                        or final_world_grasp is None
+                    ):
+                        transfer_initial_world_grasp = saved_grasp_to_world_grasp(
+                            plan.transfer_grasp,
+                            plan.initial_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                        transfer_staging_world_grasp = saved_grasp_to_world_grasp(
+                            plan.transfer_grasp,
+                            plan.staging_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                        final_world_grasp = saved_grasp_to_world_grasp(
+                            plan.final_grasp,
+                            plan.staging_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                    regrasp_result = MujocoRegraspAttemptResult(
+                        success=False,
+                        status="moveit_planning_failed",
+                        message=(
+                            "No MoveIt plan was found for any capped regrasp "
+                            "placement/transfer/final candidate combination."
+                        ),
+                        transfer_pregrasp_reached=False,
+                        transfer_grasp_reached=False,
+                        transfer_lift_reached=False,
+                        placement_reached=False,
+                        final_pregrasp_reached=False,
+                        final_grasp_reached=False,
+                        initial_object_position_world=tuple(
+                            float(v) for v in plan.initial_object_pose_world.position_world
+                        ),
+                        staged_object_position_world=tuple(
+                            float(v) for v in active_plan.staging_object_pose_world.position_world
+                        ),
+                        final_object_position_world=tuple(
+                            float(v) for v in plan.initial_object_pose_world.position_world
+                        ),
+                        final_lift_height_m=0.0,
+                        target_lift_height_m=float(execution_cfg.success_height_margin_m),
+                    )
+                _write_regrasp_attempt_artifact(
+                    output_path=args_cli.attempt_artifact,
+                    input_json=args_cli.input_json,
+                    regrasp_plan_json=args_cli.regrasp_plan_json,
+                    plan=active_plan,
+                    transfer_initial_world_grasp=transfer_initial_world_grasp,
+                    transfer_staging_world_grasp=transfer_staging_world_grasp,
+                    final_world_grasp=final_world_grasp,
+                    result=regrasp_result,
+                    attempts=attempts,
+                    planned_candidates=planned_candidate_records,
+                )
+                print(
+                    f"[INFO]: MuJoCo regrasp fallback exhausted {len(attempts)} attempt(s); "
+                    f"planned_candidates={len(planned_candidate_records)} "
+                    f"last_status={regrasp_result.status} message={regrasp_result.message}",
+                    flush=True,
+                )
+                print(f"[INFO]: Wrote attempt artifact to {args_cli.attempt_artifact}", flush=True)
+                raise RuntimeError(f"MuJoCo regrasp fallback failed after {len(attempts)} attempt(s).")
+            for placement_option_index, placement_option in enumerate(placement_options, start=1):
+                active_plan = _active_regrasp_plan_for_attempt(
+                    plan=plan,
+                    placement_option=placement_option,
+                    transfer_candidate=placement_option.transfer_grasp,
+                    final_candidate=placement_option.final_grasp,
+                )
+                staging_xy = (
+                    float(placement_option.staging_object_pose_world.position_world[0]),
+                    float(placement_option.staging_object_pose_world.position_world[1]),
+                )
+                transfer_candidates = _ordered_regrasp_candidates(
+                    placement_option.transfer_grasp,
+                    placement_option.transfer_grasp_candidates,
+                )
+                final_candidates = _ordered_regrasp_candidates(
+                    placement_option.final_grasp,
+                    placement_option.final_grasp_candidates,
+                )
+                print(
+                    f"[INFO]: Trying regrasp placement option {placement_option_index}/{len(placement_options)} "
+                    f"xy=({staging_xy[0]:.3f}, {staging_xy[1]:.3f}) "
+                    f"score={float(placement_option.metadata.get('placement_score', 0.0)):.3f}",
+                    flush=True,
+                )
+                for transfer_candidate in transfer_candidates:
+                    for final_candidate in final_candidates:
+                        attempt_index += 1
+                        active_plan = _active_regrasp_plan_for_attempt(
+                            plan=plan,
+                            placement_option=placement_option,
+                            transfer_candidate=transfer_candidate,
+                            final_candidate=final_candidate,
+                        )
+                        transfer_initial_world_grasp = saved_grasp_to_world_grasp(
+                            transfer_candidate,
+                            plan.initial_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                        transfer_staging_world_grasp = saved_grasp_to_world_grasp(
+                            transfer_candidate,
+                            placement_option.staging_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                        final_world_grasp = saved_grasp_to_world_grasp(
+                            final_candidate,
+                            placement_option.staging_object_pose_world,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                        )
+                        print(
+                            f"[INFO]: MuJoCo regrasp attempt {attempt_index}/{max_attempts} "
+                            f"placement={placement_option_index} "
+                            f"transfer={transfer_candidate.grasp_id} final={final_candidate.grasp_id}",
+                            flush=True,
+                        )
+                        moveit_joint_trajectories = None
+                        if args_cli.controller == "moveit":
+                            print("[INFO]: Planning MuJoCo regrasp fallback with MoveIt.", flush=True)
+                            try:
+                                moveit_joint_trajectories = _plan_moveit_regrasp_joint_trajectories(
+                                    args_cli,
+                                    robot_cfg=robot_cfg,
+                                    execution_cfg=execution_cfg,
+                                    transfer_initial_world_grasp=transfer_initial_world_grasp,
+                                    transfer_staging_world_grasp=transfer_staging_world_grasp,
+                                    final_world_grasp=final_world_grasp,
+                                )
+                                _print_moveit_joint_trajectory_diagnostics(
+                                    moveit_joint_trajectories,
+                                    prefix="MoveIt regrasp trajectory",
+                                )
+                            except RuntimeError as exc:
+                                message = str(exc)
+                                attempts.append(
+                                    {
+                                        "attempt_index": attempt_index,
+                                        "placement_option_index": placement_option_index,
+                                        "staging_xy_world": list(staging_xy),
+                                        "transfer_grasp_id": transfer_candidate.grasp_id,
+                                        "final_grasp_id": final_candidate.grasp_id,
+                                        "success": False,
+                                        "status": "moveit_planning_failed",
+                                        "message": message,
+                                    }
+                                )
+                                print(
+                                    f"[WARN]: Regrasp attempt {attempt_index}/{max_attempts} planning failed: "
+                                    f"{message}",
+                                    flush=True,
+                                )
+                                if _regrasp_failure_depends_on_transfer(message):
+                                    break
+                                continue
+                        regrasp_result = run_regrasp_plan_in_mujoco(
+                            robot_cfg=robot_cfg,
+                            execution_cfg=execution_cfg,
+                            object_mesh_path=object_mesh_path,
+                            initial_object_pose_world=plan.initial_object_pose_world,
+                            transfer_initial_grasp=transfer_initial_world_grasp,
+                            transfer_staging_grasp=transfer_staging_world_grasp,
+                            final_grasp=final_world_grasp,
+                            staging_object_pose_world=placement_option.staging_object_pose_world,
+                            final_grasp_candidate=final_candidate,
+                            pregrasp_offset=pregrasp_offset,
+                            gripper_width_clearance=gripper_width_clearance,
+                            moveit_joint_trajectories=moveit_joint_trajectories,
+                            keep_generated_scene=args_cli.keep_generated_scene,
+                            show_viewer=args_cli.viewer,
+                            viewer_left_ui=args_cli.viewer_left_ui,
+                            viewer_right_ui=args_cli.viewer_right_ui,
+                            viewer_realtime=not args_cli.viewer_no_realtime,
+                            viewer_hold_seconds=args_cli.viewer_hold_seconds,
+                            viewer_block_at_end=args_cli.viewer_block_at_end,
+                        )
+                        attempts.append(
+                            {
+                                "attempt_index": attempt_index,
+                                "placement_option_index": placement_option_index,
+                                "staging_xy_world": list(staging_xy),
+                                "transfer_grasp_id": transfer_candidate.grasp_id,
+                                "final_grasp_id": final_candidate.grasp_id,
+                                "result": _object_payload(regrasp_result),
+                            }
+                        )
+                        print(
+                            f"[INFO]: MuJoCo regrasp attempt {attempt_index}/{max_attempts} finished "
+                            f"success={regrasp_result.success} status={regrasp_result.status} "
+                            f"message={regrasp_result.message}",
+                            flush=True,
+                        )
+                        if regrasp_result.success:
+                            _write_regrasp_attempt_artifact(
+                                output_path=args_cli.attempt_artifact,
+                                input_json=args_cli.input_json,
+                                regrasp_plan_json=args_cli.regrasp_plan_json,
+                                plan=active_plan,
+                                transfer_initial_world_grasp=transfer_initial_world_grasp,
+                                transfer_staging_world_grasp=transfer_staging_world_grasp,
+                                final_world_grasp=final_world_grasp,
+                                result=regrasp_result,
+                                attempts=attempts,
+                            )
+                            print(f"[INFO]: Wrote attempt artifact to {args_cli.attempt_artifact}", flush=True)
+                            return
+                        if _regrasp_failure_depends_on_transfer(regrasp_result.status):
+                            break
+            if regrasp_result is None:
+                if (
+                    transfer_initial_world_grasp is None
+                    or transfer_staging_world_grasp is None
+                    or final_world_grasp is None
+                ):
+                    transfer_initial_world_grasp = saved_grasp_to_world_grasp(
+                        plan.transfer_grasp,
+                        plan.initial_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                    transfer_staging_world_grasp = saved_grasp_to_world_grasp(
+                        plan.transfer_grasp,
+                        plan.staging_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                    final_world_grasp = saved_grasp_to_world_grasp(
+                        plan.final_grasp,
+                        plan.staging_object_pose_world,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                regrasp_result = MujocoRegraspAttemptResult(
+                    success=False,
+                    status="moveit_planning_failed",
+                    message="No MoveIt plan was found for any regrasp placement/transfer/final candidate combination.",
+                    transfer_pregrasp_reached=False,
+                    transfer_grasp_reached=False,
+                    transfer_lift_reached=False,
+                    placement_reached=False,
+                    final_pregrasp_reached=False,
+                    final_grasp_reached=False,
+                    initial_object_position_world=tuple(float(v) for v in plan.initial_object_pose_world.position_world),
+                    staged_object_position_world=tuple(
+                        float(v) for v in active_plan.staging_object_pose_world.position_world
+                    ),
+                    final_object_position_world=tuple(float(v) for v in plan.initial_object_pose_world.position_world),
+                    final_lift_height_m=0.0,
+                    target_lift_height_m=float(execution_cfg.success_height_margin_m),
+                )
+            _write_regrasp_attempt_artifact(
+                output_path=args_cli.attempt_artifact,
+                input_json=args_cli.input_json,
+                regrasp_plan_json=args_cli.regrasp_plan_json,
+                plan=active_plan,
+                transfer_initial_world_grasp=transfer_initial_world_grasp,
+                transfer_staging_world_grasp=transfer_staging_world_grasp,
+                final_world_grasp=final_world_grasp,
+                result=regrasp_result,
+                attempts=attempts,
+            )
+            print(
+                f"[INFO]: MuJoCo regrasp fallback exhausted {len(attempts)} attempt(s); "
+                f"last_status={regrasp_result.status} message={regrasp_result.message}",
+                flush=True,
+            )
+            print(f"[INFO]: Wrote attempt artifact to {args_cli.attempt_artifact}", flush=True)
+            raise RuntimeError(f"MuJoCo regrasp fallback failed after {len(attempts)} attempt(s).")
+
+        placement_spec, object_pose_world = _resolve_object_pose_world_from_bundle(args_cli, bundle, mesh_local)
+        statuses = evaluate_saved_grasps_against_pickup_pose(
+            bundle.candidates,
+            object_pose_world=object_pose_world,
+            contact_gap_m=contact_gap_m,
+        )
+        feasible = accepted_grasps(statuses)
+        if not feasible:
+            raise RuntimeError("No ground-feasible grasps remain for the requested pickup pose.")
+
+        feasible = score_grasps(feasible, mesh_local=mesh_local)
+        selected_grasps = _ordered_feasible_grasps(feasible=feasible, requested_grasp_id=args_cli.grasp_id)
+        if not selected_grasps:
+            raise RuntimeError("No feasible grasp could be selected after scoring.")
+
         attempts: list[dict[str, object]] = []
         selected_world_grasp = None
         result = None
@@ -585,6 +1537,10 @@ def main() -> None:
                     robot_cfg=robot_cfg,
                     execution_cfg=execution_cfg,
                     world_grasp=selected_world_grasp,
+                )
+                _print_moveit_joint_trajectory_diagnostics(
+                    moveit_joint_trajectories,
+                    prefix="MoveIt pickup trajectory",
                 )
             result = run_world_grasp_in_mujoco(
                 robot_cfg=robot_cfg,

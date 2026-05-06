@@ -10,7 +10,7 @@ scene:
   object:
     mass_kg: 0.15
     scale: 1.0
-    friction: [5.2, 0.08, 0.01]
+    friction: [7.5, 0.16, 0.03]
     condim: 6
     solref: [0.003, 1.0]
     solimp: [0.95, 0.99, 0.001]
@@ -22,16 +22,17 @@ scene:
 robot:
   timestep_s: 0.002
   control_substeps: 8
-  speed_scale: 2.0
+  speed_scale: 5.0
   settle_steps: 120
   ik_max_iters: 200
   ik_damping: 0.001
   ik_step_size: 0.7
   ik_position_tolerance_m: 0.003
   ik_orientation_tolerance_rad: 0.04
-  trajectory_waypoints: 25
-  waypoint_settle_steps: 45
+  trajectory_waypoints: 20
+  waypoint_settle_steps: 30
   lift_height_m: 0.12
+  regrasp_transport_clearance_m: 0.22
   hold_steps: 240
   success_height_margin_m: 0.05
 
