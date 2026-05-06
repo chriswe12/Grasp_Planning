@@ -194,10 +194,12 @@ Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
 
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
+- `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
+- `regrasp_transfer_top_grasp_score_weight` applies the same top-down score to the regrasp transfer pickup in the initial pose. It defaults higher than `top_grasp_score_weight` because the first pickup is more sensitive to wrist orientation than setting the object back down.
 - `skip_stage1_collision_checks: true` keeps all generated stage-1 grasps and skips offline assembly collision filtering. For a one-off run, pass `--skip-stage1-collision-checks`.
 
 Use `configs/mujoco_simulation.yaml` to tune:
@@ -206,11 +208,30 @@ Use `configs/mujoco_simulation.yaml` to tune:
 - robot timing and speed such as `timestep_s`, `control_substeps`, `speed_scale`, IK and trajectory settings
 - gripper actuation and settle behavior such as `open_ctrl`, `closed_ctrl`, and `close_steps`
 
-MuJoCo can either use its native damped-IK arm controller or MoveIt-planned arm trajectories:
-- default: `mujoco_execution.controller: "native"`
-- MoveIt planning with MuJoCo physics/viewer: set `mujoco_execution.controller: "moveit"`
+MuJoCo also has an optional one-placement regrasp fallback for the case where stage 1 finds assembly-feasible grasps but stage 2 rejects all of them because of the floor. Configure it in the `mujoco_execution` block:
+- `regrasp_fallback_enabled: true`
+- `force_regrasp_fallback: true` or `./run_pipeline.sh ... --force-regrasp-fallback` to test the fallback even when direct stage-2 grasps exist; forced mode skips the surface currently on the floor and fails clearly if no feasible different-surface plan exists
+- `regrasp_plan_artifact` for the JSON plan containing the transfer grasp, staging pose, and final grasp
+- `regrasp_html_artifact` for the side-by-side debug view of the initial/staging poses, floor plane, all evaluated grasp markers, and highlighted planned transfer/final grasps
+- `regrasp_staging_xy_offsets_m` samples multiple table XY locations around `regrasp_staging_xy_world`
+- `regrasp_max_placement_options` caps how many feasible placement options are written into the regrasp plan
+- `regrasp_moveit_max_candidate_plans`, `regrasp_moveit_transfer_candidates_per_placement`, and `regrasp_moveit_final_candidates_per_placement` cap the runtime MoveIt candidate plans scored before MuJoCo execution
 
-The MoveIt-backed MuJoCo path requires the FR3 MoveIt stack to be running and sourced, but only uses MoveIt planning services. MoveIt plans `pregrasp`, `grasp`, and `lift` joint trajectories from the stage-2 bundle; MuJoCo still executes those joint waypoints, closes the gripper, simulates contacts, and evaluates pickup success by object lift height.
+The fallback computes convex-hull support facets, checks homogeneous-COM stability for candidate resting poses, samples staging XY locations, searches for a final assembly-feasible grasp in each staging pose, and then searches raw stage-1 grasps for a transfer grasp that is floor-feasible in both the initial and staging poses. MuJoCo can execute this fallback either with native IK or with MoveIt-planned transfer/place/final-pick trajectories. With MoveIt, execution first plans and scores a capped set of placement/transfer/final-grasp combinations, ranks them by joint path length, joint jumps, and the static placement score, then executes the cheapest candidate in MuJoCo and falls back to the next cheapest if needed. During regrasp transport, the runner inserts higher lift/rotate/translate waypoints before descending to the staging placement; tune that with `robot.regrasp_transport_clearance_m` in `configs/mujoco_simulation.yaml`. The MuJoCo attempt artifact includes `planned_candidates`, `attempts`, and trajectory diagnostics for debugging path choice.
+
+For a planner-only regrasp visualization that uses a known different-surface case, run:
+
+```bash
+./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_plumbers_regrasp.yaml --backend none --headless
+```
+
+This writes `artifacts/plumbers_mujoco_regrasp_plan.html` without launching MuJoCo execution.
+
+MuJoCo can either use its native damped-IK arm controller or MoveIt-planned arm trajectories:
+- default sim config: `mujoco_execution.controller: "moveit"`
+- native MuJoCo IK: set `mujoco_execution.controller: "native"`
+
+The MoveIt-backed MuJoCo path requires the FR3 MoveIt stack to be running and sourced, but only uses MoveIt planning services. For direct pickups, MoveIt plans `pregrasp`, `grasp`, and `lift` trajectories from the stage-2 bundle. For regrasp fallback, it plans transfer, staging placement, retreat, and final-pick trajectories. MuJoCo still executes those joint waypoints, closes/opens the gripper, simulates contacts, and evaluates pickup success by object lift height.
 
 For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only.
 

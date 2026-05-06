@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -13,12 +13,13 @@ import numpy as np
 
 from grasp_planning.grasping.fabrica_grasp_debug import (
     SavedGraspBundle,
+    SavedGraspCandidate,
     TriangleMesh,
     load_stl_mesh,
     quat_to_rotmat_xyzw,
     rotmat_to_quat_xyzw,
 )
-from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
+from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate, saved_grasp_to_world_grasp
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 
 from .scene_builder import MujocoObjectSceneConfig, write_temporary_scene_xml
@@ -65,6 +66,7 @@ class MujocoExecutionConfig:
     settle_steps: int = 120
     close_steps: int = 240
     lift_height_m: float = 0.12
+    regrasp_transport_clearance_m: float = 0.22
     hold_steps: int = 240
     trajectory_waypoints: int = 25
     waypoint_settle_steps: int = 45
@@ -100,6 +102,29 @@ class MujocoAttemptResult:
     position_error_m: float | None = None
     orientation_error_rad: float | None = None
     generated_scene_xml: str | None = None
+    trajectory_diagnostics: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
+class MujocoRegraspAttemptResult:
+    """Summary of a MuJoCo transfer-place-final-pick fallback attempt."""
+
+    success: bool
+    status: str
+    message: str
+    transfer_pregrasp_reached: bool
+    transfer_grasp_reached: bool
+    transfer_lift_reached: bool
+    placement_reached: bool
+    final_pregrasp_reached: bool
+    final_grasp_reached: bool
+    initial_object_position_world: tuple[float, float, float]
+    staged_object_position_world: tuple[float, float, float]
+    final_object_position_world: tuple[float, float, float]
+    final_lift_height_m: float
+    target_lift_height_m: float
+    generated_scene_xml: str | None = None
+    trajectory_diagnostics: tuple[dict[str, object], ...] = ()
 
 
 MoveItJointTrajectories = Mapping[str, tuple[tuple[float, ...], ...]]
@@ -212,6 +237,7 @@ class MujocoPickupRuntime:
         self._viewer_realtime = True
         self._viewer_wall_start_s = 0.0
         self._viewer_sim_start_s = 0.0
+        self._trajectory_diagnostics: list[dict[str, object]] = []
         if robot_cfg.ee_site_name:
             self._site_id = self._mujoco.mj_name2id(self._model, self._mujoco.mjtObj.mjOBJ_SITE, robot_cfg.ee_site_name)
             if self._site_id < 0:
@@ -420,6 +446,75 @@ class MujocoPickupRuntime:
     def object_position_world(self) -> np.ndarray:
         return np.asarray(self._data.xpos[self._object_body_id], dtype=float).copy()
 
+    def _scratch_data_from_current_state(self):
+        scratch = self._mujoco.MjData(self._model)
+        scratch.qpos[:] = self._data.qpos
+        scratch.qvel[:] = self._data.qvel
+        if (
+            hasattr(self._data, "act")
+            and hasattr(scratch, "act")
+            and self._data.act is not None
+            and scratch.act is not None
+        ):
+            scratch.act[:] = self._data.act
+        scratch.ctrl[:] = self._data.ctrl
+        self._mujoco.mj_forward(self._model, scratch)
+        return scratch
+
+    def _planned_waypoint_diagnostics(
+        self,
+        *,
+        label: str,
+        waypoints: tuple[tuple[float, ...], ...],
+    ) -> dict[str, object]:
+        diagnostic: dict[str, object] = {
+            "label": str(label),
+            "point_count": int(len(waypoints)),
+        }
+        if not waypoints:
+            diagnostic["failure_reason"] = "no_waypoints"
+            return diagnostic
+
+        q_sequence = [self.get_arm_qpos()]
+        q_sequence.extend(np.asarray(waypoint, dtype=float) for waypoint in waypoints)
+        q_matrix = np.asarray(q_sequence, dtype=float)
+        q_deltas = np.diff(q_matrix, axis=0)
+        if q_deltas.size:
+            joint_segment_lengths = np.linalg.norm(q_deltas, axis=1)
+            diagnostic["joint_path_length_rad"] = float(np.sum(joint_segment_lengths))
+            diagnostic["max_joint_step_rad"] = float(np.max(np.abs(q_deltas)))
+        else:
+            diagnostic["joint_path_length_rad"] = 0.0
+            diagnostic["max_joint_step_rad"] = 0.0
+
+        scratch = self._scratch_data_from_current_state()
+        tcp_positions = []
+        for qpos in q_sequence:
+            scratch.qpos[self._arm_qpos_indices] = np.asarray(qpos, dtype=float)
+            self._mujoco.mj_forward(self._model, scratch)
+            tcp_position, _ = self._site_pose_from_data(scratch)
+            tcp_positions.append(tcp_position)
+        tcp_matrix = np.asarray(tcp_positions, dtype=float)
+        tcp_deltas = np.diff(tcp_matrix, axis=0)
+        diagnostic["tcp_path_length_m"] = float(np.sum(np.linalg.norm(tcp_deltas, axis=1))) if tcp_deltas.size else 0.0
+        diagnostic["tcp_min_z_m"] = float(np.min(tcp_matrix[:, 2]))
+        diagnostic["tcp_max_z_m"] = float(np.max(tcp_matrix[:, 2]))
+        diagnostic["tcp_start_xyz"] = [float(v) for v in tcp_matrix[0]]
+        diagnostic["tcp_end_xyz"] = [float(v) for v in tcp_matrix[-1]]
+        return diagnostic
+
+    def object_pose_world(self) -> ObjectWorldPose:
+        quat_wxyz = np.asarray(self._data.xquat[self._object_body_id], dtype=float).copy()
+        return ObjectWorldPose(
+            position_world=tuple(float(v) for v in self.object_position_world()),
+            orientation_xyzw_world=(
+                float(quat_wxyz[1]),
+                float(quat_wxyz[2]),
+                float(quat_wxyz[3]),
+                float(quat_wxyz[0]),
+            ),
+        )
+
     def _apply_home_configuration(self) -> None:
         if not self._robot_cfg.home_joint_positions:
             return
@@ -512,26 +607,68 @@ class MujocoPickupRuntime:
         final_error = float(np.max(np.abs(self.get_arm_qpos() - q_goal)))
         return final_error <= 0.02
 
+    def reach_world_grasp_pose(
+        self,
+        *,
+        position_w: tuple[float, float, float],
+        orientation_xyzw: tuple[float, float, float, float],
+        gripper_ctrl: tuple[float, ...],
+    ) -> tuple[bool, float, float]:
+        q_goal, position_error_m, orientation_error_rad = self.solve_ik(
+            position_w,
+            orientation_xyzw,
+            gripper_ctrl=gripper_ctrl,
+        )
+        if q_goal is None:
+            return False, position_error_m, orientation_error_rad
+        reached = self.execute_joint_target(q_goal, gripper_ctrl=gripper_ctrl)
+        return bool(reached), position_error_m, orientation_error_rad
+
     def execute_joint_waypoints(
         self,
         waypoints: tuple[tuple[float, ...], ...],
         *,
         gripper_ctrl: tuple[float, ...],
+        label: str = "",
     ) -> bool:
-        if not waypoints:
-            return False
         expected = len(self._robot_cfg.arm_joint_names)
         for waypoint in waypoints:
+            q_size = np.asarray(waypoint, dtype=float).size
+            if q_size != expected:
+                raise ValueError(f"Expected {expected} MoveIt joint positions, got {q_size}.")
+        diagnostic = self._planned_waypoint_diagnostics(label=label or "unnamed", waypoints=waypoints)
+        if not waypoints:
+            diagnostic["success"] = False
+            self._trajectory_diagnostics.append(diagnostic)
+            return False
+        observed_tcp_min_z = float("inf")
+        observed_tcp_max_z = float("-inf")
+        observed_object_center_min_z = float("inf")
+        observed_object_center_max_z = float("-inf")
+        for waypoint in waypoints:
             q_target = np.asarray(waypoint, dtype=float)
-            if q_target.size != expected:
-                raise ValueError(f"Expected {expected} MoveIt joint positions, got {q_target.size}.")
             for _ in range(self._scaled_arm_steps(self._execution_cfg.waypoint_settle_steps)):
                 self._set_arm_ctrl(q_target)
                 self._set_gripper_ctrl(gripper_ctrl)
                 self._step(self._robot_cfg.control_substeps)
+                tcp_position, _ = self._site_pose_from_data(self._data)
+                object_position = self.object_position_world()
+                observed_tcp_min_z = min(observed_tcp_min_z, float(tcp_position[2]))
+                observed_tcp_max_z = max(observed_tcp_max_z, float(tcp_position[2]))
+                observed_object_center_min_z = min(observed_object_center_min_z, float(object_position[2]))
+                observed_object_center_max_z = max(observed_object_center_max_z, float(object_position[2]))
         final_goal = np.asarray(waypoints[-1], dtype=float)
         final_error = float(np.max(np.abs(self.get_arm_qpos() - final_goal)))
-        return final_error <= 0.02
+        success = final_error <= 0.02
+        diagnostic["final_joint_error_rad"] = final_error
+        diagnostic["success"] = bool(success)
+        if np.isfinite(observed_tcp_min_z):
+            diagnostic["observed_tcp_min_z_m"] = float(observed_tcp_min_z)
+            diagnostic["observed_tcp_max_z_m"] = float(observed_tcp_max_z)
+            diagnostic["observed_object_center_min_z_m"] = float(observed_object_center_min_z)
+            diagnostic["observed_object_center_max_z_m"] = float(observed_object_center_max_z)
+        self._trajectory_diagnostics.append(diagnostic)
+        return success
 
     def close_gripper(self) -> dict[str, object]:
         q_hold = self.get_arm_qpos()
@@ -561,6 +698,13 @@ class MujocoPickupRuntime:
         summary["settled"] = bool(settled or self._gripper_qpos_indices.size == 0)
         summary["stable_steps"] = int(stable_steps)
         return summary
+
+    def open_gripper(self) -> None:
+        q_hold = self.get_arm_qpos()
+        for _ in range(max(1, int(self._execution_cfg.close_steps // 2))):
+            self._set_arm_ctrl(q_hold)
+            self._set_gripper_ctrl(self._robot_cfg.open_gripper_ctrl)
+            self._step(self._robot_cfg.control_substeps)
 
     def hold_closed(self) -> None:
         q_hold = self.get_arm_qpos()
@@ -681,6 +825,507 @@ class MujocoPickupRuntime:
             generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
         )
 
+    def run_regrasp(
+        self,
+        *,
+        transfer_initial_grasp: WorldFrameGraspCandidate,
+        transfer_staging_grasp: WorldFrameGraspCandidate,
+        final_grasp: WorldFrameGraspCandidate,
+        staging_object_pose_world: ObjectWorldPose | None = None,
+        final_grasp_candidate: SavedGraspCandidate | None = None,
+        pregrasp_offset: float | None = None,
+        gripper_width_clearance: float | None = None,
+    ) -> MujocoRegraspAttemptResult:
+        self._forward()
+        self.settle_home()
+        initial_object_position_world = self.object_position_world()
+        staged_object_position_world = initial_object_position_world.copy()
+
+        def _result(
+            *,
+            success: bool,
+            status: str,
+            message: str,
+            transfer_pregrasp_reached: bool = False,
+            transfer_grasp_reached: bool = False,
+            transfer_lift_reached: bool = False,
+            placement_reached: bool = False,
+            final_pregrasp_reached: bool = False,
+            final_grasp_reached: bool = False,
+            staged_position: np.ndarray | None = None,
+        ) -> MujocoRegraspAttemptResult:
+            staged = staged_object_position_world if staged_position is None else staged_position
+            final_position = self.object_position_world()
+            final_lift_height_m = (
+                0.0
+                if not final_grasp_reached
+                else float(final_position[2] - float(staged[2]))
+            )
+            return MujocoRegraspAttemptResult(
+                success=bool(success),
+                status=status,
+                message=message,
+                transfer_pregrasp_reached=bool(transfer_pregrasp_reached),
+                transfer_grasp_reached=bool(transfer_grasp_reached),
+                transfer_lift_reached=bool(transfer_lift_reached),
+                placement_reached=bool(placement_reached),
+                final_pregrasp_reached=bool(final_pregrasp_reached),
+                final_grasp_reached=bool(final_grasp_reached),
+                initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                staged_object_position_world=tuple(float(v) for v in staged),
+                final_object_position_world=tuple(float(v) for v in final_position),
+                final_lift_height_m=float(final_lift_height_m),
+                target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
+                generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            )
+
+        if self._gripper_actuator_ids.size == 0:
+            return _result(
+                success=False,
+                status="no_gripper_configured",
+                message=(
+                    "The selected MuJoCo robot model has no gripper actuators configured. "
+                    "Regrasp fallback requires pickup execution."
+                ),
+            )
+
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=transfer_initial_grasp.pregrasp_position_w,
+            orientation_xyzw=transfer_initial_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="transfer_pregrasp_failed",
+                message=f"Failed to reach transfer pregrasp: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+            )
+        transfer_pregrasp_reached = True
+
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=transfer_initial_grasp.position_w,
+            orientation_xyzw=transfer_initial_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="transfer_grasp_failed",
+                message=f"Failed to reach transfer grasp: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+            )
+        transfer_grasp_reached = True
+        self.close_gripper()
+
+        transfer_lift_target = (
+            float(transfer_initial_grasp.position_w[0]),
+            float(transfer_initial_grasp.position_w[1]),
+            float(transfer_initial_grasp.position_w[2] + self._execution_cfg.lift_height_m),
+        )
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=transfer_lift_target,
+            orientation_xyzw=transfer_initial_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="transfer_lift_failed",
+                message=f"Failed to lift transfer grasp: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+            )
+        transfer_lift_reached = True
+
+        transport_z = max(
+            float(transfer_initial_grasp.position_w[2]),
+            float(transfer_staging_grasp.position_w[2]),
+        ) + max(float(self._execution_cfg.lift_height_m), float(self._execution_cfg.regrasp_transport_clearance_m))
+        transport_targets = (
+            (
+                (
+                    float(transfer_initial_grasp.position_w[0]),
+                    float(transfer_initial_grasp.position_w[1]),
+                    float(transport_z),
+                ),
+                transfer_initial_grasp.orientation_xyzw,
+                "transfer_transport_lift",
+            ),
+            (
+                (
+                    float(transfer_initial_grasp.position_w[0]),
+                    float(transfer_initial_grasp.position_w[1]),
+                    float(transport_z),
+                ),
+                transfer_staging_grasp.orientation_xyzw,
+                "transfer_transport_rotate",
+            ),
+            (
+                (
+                    float(transfer_staging_grasp.position_w[0]),
+                    float(transfer_staging_grasp.position_w[1]),
+                    float(transport_z),
+                ),
+                transfer_staging_grasp.orientation_xyzw,
+                "staging_transport",
+            ),
+        )
+        for position_w, orientation_xyzw, label in transport_targets:
+            ok, pos_err, rot_err = self.reach_world_grasp_pose(
+                position_w=position_w,
+                orientation_xyzw=orientation_xyzw,
+                gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+            )
+            if not ok:
+                return _result(
+                    success=False,
+                    status=f"{label}_failed",
+                    message=f"Failed to reach {label}: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                    transfer_pregrasp_reached=transfer_pregrasp_reached,
+                    transfer_grasp_reached=transfer_grasp_reached,
+                    transfer_lift_reached=transfer_lift_reached,
+                )
+
+        staging_lift_target = (
+            float(transfer_staging_grasp.position_w[0]),
+            float(transfer_staging_grasp.position_w[1]),
+            float(transfer_staging_grasp.position_w[2] + self._execution_cfg.lift_height_m),
+        )
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=staging_lift_target,
+            orientation_xyzw=transfer_staging_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="staging_preplace_failed",
+                message=f"Failed to reach staging pre-place: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+            )
+
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=transfer_staging_grasp.position_w,
+            orientation_xyzw=transfer_staging_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="placement_failed",
+                message=f"Failed to place object at staging pose: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+            )
+        placement_reached = True
+        self.open_gripper()
+        self._step(self._execution_cfg.settle_steps)
+        staged_object_position_world = self.object_position_world()
+        if final_grasp_candidate is not None:
+            final_grasp = saved_grasp_to_world_grasp(
+                final_grasp_candidate,
+                self.object_pose_world(),
+                pregrasp_offset=final_grasp.pregrasp_offset if pregrasp_offset is None else float(pregrasp_offset),
+                gripper_width_clearance=(
+                    final_grasp.gripper_width - final_grasp.jaw_width
+                    if gripper_width_clearance is None
+                    else float(gripper_width_clearance)
+                ),
+            )
+        elif staging_object_pose_world is not None:
+            placement_delta = staged_object_position_world - np.asarray(
+                staging_object_pose_world.position_world,
+                dtype=float,
+            )
+            final_grasp = replace(
+                final_grasp,
+                position_w=tuple(float(v) for v in (np.asarray(final_grasp.position_w, dtype=float) + placement_delta)),
+                pregrasp_position_w=tuple(
+                    float(v) for v in (np.asarray(final_grasp.pregrasp_position_w, dtype=float) + placement_delta)
+                ),
+                contact_point_a_w=tuple(
+                    float(v) for v in (np.asarray(final_grasp.contact_point_a_w, dtype=float) + placement_delta)
+                ),
+                contact_point_b_w=tuple(
+                    float(v) for v in (np.asarray(final_grasp.contact_point_b_w, dtype=float) + placement_delta)
+                ),
+            )
+
+        self.reach_world_grasp_pose(
+            position_w=transfer_staging_grasp.pregrasp_position_w,
+            orientation_xyzw=transfer_staging_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        )
+
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=final_grasp.pregrasp_position_w,
+            orientation_xyzw=final_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="final_pregrasp_failed",
+                message=f"Failed to reach final pregrasp: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+                placement_reached=placement_reached,
+                staged_position=staged_object_position_world,
+            )
+        final_pregrasp_reached = True
+
+        ok, pos_err, rot_err = self.reach_world_grasp_pose(
+            position_w=final_grasp.position_w,
+            orientation_xyzw=final_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+        )
+        if not ok:
+            return _result(
+                success=False,
+                status="final_grasp_failed",
+                message=f"Failed to reach final grasp: position_error={pos_err:.4f} orientation_error={rot_err:.4f}",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+                placement_reached=placement_reached,
+                final_pregrasp_reached=final_pregrasp_reached,
+                staged_position=staged_object_position_world,
+            )
+        final_grasp_reached = True
+        self.close_gripper()
+
+        final_lift_target = (
+            float(final_grasp.position_w[0]),
+            float(final_grasp.position_w[1]),
+            float(final_grasp.position_w[2] + self._execution_cfg.lift_height_m),
+        )
+        self.reach_world_grasp_pose(
+            position_w=final_lift_target,
+            orientation_xyzw=final_grasp.orientation_xyzw,
+            gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+        )
+        self.hold_closed()
+        final_object_position_world = self.object_position_world()
+        final_lift_height_m = float(final_object_position_world[2] - staged_object_position_world[2])
+        success = final_lift_height_m >= float(self._execution_cfg.success_height_margin_m)
+        return _result(
+            success=success,
+            status="ok" if success else "final_lift_failed",
+            message=(
+                f"Final pickup lifted object by {final_lift_height_m:.4f} m "
+                f"(required {self._execution_cfg.success_height_margin_m:.4f} m)."
+            ),
+            transfer_pregrasp_reached=transfer_pregrasp_reached,
+            transfer_grasp_reached=transfer_grasp_reached,
+            transfer_lift_reached=transfer_lift_reached,
+            placement_reached=placement_reached,
+            final_pregrasp_reached=final_pregrasp_reached,
+            final_grasp_reached=final_grasp_reached,
+            staged_position=staged_object_position_world,
+        )
+
+    def run_moveit_regrasp_joint_trajectories(
+        self,
+        *,
+        trajectories: MoveItJointTrajectories,
+    ) -> MujocoRegraspAttemptResult:
+        self._forward()
+        self.settle_home()
+        initial_object_position_world = self.object_position_world()
+        staged_object_position_world = initial_object_position_world.copy()
+
+        def _result(
+            *,
+            success: bool,
+            status: str,
+            message: str,
+            transfer_pregrasp_reached: bool = False,
+            transfer_grasp_reached: bool = False,
+            transfer_lift_reached: bool = False,
+            placement_reached: bool = False,
+            final_pregrasp_reached: bool = False,
+            final_grasp_reached: bool = False,
+            staged_position: np.ndarray | None = None,
+        ) -> MujocoRegraspAttemptResult:
+            staged = staged_object_position_world if staged_position is None else staged_position
+            final_position = self.object_position_world()
+            final_lift_height_m = 0.0 if not final_grasp_reached else float(final_position[2] - float(staged[2]))
+            return MujocoRegraspAttemptResult(
+                success=bool(success),
+                status=status,
+                message=message,
+                transfer_pregrasp_reached=bool(transfer_pregrasp_reached),
+                transfer_grasp_reached=bool(transfer_grasp_reached),
+                transfer_lift_reached=bool(transfer_lift_reached),
+                placement_reached=bool(placement_reached),
+                final_pregrasp_reached=bool(final_pregrasp_reached),
+                final_grasp_reached=bool(final_grasp_reached),
+                initial_object_position_world=tuple(float(v) for v in initial_object_position_world),
+                staged_object_position_world=tuple(float(v) for v in staged),
+                final_object_position_world=tuple(float(v) for v in final_position),
+                final_lift_height_m=float(final_lift_height_m),
+                target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
+                generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+                trajectory_diagnostics=tuple(self._trajectory_diagnostics),
+            )
+
+        def _execute(label: str, *, gripper_ctrl: tuple[float, ...]) -> bool:
+            return self.execute_joint_waypoints(
+                tuple(trajectories.get(label, ())),
+                gripper_ctrl=gripper_ctrl,
+                label=label,
+            )
+
+        if self._gripper_actuator_ids.size == 0:
+            return _result(
+                success=False,
+                status="no_gripper_configured",
+                message=(
+                    "The selected MuJoCo robot model has no gripper actuators configured. "
+                    "Regrasp fallback requires pickup execution."
+                ),
+            )
+
+        if not _execute("transfer_pregrasp", gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_transfer_pregrasp_failed",
+                message="Failed to execute the MoveIt transfer pregrasp trajectory in MuJoCo.",
+            )
+        transfer_pregrasp_reached = True
+
+        if not _execute("transfer_grasp", gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_transfer_grasp_failed",
+                message="Failed to execute the MoveIt transfer grasp trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+            )
+        transfer_grasp_reached = True
+        self.close_gripper()
+
+        if not _execute("transfer_lift", gripper_ctrl=self._robot_cfg.closed_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_transfer_lift_failed",
+                message="Failed to execute the MoveIt transfer lift trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+            )
+        transfer_lift_reached = True
+
+        for transport_label in ("transfer_transport_lift", "transfer_transport_rotate", "staging_transport"):
+            if transport_label not in trajectories:
+                continue
+            if not _execute(transport_label, gripper_ctrl=self._robot_cfg.closed_gripper_ctrl):
+                return _result(
+                    success=False,
+                    status=f"moveit_{transport_label}_failed",
+                    message=f"Failed to execute the MoveIt {transport_label} trajectory in MuJoCo.",
+                    transfer_pregrasp_reached=transfer_pregrasp_reached,
+                    transfer_grasp_reached=transfer_grasp_reached,
+                    transfer_lift_reached=transfer_lift_reached,
+                )
+
+        if not _execute("staging_preplace", gripper_ctrl=self._robot_cfg.closed_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_staging_preplace_failed",
+                message="Failed to execute the MoveIt staging pre-place trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+            )
+
+        if not _execute("placement", gripper_ctrl=self._robot_cfg.closed_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_placement_failed",
+                message="Failed to execute the MoveIt placement trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+            )
+        placement_reached = True
+        self.open_gripper()
+        self._step(self._execution_cfg.settle_steps)
+        staged_object_position_world = self.object_position_world()
+
+        if not _execute("staging_retreat", gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_staging_retreat_failed",
+                message="Failed to execute the MoveIt staging retreat trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+                placement_reached=placement_reached,
+                staged_position=staged_object_position_world,
+            )
+
+        if not _execute("final_pregrasp", gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_final_pregrasp_failed",
+                message="Failed to execute the MoveIt final pregrasp trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+                placement_reached=placement_reached,
+                staged_position=staged_object_position_world,
+            )
+        final_pregrasp_reached = True
+
+        if not _execute("final_grasp", gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+            return _result(
+                success=False,
+                status="moveit_final_grasp_failed",
+                message="Failed to execute the MoveIt final grasp trajectory in MuJoCo.",
+                transfer_pregrasp_reached=transfer_pregrasp_reached,
+                transfer_grasp_reached=transfer_grasp_reached,
+                transfer_lift_reached=transfer_lift_reached,
+                placement_reached=placement_reached,
+                final_pregrasp_reached=final_pregrasp_reached,
+                staged_position=staged_object_position_world,
+            )
+        final_grasp_reached = True
+        self.close_gripper()
+
+        final_lift_reached = _execute("final_lift", gripper_ctrl=self._robot_cfg.closed_gripper_ctrl)
+        self.hold_closed()
+        final_object_position_world = self.object_position_world()
+        final_lift_height_m = float(final_object_position_world[2] - staged_object_position_world[2])
+        target_lift_height_m = float(self._execution_cfg.success_height_margin_m)
+        success = bool(final_lift_reached and final_lift_height_m >= target_lift_height_m)
+        if success:
+            status = "ok"
+            message = f"Final pickup lifted object by {final_lift_height_m:.4f} m."
+        elif not final_lift_reached:
+            status = "moveit_final_lift_failed"
+            message = "Failed to execute the MoveIt final lift trajectory in MuJoCo."
+        else:
+            status = "final_lift_failed"
+            message = (
+                f"Final pickup lifted object by {final_lift_height_m:.4f} m "
+                f"(required {target_lift_height_m:.4f} m)."
+            )
+        return _result(
+            success=success,
+            status=status,
+            message=message,
+            transfer_pregrasp_reached=transfer_pregrasp_reached,
+            transfer_grasp_reached=transfer_grasp_reached,
+            transfer_lift_reached=transfer_lift_reached,
+            placement_reached=placement_reached,
+            final_pregrasp_reached=final_pregrasp_reached,
+            final_grasp_reached=final_grasp_reached,
+            staged_position=staged_object_position_world,
+        )
+
     def run_moveit_joint_trajectories(
         self,
         *,
@@ -711,6 +1356,7 @@ class MujocoPickupRuntime:
         if not self.execute_joint_waypoints(
             pregrasp_waypoints,
             gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+            label="pregrasp",
         ):
             return MujocoAttemptResult(
                 success=False,
@@ -723,12 +1369,14 @@ class MujocoPickupRuntime:
                 lift_height_m=0.0,
                 target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
                 generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+                trajectory_diagnostics=tuple(self._trajectory_diagnostics),
             )
 
         grasp_waypoints = tuple(trajectories.get("grasp", ()))
         if not self.execute_joint_waypoints(
             grasp_waypoints,
             gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
+            label="grasp",
         ):
             return MujocoAttemptResult(
                 success=False,
@@ -741,12 +1389,14 @@ class MujocoPickupRuntime:
                 lift_height_m=0.0,
                 target_lift_height_m=float(self._execution_cfg.success_height_margin_m),
                 generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+                trajectory_diagnostics=tuple(self._trajectory_diagnostics),
             )
 
         self.close_gripper()
         lift_reached = self.execute_joint_waypoints(
             tuple(trajectories.get("lift", ())),
             gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
+            label="lift",
         )
         self.hold_closed()
 
@@ -774,6 +1424,7 @@ class MujocoPickupRuntime:
             lift_height_m=lift_height_m,
             target_lift_height_m=target_lift_height_m,
             generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            trajectory_diagnostics=tuple(self._trajectory_diagnostics),
         )
 
 
@@ -822,5 +1473,76 @@ def run_world_grasp_in_mujoco(
         if moveit_joint_trajectories is None:
             return runtime.run(world_grasp)
         return runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
+    finally:
+        runtime.close()
+
+
+def run_regrasp_plan_in_mujoco(
+    *,
+    robot_cfg: MujocoRobotConfig,
+    execution_cfg: MujocoExecutionConfig,
+    object_mesh_path: str | Path,
+    initial_object_pose_world: ObjectWorldPose,
+    transfer_initial_grasp: WorldFrameGraspCandidate,
+    transfer_staging_grasp: WorldFrameGraspCandidate,
+    final_grasp: WorldFrameGraspCandidate,
+    staging_object_pose_world: ObjectWorldPose | None = None,
+    final_grasp_candidate: SavedGraspCandidate | None = None,
+    pregrasp_offset: float | None = None,
+    gripper_width_clearance: float | None = None,
+    keep_generated_scene: bool = False,
+    show_viewer: bool = False,
+    viewer_left_ui: bool = False,
+    viewer_right_ui: bool = False,
+    viewer_realtime: bool = True,
+    viewer_hold_seconds: float = 8.0,
+    viewer_block_at_end: bool = False,
+    moveit_joint_trajectories: MoveItJointTrajectories | None = None,
+) -> MujocoRegraspAttemptResult:
+    """Execute a transfer-place-final-pick fallback plan in one MuJoCo scene."""
+
+    runtime = MujocoPickupRuntime(
+        robot_cfg=robot_cfg,
+        execution_cfg=execution_cfg,
+        object_mesh_path=object_mesh_path,
+        object_pose_world=initial_object_pose_world,
+        keep_generated_scene=keep_generated_scene,
+    )
+    try:
+        if show_viewer:
+            import mujoco.viewer  # type: ignore
+
+            with mujoco.viewer.launch_passive(
+                runtime.model,
+                runtime.data,
+                show_left_ui=viewer_left_ui,
+                show_right_ui=viewer_right_ui,
+            ) as viewer:
+                runtime.attach_viewer(viewer, realtime=viewer_realtime)
+                if moveit_joint_trajectories is None:
+                    result = runtime.run_regrasp(
+                        transfer_initial_grasp=transfer_initial_grasp,
+                        transfer_staging_grasp=transfer_staging_grasp,
+                        final_grasp=final_grasp,
+                        staging_object_pose_world=staging_object_pose_world,
+                        final_grasp_candidate=final_grasp_candidate,
+                        pregrasp_offset=pregrasp_offset,
+                        gripper_width_clearance=gripper_width_clearance,
+                    )
+                else:
+                    result = runtime.run_moveit_regrasp_joint_trajectories(trajectories=moveit_joint_trajectories)
+                runtime.hold_viewer_open(seconds=None if viewer_block_at_end else viewer_hold_seconds)
+                return result
+        if moveit_joint_trajectories is not None:
+            return runtime.run_moveit_regrasp_joint_trajectories(trajectories=moveit_joint_trajectories)
+        return runtime.run_regrasp(
+            transfer_initial_grasp=transfer_initial_grasp,
+            transfer_staging_grasp=transfer_staging_grasp,
+            final_grasp=final_grasp,
+            staging_object_pose_world=staging_object_pose_world,
+            final_grasp_candidate=final_grasp_candidate,
+            pregrasp_offset=pregrasp_offset,
+            gripper_width_clearance=gripper_width_clearance,
+        )
     finally:
         runtime.close()

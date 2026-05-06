@@ -35,6 +35,11 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_stage1_artifacts,
     write_stage2_artifacts,
 )
+from grasp_planning.pipeline.regrasp_debug_html import write_mujoco_regrasp_debug_html  # noqa: E402
+from grasp_planning.pipeline.regrasp_fallback import (  # noqa: E402
+    plan_mujoco_regrasp_fallback,
+    write_mujoco_regrasp_plan,
+)
 from grasp_planning.ros2 import (  # noqa: E402
     execute_real_grasp_from_bundle,
     wait_for_debug_frame_pose_message,
@@ -52,6 +57,14 @@ def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[f
     if expected_len is not None and len(result) != expected_len:
         raise ValueError(f"Expected {expected_len} values, got {len(result)}.")
     return result
+
+
+def _tuple_float_pairs(values: object) -> tuple[tuple[float, float], ...]:
+    if values in ("", None):
+        return ()
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"Expected a list/tuple of [x, y] pairs, got {values!r}.")
+    return tuple(_tuple_floats(item, expected_len=2) for item in values)  # type: ignore[arg-type]
 
 
 def _roll_angles_from_planning(raw: dict[str, object]) -> tuple[float, ...]:
@@ -90,6 +103,8 @@ def _geometry_config(payload: dict[str, object]) -> GeometryConfig:
 def _planning_config(payload: dict[str, object]) -> PlanningConfig:
     raw = dict(payload.get("planning", {}))
     return PlanningConfig(
+        stage1_cache_enabled=bool(raw.get("stage1_cache_enabled", True)),
+        stage1_cache_dir=str(raw.get("stage1_cache_dir", "artifacts/stage1_cache")),
         num_surface_samples=int(raw.get("num_surface_samples", 1024)),
         min_jaw_width=float(raw.get("min_jaw_width", 0.002)),
         max_jaw_width=float(raw.get("max_jaw_width", 0.09)),
@@ -100,6 +115,7 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         floor_clearance_margin_m=float(raw.get("floor_clearance_margin_m", 0.0)),
         skip_stage1_collision_checks=bool(raw.get("skip_stage1_collision_checks", False)),
         top_grasp_score_weight=float(raw.get("top_grasp_score_weight", 0.35)),
+        regrasp_transfer_top_grasp_score_weight=float(raw.get("regrasp_transfer_top_grasp_score_weight", 0.85)),
         contact_lateral_offsets_m=_tuple_floats(raw.get("contact_lateral_offsets_m", []))
         or DEFAULT_CONTACT_LATERAL_OFFSETS_M,
         contact_approach_offsets_m=_tuple_floats(raw.get("contact_approach_offsets_m", []))
@@ -132,6 +148,10 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
     controller = str(raw.get("controller", "native")).strip().lower()
     if controller not in {"native", "moveit"}:
         raise ValueError(f"Unsupported mujoco_execution.controller value '{controller}'.")
+    regrasp_staging_xy_world = None
+    if raw.get("regrasp_staging_xy_world") not in ("", None):
+        regrasp_staging_xy_world = _tuple_floats(raw["regrasp_staging_xy_world"], expected_len=2)
+    regrasp_staging_xy_offsets_m = _tuple_float_pairs(raw.get("regrasp_staging_xy_offsets_m"))
     return MujocoPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -166,6 +186,42 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execute_timeout_s=float(raw.get("moveit_execute_timeout_s", 120.0)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
+        regrasp_fallback_enabled=bool(raw.get("regrasp_fallback_enabled", True)),
+        force_regrasp_fallback=bool(raw.get("force_regrasp_fallback", False)),
+        regrasp_plan_artifact=str(raw.get("regrasp_plan_artifact", "artifacts/mujoco_regrasp_plan.json")),
+        regrasp_html_artifact=str(raw.get("regrasp_html_artifact", "")),
+        regrasp_staging_xy_world=regrasp_staging_xy_world,  # type: ignore[arg-type]
+        regrasp_staging_xy_offsets_m=(
+            regrasp_staging_xy_offsets_m
+            if regrasp_staging_xy_offsets_m
+            else MujocoPipelineConfig.regrasp_staging_xy_offsets_m
+        ),
+        regrasp_max_placement_options=int(
+            raw.get("regrasp_max_placement_options", MujocoPipelineConfig.regrasp_max_placement_options)
+        ),
+        regrasp_moveit_max_candidate_plans=int(
+            raw.get(
+                "regrasp_moveit_max_candidate_plans",
+                MujocoPipelineConfig.regrasp_moveit_max_candidate_plans,
+            )
+        ),
+        regrasp_moveit_transfer_candidates_per_placement=int(
+            raw.get(
+                "regrasp_moveit_transfer_candidates_per_placement",
+                MujocoPipelineConfig.regrasp_moveit_transfer_candidates_per_placement,
+            )
+        ),
+        regrasp_moveit_final_candidates_per_placement=int(
+            raw.get(
+                "regrasp_moveit_final_candidates_per_placement",
+                MujocoPipelineConfig.regrasp_moveit_final_candidates_per_placement,
+            )
+        ),
+        regrasp_yaw_angles_deg=_tuple_floats(raw.get("regrasp_yaw_angles_deg", [0.0, 90.0, 180.0, 270.0])),
+        regrasp_max_orientations=int(raw.get("regrasp_max_orientations", 24)),
+        regrasp_min_facet_area_m2=float(raw.get("regrasp_min_facet_area_m2", 0.0)),
+        regrasp_stability_margin_m=float(raw.get("regrasp_stability_margin_m", 0.0)),
+        regrasp_coplanar_tolerance_m=float(raw.get("regrasp_coplanar_tolerance_m", 1.0e-6)),
     )
 
 
@@ -307,11 +363,13 @@ def _run_mujoco_execution(
     *,
     input_json: Path,
     headless: bool,
+    regrasp_plan_json: Path | None = None,
 ) -> None:
     if not mujoco_execution.enabled:
         return
     if not mujoco_execution.robot_config:
         raise ValueError("mujoco_execution.robot_config is required when MuJoCo execution is enabled.")
+    controller = mujoco_execution.controller
     command = [
         _effective_python_executable(mujoco_execution.python_executable),
         "scripts/run_fabrica_grasp_in_mujoco.py",
@@ -322,10 +380,12 @@ def _run_mujoco_execution(
         "--attempt-artifact",
         mujoco_execution.attempt_artifact,
         "--controller",
-        mujoco_execution.controller,
+        controller,
     ]
     if mujoco_execution.simulation_config:
         command.extend(["--simulation-config", mujoco_execution.simulation_config])
+    if regrasp_plan_json is not None:
+        command.extend(["--regrasp-plan-json", str(regrasp_plan_json)])
     if mujoco_execution.grasp_id:
         command.extend(["--grasp-id", mujoco_execution.grasp_id])
     if mujoco_execution.pregrasp_offset is not None:
@@ -356,7 +416,7 @@ def _run_mujoco_execution(
         command.append("--keep-generated-scene")
     if mujoco_execution.viewer_hold_seconds != 8.0:
         command.extend(["--viewer-hold-seconds", str(mujoco_execution.viewer_hold_seconds)])
-    if mujoco_execution.controller == "moveit":
+    if controller == "moveit":
         command.extend(
             [
                 "--moveit-frame-id",
@@ -381,12 +441,79 @@ def _run_mujoco_execution(
                 str(mujoco_execution.moveit_acceleration_scale),
                 "--moveit-execute-timeout-s",
                 str(mujoco_execution.moveit_execute_timeout_s),
+                "--regrasp-moveit-max-candidate-plans",
+                str(mujoco_execution.regrasp_moveit_max_candidate_plans),
+                "--regrasp-moveit-transfer-candidates-per-placement",
+                str(mujoco_execution.regrasp_moveit_transfer_candidates_per_placement),
+                "--regrasp-moveit-final-candidates-per-placement",
+                str(mujoco_execution.regrasp_moveit_final_candidates_per_placement),
             ]
         )
         if mujoco_execution.moveit_allow_collisions:
             command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting MuJoCo execution.", flush=True)
     subprocess.run(command, check=True, cwd=REPO_ROOT)
+
+
+def _maybe_write_mujoco_regrasp_plan(
+    *,
+    stage1,
+    stage2,
+    planning: PlanningConfig,
+    mujoco_execution: MujocoPipelineConfig,
+    input_stage2_json: Path,
+) -> Path | None:
+    force = bool(mujoco_execution.force_regrasp_fallback)
+    if (not mujoco_execution.enabled and not force) or not mujoco_execution.regrasp_fallback_enabled:
+        return None
+    if stage2.accepted and not force:
+        return None
+    print(
+        "[PIPELINE] Searching MuJoCo regrasp fallback."
+        + (" Forced by configuration." if force else " Direct stage 2 has no feasible grasps."),
+        flush=True,
+    )
+    plan = plan_mujoco_regrasp_fallback(
+        stage1=stage1,
+        direct_stage2=stage2,
+        planning=planning,
+        force=force,
+        staging_xy_world=mujoco_execution.regrasp_staging_xy_world,
+        staging_xy_offsets_m=mujoco_execution.regrasp_staging_xy_offsets_m,
+        yaw_angles_deg=mujoco_execution.regrasp_yaw_angles_deg,
+        max_orientations=mujoco_execution.regrasp_max_orientations,
+        max_placement_options=mujoco_execution.regrasp_max_placement_options,
+        min_facet_area_m2=mujoco_execution.regrasp_min_facet_area_m2,
+        stability_margin_m=mujoco_execution.regrasp_stability_margin_m,
+        coplanar_tolerance_m=mujoco_execution.regrasp_coplanar_tolerance_m,
+    )
+    if plan is None:
+        if force:
+            raise RuntimeError(
+                "Forced MuJoCo regrasp fallback requested, but no feasible plan on a different support surface was found."
+            )
+        print("[PIPELINE] No MuJoCo regrasp fallback plan found.", flush=True)
+        return None
+    output_path = Path(mujoco_execution.regrasp_plan_artifact)
+    write_mujoco_regrasp_plan(plan, output_path, input_stage2_json=input_stage2_json)
+    html_path = (
+        Path(mujoco_execution.regrasp_html_artifact)
+        if mujoco_execution.regrasp_html_artifact
+        else output_path.with_suffix(".html")
+    )
+    write_mujoco_regrasp_debug_html(
+        plan=plan,
+        stage1=stage1,
+        planning=planning,
+        output_html=html_path,
+    )
+    print(
+        f"[PIPELINE] Wrote MuJoCo regrasp fallback plan to {output_path} "
+        f"(transfer={plan.transfer_grasp.grasp_id}, final={plan.final_grasp.grasp_id}).",
+        flush=True,
+    )
+    print(f"[PIPELINE] Wrote MuJoCo regrasp debug HTML to {html_path}.", flush=True)
+    return output_path
 
 
 def _run_isaac_execution(
@@ -486,6 +613,15 @@ def _execution_backend_configs(
     raise ValueError(f"Unsupported execution backend '{backend}'.")
 
 
+def _stage1_cache_note(stage1) -> str:
+    metadata = getattr(stage1.bundle, "metadata", {}) or {}
+    if metadata.get("stage1_cache_hit"):
+        return " (cache hit)"
+    if metadata.get("stage1_cache_enabled"):
+        return " (cache updated)"
+    return ""
+
+
 def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "config") -> None:
     geometry = _geometry_config(payload)
     planning = _planning_config(payload)
@@ -503,7 +639,9 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
     print("[PIPELINE] Loading geometry and generating raw grasps.", flush=True)
     stage1 = generate_stage1_result(geometry=geometry, planning=planning)
     print(
-        f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
+        f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
+        f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",
+        flush=True,
     )
     write_stage1_artifacts(
         stage1,
@@ -532,7 +670,19 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
         output_html=artifacts["stage2_html"],
     )
     _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
-    _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
+    regrasp_plan_json = _maybe_write_mujoco_regrasp_plan(
+        stage1=stage1,
+        stage2=stage2,
+        planning=planning,
+        mujoco_execution=mujoco_execution,
+        input_stage2_json=artifacts["stage2_json"],
+    )
+    _run_mujoco_execution(
+        mujoco_execution,
+        input_json=artifacts["stage2_json"],
+        headless=headless,
+        regrasp_plan_json=regrasp_plan_json,
+    )
     _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
 
@@ -554,7 +704,9 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
     stage1 = generate_stage1_result(geometry=geometry, planning=planning)
     print(
-        f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
+        f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
+        f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",
+        flush=True,
     )
     write_stage1_artifacts(
         stage1,
@@ -583,7 +735,19 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
         output_html=artifacts["stage2_html"],
     )
     _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
-    _run_mujoco_execution(mujoco_execution, input_json=artifacts["stage2_json"], headless=headless)
+    regrasp_plan_json = _maybe_write_mujoco_regrasp_plan(
+        stage1=stage1,
+        stage2=stage2,
+        planning=planning,
+        mujoco_execution=mujoco_execution,
+        input_stage2_json=artifacts["stage2_json"],
+    )
+    _run_mujoco_execution(
+        mujoco_execution,
+        input_json=artifacts["stage2_json"],
+        headless=headless,
+        regrasp_plan_json=regrasp_plan_json,
+    )
     _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
 
 
@@ -599,7 +763,9 @@ def run_real(payload: dict[str, object]) -> None:
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
     stage1 = generate_stage1_result(geometry=geometry, planning=planning)
     print(
-        f"[PIPELINE] Stage 1 complete: kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.", flush=True
+        f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
+        f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",
+        flush=True,
     )
     write_stage1_artifacts(
         stage1,
@@ -666,6 +832,11 @@ def main() -> None:
         action="store_true",
         help="Keep all stage-1 generated grasps and skip offline assembly collision filtering.",
     )
+    parser.add_argument(
+        "--force-regrasp-fallback",
+        action="store_true",
+        help="Force MuJoCo regrasp fallback planning even when direct stage 2 has feasible grasps.",
+    )
     args = parser.parse_args()
     mode = _normalize_mode(args.mode)
 
@@ -684,6 +855,10 @@ def main() -> None:
         planning_payload = dict(payload.get("planning", {}))
         planning_payload["skip_stage1_collision_checks"] = True
         payload["planning"] = planning_payload
+    if args.force_regrasp_fallback:
+        mujoco_payload = dict(payload.get("mujoco_execution", {}))
+        mujoco_payload["force_regrasp_fallback"] = True
+        payload["mujoco_execution"] = mujoco_payload
     if mode == "sim":
         run_sim(payload, headless=bool(args.headless), backend=args.backend)
         return

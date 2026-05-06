@@ -11,6 +11,7 @@ Usage:
   ./run_pipeline.sh --mode sim --headless
   ./run_pipeline.sh --mode sim --backend isaac --headless
   ./run_pipeline.sh --mode pitl --skip-stage1-collision-checks
+  ./run_pipeline.sh --mode sim --backend mujoco --force-regrasp-fallback
 
 Backends for sim/pitl:
   config  Honor YAML execution blocks
@@ -26,6 +27,7 @@ CONFIG=""
 BACKEND="config"
 HEADLESS=0
 SKIP_STAGE1_COLLISION_CHECKS=0
+FORCE_REGRASP_FALLBACK=0
 
 source_if_exists() {
   local setup_file="$1"
@@ -119,6 +121,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_STAGE1_COLLISION_CHECKS=1
       shift
       ;;
+    --force-regrasp-fallback)
+      FORCE_REGRASP_FALLBACK=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -173,5 +179,8 @@ if [[ "${HEADLESS}" -eq 1 ]]; then
 fi
 if [[ "${SKIP_STAGE1_COLLISION_CHECKS}" -eq 1 ]]; then
   ARGS+=(--skip-stage1-collision-checks)
+fi
+if [[ "${FORCE_REGRASP_FALLBACK}" -eq 1 ]]; then
+  ARGS+=(--force-regrasp-fallback)
 fi
 exec "${PYTHON_BIN}" "${ARGS[@]}"

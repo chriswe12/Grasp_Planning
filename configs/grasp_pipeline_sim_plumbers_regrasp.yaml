@@ -6,12 +6,12 @@ geometry:
 planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
-  num_surface_samples: 2560
+  num_surface_samples: 256
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
-  max_pair_checks: 10960
+  max_pair_checks: 40960
   detailed_finger_contact_gap_m: 0.002
   floor_clearance_margin_m: 0.01
   top_grasp_score_weight: 0.35
@@ -20,21 +20,26 @@ planning:
   contact_approach_offsets_m: [-0.006166666666666667, -0.0030833333333333333, 0.0, 0.0030833333333333333, 0.006166666666666667]
   rng_seed: 0
 
+pickup_pose:
+  support_face: "neg_z"
+  yaw_deg: 0.0
+  xy_world: [0.5, 0.0]
+
 artifacts:
-  stage1_json: "artifacts/pitl_pipeline_stage1_assembly_grasps.json"
-  stage1_html: "artifacts/pitl_pipeline_stage1_assembly_grasps.html"
-  stage2_json: "artifacts/pitl_pipeline_stage2_ground_feasible.json"
-  stage2_html: "artifacts/pitl_pipeline_stage2_ground_feasible.html"
-  part_frame_html: "artifacts/pitl_pipeline_part_frame_debug.html"
+  stage1_json: "artifacts/plumbers_pipeline_stage1_assembly_grasps.json"
+  stage1_html: "artifacts/plumbers_pipeline_stage1_assembly_grasps.html"
+  stage2_json: "artifacts/plumbers_pipeline_stage2_ground_feasible.json"
+  stage2_html: "artifacts/plumbers_pipeline_stage2_ground_feasible.html"
+  part_frame_html: "artifacts/plumbers_pipeline_part_frame_debug.html"
 
 mujoco_execution:
   enabled: true
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
-  controller: "moveit"  # set to "moveit" to plan MuJoCo arm trajectories with MoveIt
+  controller: "moveit"
   grasp_id: ""
-  attempt_artifact: "artifacts/pitl_mujoco_pick_attempt.json"
+  attempt_artifact: "artifacts/plumbers_mujoco_pick_attempt.json"
   viewer: true
   viewer_left_ui: false
   viewer_right_ui: false
@@ -55,9 +60,9 @@ mujoco_execution:
   moveit_execute_timeout_s: 120.0
   moveit_allow_collisions: false
   regrasp_fallback_enabled: true
-  force_regrasp_fallback: false
-  regrasp_plan_artifact: "artifacts/pitl_mujoco_regrasp_plan.json"
-  regrasp_html_artifact: "artifacts/pitl_mujoco_regrasp_plan.html"
+  force_regrasp_fallback: true
+  regrasp_plan_artifact: "artifacts/plumbers_mujoco_regrasp_plan.json"
+  regrasp_html_artifact: "artifacts/plumbers_mujoco_regrasp_plan.html"
   regrasp_staging_xy_world: [0.5, 0.0]
   regrasp_staging_xy_offsets_m:
     - [0.0, 0.0]
@@ -86,7 +91,7 @@ mujoco_execution:
 isaac_execution:
   enabled: false
   python_executable: "/isaac-sim/python.sh"
-  part_usd: ""  # optional; runner generates a bundle-local USD by default
+  part_usd: ""
   fr3_usd: ""
   controller: "admittance"
   grasp_id: ""
@@ -95,13 +100,13 @@ isaac_execution:
   contact_gap_m: 0.002
   close_width: 0.0
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
-  attempt_artifact: "artifacts/pitl_isaac_pick_attempt.json"
+  attempt_artifact: "artifacts/plumbers_isaac_pick_attempt.json"
   pregrasp_only: false
   run_seconds: 0.0
   headless: false
 
 ros2:
   debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: "pb_pipe"
+  object_id: ""
   frame_id: "world"
   timeout_s: 10.0

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import glob
+import hashlib
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -24,11 +27,14 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     load_asset_mesh,
     quat_to_rotmat_xyzw,
     relative_asset_mesh_path,
+    resolve_asset_mesh_path,
     save_grasp_bundle,
     score_grasps,
     serialize_saved_candidate,
     write_debug_html,
 )
+from grasp_planning.grasping.mesh_antipodal_grasp_generator import SurfaceSample
+from grasp_planning.grasping.mesh_io import DEFAULT_ASSET_MESH_DIR
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 
 
@@ -41,6 +47,8 @@ class GeometryConfig:
 
 @dataclass(frozen=True)
 class PlanningConfig:
+    stage1_cache_enabled: bool = True
+    stage1_cache_dir: str = "artifacts/stage1_cache"
     num_surface_samples: int = 1024
     min_jaw_width: float = 0.002
     max_jaw_width: float = 0.09
@@ -51,6 +59,7 @@ class PlanningConfig:
     floor_clearance_margin_m: float = 0.0
     skip_stage1_collision_checks: bool = False
     top_grasp_score_weight: float = 0.35
+    regrasp_transfer_top_grasp_score_weight: float = 0.85
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
@@ -129,6 +138,35 @@ class MujocoPipelineConfig:
     moveit_acceleration_scale: float = 0.05
     moveit_execute_timeout_s: float = 120.0
     moveit_allow_collisions: bool = False
+    regrasp_fallback_enabled: bool = True
+    force_regrasp_fallback: bool = False
+    regrasp_plan_artifact: str = "artifacts/mujoco_regrasp_plan.json"
+    regrasp_html_artifact: str = ""
+    regrasp_staging_xy_world: tuple[float, float] | None = None
+    regrasp_staging_xy_offsets_m: tuple[tuple[float, float], ...] = (
+        (0.0, 0.0),
+        (0.06, 0.0),
+        (-0.06, 0.0),
+        (0.0, 0.06),
+        (0.0, -0.06),
+        (0.12, 0.0),
+        (-0.12, 0.0),
+        (0.0, 0.12),
+        (0.0, -0.12),
+        (0.06, 0.06),
+        (0.06, -0.06),
+        (-0.06, 0.06),
+        (-0.06, -0.06),
+    )
+    regrasp_max_placement_options: int = 18
+    regrasp_moveit_max_candidate_plans: int = 36
+    regrasp_moveit_transfer_candidates_per_placement: int = 3
+    regrasp_moveit_final_candidates_per_placement: int = 3
+    regrasp_yaw_angles_deg: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
+    regrasp_max_orientations: int = 24
+    regrasp_min_facet_area_m2: float = 0.0
+    regrasp_stability_margin_m: float = 0.0
+    regrasp_coplanar_tolerance_m: float = 1.0e-6
 
 
 @dataclass(frozen=True)
@@ -200,6 +238,8 @@ class Stage1Result:
     obstacle_mesh_world: object | None
     collision_backend_name: str
     raw_candidate_count: int
+    raw_candidates: tuple[SavedGraspCandidate, ...] = ()
+    surface_samples: tuple[SurfaceSample, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,6 +272,243 @@ def _source_frame_pose_from_bundle(bundle: SavedGraspBundle) -> ObjectWorldPose:
     )
 
 
+_STAGE1_CACHE_SCHEMA_VERSION = 1
+
+
+def _path_cache_record(path: str | Path) -> dict[str, object]:
+    resolved = resolve_asset_mesh_path(path)
+    stat = resolved.stat()
+    return {
+        "path": relative_asset_mesh_path(resolved),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _assembly_cache_records(geometry: GeometryConfig, planning: PlanningConfig) -> list[dict[str, object]]:
+    if planning.skip_stage1_collision_checks or not geometry.assembly_glob:
+        return []
+    pattern_path = Path(geometry.assembly_glob).expanduser()
+    if pattern_path.is_absolute():
+        matches = (Path(path) for path in glob.glob(str(pattern_path)))
+    else:
+        matches = DEFAULT_ASSET_MESH_DIR.glob(geometry.assembly_glob)
+    target_resolved = resolve_asset_mesh_path(geometry.target_mesh_path).resolve()
+    obstacle_paths = []
+    for path in matches:
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved == target_resolved:
+            continue
+        obstacle_paths.append(resolved)
+    return [_path_cache_record(path) for path in sorted(obstacle_paths)]
+
+
+def _stage1_cache_key_payload(
+    *,
+    geometry: GeometryConfig,
+    planning: PlanningConfig,
+    source_frame_pose_obj_world: ObjectWorldPose | None,
+) -> dict[str, object]:
+    source_frame_payload = None
+    if source_frame_pose_obj_world is not None:
+        source_frame_payload = {
+            "position_world": [float(v) for v in source_frame_pose_obj_world.position_world],
+            "orientation_xyzw_world": [float(v) for v in source_frame_pose_obj_world.orientation_xyzw_world],
+        }
+    return {
+        "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
+        "algorithm": "fabrica_stage1_antipodal_v1",
+        "geometry": {
+            "target_mesh": _path_cache_record(geometry.target_mesh_path),
+            "mesh_scale": float(geometry.mesh_scale),
+            "assembly_glob": geometry.assembly_glob,
+            "assembly_meshes": _assembly_cache_records(geometry, planning),
+            "source_frame_pose_obj_world": source_frame_payload,
+        },
+        "planning": {
+            "num_surface_samples": int(planning.num_surface_samples),
+            "min_jaw_width": float(planning.min_jaw_width),
+            "max_jaw_width": float(planning.max_jaw_width),
+            "antipodal_cosine_threshold": float(planning.antipodal_cosine_threshold),
+            "roll_angles_rad": [float(v) for v in planning.roll_angles_rad],
+            "max_pair_checks": int(planning.max_pair_checks),
+            "detailed_finger_contact_gap_m": float(planning.detailed_finger_contact_gap_m),
+            "skip_stage1_collision_checks": bool(planning.skip_stage1_collision_checks),
+            "contact_lateral_offsets_m": [float(v) for v in planning.contact_lateral_offsets_m],
+            "contact_approach_offsets_m": [float(v) for v in planning.contact_approach_offsets_m],
+            "rng_seed": int(planning.rng_seed),
+        },
+    }
+
+
+def _stage1_cache_path(
+    *,
+    geometry: GeometryConfig,
+    planning: PlanningConfig,
+    source_frame_pose_obj_world: ObjectWorldPose | None,
+) -> tuple[Path, str, dict[str, object]]:
+    key_payload = _stage1_cache_key_payload(
+        geometry=geometry,
+        planning=planning,
+        source_frame_pose_obj_world=source_frame_pose_obj_world,
+    )
+    key = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    stem = Path(relative_asset_mesh_path(geometry.target_mesh_path)).with_suffix("").as_posix()
+    safe_stem = "".join(char if char.isalnum() or char in "._-" else "_" for char in stem)[-96:] or "object"
+    return Path(planning.stage1_cache_dir) / f"{safe_stem}_{key[:16]}.json", key, key_payload
+
+
+def _saved_candidate_to_cache_payload(candidate: SavedGraspCandidate) -> dict[str, object]:
+    return {
+        "grasp_id": candidate.grasp_id,
+        "grasp_pose_obj": {
+            "position": list(candidate.grasp_position_obj),
+            "orientation_xyzw": list(candidate.grasp_orientation_xyzw_obj),
+        },
+        "contact_points_obj": [list(candidate.contact_point_a_obj), list(candidate.contact_point_b_obj)],
+        "contact_normals_obj": [list(candidate.contact_normal_a_obj), list(candidate.contact_normal_b_obj)],
+        "jaw_width": float(candidate.jaw_width),
+        "roll_angle_rad": float(candidate.roll_angle_rad),
+        "contact_patch_offset_local": [
+            float(candidate.contact_patch_lateral_offset_m),
+            float(candidate.contact_patch_approach_offset_m),
+        ],
+        "score": candidate.score,
+        "score_components": candidate.score_components,
+    }
+
+
+def _saved_candidate_from_cache_payload(item: dict[str, object]) -> SavedGraspCandidate:
+    contact_patch_offset_local = item.get("contact_patch_offset_local", [0.0, 0.0])
+    return SavedGraspCandidate(
+        grasp_id=str(item["grasp_id"]),
+        grasp_position_obj=tuple(float(v) for v in item["grasp_pose_obj"]["position"]),  # type: ignore[index]
+        grasp_orientation_xyzw_obj=tuple(
+            float(v) for v in item["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
+        ),
+        contact_point_a_obj=tuple(float(v) for v in item["contact_points_obj"][0]),  # type: ignore[index]
+        contact_point_b_obj=tuple(float(v) for v in item["contact_points_obj"][1]),  # type: ignore[index]
+        contact_normal_a_obj=tuple(float(v) for v in item["contact_normals_obj"][0]),  # type: ignore[index]
+        contact_normal_b_obj=tuple(float(v) for v in item["contact_normals_obj"][1]),  # type: ignore[index]
+        jaw_width=float(item["jaw_width"]),
+        roll_angle_rad=float(item["roll_angle_rad"]),
+        contact_patch_lateral_offset_m=float(contact_patch_offset_local[0]),  # type: ignore[index]
+        contact_patch_approach_offset_m=float(contact_patch_offset_local[1]),  # type: ignore[index]
+        score=None if item.get("score") is None else float(item["score"]),
+        score_components=(
+            None
+            if item.get("score_components") is None
+            else {str(k): float(v) for k, v in dict(item["score_components"]).items()}  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _surface_sample_to_cache_payload(sample: SurfaceSample) -> dict[str, object]:
+    return {
+        "point_obj": list(sample.point_obj),
+        "normal_obj": list(sample.normal_obj),
+        "face_index": int(sample.face_index),
+    }
+
+
+def _surface_sample_from_cache_payload(item: dict[str, object]) -> SurfaceSample:
+    return SurfaceSample(
+        point_obj=tuple(float(v) for v in item["point_obj"]),  # type: ignore[arg-type]
+        normal_obj=tuple(float(v) for v in item["normal_obj"]),  # type: ignore[arg-type]
+        face_index=int(item["face_index"]),
+    )
+
+
+def _load_stage1_cache(
+    *,
+    cache_path: Path,
+    cache_key: str,
+    target_mesh_local,
+    target_pose_in_obj_world: ObjectWorldPose,
+    obstacle_mesh_world,
+) -> Stage1Result | None:
+    if not cache_path.exists():
+        return None
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    if int(payload.get("schema_version", -1)) != _STAGE1_CACHE_SCHEMA_VERSION:
+        return None
+    if payload.get("cache_key") != cache_key:
+        return None
+    bundle_payload = dict(payload["bundle"])
+    metadata = dict(bundle_payload.get("metadata", {}))
+    metadata.update(
+        {
+            "stage1_cache_hit": True,
+            "stage1_cache_path": str(cache_path),
+            "stage1_cache_key": cache_key,
+        }
+    )
+    kept_candidates = tuple(
+        _saved_candidate_from_cache_payload(dict(item)) for item in bundle_payload.get("candidates", [])
+    )
+    target_payload = dict(bundle_payload["target"])
+    bundle = SavedGraspBundle(
+        target_mesh_path=str(target_payload["mesh_path"]),
+        mesh_scale=float(target_payload["mesh_scale"]),
+        source_frame_origin_obj_world=tuple(float(v) for v in target_payload["source_frame_origin_obj_world"]),
+        source_frame_orientation_xyzw_obj_world=tuple(
+            float(v) for v in target_payload["source_frame_orientation_xyzw_obj_world"]
+        ),
+        candidates=kept_candidates,
+        metadata=metadata,
+    )
+    raw_candidates = tuple(
+        _saved_candidate_from_cache_payload(dict(item)) for item in payload.get("raw_candidates", [])
+    )
+    surface_samples = tuple(
+        _surface_sample_from_cache_payload(dict(item)) for item in payload.get("surface_samples", [])
+    )
+    return Stage1Result(
+        bundle=bundle,
+        target_mesh_local=target_mesh_local,
+        target_pose_in_obj_world=target_pose_in_obj_world,
+        obstacle_mesh_world=obstacle_mesh_world,
+        collision_backend_name=str(payload.get("collision_backend_name", metadata.get("collision_backend", ""))),
+        raw_candidate_count=int(payload.get("raw_candidate_count", len(raw_candidates))),
+        raw_candidates=raw_candidates,
+        surface_samples=surface_samples,
+    )
+
+
+def _write_stage1_cache(
+    *,
+    cache_path: Path,
+    cache_key: str,
+    cache_key_payload: dict[str, object],
+    result: Stage1Result,
+) -> None:
+    payload = {
+        "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
+        "cache_key": cache_key,
+        "cache_key_payload": cache_key_payload,
+        "collision_backend_name": result.collision_backend_name,
+        "raw_candidate_count": int(result.raw_candidate_count),
+        "bundle": {
+            "target": {
+                "mesh_path": result.bundle.target_mesh_path,
+                "mesh_scale": float(result.bundle.mesh_scale),
+                "source_frame_origin_obj_world": list(result.bundle.source_frame_origin_obj_world),
+                "source_frame_orientation_xyzw_obj_world": list(
+                    result.bundle.source_frame_orientation_xyzw_obj_world
+                ),
+            },
+            "metadata": result.bundle.metadata,
+            "candidates": [_saved_candidate_to_cache_payload(candidate) for candidate in result.bundle.candidates],
+        },
+        "raw_candidates": [_saved_candidate_to_cache_payload(candidate) for candidate in result.raw_candidates],
+        "surface_samples": [_surface_sample_to_cache_payload(sample) for sample in result.surface_samples],
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def generate_stage1_result(
     *,
     geometry: GeometryConfig,
@@ -244,16 +521,49 @@ def generate_stage1_result(
     else:
         target_pose_in_obj_world = source_frame_pose_obj_world
         target_mesh_local = _mesh_in_source_frame(target_mesh_obj_world, target_pose_in_obj_world)
+
+    cache_path = None
+    cache_key = ""
+    cache_key_payload: dict[str, object] = {}
+    if planning.stage1_cache_enabled:
+        cache_path, cache_key, cache_key_payload = _stage1_cache_path(
+            geometry=geometry,
+            planning=planning,
+            source_frame_pose_obj_world=source_frame_pose_obj_world,
+        )
+        if cache_path.exists():
+            obstacle_mesh_world = None
+            if not planning.skip_stage1_collision_checks:
+                obstacle_mesh_world, _ = load_assembly_obstacle_mesh(
+                    assembly_glob=geometry.assembly_glob,
+                    target_stl_path=geometry.target_mesh_path,
+                    stl_scale=geometry.mesh_scale,
+                )
+            try:
+                cached = _load_stage1_cache(
+                    cache_path=cache_path,
+                    cache_key=cache_key,
+                    target_mesh_local=target_mesh_local,
+                    target_pose_in_obj_world=target_pose_in_obj_world,
+                    obstacle_mesh_world=obstacle_mesh_world,
+                )
+            except (KeyError, TypeError, ValueError):
+                cached = None
+            if cached is not None:
+                return cached
+
     generator = AntipodalMeshGraspGenerator(planning.to_generator_config())
     raw_candidates = generator.generate(target_mesh_local)
+    surface_samples = tuple(getattr(generator, "last_surface_samples", ()))
     serialized_raw = [
         serialize_saved_candidate(f"g{index:04d}", candidate) for index, candidate in enumerate(raw_candidates, start=1)
     ]
+    scored_raw = score_grasps(serialized_raw, mesh_local=target_mesh_local)
 
     obstacle_mesh_world = None
     obstacle_paths: tuple[str, ...] = ()
     if planning.skip_stage1_collision_checks:
-        kept_candidates = list(serialized_raw)
+        kept_candidates = list(scored_raw)
     else:
         obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
             assembly_glob=geometry.assembly_glob,
@@ -268,7 +578,7 @@ def generate_stage1_result(
             contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
             contact_approach_offsets_m=planning.contact_approach_offsets_m,
         )
-    kept_candidates = score_grasps(kept_candidates, mesh_local=target_mesh_local)
+        kept_candidates = score_grasps(kept_candidates, mesh_local=target_mesh_local)
 
     bundle = SavedGraspBundle(
         target_mesh_path=relative_asset_mesh_path(geometry.target_mesh_path),
@@ -280,7 +590,12 @@ def generate_stage1_result(
             "assembly_glob": geometry.assembly_glob,
             "collision_backend": generator.collision_backend_name,
             "stage1_collision_checks_skipped": planning.skip_stage1_collision_checks,
+            "stage1_cache_enabled": planning.stage1_cache_enabled,
+            "stage1_cache_hit": False,
+            "stage1_cache_path": None if cache_path is None else str(cache_path),
+            "stage1_cache_key": cache_key or None,
             "num_surface_samples": planning.num_surface_samples,
+            "surface_sample_count": len(surface_samples),
             "raw_candidate_count": len(serialized_raw),
             "assembly_feasible_count": len(kept_candidates),
             "scored_feasible_count": len(kept_candidates),
@@ -289,14 +604,24 @@ def generate_stage1_result(
             "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
         },
     )
-    return Stage1Result(
+    result = Stage1Result(
         bundle=bundle,
         target_mesh_local=target_mesh_local,
         target_pose_in_obj_world=target_pose_in_obj_world,
         obstacle_mesh_world=obstacle_mesh_world,
         collision_backend_name=generator.collision_backend_name,
         raw_candidate_count=len(serialized_raw),
+        raw_candidates=tuple(scored_raw),
+        surface_samples=surface_samples,
     )
+    if planning.stage1_cache_enabled and cache_path is not None:
+        _write_stage1_cache(
+            cache_path=cache_path,
+            cache_key=cache_key,
+            cache_key_payload=cache_key_payload,
+            result=result,
+        )
+    return result
 
 
 def write_stage1_artifacts(

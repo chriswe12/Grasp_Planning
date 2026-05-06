@@ -4,6 +4,8 @@ geometry:
   assembly_glob: "obj/fabrica/cooling_manifold/*.obj"
 
 planning:
+  stage1_cache_enabled: true
+  stage1_cache_dir: "artifacts/stage1_cache"
   num_surface_samples: 2560
   min_jaw_width: 0.002
   max_jaw_width: 0.09
@@ -13,6 +15,7 @@ planning:
   detailed_finger_contact_gap_m: 0.002
   floor_clearance_margin_m: 0.01
   top_grasp_score_weight: 0.35
+  regrasp_transfer_top_grasp_score_weight: 0.85
   contact_lateral_offsets_m: [-0.005833333333333334, -0.002916666666666667, 0.0, 0.002916666666666667, 0.005833333333333334]
   contact_approach_offsets_m: [-0.006166666666666667, -0.0030833333333333333, 0.0, 0.0030833333333333333, 0.006166666666666667]
   rng_seed: 0
