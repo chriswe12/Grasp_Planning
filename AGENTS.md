@@ -28,7 +28,7 @@ For broad architecture, pipeline, frame, backend, ROS2, config, asset, or safety
 - when wiki follow-up is needed, create a Markdown changelog entry under `../mt_wiki/agent-changelogs/`;
 - follow `../mt_wiki/agent-changelogs/README.md` and `../mt_wiki/agent-changelogs/TEMPLATE.md` for naming and content.
 
-Write an agent changelog when explicitly prompted or when committing changes. Include the source repo, branch, commit or PR when available, changed paths, behavior changes, verification, risks or open questions, and suggested wiki pages for later ingestion.
+Maintain one session changelog when wiki follow-up is needed. Update it as durable behavior, architecture, configuration, safety, or debugging facts change; before a commit or when prompted, review it for accuracy. Include the source repo, branch, commit or PR when available, changed paths, behavior changes, verification, risks or open questions, and suggested wiki pages.
 
 Do not create a changelog for trivial formatting, small local fixes with no durable conceptual impact, generated artifacts, or purely experimental scratch work unless explicitly requested.
 
