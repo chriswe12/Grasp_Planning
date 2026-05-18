@@ -40,3 +40,11 @@ fallback:
   coplanar_tolerance_m: 0.000001
   staging_xy_offsets_m:
     - [0.0, 0.0]
+
+handover_fallback:
+  enabled: true
+  max_final_candidates: 40
+  max_transfer_candidates: 80
+  max_pair_checks: 1000
+  max_accepted_pairs: 24
+  max_rejected_pairs: 100

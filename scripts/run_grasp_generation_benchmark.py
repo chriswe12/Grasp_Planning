@@ -48,10 +48,14 @@ from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh 
 from grasp_planning.grasping.mesh_io import resolve_mesh_path  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
     GeometryConfig,
+    HandoverFallbackResult,
+    HandoverGraspPair,
     PlanningConfig,
     generate_stage1_result,
+    plan_handover_fallback,
     plan_mujoco_regrasp_fallback,
     recheck_stage2_result,
+    write_handover_fallback_result,
     write_mujoco_regrasp_debug_html,
     write_mujoco_regrasp_plan,
     write_stage1_artifacts,
@@ -69,13 +73,15 @@ from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # n
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "grasp_generation_benchmark.yaml"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "artifacts" / "grasp_generation_benchmark"
-SUCCESS_STATUSES = {"direct_success", "fallback_success"}
+SUCCESS_STATUSES = {"direct_success", "fallback_success", "handover_fallback_success"}
 FAILED_GRASP_HTML_LIMIT = 100
 FAILED_GRASP_STAGE1_PASS_EXAMPLE_LIMIT = 20
 FAILED_GRASP_DISPLAY_FRAME = "stage2_floor_pose"
 ALL_GRASP_OVERVIEW_MAX_MESH_EDGES = 5000
 ALL_GRASP_OVERVIEW_MAX_OBSTACLE_EDGES = 5000
 ALL_GRASP_OVERVIEW_MARKER_LENGTH_M = 0.025
+HANDOVER_PAIR_HTML_LIMIT = 100
+HANDOVER_PAIR_ACCEPTED_HTML_LIMIT = 30
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,16 @@ class FallbackBenchmarkConfig:
     stability_margin_m: float = 0.0
     coplanar_tolerance_m: float = 1.0e-6
     staging_xy_offsets_m: tuple[tuple[float, float], ...] = ((0.0, 0.0),)
+
+
+@dataclass(frozen=True)
+class HandoverFallbackBenchmarkConfig:
+    enabled: bool = True
+    max_final_candidates: int = 40
+    max_transfer_candidates: int = 80
+    max_pair_checks: int = 1000
+    max_accepted_pairs: int = 24
+    max_rejected_pairs: int = 100
 
 
 @dataclass(frozen=True)
@@ -141,6 +157,18 @@ def _fallback_config(payload: dict[str, object]) -> FallbackBenchmarkConfig:
         stability_margin_m=float(raw.get("stability_margin_m", 0.0)),
         coplanar_tolerance_m=float(raw.get("coplanar_tolerance_m", 1.0e-6)),
         staging_xy_offsets_m=_tuple_float_pairs(raw.get("staging_xy_offsets_m", [[0.0, 0.0]])) or ((0.0, 0.0),),
+    )
+
+
+def _handover_fallback_config(payload: dict[str, object]) -> HandoverFallbackBenchmarkConfig:
+    raw = dict(payload.get("handover_fallback", {}))
+    return HandoverFallbackBenchmarkConfig(
+        enabled=bool(raw.get("enabled", True)),
+        max_final_candidates=int(raw.get("max_final_candidates", 40)),
+        max_transfer_candidates=int(raw.get("max_transfer_candidates", 80)),
+        max_pair_checks=int(raw.get("max_pair_checks", 1000)),
+        max_accepted_pairs=int(raw.get("max_accepted_pairs", 24)),
+        max_rejected_pairs=int(raw.get("max_rejected_pairs", 100)),
     )
 
 
@@ -554,14 +582,24 @@ def _raw_stage1_payload(stage1, target: TargetSpec) -> dict[str, object]:
     }
 
 
-def _status_for_orientation(*, stage1_count: int, stage2_count: int, fallback_found: bool, fallback_enabled: bool) -> str:
+def _status_for_orientation(
+    *,
+    stage1_count: int,
+    stage2_count: int,
+    fallback_found: bool,
+    handover_found: bool,
+    fallback_enabled: bool,
+    handover_enabled: bool,
+) -> str:
     if stage1_count <= 0:
         return "stage1_failed"
     if stage2_count > 0:
         return "direct_success"
     if fallback_found:
         return "fallback_success"
-    if fallback_enabled:
+    if handover_found:
+        return "handover_fallback_success"
+    if fallback_enabled or handover_enabled:
         return "stage2_failed_fallback_failed"
     return "stage2_failed_no_fallback"
 
@@ -580,6 +618,21 @@ def _fallback_summary(plan) -> dict[str, object] | None:
     }
 
 
+def _handover_summary(result: HandoverFallbackResult | None) -> dict[str, object] | None:
+    if result is None or result.selected_pair is None:
+        return None
+    selected = result.selected_pair
+    return {
+        "transfer_grasp_id": selected.transfer_grasp.grasp_id,
+        "transfer_grasp_score": selected.transfer_grasp.score,
+        "final_grasp_id": selected.final_grasp.grasp_id,
+        "final_grasp_score": selected.final_grasp.score,
+        "accepted_pair_count": len(result.accepted_pairs),
+        "rejected_pair_count_displayed": len(result.rejected_pairs),
+        "metadata": result.metadata,
+    }
+
+
 def _orientation_row(
     *,
     target: TargetSpec,
@@ -590,6 +643,7 @@ def _orientation_row(
     stage2_count: int,
     best_direct: dict[str, object] | None,
     fallback_summary: dict[str, object] | None,
+    handover_summary: dict[str, object] | None = None,
     error: str = "",
 ) -> dict[str, object]:
     return {
@@ -612,6 +666,10 @@ def _orientation_row(
         "fallback_transfer_grasp_id": "" if fallback_summary is None else fallback_summary["transfer_grasp_id"],
         "fallback_final_grasp_id": "" if fallback_summary is None else fallback_summary["final_grasp_id"],
         "fallback_placement_option_count": 0 if fallback_summary is None else fallback_summary["placement_option_count"],
+        "handover_fallback_found": handover_summary is not None,
+        "handover_transfer_grasp_id": "" if handover_summary is None else handover_summary["transfer_grasp_id"],
+        "handover_final_grasp_id": "" if handover_summary is None else handover_summary["final_grasp_id"],
+        "handover_accepted_pair_count": 0 if handover_summary is None else handover_summary["accepted_pair_count"],
         "error": error,
     }
 
@@ -637,6 +695,10 @@ def _write_summary_csv(output_path: Path, rows: list[dict[str, object]]) -> None
         "fallback_transfer_grasp_id",
         "fallback_final_grasp_id",
         "fallback_placement_option_count",
+        "handover_fallback_found",
+        "handover_transfer_grasp_id",
+        "handover_final_grasp_id",
+        "handover_accepted_pair_count",
         "error",
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -652,8 +714,9 @@ def _write_summary_md(output_path: Path, *, rows: list[dict[str, object]], part_
     part_status_counts = Counter(str(part.get("status", "unknown")) for part in part_records)
     direct = status_counts.get("direct_success", 0)
     fallback = status_counts.get("fallback_success", 0)
+    handover = status_counts.get("handover_fallback_success", 0)
     total = len(rows)
-    generation_success = direct + fallback
+    generation_success = direct + fallback + handover
     lines = [
         "# Grasp Generation Benchmark Summary",
         "",
@@ -661,6 +724,7 @@ def _write_summary_md(output_path: Path, *, rows: list[dict[str, object]], part_
         f"- orientations: {total}",
         f"- direct successes: {direct}",
         f"- fallback successes: {fallback}",
+        f"- handover fallback successes: {handover}",
         f"- generation successes: {generation_success}",
         f"- generation success rate: {generation_success / total:.3f}" if total else "- generation success rate: n/a",
         "",
@@ -895,7 +959,7 @@ def _write_index_html(
     function populatePartSelect() {
       partSelect.replaceChildren();
       partsForAssembly().forEach((part) => {
-        const successes = part.frames.filter((frame) => frame.status === "direct_success" || frame.status === "fallback_success").length;
+        const successes = part.frames.filter((frame) => frame.status === "direct_success" || frame.status === "fallback_success" || frame.status === "handover_fallback_success").length;
         const option = document.createElement("option");
         option.value = part.key;
         option.textContent = `${part.part_id} (${successes}/${part.frames.length})`;
@@ -908,7 +972,7 @@ def _write_index_html(
     }
     function statusClass(status) {
       if (status === "direct_success") return "direct_success";
-      if (status === "fallback_success") return "fallback_success";
+      if (status === "fallback_success" || status === "handover_fallback_success") return "fallback_success";
       return "failed";
     }
     function fmt(value, digits = 3) {
@@ -1094,6 +1158,8 @@ def _write_index_html(
         grasp && grasp.score_components ? `top_down_score:    ${fmt(grasp.score_components.top_down_approach, 6)}` : "",
         "",
         frame.fallback ? `fallback_final:    ${frame.fallback.final_grasp_id}` : "",
+        frame.handover_fallback ? `handover_final:    ${frame.handover_fallback.final_grasp_id}` : "",
+        frame.handover_fallback ? `handover_transfer: ${frame.handover_fallback.transfer_grasp_id}` : "",
         frame.error ? `error:             ${frame.error}` : "",
       ].filter((line) => line !== "").join("\\n");
     }
@@ -1231,6 +1297,7 @@ def _part_orientation_frame(
     status: str,
     stage2=None,
     fallback_summary: dict[str, object] | None = None,
+    handover_summary: dict[str, object] | None = None,
     links: dict[str, str] | None = None,
     error: str = "",
 ) -> dict[str, object]:
@@ -1257,6 +1324,7 @@ def _part_orientation_frame(
         "stage2_ground_feasible_count": 0 if stage2 is None else len(stage2.accepted),
         "stage2_reason_counts": {} if stage2 is None else _reason_counts(stage2.statuses),
         "fallback": fallback_summary,
+        "handover_fallback": handover_summary,
         "links": links or {},
         "mesh_vertices_world": [[float(v) for v in vertex] for vertex in mesh_vertices_world.tolist()],
         "floor_world": _world_floor_corners(mesh_vertices_world),
@@ -1754,6 +1822,303 @@ def _write_all_generated_grasps_html(
         obstacle_mesh_local=obstacle_mesh_local,
         metadata_lines=metadata_lines,
     )
+
+
+def _handover_pair_payload(pair: HandoverGraspPair, *, planning: PlanningConfig) -> dict[str, object]:
+    transfer_payload = candidate_payload(
+        [CandidateStatus(grasp=pair.transfer_grasp, status=pair.status, reason=pair.reason)],
+        contact_gap_m=planning.detailed_finger_contact_gap_m,
+    )[0]
+    final_payload = candidate_payload(
+        [CandidateStatus(grasp=pair.final_grasp, status=pair.status, reason=pair.reason)],
+        contact_gap_m=planning.detailed_finger_contact_gap_m,
+    )[0]
+    return {
+        "status": pair.status,
+        "reason": pair.reason,
+        "score": pair.score,
+        "transfer": transfer_payload,
+        "final": final_payload,
+        "metadata": pair.metadata,
+    }
+
+
+def _write_handover_grasp_pairs_html(
+    output_html: Path,
+    *,
+    target: TargetSpec,
+    orientation: StableOrientation,
+    status: str,
+    stage1,
+    planning: PlanningConfig,
+    result: HandoverFallbackResult,
+    limit: int = HANDOVER_PAIR_HTML_LIMIT,
+) -> dict[str, int]:
+    accepted_limit = min(HANDOVER_PAIR_ACCEPTED_HTML_LIMIT, max(0, int(limit)))
+    accepted_pairs = list(result.accepted_pairs[:accepted_limit])
+    rejected_pairs = list(result.rejected_pairs[: max(0, int(limit) - len(accepted_pairs))])
+    pairs = accepted_pairs + rejected_pairs
+    status_counts = dict(Counter(pair.status for pair in pairs))
+    mesh_local = stage1.target_mesh_local
+    data = {
+        "title": f"Handover Fallback Pairs: {target.assembly}/{target.part_id} {orientation.orientation_id}",
+        "subtitle": "Planning-only reverse handover search. The final hand is assembly-feasible; the transfer hand is floor-feasible in the current pose.",
+        "target_mesh_path": target.target_mesh_path,
+        "metadata_lines": [
+            f"benchmark_status: {status}",
+            f"raw_candidates:   {len(stage1.raw_candidates)}",
+            f"stage1_feasible:  {len(stage1.bundle.candidates)}",
+            f"accepted_pairs:   {len(result.accepted_pairs)}",
+            f"rejected_shown:   {len(rejected_pairs)}",
+            f"checked_pairs:    {result.metadata.get('checked_pair_count', 0)}",
+            f"rejection_counts: {result.metadata.get('rejection_counts', {})}",
+            f"floor_counts:     {result.transfer_floor_status_counts}",
+        ],
+        "vertices_obj": [[float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()],
+        "edges": unique_edges(mesh_local.faces),
+        "faces": [[int(value) for value in face] for face in np.asarray(mesh_local.faces, dtype=np.int64).tolist()],
+        "status_counts": status_counts,
+        "pairs": [_handover_pair_payload(pair, planning=planning) for pair in pairs],
+    }
+    data_json = json.dumps(data, indent=2)
+    document = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Handover Fallback Pairs</title>
+  <style>
+    :root {
+      --bg: #f6f4ee;
+      --panel: #fffdf8;
+      --ink: #1f2522;
+      --muted: #68716c;
+      --line: #d9d4c7;
+      --mesh: #2f6f5e;
+      --transfer: #1d4ed8;
+      --final: #15803d;
+      --reject: #b91c1c;
+      --hand: #8f5a12;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    .layout { display: grid; grid-template-columns: 390px minmax(0, 1fr); min-height: 100vh; }
+    aside { border-right: 1px solid var(--line); background: var(--panel); padding: 18px; overflow: auto; }
+    main { padding: 18px; overflow: hidden; }
+    h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.15; }
+    .subtitle { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .panel { border: 1px solid var(--line); background: rgba(255,253,248,0.96); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 8px 10px; font: inherit; cursor: pointer; }
+    button:hover { border-color: var(--mesh); }
+    .pair-list { display: grid; gap: 8px; }
+    .pair-item { text-align: left; border-radius: 8px; }
+    .pair-item.active { border-color: var(--mesh); box-shadow: 0 0 0 2px rgba(47,111,94,0.14); }
+    .status { border-radius: 999px; padding: 2px 7px; font-size: 12px; white-space: nowrap; }
+    .accepted { background: #dcfce7; color: var(--final); }
+    .rejected { background: #fee2e2; color: var(--reject); }
+    .item-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
+    .item-meta { margin-top: 5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.4; }
+    .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; margin: 0; }
+    .canvas-wrap { height: calc(100vh - 36px); border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, #ffffff, #ebe7dc); overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+      main { overflow: visible; }
+      .canvas-wrap { height: 70vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1 id="title"></h1>
+      <p id="subtitle" class="subtitle"></p>
+      <section class="panel controls">
+        <button id="prevBtn" type="button">Previous</button>
+        <button id="nextBtn" type="button">Next</button>
+        <button id="resetBtn" type="button">Reset View</button>
+        <button id="meshBtn" type="button">Mesh On</button>
+      </section>
+      <section class="panel"><pre id="details" class="kv"></pre></section>
+      <section id="pairList" class="pair-list"></section>
+    </aside>
+    <main>
+      <div class="canvas-wrap"><canvas id="scene"></canvas></div>
+    </main>
+  </div>
+  <script>
+    const data = __DATA_JSON__;
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+    const details = document.getElementById("details");
+    const pairList = document.getElementById("pairList");
+    document.getElementById("title").textContent = data.title;
+    document.getElementById("subtitle").textContent = data.subtitle;
+    const state = { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0, selected: 0, dragging: false, dragMode: "rotate", lastX: 0, lastY: 0, showMesh: true };
+    function allPairPoints(pair) {
+      if (!pair) return [];
+      return [pair.transfer, pair.final].flatMap((grasp) => [
+        grasp.grasp_position_obj,
+        grasp.contact_point_a_obj,
+        grasp.contact_point_b_obj,
+        ...grasp.franka_hand_vertices_obj,
+        ...grasp.franka_left_boxes.flatMap((box) => box.corners),
+        ...grasp.franka_right_boxes.flatMap((box) => box.corners),
+      ]);
+    }
+    function allPoints() {
+      return [...data.vertices_obj, ...data.pairs.flatMap(allPairPoints)];
+    }
+    const bounds = allPoints().reduce((acc, point) => {
+      point.forEach((value, axis) => { acc.min[axis] = Math.min(acc.min[axis], value); acc.max[axis] = Math.max(acc.max[axis], value); });
+      return acc;
+    }, { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+    const center = bounds.min.map((value, axis) => 0.5 * (value + bounds.max[axis]));
+    const extent = Math.max(...bounds.max.map((value, axis) => value - bounds.min[axis]), 0.12);
+    function resize() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      draw();
+    }
+    function rotate(point) {
+      const shifted = point.map((value, axis) => value - center[axis]);
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const x1 = cy * shifted[0] + sy * shifted[1];
+      const y1 = -sy * shifted[0] + cy * shifted[1];
+      const z1 = shifted[2];
+      return [x1, cp * y1 + sp * z1, -sp * y1 + cp * z1];
+    }
+    function project(point) {
+      const rect = canvas.getBoundingClientRect();
+      const [x, y, z] = rotate(point);
+      const scale = (0.68 * Math.min(rect.width, rect.height) / extent) * state.zoom;
+      return { x: rect.width * 0.5 + state.panX + x * scale, y: rect.height * 0.5 + state.panY - y * scale, depth: z };
+    }
+    function line(a, b, color, width = 1, alpha = 1) {
+      const pa = project(a), pb = project(b);
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    function point(p, color, radius = 4) {
+      const pp = project(p);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    function drawBox(corners, color, alpha) {
+      [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(([a, b]) => line(corners[a], corners[b], color, 1.3, alpha));
+    }
+    function drawHand(grasp, color, alpha) {
+      grasp.franka_hand_faces.forEach((face) => {
+        line(grasp.franka_hand_vertices_obj[face[0]], grasp.franka_hand_vertices_obj[face[1]], color, 0.75, alpha * 0.45);
+        line(grasp.franka_hand_vertices_obj[face[1]], grasp.franka_hand_vertices_obj[face[2]], color, 0.75, alpha * 0.45);
+        line(grasp.franka_hand_vertices_obj[face[2]], grasp.franka_hand_vertices_obj[face[0]], color, 0.75, alpha * 0.45);
+      });
+      grasp.franka_left_boxes.forEach((box) => drawBox(box.corners, color, alpha));
+      grasp.franka_right_boxes.forEach((box) => drawBox(box.corners, color, alpha));
+      line(grasp.contact_point_a_obj, grasp.contact_point_b_obj, color, 2.4, alpha);
+      point(grasp.grasp_position_obj, color, 4.5);
+    }
+    function renderList() {
+      pairList.replaceChildren();
+      data.pairs.forEach((pair, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `pair-item${index === state.selected ? " active" : ""}`;
+        button.innerHTML = `<div class="item-title"><span>${pair.final.grasp_id} / ${pair.transfer.grasp_id}</span><span class="status ${pair.status}">${pair.status}</span></div><div class="item-meta">${pair.reason}<br>final=${pair.final.score ?? "n/a"} transfer=${pair.transfer.score ?? "n/a"}</div>`;
+        button.addEventListener("click", () => { state.selected = index; draw(); renderList(); });
+        pairList.appendChild(button);
+      });
+    }
+    function draw() {
+      const rect = canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      if (state.showMesh) {
+        data.edges.forEach(([a, b]) => line(data.vertices_obj[a], data.vertices_obj[b], "#2f6f5e", 1, 0.42));
+      }
+      const pair = data.pairs[state.selected];
+      if (pair) {
+        const rejected = pair.status !== "accepted";
+        drawHand(pair.final, rejected ? "#64748b" : "#15803d", rejected ? 0.55 : 0.9);
+        drawHand(pair.transfer, rejected ? "#b91c1c" : "#1d4ed8", rejected ? 0.9 : 0.9);
+      }
+      renderDetails();
+    }
+    function renderDetails() {
+      if (state.selected >= data.pairs.length) state.selected = 0;
+      const pair = data.pairs[state.selected];
+      details.textContent = [
+        ...data.metadata_lines,
+        "",
+        `shown_pairs:    ${data.pairs.length}`,
+        `status_counts:  ${JSON.stringify(data.status_counts)}`,
+        "",
+        pair ? `status:         ${pair.status}` : "status:         none",
+        pair ? `reason:         ${pair.reason}` : "",
+        pair ? `final_grasp:    ${pair.final.grasp_id}` : "",
+        pair ? `transfer_grasp: ${pair.transfer.grasp_id}` : "",
+        pair ? `pair_score:     ${pair.score}` : "",
+      ].filter((line) => line !== "").join("\\n");
+    }
+    function selectDelta(delta) {
+      if (!data.pairs.length) return;
+      state.selected = (state.selected + delta + data.pairs.length) % data.pairs.length;
+      draw();
+      renderList();
+    }
+    document.getElementById("prevBtn").addEventListener("click", () => selectDelta(-1));
+    document.getElementById("nextBtn").addEventListener("click", () => selectDelta(1));
+    document.getElementById("resetBtn").addEventListener("click", () => { Object.assign(state, { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0 }); draw(); });
+    document.getElementById("meshBtn").addEventListener("click", (event) => { state.showMesh = !state.showMesh; event.target.textContent = state.showMesh ? "Mesh On" : "Mesh Off"; draw(); });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectDelta(-1); }
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectDelta(1); }
+    });
+    canvas.addEventListener("pointerdown", (event) => {
+      state.dragging = true;
+      state.dragMode = event.button === 1 || event.shiftKey ? "pan" : "rotate";
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      canvas.setPointerCapture(event.pointerId);
+      canvas.style.cursor = state.dragMode === "pan" ? "move" : "grabbing";
+    });
+    canvas.addEventListener("pointerup", (event) => { state.dragging = false; canvas.releasePointerCapture(event.pointerId); canvas.style.cursor = "grab"; });
+    canvas.addEventListener("pointercancel", () => { state.dragging = false; canvas.style.cursor = "grab"; });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!state.dragging) return;
+      const dx = event.clientX - state.lastX, dy = event.clientY - state.lastY;
+      state.lastX = event.clientX; state.lastY = event.clientY;
+      if (state.dragMode === "pan") { state.panX += dx; state.panY += dy; }
+      else { state.yaw += dx * 0.01; state.pitch -= dy * 0.01; }
+      draw();
+    });
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      state.zoom = Math.max(0.25, Math.min(5, state.zoom * (event.deltaY < 0 ? 1.08 : 1 / 1.08)));
+      draw();
+    }, { passive: false });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("resize", resize);
+    renderList();
+    resize();
+  </script>
+</body>
+</html>
+"""
+    output_html.parent.mkdir(parents=True, exist_ok=True)
+    output_html.write_text(document.replace("__DATA_JSON__", data_json), encoding="utf-8")
+    return status_counts
 
 
 def _write_failed_grasps_html(
@@ -2262,6 +2627,7 @@ def _write_orientation_details(
     stage1,
     stage2=None,
     fallback_summary: dict[str, object] | None = None,
+    handover_summary: dict[str, object] | None = None,
     error: str = "",
 ) -> None:
     payload = {
@@ -2287,6 +2653,7 @@ def _write_orientation_details(
             "best_direct_grasp": _best_candidate_payload(stage2.accepted),
         },
         "fallback": fallback_summary,
+        "handover_fallback": handover_summary,
         "error": error,
     }
     _write_json(output_path, payload)
@@ -2311,6 +2678,9 @@ def _apply_cli_overrides(payload: dict[str, object], args: argparse.Namespace, o
         fallback = dict(effective.get("fallback", {}))
         fallback["enabled"] = bool(args.fallback_enabled)
         effective["fallback"] = fallback
+        handover_fallback = dict(effective.get("handover_fallback", {}))
+        handover_fallback["enabled"] = bool(args.fallback_enabled)
+        effective["handover_fallback"] = handover_fallback
     return effective
 
 
@@ -2320,6 +2690,7 @@ def _benchmark_one_target(
     planning: PlanningConfig,
     stable_config: StableOrientationConfig,
     fallback_config: FallbackBenchmarkConfig,
+    handover_config: HandoverFallbackBenchmarkConfig,
     mesh_scale: float,
     output_dir: Path,
     target_index: int,
@@ -2426,6 +2797,8 @@ def _benchmark_one_target(
         stage2_html = orientation_dir / "stage2.html"
         fallback_json = orientation_dir / "fallback_plan.json"
         fallback_html = orientation_dir / "fallback_plan.html"
+        handover_json = orientation_dir / "handover_fallback_plan.json"
+        handover_html = orientation_dir / "handover_fallback_pairs.html"
         print(f"  {orientation.orientation_id}: stage 2.", flush=True)
         try:
             stage2 = recheck_stage2_result(
@@ -2436,6 +2809,7 @@ def _benchmark_one_target(
             )
             write_stage2_artifacts(stage2, planning=planning, output_json=stage2_json, output_html=stage2_html)
             plan = None
+            handover_result = None
             if fallback_config.enabled and len(stage1.bundle.candidates) > 0 and not stage2.accepted:
                 plan = plan_mujoco_regrasp_fallback(
                     stage1=stage1,
@@ -2463,11 +2837,47 @@ def _benchmark_one_target(
                         output_html=fallback_html,
                     )
             fallback_summary = _fallback_summary(plan)
+            if (
+                handover_config.enabled
+                and len(stage1.bundle.candidates) > 0
+                and not stage2.accepted
+                and fallback_summary is None
+            ):
+                handover_result = plan_handover_fallback(
+                    stage1=stage1,
+                    direct_stage2=stage2,
+                    planning=planning,
+                    max_final_candidates=handover_config.max_final_candidates,
+                    max_transfer_candidates=handover_config.max_transfer_candidates,
+                    max_pair_checks=handover_config.max_pair_checks,
+                    max_accepted_pairs=handover_config.max_accepted_pairs,
+                    max_rejected_pairs=handover_config.max_rejected_pairs,
+                )
+                if handover_result is not None:
+                    write_handover_fallback_result(
+                        handover_result,
+                        handover_json,
+                        input_stage2_json=stage2_json,
+                    )
+                    _write_handover_grasp_pairs_html(
+                        handover_html,
+                        target=target,
+                        orientation=orientation,
+                        status="handover_fallback_success"
+                        if handover_result.selected_pair is not None
+                        else "handover_fallback_failed",
+                        stage1=stage1,
+                        planning=planning,
+                        result=handover_result,
+                    )
+            handover_summary = _handover_summary(handover_result)
             status = _status_for_orientation(
                 stage1_count=len(stage1.bundle.candidates),
                 stage2_count=len(stage2.accepted),
                 fallback_found=fallback_summary is not None,
+                handover_found=handover_summary is not None,
                 fallback_enabled=fallback_config.enabled,
+                handover_enabled=handover_config.enabled,
             )
             row = _orientation_row(
                 target=target,
@@ -2478,13 +2888,23 @@ def _benchmark_one_target(
                 stage2_count=len(stage2.accepted),
                 best_direct=_best_candidate_payload(stage2.accepted),
                 fallback_summary=fallback_summary,
+                handover_summary=handover_summary,
             )
             row_links = {
                 "stage2_json": _relative_link(output_dir, stage2_json),
                 "stage2_html": _relative_link(output_dir, stage2_html),
                 "fallback_json": _relative_link(output_dir, fallback_json) if fallback_summary is not None else "",
                 "fallback_html": _relative_link(output_dir, fallback_html) if fallback_summary is not None else "",
+                "handover_json": _relative_link(output_dir, handover_json) if handover_result is not None else "",
+                "handover_html": _relative_link(output_dir, handover_html) if handover_result is not None else "",
             }
+            if handover_result is not None:
+                row["handover_pair_count_displayed"] = len(handover_result.accepted_pairs) + len(
+                    handover_result.rejected_pairs
+                )
+                row["handover_rejection_counts"] = handover_result.metadata.get("rejection_counts", {})
+                row["handover_transfer_floor_status_counts"] = handover_result.transfer_floor_status_counts
+                row["handover_checked_pair_count"] = handover_result.metadata.get("checked_pair_count", 0)
             all_grasps_html = orientation_dir / "all_generated_grasps.html"
             try:
                 overview_counts = _write_all_generated_grasps_html(
@@ -2538,6 +2958,7 @@ def _benchmark_one_target(
                     status=status,
                     stage2=stage2,
                     fallback_summary=fallback_summary,
+                    handover_summary=handover_summary,
                     links=row_links,
                 )
             )
@@ -2549,8 +2970,13 @@ def _benchmark_one_target(
                 stage1=stage1,
                 stage2=stage2,
                 fallback_summary=fallback_summary,
+                handover_summary=handover_summary,
             )
-            print(f"    {status}: stage2={len(stage2.accepted)} fallback={fallback_summary is not None}", flush=True)
+            print(
+                f"    {status}: stage2={len(stage2.accepted)} fallback={fallback_summary is not None} "
+                f"handover={handover_summary is not None}",
+                flush=True,
+            )
         except Exception as exc:
             error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             row = _orientation_row(
@@ -2635,7 +3061,7 @@ def _benchmark_one_target(
         orientation_frames=orientation_frames,
     )
     part_statuses = Counter(str(row["status"]) for row in rows if row["assembly"] == target.assembly and row["part_id"] == target.part_id)
-    if part_statuses.get("direct_success", 0) or part_statuses.get("fallback_success", 0):
+    if any(part_statuses.get(status, 0) for status in SUCCESS_STATUSES):
         part_status = "has_generation_success"
     elif part_statuses:
         part_status = "all_orientations_failed"
@@ -2694,6 +3120,7 @@ def main() -> None:
     planning = _planning_config(payload)
     stable_config = _stable_orientation_config(payload)
     fallback_config = _fallback_config(payload)
+    handover_config = _handover_fallback_config(payload)
     mesh_scale = float(dict(payload.get("geometry", {})).get("mesh_scale", 1.0))
     targets = _discover_targets(payload, args)
     if not targets:
@@ -2721,6 +3148,7 @@ def main() -> None:
             planning=planning,
             stable_config=stable_config,
             fallback_config=fallback_config,
+            handover_config=handover_config,
             mesh_scale=mesh_scale,
             output_dir=output_dir,
             target_index=index,
@@ -2751,6 +3179,11 @@ def main() -> None:
                 1
                 for row in rows
                 if isinstance(row.get("links"), dict) and row["links"].get("all_generated_grasps_html")
+            ),
+            "handover_fallback_pages_written": sum(
+                1
+                for row in rows
+                if isinstance(row.get("links"), dict) and row["links"].get("handover_html")
             ),
             "failed_grasp_display_frames": dict(
                 Counter(
