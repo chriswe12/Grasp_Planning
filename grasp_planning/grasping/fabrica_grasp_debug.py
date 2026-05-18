@@ -1228,6 +1228,47 @@ def candidate_payload(
     return payload
 
 
+def _sample_edges(edges: list[tuple[int, int]], max_edges: int | None) -> list[tuple[int, int]]:
+    if max_edges is None or max_edges <= 0 or len(edges) <= max_edges:
+        return edges
+    indices = np.linspace(0, len(edges) - 1, int(max_edges), dtype=np.int64)
+    return [edges[int(index)] for index in indices]
+
+
+def _compact_vertices_for_edges(
+    vertices: list[list[float]],
+    edges: list[tuple[int, int]],
+) -> tuple[list[list[float]], list[tuple[int, int]]]:
+    if not edges:
+        return [], []
+    old_to_new: dict[int, int] = {}
+    compact_vertices: list[list[float]] = []
+    compact_edges: list[tuple[int, int]] = []
+    for start, end in edges:
+        remapped: list[int] = []
+        for old_index in (int(start), int(end)):
+            if old_index not in old_to_new:
+                old_to_new[old_index] = len(compact_vertices)
+                compact_vertices.append(vertices[old_index])
+            remapped.append(old_to_new[old_index])
+        compact_edges.append((remapped[0], remapped[1]))
+    return compact_vertices, compact_edges
+
+
+def _bounds_corners(points: list[list[float]]) -> list[list[float]]:
+    if not points:
+        return []
+    array = np.asarray(points, dtype=float)
+    mins = array.min(axis=0)
+    maxs = array.max(axis=0)
+    return [
+        fmt_vec([x, y, z])
+        for x in (mins[0], maxs[0])
+        for y in (mins[1], maxs[1])
+        for z in (mins[2], maxs[2])
+    ]
+
+
 def write_debug_html(
     *,
     title: str,
@@ -1240,6 +1281,8 @@ def write_debug_html(
     obstacle_mesh_local: TriangleMesh | None = None,
     metadata_lines: list[str] | None = None,
     display_object_pose_world: ObjectWorldPose | None = None,
+    max_mesh_edges: int | None = None,
+    max_obstacle_edges: int | None = None,
 ) -> None:
     mesh_vertices_display = (
         [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()]
@@ -1261,6 +1304,13 @@ def write_debug_html(
             ]
         )
     )
+    mesh_edges = _sample_edges(unique_edges(mesh_local.faces), max_mesh_edges)
+    obstacle_edges = [] if obstacle_mesh_local is None else unique_edges(obstacle_mesh_local.faces)
+    obstacle_edge_count_original = len(obstacle_edges)
+    obstacle_bounds_display = _bounds_corners(obstacle_vertices_display)
+    obstacle_edges = _sample_edges(obstacle_edges, max_obstacle_edges)
+    if obstacle_mesh_local is not None and max_obstacle_edges is not None:
+        obstacle_vertices_display, obstacle_edges = _compact_vertices_for_edges(obstacle_vertices_display, obstacle_edges)
     ground_plane_display = (
         ground_plane
         if ground_plane is None or display_object_pose_world is None
@@ -1275,10 +1325,13 @@ def write_debug_html(
         "title": title,
         "subtitle": subtitle,
         "vertices_obj": mesh_vertices_display,
-        "edges": unique_edges(mesh_local.faces),
+        "edges": mesh_edges,
+        "edge_count_original": len(unique_edges(mesh_local.faces)),
         "faces": [[int(v) for v in face] for face in mesh_local.faces.tolist()],
         "obstacle_vertices_obj": obstacle_vertices_display,
-        "obstacle_edges": [] if obstacle_mesh_local is None else unique_edges(obstacle_mesh_local.faces),
+        "obstacle_edges": obstacle_edges,
+        "obstacle_edge_count_original": obstacle_edge_count_original,
+        "obstacle_bounds_obj": obstacle_bounds_display,
         "ground_plane_overlay": ground_plane_display,
         "metadata_lines": metadata_lines or [],
         "candidates": candidate_payload(
@@ -1341,6 +1394,7 @@ def write_debug_html(
     .item-meta { margin-top: 8px; color: var(--muted); font-size: 13px; font-family: "IBM Plex Mono", monospace; }
     .status.accepted { color: var(--accepted); }
     .status.rejected { color: var(--rejected); }
+    .status.stage1_pass { color: var(--ground); }
     .main { padding: 18px; overflow: auto; }
     .cards { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr); gap: 18px; align-items: start; }
     .card { border: 1px solid var(--line); border-radius: 20px; background: rgba(255,250,240,0.88); padding: 16px; box-shadow: 0 14px 32px rgba(72,51,28,0.08); }
@@ -1438,6 +1492,7 @@ def write_debug_html(
     const points = [
       ...data.vertices_obj,
       ...data.obstacle_vertices_obj,
+      ...(data.obstacle_bounds_obj || []),
       ...(data.ground_plane_overlay ? data.ground_plane_overlay.corners_obj : []),
       ...data.candidates.flatMap((candidate) => [candidate.grasp_position_obj, candidate.contact_point_a_obj, candidate.contact_point_b_obj, ...candidate.franka_hand_vertices_obj, ...candidate.franka_left_boxes.flatMap((box) => box.corners), ...candidate.franka_right_boxes.flatMap((box) => box.corners)]),
     ];
@@ -1642,6 +1697,26 @@ def write_debug_html(
       renderScene(candidate);
       renderDetails(candidate);
     }
+    let sceneRenderPending = false;
+    function renderCurrentScene() {
+      const candidates = visibleCandidates();
+      if (candidates.length === 0) {
+        scene.replaceChildren();
+        return;
+      }
+      if (state.selectedIndex >= candidates.length) {
+        state.selectedIndex = 0;
+      }
+      renderScene(candidates[state.selectedIndex]);
+    }
+    function scheduleSceneRender() {
+      if (sceneRenderPending) return;
+      sceneRenderPending = true;
+      window.requestAnimationFrame(() => {
+        sceneRenderPending = false;
+        renderCurrentScene();
+      });
+    }
     window.addEventListener("keydown", (event) => {
       const candidates = visibleCandidates();
       if (candidates.length === 0) return;
@@ -1663,7 +1738,7 @@ def write_debug_html(
     meshModeBtn.addEventListener("click", () => {
       state.meshRenderMode = state.meshRenderMode === "wireframe" ? "solid" : "wireframe";
       meshModeBtn.textContent = state.meshRenderMode === "wireframe" ? "Solid Mesh" : "Wireframe Mesh";
-      render();
+      renderCurrentScene();
     });
     acceptedOnlyBtn.addEventListener("click", () => {
       state.acceptedOnly = !state.acceptedOnly;
@@ -1704,13 +1779,13 @@ def write_debug_html(
         state.yaw = wrapAngle(state.yaw + dx * 0.01);
         state.pitch = wrapAngle(state.pitch - dy * 0.01);
       }
-      render();
+      scheduleSceneRender();
     });
     scene.addEventListener("wheel", (event) => {
       event.preventDefault();
       const zoomFactor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
       state.zoom = clamp(state.zoom * zoomFactor, 0.35, 4.0);
-      render();
+      scheduleSceneRender();
     }, { passive: false });
     scene.style.cursor = "grab";
     scene.addEventListener("contextmenu", (event) => event.preventDefault());

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import html
 import json
 import shutil
 import subprocess
@@ -25,14 +24,27 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from grasp_planning.grasping.collision import trimesh_fcl_backend_available  # noqa: E402
+from grasp_planning.grasping.collision import (  # noqa: E402
+    BoxCollisionPrimitive,
+    FrankaHandFingerCollisionModel,
+    GraspCollisionEvaluator,
+    MeshCollisionPrimitive,
+    trimesh_fcl_backend_available,
+)
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     CandidateStatus,
     SavedGraspCandidate,
     candidate_payload,
+    canonicalize_target_mesh,
+    ground_plane_overlay_obj,
+    load_asset_mesh,
+    quat_to_rotmat_xyzw,
     relative_asset_mesh_path,
+    transform_primitive_to_world,
     unique_edges,
+    write_debug_html,
 )
+from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh  # noqa: E402
 from grasp_planning.grasping.mesh_io import resolve_mesh_path  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
     GeometryConfig,
@@ -57,6 +69,13 @@ from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # n
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "grasp_generation_benchmark.yaml"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "artifacts" / "grasp_generation_benchmark"
+SUCCESS_STATUSES = {"direct_success", "fallback_success"}
+FAILED_GRASP_HTML_LIMIT = 100
+FAILED_GRASP_STAGE1_PASS_EXAMPLE_LIMIT = 20
+FAILED_GRASP_DISPLAY_FRAME = "stage2_floor_pose"
+ALL_GRASP_OVERVIEW_MAX_MESH_EDGES = 5000
+ALL_GRASP_OVERVIEW_MAX_OBSTACLE_EDGES = 5000
+ALL_GRASP_OVERVIEW_MARKER_LENGTH_M = 0.025
 
 
 @dataclass(frozen=True)
@@ -77,6 +96,14 @@ class FallbackBenchmarkConfig:
     stability_margin_m: float = 0.0
     coplanar_tolerance_m: float = 1.0e-6
     staging_xy_offsets_m: tuple[tuple[float, float], ...] = ((0.0, 0.0),)
+
+
+@dataclass(frozen=True)
+class AssemblyObstaclePart:
+    part_id: str
+    mesh_path: str
+    mesh_world: TriangleMesh
+    scene: object
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
@@ -266,6 +293,257 @@ def _best_candidate_payload(candidates: Iterable[SavedGraspCandidate]) -> dict[s
     }
 
 
+def _candidate_score(candidate: SavedGraspCandidate) -> float:
+    return float(candidate.score) if candidate.score is not None else float("-inf")
+
+
+def _status_sort_key(entry: CandidateStatus) -> tuple[float, str]:
+    return (-_candidate_score(entry.grasp), entry.grasp.grasp_id)
+
+
+def _candidate_contact_key(candidate: SavedGraspCandidate, *, tolerance_m: float = 1.0e-5) -> tuple[object, ...]:
+    def _point_key(point: tuple[float, float, float]) -> tuple[int, int, int]:
+        return tuple(int(round(float(value) / tolerance_m)) for value in point)
+
+    contact_pair = tuple(
+        sorted(
+            (
+                _point_key(candidate.contact_point_a_obj),
+                _point_key(candidate.contact_point_b_obj),
+            )
+        )
+    )
+    jaw_width_key = int(round(float(candidate.jaw_width) / tolerance_m))
+    return contact_pair, jaw_width_key
+
+
+def _unique_contact_statuses(
+    statuses: Iterable[CandidateStatus],
+    *,
+    limit: int = FAILED_GRASP_HTML_LIMIT,
+) -> list[CandidateStatus]:
+    selected: list[CandidateStatus] = []
+    seen: set[tuple[object, ...]] = set()
+    for entry in sorted(statuses, key=_status_sort_key):
+        key = _candidate_contact_key(entry.grasp)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(entry)
+        if len(selected) >= max(0, int(limit)):
+            break
+    return selected
+
+
+def _top_rejected_statuses(
+    statuses: Iterable[CandidateStatus],
+    *,
+    limit: int = FAILED_GRASP_HTML_LIMIT,
+) -> list[CandidateStatus]:
+    rejected = [entry for entry in statuses if entry.status != "accepted"]
+    return _unique_contact_statuses(rejected, limit=limit)
+
+
+def _stage1_passed_stage2_failure_statuses(
+    stage2,
+    *,
+    limit: int = FAILED_GRASP_STAGE1_PASS_EXAMPLE_LIMIT,
+) -> list[CandidateStatus]:
+    if stage2 is None:
+        return []
+    return _unique_contact_statuses(
+        [
+            CandidateStatus(
+                grasp=entry.grasp,
+                status="stage1_pass",
+                reason=f"floor: {entry.reason} (stage1 passed)",
+            )
+            for entry in stage2.statuses
+            if entry.status != "accepted"
+        ],
+        limit=limit,
+    )
+
+
+def _mesh_in_object_frame(mesh_world: TriangleMesh, object_pose_world) -> TriangleMesh:
+    rotation = object_pose_world.rotation_world_from_object
+    translation = object_pose_world.translation_world
+    vertices_obj = (np.asarray(mesh_world.vertices_obj, dtype=float) - translation) @ rotation
+    return TriangleMesh(vertices_obj=vertices_obj, faces=np.asarray(mesh_world.faces, dtype=np.int64))
+
+
+def _minus_z_axis_in_object_frame(object_pose_world) -> tuple[float, float, float]:
+    axis_obj = object_pose_world.rotation_world_from_object.T @ np.array([0.0, 0.0, -1.0], dtype=float)
+    norm = float(np.linalg.norm(axis_obj))
+    if norm < 1.0e-12:
+        return (0.0, 0.0, -1.0)
+    return tuple(float(value) for value in (axis_obj / norm).tolist())
+
+
+def _unique_axes(axes: Iterable[tuple[float, float, float]], *, tolerance: float = 1.0e-8) -> tuple[tuple[float, float, float], ...]:
+    unique: list[tuple[float, float, float]] = []
+    for axis in axes:
+        vector = np.asarray(axis, dtype=float)
+        norm = float(np.linalg.norm(vector))
+        if norm < 1.0e-12:
+            continue
+        normalized = tuple(float(value) for value in (vector / norm).tolist())
+        if all(float(np.linalg.norm(np.asarray(normalized) - np.asarray(existing))) > tolerance for existing in unique):
+            unique.append(normalized)
+    return tuple(unique)
+
+
+def _upright_approach_axes_obj(
+    *,
+    source_frame_pose_obj_world,
+    orientations: Iterable[StableOrientation],
+) -> tuple[tuple[float, float, float], ...]:
+    return _unique_axes(
+        (
+            (0.0, 0.0, -1.0),
+            _minus_z_axis_in_object_frame(source_frame_pose_obj_world),
+            *(_minus_z_axis_in_object_frame(orientation.object_pose_world) for orientation in orientations),
+        )
+    )
+
+
+def _assembly_obstacle_parts(
+    *,
+    target: TargetSpec,
+    mesh_scale: float,
+    contact_gap_m: float,
+) -> list[AssemblyObstaclePart]:
+    target_resolved = resolve_mesh_path(target.target_mesh_path)
+    evaluator = GraspCollisionEvaluator(FrankaHandFingerCollisionModel(contact_gap_m=contact_gap_m))
+    parts: list[AssemblyObstaclePart] = []
+    for path in sorted(REPO_ROOT.joinpath("assets").glob(target.assembly_glob)):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved == target_resolved:
+            continue
+        mesh_world = load_asset_mesh(resolved, scale=mesh_scale)
+        parts.append(
+            AssemblyObstaclePart(
+                part_id=resolved.stem,
+                mesh_path=relative_asset_mesh_path(resolved),
+                mesh_world=mesh_world,
+                scene=evaluator.build_scene(mesh_world),
+            )
+        )
+    return parts
+
+
+def _candidate_collides_with_scene(
+    candidate: SavedGraspCandidate,
+    *,
+    object_pose_world,
+    scene: object,
+    contact_gap_m: float,
+    lateral_offset_m: float,
+    approach_offset_m: float,
+) -> bool:
+    candidate_obj = candidate.to_object_frame_candidate()
+    grasp_rotmat = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
+    collision_model = FrankaHandFingerCollisionModel(
+        contact_gap_m=contact_gap_m,
+        contact_patch_lateral_offset_m=lateral_offset_m,
+        contact_patch_approach_offset_m=approach_offset_m,
+    )
+    for primitive_obj in collision_model.primitives_for_grasp(
+        grasp_rotmat=grasp_rotmat,
+        contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
+        contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+    ):
+        primitive_world = transform_primitive_to_world(primitive_obj, object_pose_world)
+        if isinstance(primitive_world, BoxCollisionPrimitive) and scene.intersects_box(primitive_world):
+            return True
+        if isinstance(primitive_world, MeshCollisionPrimitive) and scene.intersects_mesh(primitive_world):
+            return True
+    return False
+
+
+def _colliding_obstacle_parts(
+    candidate: SavedGraspCandidate,
+    *,
+    object_pose_world,
+    obstacle_parts: list[AssemblyObstaclePart],
+    contact_gap_m: float,
+    lateral_offset_m: float,
+    approach_offset_m: float,
+) -> list[str]:
+    return [
+        part.part_id
+        for part in obstacle_parts
+        if _candidate_collides_with_scene(
+            candidate,
+            object_pose_world=object_pose_world,
+            scene=part.scene,
+            contact_gap_m=contact_gap_m,
+            lateral_offset_m=lateral_offset_m,
+            approach_offset_m=approach_offset_m,
+        )
+    ]
+
+
+def _stage1_assembly_failure_statuses(
+    *,
+    target: TargetSpec,
+    stage1,
+    planning: PlanningConfig,
+    mesh_scale: float,
+    limit: int = FAILED_GRASP_HTML_LIMIT,
+    max_candidates_to_scan: int | None = None,
+) -> tuple[list[CandidateStatus], list[AssemblyObstaclePart]]:
+    accepted_ids = {candidate.grasp_id for candidate in stage1.bundle.candidates}
+    raw_candidates = sorted(
+        (candidate for candidate in stage1.raw_candidates if candidate.grasp_id not in accepted_ids),
+        key=lambda candidate: (-_candidate_score(candidate), candidate.grasp_id),
+    )
+    scan_limit = max_candidates_to_scan if max_candidates_to_scan is not None else max(int(limit) * 8, int(limit))
+    raw_candidates = raw_candidates[: max(0, int(scan_limit))]
+    if not raw_candidates:
+        return [], []
+    if planning.skip_stage1_collision_checks:
+        return [], []
+
+    obstacle_parts = _assembly_obstacle_parts(
+        target=target,
+        mesh_scale=mesh_scale,
+        contact_gap_m=planning.detailed_finger_contact_gap_m,
+    )
+    statuses: list[CandidateStatus] = []
+    seen_contact_keys: set[tuple[object, ...]] = set()
+    for candidate in raw_candidates:
+        collisions = _colliding_obstacle_parts(
+            candidate,
+            object_pose_world=stage1.target_pose_in_obj_world,
+            obstacle_parts=obstacle_parts,
+            contact_gap_m=planning.detailed_finger_contact_gap_m,
+            lateral_offset_m=float(candidate.contact_patch_lateral_offset_m),
+            approach_offset_m=float(candidate.contact_patch_approach_offset_m),
+        )
+        if collisions:
+            shown = ", ".join(collisions[:4])
+            suffix = "" if len(collisions) <= 4 else f", +{len(collisions) - 4} more"
+            reason = f"part: {shown}{suffix}"
+        else:
+            reason = "part: no_collision_at_saved_offset"
+
+        contact_key = _candidate_contact_key(candidate)
+        if contact_key in seen_contact_keys:
+            continue
+        seen_contact_keys.add(contact_key)
+        statuses.append(CandidateStatus(grasp=candidate, status="rejected", reason=reason))
+        if len(statuses) >= max(0, int(limit)):
+            break
+    return statuses, obstacle_parts
+
+
+def _constraint_counts(statuses: Iterable[CandidateStatus]) -> dict[str, int]:
+    return dict(Counter(entry.reason for entry in statuses))
+
+
 def _raw_stage1_payload(stage1, target: TargetSpec) -> dict[str, object]:
     return {
         "target_mesh_path": target.target_mesh_path,
@@ -395,7 +673,7 @@ def _write_summary_md(output_path: Path, *, rows: list[dict[str, object]], part_
     for status, count in sorted(part_status_counts.items()):
         lines.append(f"- {status}: {count}")
     lines.extend(["", "## Failed Orientations", ""])
-    failed_rows = [row for row in rows if str(row["status"]) not in {"direct_success", "fallback_success"}]
+    failed_rows = [row for row in rows if str(row["status"]) not in SUCCESS_STATUSES]
     if not failed_rows:
         lines.append("- none")
     else:
@@ -423,97 +701,512 @@ def _write_index_html(
     output_dir: Path,
     rows: list[dict[str, object]],
     part_records: list[dict[str, object]],
+    browser_parts: list[dict[str, object]],
 ) -> None:
     status_counts = Counter(str(row["status"]) for row in rows)
-    part_by_key = {(part["assembly"], part["part_id"]): part for part in part_records}
-    table_rows: list[str] = []
-    for row in rows:
-        key = (row["assembly"], row["part_id"])
-        part = part_by_key.get(key, {})
-        links = row.get("links", {}) if isinstance(row.get("links"), dict) else {}
-        stage1_link = _relative_link(output_dir, Path(str(part.get("stage1_html")))) if part.get("stage1_html") else ""
-        orientations_link = (
-            _relative_link(output_dir, Path(str(part.get("orientations_html"))))
-            if part.get("orientations_html")
-            else ""
-        )
-        stage2_link = str(links.get("stage2_html", ""))
-        fallback_link = str(links.get("fallback_html", ""))
-        link_html = " ".join(
-            item
-            for item in (
-                f'<a href="{html.escape(stage1_link)}">stage1</a>' if stage1_link else "",
-                f'<a href="{html.escape(orientations_link)}">orientations</a>' if orientations_link else "",
-                f'<a href="{html.escape(stage2_link)}">stage2</a>' if stage2_link else "",
-                f'<a href="{html.escape(fallback_link)}">fallback</a>' if fallback_link else "",
-            )
-            if item
-        )
-        table_rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(row['assembly']))}</td>"
-            f"<td>{html.escape(str(row['part_id']))}</td>"
-            f"<td>{html.escape(str(row['orientation_id']))}</td>"
-            f"<td><span class=\"status {html.escape(str(row['status']))}\">{html.escape(str(row['status']))}</span></td>"
-            f"<td>{html.escape(str(row['stage1_assembly_feasible_count']))}</td>"
-            f"<td>{html.escape(str(row['stage2_ground_feasible_count']))}</td>"
-            f"<td>{html.escape(str(row['max_stable_tilt_deg']))}</td>"
-            f"<td>{link_html}</td>"
-            "</tr>"
-        )
-    if not table_rows:
-        table_rows.append("<tr><td colspan=\"8\">No orientation rows were generated.</td></tr>")
-    counts_html = "".join(
-        f"<li><strong>{html.escape(status)}</strong>: {count}</li>" for status, count in sorted(status_counts.items())
-    )
-    document = f"""<!DOCTYPE html>
+    part_status_counts = Counter(str(part.get("status", "unknown")) for part in part_records)
+    data = {
+        "title": "Grasp Generation Benchmark",
+        "subtitle": "Select an assembly and part, then step through stable orientations and their benchmark artifacts.",
+        "summary": {
+            "part_count": len(part_records),
+            "orientation_count": len(rows),
+            "status_counts": dict(sorted(status_counts.items())),
+            "part_status_counts": dict(sorted(part_status_counts.items())),
+        },
+        "parts": browser_parts,
+    }
+    data_json = json.dumps(data, indent=2)
+    document = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grasp Generation Benchmark</title>
+  <title>Grasp Generation Benchmark Browser</title>
   <style>
-    body {{ margin: 0; font-family: system-ui, sans-serif; color: #1f2933; background: #f7f7f4; }}
-    main {{ max-width: 1280px; margin: 0 auto; padding: 24px; }}
-    h1 {{ margin: 0 0 12px; font-size: 28px; }}
-    .summary {{ display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }}
-    .summary section {{ border: 1px solid #d8d8cf; background: #fff; border-radius: 8px; padding: 14px 16px; min-width: 220px; }}
-    table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #d8d8cf; }}
-    th, td {{ border-bottom: 1px solid #e3e3dc; padding: 8px 10px; text-align: left; font-size: 13px; }}
-    th {{ background: #ecece4; position: sticky; top: 0; }}
-    a {{ color: #2563eb; text-decoration: none; margin-right: 8px; }}
-    a:hover {{ text-decoration: underline; }}
-    .status {{ border-radius: 999px; padding: 3px 8px; background: #e5e7eb; white-space: nowrap; }}
-    .direct_success {{ background: #dcfce7; color: #166534; }}
-    .fallback_success {{ background: #dbeafe; color: #1d4ed8; }}
-    .stage1_failed, .stage2_failed_fallback_failed, .stage2_failed_no_fallback {{ background: #fee2e2; color: #991b1b; }}
+    :root {
+      --bg: #f6f4ee;
+      --panel: #fffdf8;
+      --ink: #1f2522;
+      --muted: #68716c;
+      --line: #d9d4c7;
+      --mesh: #2f6f5e;
+      --floor: #2563eb;
+      --success: #15803d;
+      --fallback: #1d4ed8;
+      --fail: #b91c1c;
+      --franka: #d97706;
+      --hand: #8f5a12;
+      --contact-a: #c8452d;
+      --contact-b: #1f7c60;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    .layout { display: grid; grid-template-columns: 390px minmax(0, 1fr); min-height: 100vh; }
+    aside { border-right: 1px solid var(--line); background: var(--panel); padding: 20px; overflow: auto; }
+    main { padding: 18px; overflow: auto; }
+    h1 { margin: 0 0 8px; font-size: 25px; line-height: 1.15; }
+    .subtitle { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+    .metric { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 8px 10px; }
+    .metric strong { display: block; font-size: 12px; color: var(--muted); }
+    .metric span { display: block; margin-top: 3px; font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+    .selectors { display: grid; gap: 8px; margin-bottom: 12px; }
+    label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+    select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); padding: 9px 10px; font: inherit; }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+    button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 10px 12px; font: inherit; cursor: pointer; }
+    button:hover { border-color: var(--mesh); }
+    .orientation-list { display: grid; gap: 8px; }
+    .orientation-item { width: 100%; text-align: left; border-radius: 8px; }
+    .orientation-item.active { border-color: var(--mesh); box-shadow: 0 0 0 2px rgba(47,111,94,0.14); }
+    .item-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
+    .item-meta { margin-top: 5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.4; }
+    .status { border-radius: 999px; padding: 2px 7px; font-size: 12px; white-space: nowrap; }
+    .direct_success { background: #dcfce7; color: var(--success); }
+    .fallback_success { background: #dbeafe; color: var(--fallback); }
+    .failed { background: #fee2e2; color: var(--fail); }
+    .card { border: 1px solid var(--line); background: rgba(255,253,248,0.96); border-radius: 8px; padding: 14px; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.6fr); gap: 16px; align-items: start; }
+    #scene { width: 100%; aspect-ratio: 1.45 / 1; display: block; border-radius: 8px; background: linear-gradient(180deg, #ffffff, #ebe7dc); }
+    .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; margin: 0; }
+    .link-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .link-list a { border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #2563eb; padding: 6px 8px; font-size: 13px; text-decoration: none; }
+    .link-list a:hover { text-decoration: underline; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .swatch { width: 13px; height: 13px; border-radius: 999px; display: inline-block; }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Grasp Generation Benchmark</h1>
-    <div class="summary">
-      <section><strong>Parts</strong><br>{len(part_records)}</section>
-      <section><strong>Orientations</strong><br>{len(rows)}</section>
-      <section><strong>Status Counts</strong><ul>{counts_html}</ul></section>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Assembly</th><th>Part</th><th>Orientation</th><th>Status</th>
-          <th>Stage 1</th><th>Stage 2</th><th>Max Tilt Deg</th><th>Links</th>
-        </tr>
-      </thead>
-      <tbody>
-        {''.join(table_rows)}
-      </tbody>
-    </table>
-  </main>
+  <div class="layout">
+    <aside>
+      <h1 id="title"></h1>
+      <p id="subtitle" class="subtitle"></p>
+      <div id="summary" class="summary"></div>
+      <div class="selectors">
+        <label>Assembly<select id="assemblySelect"></select></label>
+        <label>Part<select id="partSelect"></select></label>
+      </div>
+      <div class="controls">
+        <button id="prevPartBtn" type="button">Previous Part</button>
+        <button id="nextPartBtn" type="button">Next Part</button>
+        <button id="prevOrientationBtn" type="button">Previous Orientation</button>
+        <button id="nextOrientationBtn" type="button">Next Orientation</button>
+        <button id="solidBtn" type="button">Solid Mesh</button>
+        <button id="resetBtn" type="button">Reset View</button>
+      </div>
+      <div id="orientationList" class="orientation-list"></div>
+    </aside>
+    <main>
+      <div class="grid">
+        <section class="card">
+          <svg id="scene" viewBox="0 0 1100 760"></svg>
+          <div class="legend">
+            <span><i class="swatch" style="background: var(--mesh)"></i>Target mesh</span>
+            <span><i class="swatch" style="background: var(--floor)"></i>Ground</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Hand mesh</span>
+            <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A</span>
+            <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B</span>
+          </div>
+        </section>
+        <section class="card">
+          <pre id="details" class="kv"></pre>
+          <div id="linkList" class="link-list"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script>
+    const data = __DATA_JSON__;
+    const assemblySelect = document.getElementById("assemblySelect");
+    const partSelect = document.getElementById("partSelect");
+    const scene = document.getElementById("scene");
+    const details = document.getElementById("details");
+    const linkList = document.getElementById("linkList");
+    const list = document.getElementById("orientationList");
+    document.getElementById("title").textContent = data.title;
+    document.getElementById("subtitle").textContent = data.subtitle;
+    const initialView = { yaw: -0.72, pitch: 0.52, zoom: 1.0, panX: 0, panY: 0 };
+    const state = { assembly: "", partKey: "", index: 0, solid: false, dragging: false, dragMode: "rotate", pointerId: null, lastX: 0, lastY: 0, ...initialView };
+    function metric(label, value) {
+      const node = document.createElement("div");
+      node.className = "metric";
+      node.innerHTML = `<strong>${label}</strong><span>${value}</span>`;
+      return node;
+    }
+    function renderSummary() {
+      const summary = document.getElementById("summary");
+      const statusText = Object.entries(data.summary.status_counts).map(([key, value]) => `${key}:${value}`).join(" ");
+      summary.replaceChildren(
+        metric("Parts", data.summary.part_count),
+        metric("Orientations", data.summary.orientation_count),
+        metric("Statuses", statusText || "none"),
+        metric("Browser Parts", data.parts.length),
+      );
+    }
+    function assemblies() {
+      return [...new Set(data.parts.map((part) => part.assembly))].sort();
+    }
+    function partsForAssembly() {
+      return data.parts.filter((part) => part.assembly === state.assembly);
+    }
+    function currentPartIndex() {
+      return partsForAssembly().findIndex((part) => part.key === state.partKey);
+    }
+    function currentPart() {
+      return data.parts.find((part) => part.key === state.partKey) || partsForAssembly()[0] || data.parts[0] || null;
+    }
+    function currentFrame() {
+      const part = currentPart();
+      return part ? part.frames[state.index] || null : null;
+    }
+    function setAssembly(value) {
+      state.assembly = value;
+      const parts = partsForAssembly();
+      state.partKey = parts.length ? parts[0].key : "";
+      state.index = 0;
+      populatePartSelect();
+      render();
+    }
+    function setPart(value, preserveOrientationIndex = false) {
+      state.partKey = value;
+      if (!preserveOrientationIndex) {
+        state.index = 0;
+      }
+      render();
+    }
+    function populateAssemblySelect() {
+      assemblySelect.replaceChildren();
+      assemblies().forEach((assembly) => {
+        const option = document.createElement("option");
+        option.value = assembly;
+        option.textContent = assembly;
+        assemblySelect.appendChild(option);
+      });
+      state.assembly = assemblySelect.value || assemblies()[0] || "";
+    }
+    function populatePartSelect() {
+      partSelect.replaceChildren();
+      partsForAssembly().forEach((part) => {
+        const successes = part.frames.filter((frame) => frame.status === "direct_success" || frame.status === "fallback_success").length;
+        const option = document.createElement("option");
+        option.value = part.key;
+        option.textContent = `${part.part_id} (${successes}/${part.frames.length})`;
+        partSelect.appendChild(option);
+      });
+      if (![...partSelect.options].some((option) => option.value === state.partKey)) {
+        state.partKey = partSelect.options.length ? partSelect.options[0].value : "";
+      }
+      partSelect.value = state.partKey;
+    }
+    function statusClass(status) {
+      if (status === "direct_success") return "direct_success";
+      if (status === "fallback_success") return "fallback_success";
+      return "failed";
+    }
+    function fmt(value, digits = 3) {
+      if (value === null || value === undefined || value === "") return "n/a";
+      return Number(value).toFixed(digits);
+    }
+    function allPoints(part, frame) {
+      if (!frame) return part ? part.vertices_local : [[0, 0, 0]];
+      const points = [...frame.mesh_vertices_world, ...frame.floor_world];
+      const grasp = frame.best_grasp;
+      if (grasp) {
+        points.push(
+          grasp.grasp_position_obj,
+          grasp.contact_point_a_obj,
+          grasp.contact_point_b_obj,
+          ...grasp.franka_hand_vertices_obj,
+          ...grasp.franka_left_boxes.flatMap((box) => box.corners),
+          ...grasp.franka_right_boxes.flatMap((box) => box.corners),
+        );
+      }
+      return points;
+    }
+    function bounds(points) {
+      return points.reduce((acc, point) => {
+        point.forEach((value, axis) => {
+          acc.min[axis] = Math.min(acc.min[axis], value);
+          acc.max[axis] = Math.max(acc.max[axis], value);
+        });
+        return acc;
+      }, { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+    }
+    function rotate(point, center) {
+      const shifted = point.map((value, axis) => value - center[axis]);
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const x1 = cy * shifted[0] + sy * shifted[1];
+      const y1 = -sy * shifted[0] + cy * shifted[1];
+      const z1 = shifted[2];
+      return [x1, cp * y1 + sp * z1, -sp * y1 + cp * z1];
+    }
+    function projection(part, frame) {
+      const b = bounds(allPoints(part, frame));
+      const center = b.min.map((value, axis) => 0.5 * (value + b.max[axis]));
+      const extent = Math.max(...b.max.map((value, axis) => value - b.min[axis]), 0.08);
+      return { center, scale: 560 / extent };
+    }
+    function project(point, projectionBounds) {
+      const [x, y, z] = rotate(point, projectionBounds.center);
+      const scale = projectionBounds.scale * state.zoom;
+      return { x: 550 + state.panX + x * scale, y: 380 + state.panY - y * scale, depth: z };
+    }
+    function add(tag, attrs) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+      scene.appendChild(node);
+      return node;
+    }
+    function line(a, b, options, projectionBounds) {
+      const pa = project(a, projectionBounds), pb = project(b, projectionBounds);
+      add("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: options.stroke || "#333", "stroke-width": options.width || 2, "stroke-opacity": options.opacity ?? 1, "stroke-dasharray": options.dash || "" });
+    }
+    function point(p, options, projectionBounds) {
+      const pp = project(p, projectionBounds);
+      add("circle", { cx: pp.x, cy: pp.y, r: options.radius || 5, fill: options.fill || "#000", stroke: "#fff", "stroke-width": options.strokeWidth || 1.5, "fill-opacity": options.opacity ?? 1 });
+    }
+    function polygon(points, options, projectionBounds) {
+      const projected = points.map((p) => project(p, projectionBounds));
+      add("polygon", { points: projected.map((p) => `${p.x},${p.y}`).join(" "), fill: options.fill || "none", "fill-opacity": options.fillOpacity ?? 1, stroke: options.stroke || "none", "stroke-width": options.strokeWidth || 1, "stroke-opacity": options.strokeOpacity ?? 1 });
+    }
+    function label(p, text, color, projectionBounds) {
+      const pp = project(p, projectionBounds);
+      const node = add("text", { x: pp.x + 8, y: pp.y - 8, fill: color, "font-size": 14, "font-family": "IBM Plex Mono, monospace", "font-weight": 700 });
+      node.textContent = text;
+    }
+    function drawMesh(part, frame, projectionBounds) {
+      if (state.solid) {
+        part.faces.map((face) => {
+          const points = face.map((index) => frame.mesh_vertices_world[index]);
+          const rotated = points.map((p) => rotate(p, projectionBounds.center));
+          const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+          const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+          const normal = [
+            edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+            edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+            edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+          ];
+          const depth = rotated.reduce((sum, p) => sum + p[2], 0) / rotated.length;
+          return { points, normal, depth };
+        }).filter((face) => face.normal[2] > 0).sort((a, b) => a.depth - b.depth).forEach((face) => {
+          polygon(face.points, { fill: "#7aa392", fillOpacity: 0.86, stroke: "#2f6f5e", strokeWidth: 0.8, strokeOpacity: 0.45 }, projectionBounds);
+        });
+      }
+      part.edges.forEach(([a, b]) => line(frame.mesh_vertices_world[a], frame.mesh_vertices_world[b], { stroke: "#2f6f5e", width: 1.5, opacity: 0.82 }, projectionBounds));
+    }
+    function drawBox(corners, color, projectionBounds) {
+      [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(([a, b]) => {
+        line(corners[a], corners[b], { stroke: color, width: 1.6, opacity: 0.78 }, projectionBounds);
+      });
+    }
+    function drawHand(grasp, projectionBounds) {
+      grasp.franka_hand_faces.forEach((face) => {
+        line(grasp.franka_hand_vertices_obj[face[0]], grasp.franka_hand_vertices_obj[face[1]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
+        line(grasp.franka_hand_vertices_obj[face[1]], grasp.franka_hand_vertices_obj[face[2]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
+        line(grasp.franka_hand_vertices_obj[face[2]], grasp.franka_hand_vertices_obj[face[0]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
+      });
+    }
+    function drawGrasp(grasp, projectionBounds) {
+      grasp.franka_left_boxes.forEach((box) => drawBox(box.corners, "#d97706", projectionBounds));
+      grasp.franka_right_boxes.forEach((box) => drawBox(box.corners, "#d97706", projectionBounds));
+      drawHand(grasp, projectionBounds);
+      line(grasp.contact_point_a_obj, grasp.contact_point_b_obj, { stroke: "#15803d", width: 3, opacity: 0.95 }, projectionBounds);
+      point(grasp.grasp_position_obj, { fill: "#15803d", radius: 7 }, projectionBounds);
+      point(grasp.contact_point_a_obj, { fill: "#c8452d", radius: 6 }, projectionBounds);
+      point(grasp.contact_point_b_obj, { fill: "#1f7c60", radius: 6 }, projectionBounds);
+      label(grasp.grasp_position_obj, grasp.grasp_id, "#15803d", projectionBounds);
+    }
+    function renderList() {
+      const part = currentPart();
+      list.replaceChildren();
+      if (!part || !part.frames.length) {
+        const empty = document.createElement("div");
+        empty.className = "item-meta";
+        empty.textContent = "No stable orientations for this part.";
+        list.appendChild(empty);
+        return;
+      }
+      part.frames.forEach((frame, index) => {
+        const grasp = frame.best_grasp;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `orientation-item${index === state.index ? " active" : ""}`;
+        button.innerHTML = `
+          <div class="item-title">
+            <span>${frame.orientation.orientation_id}</span>
+            <span class="status ${statusClass(frame.status)}">${frame.status}</span>
+          </div>
+          <div class="item-meta">
+            feasible=${frame.stage2_ground_feasible_count} tilt=${fmt(frame.orientation.max_stable_tilt_deg, 1)}deg<br>
+            best=${grasp ? `${grasp.grasp_id} score=${fmt(grasp.score, 3)}` : "none"}
+          </div>
+        `;
+        button.addEventListener("click", () => { state.index = index; render(); });
+        list.appendChild(button);
+      });
+    }
+    function linkLabel(key) {
+      return key.replace(/_html$/, "").replace(/_/g, " ");
+    }
+    function renderDetails(part, frame) {
+      linkList.replaceChildren();
+      if (!part) {
+        details.textContent = "No browser data was generated.";
+        return;
+      }
+      if (!frame) {
+        details.textContent = [`target: ${part.target_mesh_path}`, "No stable orientations."].join("\\n");
+        return;
+      }
+      Object.entries(frame.links || {}).filter(([, value]) => value).forEach(([key, value]) => {
+        const anchor = document.createElement("a");
+        anchor.href = value;
+        anchor.textContent = linkLabel(key);
+        linkList.appendChild(anchor);
+      });
+      const grasp = frame.best_grasp;
+      details.textContent = [
+        `target:             ${part.target_mesh_path}`,
+        `orientation:        ${frame.orientation.orientation_id}`,
+        `status:             ${frame.status}`,
+        `stage1_feasible:    ${frame.stage1_assembly_feasible_count}`,
+        `stage2_feasible:    ${frame.stage2_ground_feasible_count}`,
+        `normal_obj:         (${frame.orientation.normal_obj.map((v) => fmt(v, 4)).join(", ")})`,
+        `support_area_m2:    ${fmt(frame.orientation.area_m2, 6)}`,
+        `stability_margin_m: ${fmt(frame.orientation.stability_margin_m, 6)}`,
+        `com_height_m:       ${fmt(frame.orientation.com_height_m, 6)}`,
+        `max_stable_tilt:    ${fmt(frame.orientation.max_stable_tilt_deg, 3)} deg`,
+        `com_method:         ${frame.orientation.com_method}`,
+        "",
+        grasp ? `best_grasp:        ${grasp.grasp_id}` : "best_grasp:        none",
+        grasp ? `best_score:        ${fmt(grasp.score, 6)}` : "",
+        grasp ? `jaw_width_m:       ${fmt(grasp.jaw_width, 6)}` : "",
+        grasp ? `roll_angle_rad:    ${fmt(grasp.roll_angle_rad, 6)}` : "",
+        grasp && grasp.score_components ? `object_score:      ${fmt(grasp.score_components.object_score, 6)}` : "",
+        grasp && grasp.score_components ? `top_down_score:    ${fmt(grasp.score_components.top_down_approach, 6)}` : "",
+        "",
+        frame.fallback ? `fallback_final:    ${frame.fallback.final_grasp_id}` : "",
+        frame.error ? `error:             ${frame.error}` : "",
+      ].filter((line) => line !== "").join("\\n");
+    }
+    function renderScene(part, frame) {
+      scene.replaceChildren();
+      if (!part || !frame) return;
+      const b = projection(part, frame);
+      polygon(frame.floor_world, { fill: "#2563eb", fillOpacity: 0.13, stroke: "#2563eb", strokeWidth: 1.8, strokeOpacity: 0.85 }, b);
+      for (let i = 0; i < frame.floor_world.length; i += 1) {
+        line(frame.floor_world[i], frame.floor_world[(i + 1) % frame.floor_world.length], { stroke: "#2563eb", width: 1.8, opacity: 0.85, dash: "8 5" }, b);
+      }
+      drawMesh(part, frame, b);
+      if (frame.best_grasp) {
+        drawGrasp(frame.best_grasp, b);
+      } else {
+        label(frame.mesh_vertices_world[0], "no direct stage-2 grasp", "#b91c1c", b);
+      }
+    }
+    function render() {
+      assemblySelect.value = state.assembly;
+      partSelect.value = state.partKey;
+      const part = currentPart();
+      if (part && state.index >= part.frames.length) state.index = 0;
+      const frame = currentFrame();
+      renderList();
+      renderScene(part, frame);
+      renderDetails(part, frame);
+    }
+    function stepOrientation(delta) {
+      const part = currentPart();
+      if (!part || !part.frames.length) return;
+      state.index = (state.index + delta + part.frames.length) % part.frames.length;
+      render();
+    }
+    function stepPart(delta) {
+      const parts = partsForAssembly();
+      if (!parts.length) return;
+      const currentIndex = currentPartIndex();
+      const nextIndex = ((currentIndex < 0 ? 0 : currentIndex) + delta + parts.length) % parts.length;
+      const nextPart = parts[nextIndex];
+      const frameCount = nextPart.frames.length;
+      state.partKey = nextPart.key;
+      state.index = frameCount ? Math.min(state.index, frameCount - 1) : 0;
+      render();
+    }
+    assemblySelect.addEventListener("change", () => setAssembly(assemblySelect.value));
+    partSelect.addEventListener("change", () => setPart(partSelect.value));
+    document.getElementById("prevPartBtn").addEventListener("click", () => stepPart(-1));
+    document.getElementById("nextPartBtn").addEventListener("click", () => stepPart(1));
+    document.getElementById("prevOrientationBtn").addEventListener("click", () => stepOrientation(-1));
+    document.getElementById("nextOrientationBtn").addEventListener("click", () => stepOrientation(1));
+    document.getElementById("solidBtn").addEventListener("click", () => {
+      state.solid = !state.solid;
+      document.getElementById("solidBtn").textContent = state.solid ? "Wireframe Mesh" : "Solid Mesh";
+      render();
+    });
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      Object.assign(state, initialView);
+      render();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft") { event.preventDefault(); stepOrientation(-1); }
+      if (event.key === "ArrowRight") { event.preventDefault(); stepOrientation(1); }
+      if (event.key === "ArrowUp") { event.preventDefault(); stepPart(-1); }
+      if (event.key === "ArrowDown") { event.preventDefault(); stepPart(1); }
+    });
+    scene.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+      event.preventDefault();
+      state.dragging = true;
+      state.dragMode = event.button === 1 || event.button === 2 || event.shiftKey ? "pan" : "rotate";
+      state.pointerId = event.pointerId;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      scene.setPointerCapture(event.pointerId);
+    });
+    function stopDragging() {
+      state.dragging = false;
+      state.pointerId = null;
+    }
+    scene.addEventListener("pointerup", (event) => { if (state.pointerId === event.pointerId) stopDragging(); });
+    scene.addEventListener("pointercancel", stopDragging);
+    scene.addEventListener("pointermove", (event) => {
+      if (!state.dragging || (state.pointerId !== null && state.pointerId !== event.pointerId)) return;
+      const dx = event.clientX - state.lastX;
+      const dy = event.clientY - state.lastY;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      if (state.dragMode === "pan") {
+        state.panX += dx;
+        state.panY += dy;
+      } else {
+        state.yaw += dx * 0.01;
+        state.pitch -= dy * 0.01;
+      }
+      render();
+    });
+    scene.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      state.zoom = Math.max(0.3, Math.min(5.0, state.zoom * (event.deltaY < 0 ? 1.08 : 1 / 1.08)));
+      render();
+    }, { passive: false });
+    scene.addEventListener("contextmenu", (event) => event.preventDefault());
+    renderSummary();
+    populateAssemblySelect();
+    populatePartSelect();
+    render();
+  </script>
 </body>
 </html>
 """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(document, encoding="utf-8")
+    output_path.write_text(document.replace("__DATA_JSON__", data_json), encoding="utf-8")
 
 
 def _world_floor_corners(vertices_world: np.ndarray) -> list[list[float]]:
@@ -569,6 +1262,610 @@ def _part_orientation_frame(
         "floor_world": _world_floor_corners(mesh_vertices_world),
         "best_grasp": best_grasp_payload,
     }
+
+
+def _part_browser_payload(
+    *,
+    target: TargetSpec,
+    stage1,
+    orientation_frames: list[dict[str, object]],
+) -> dict[str, object]:
+    mesh_local = stage1.target_mesh_local
+    return {
+        "key": f"{target.assembly}/{target.part_id}",
+        "assembly": target.assembly,
+        "part_id": target.part_id,
+        "target_mesh_path": target.target_mesh_path,
+        "vertices_local": [
+            [float(value) for value in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()
+        ],
+        "faces": [[int(value) for value in face] for face in np.asarray(mesh_local.faces, dtype=np.int64).tolist()],
+        "edges": unique_edges(mesh_local.faces),
+        "frames": orientation_frames,
+    }
+
+
+def _sample_edges_for_overview(edges: list[tuple[int, int]], max_edges: int) -> list[tuple[int, int]]:
+    if max_edges <= 0 or len(edges) <= max_edges:
+        return edges
+    indices = np.linspace(0, len(edges) - 1, int(max_edges), dtype=np.int64)
+    return [edges[int(index)] for index in indices]
+
+
+def _compact_vertices_for_edges(
+    vertices: list[list[float]],
+    edges: list[tuple[int, int]],
+) -> tuple[list[list[float]], list[tuple[int, int]]]:
+    old_to_new: dict[int, int] = {}
+    compact_vertices: list[list[float]] = []
+    compact_edges: list[tuple[int, int]] = []
+    for start, end in edges:
+        remapped = []
+        for old_index in (int(start), int(end)):
+            if old_index not in old_to_new:
+                old_to_new[old_index] = len(compact_vertices)
+                compact_vertices.append(vertices[old_index])
+            remapped.append(old_to_new[old_index])
+        compact_edges.append((remapped[0], remapped[1]))
+    return compact_vertices, compact_edges
+
+
+def _bounds_corners(points: list[list[float]]) -> list[list[float]]:
+    if not points:
+        return []
+    array = np.asarray(points, dtype=float)
+    mins = array.min(axis=0)
+    maxs = array.max(axis=0)
+    return [
+        [float(x), float(y), float(z)]
+        for x in (mins[0], maxs[0])
+        for y in (mins[1], maxs[1])
+        for z in (mins[2], maxs[2])
+    ]
+
+
+def _transform_points_for_overview(points_obj: np.ndarray, object_pose_world) -> list[list[float]]:
+    return [
+        [round(float(value), 6) for value in point]
+        for point in object_pose_world.transform_points_to_world(np.asarray(points_obj, dtype=float)).tolist()
+    ]
+
+
+def _mesh_overview_payload(mesh_local: TriangleMesh, object_pose_world, *, max_edges: int) -> dict[str, object]:
+    vertices = _transform_points_for_overview(np.asarray(mesh_local.vertices_obj, dtype=float), object_pose_world)
+    edges_original = unique_edges(mesh_local.faces)
+    edges = _sample_edges_for_overview(edges_original, max_edges)
+    vertices, edges = _compact_vertices_for_edges(vertices, edges)
+    return {
+        "vertices": vertices,
+        "edges": [[int(a), int(b)] for a, b in edges],
+        "edge_count_original": len(edges_original),
+    }
+
+
+def _marker_point(point_obj: np.ndarray, object_pose_world) -> list[float]:
+    return _transform_points_for_overview(np.asarray([point_obj], dtype=float), object_pose_world)[0]
+
+
+def _candidate_marker_payload(entry: CandidateStatus, object_pose_world) -> dict[str, object]:
+    candidate = entry.grasp
+    contact_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
+    contact_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
+    center = np.asarray(candidate.grasp_position_obj, dtype=float)
+    approach_axis = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)[:, 2]
+    marker_offset = np.asarray(approach_axis, dtype=float) * float(ALL_GRASP_OVERVIEW_MARKER_LENGTH_M)
+    return {
+        "grasp_id": candidate.grasp_id,
+        "status": entry.status,
+        "reason": entry.reason,
+        "score": None if candidate.score is None else round(float(candidate.score), 6),
+        "roll_angle_rad": round(float(candidate.roll_angle_rad), 6),
+        "jaw_width": round(float(candidate.jaw_width), 6),
+        "center": _marker_point(center, object_pose_world),
+        "contact_a": _marker_point(contact_a, object_pose_world),
+        "contact_b": _marker_point(contact_b, object_pose_world),
+        "post_a": _marker_point(contact_a - marker_offset, object_pose_world),
+        "post_b": _marker_point(contact_b - marker_offset, object_pose_world),
+    }
+
+
+def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
+    stage1_ids = {candidate.grasp_id for candidate in stage1.bundle.candidates}
+    stage2_by_id = {} if stage2 is None else {entry.grasp.grasp_id: entry for entry in stage2.statuses}
+    statuses: list[CandidateStatus] = []
+    for candidate in sorted(stage1.raw_candidates, key=lambda grasp: (-_candidate_score(grasp), grasp.grasp_id)):
+        if candidate.grasp_id not in stage1_ids:
+            statuses.append(CandidateStatus(grasp=candidate, status="stage1_rejected", reason="part: stage1 assembly rejected"))
+            continue
+        stage2_entry = stage2_by_id.get(candidate.grasp_id)
+        if stage2_entry is None:
+            statuses.append(CandidateStatus(grasp=candidate, status="stage1_pass", reason="stage1 passed; no stage2 status"))
+        elif stage2_entry.status == "accepted":
+            statuses.append(CandidateStatus(grasp=stage2_entry.grasp, status="accepted", reason=stage2_entry.reason))
+        else:
+            statuses.append(
+                CandidateStatus(
+                    grasp=stage2_entry.grasp,
+                    status="stage2_rejected",
+                    reason=f"floor: {stage2_entry.reason}",
+                )
+            )
+    return statuses
+
+
+def _write_all_generated_grasps_overview_html(
+    output_html: Path,
+    *,
+    title: str,
+    subtitle: str,
+    mesh_local: TriangleMesh,
+    candidate_statuses: list[CandidateStatus],
+    object_pose_world,
+    ground_plane: dict[str, object] | None = None,
+    obstacle_mesh_local: TriangleMesh | None = None,
+    metadata_lines: list[str] | None = None,
+) -> dict[str, int]:
+    target_payload = _mesh_overview_payload(mesh_local, object_pose_world, max_edges=ALL_GRASP_OVERVIEW_MAX_MESH_EDGES)
+    obstacle_payload = {"vertices": [], "edges": [], "edge_count_original": 0, "bounds": []}
+    if obstacle_mesh_local is not None:
+        obstacle_payload = _mesh_overview_payload(
+            obstacle_mesh_local,
+            object_pose_world,
+            max_edges=ALL_GRASP_OVERVIEW_MAX_OBSTACLE_EDGES,
+        )
+        obstacle_payload["bounds"] = _bounds_corners(obstacle_payload["vertices"])  # type: ignore[index]
+    status_counts = dict(Counter(entry.status for entry in candidate_statuses))
+    data = {
+        "title": title,
+        "subtitle": subtitle,
+        "metadata_lines": metadata_lines or [],
+        "target": target_payload,
+        "obstacle": obstacle_payload,
+        "ground_plane": (
+            None
+            if ground_plane is None
+            else {
+                "corners": [
+                    _marker_point(np.asarray(point, dtype=float), object_pose_world)
+                    for point in ground_plane["corners_obj"]
+                ]
+            }
+        ),
+        "status_counts": status_counts,
+        "markers": [_candidate_marker_payload(entry, object_pose_world) for entry in candidate_statuses],
+    }
+    data_json = json.dumps(data, indent=2)
+    document = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>All Generated Grasp Markers</title>
+  <style>
+    :root {
+      --bg: #f6f4ee;
+      --panel: #fffdf8;
+      --ink: #1f2522;
+      --muted: #68716c;
+      --line: #d9d4c7;
+      --mesh: #2f6f5e;
+      --obstacle: #64748b;
+      --ground: #2563eb;
+      --stage1: #b91c1c;
+      --stage2: #d97706;
+      --accepted: #15803d;
+      --pass: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    .layout { display: grid; grid-template-columns: 360px minmax(0, 1fr); min-height: 100vh; }
+    aside { border-right: 1px solid var(--line); background: var(--panel); padding: 18px; overflow: auto; }
+    main { padding: 18px; overflow: hidden; }
+    h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.15; }
+    .subtitle { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .panel { border: 1px solid var(--line); background: rgba(255,253,248,0.96); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .checks { display: grid; gap: 8px; }
+    label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); }
+    input[type="checkbox"] { width: 18px; height: 18px; }
+    button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 8px 10px; font: inherit; cursor: pointer; }
+    button:hover { border-color: var(--mesh); }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; margin: 0; }
+    .legend { display: grid; gap: 7px; font-size: 13px; color: var(--muted); }
+    .legend span { display: flex; align-items: center; gap: 8px; }
+    .swatch { width: 14px; height: 14px; border-radius: 999px; display: inline-block; }
+    .canvas-wrap { height: calc(100vh - 36px); border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, #ffffff, #ebe7dc); overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+      main { overflow: visible; }
+      .canvas-wrap { height: 70vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1 id="title"></h1>
+      <p id="subtitle" class="subtitle"></p>
+      <section class="panel legend">
+        <span><i class="swatch" style="background: var(--stage1)"></i>Stage 1 assembly rejected</span>
+        <span><i class="swatch" style="background: var(--stage2)"></i>Stage 1 passed, stage 2 floor rejected</span>
+        <span><i class="swatch" style="background: var(--accepted)"></i>Accepted in this orientation</span>
+        <span><i class="swatch" style="background: var(--pass)"></i>Stage 1 passed, no stage 2 status</span>
+      </section>
+      <section class="panel checks">
+        <label>Stage 1 rejects <input id="showStage1" type="checkbox" checked></label>
+        <label>Stage 2 rejects <input id="showStage2" type="checkbox" checked></label>
+        <label>Accepted <input id="showAccepted" type="checkbox" checked></label>
+        <label>Stage 1 pass only <input id="showPass" type="checkbox" checked></label>
+      </section>
+      <section class="panel controls">
+        <button id="prevBtn" type="button">Previous</button>
+        <button id="nextBtn" type="button">Next</button>
+        <button id="resetBtn" type="button">Reset View</button>
+        <button id="meshBtn" type="button">Mesh On</button>
+      </section>
+      <section class="panel">
+        <pre id="details" class="kv"></pre>
+      </section>
+    </aside>
+    <main>
+      <div class="canvas-wrap"><canvas id="scene"></canvas></div>
+    </main>
+  </div>
+  <script>
+    const data = __DATA_JSON__;
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+    const details = document.getElementById("details");
+    document.getElementById("title").textContent = data.title;
+    document.getElementById("subtitle").textContent = data.subtitle;
+    const controls = {
+      stage1_rejected: document.getElementById("showStage1"),
+      stage2_rejected: document.getElementById("showStage2"),
+      accepted: document.getElementById("showAccepted"),
+      stage1_pass: document.getElementById("showPass"),
+    };
+    const state = { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0, selected: 0, dragging: false, dragMode: "rotate", lastX: 0, lastY: 0, showMesh: true };
+    const colors = { stage1_rejected: "#b91c1c", stage2_rejected: "#d97706", accepted: "#15803d", stage1_pass: "#1d4ed8" };
+    function visible(marker) { return controls[marker.status] ? controls[marker.status].checked : true; }
+    function visibleMarkers() { return data.markers.filter(visible); }
+    function allPoints() {
+      return [
+        ...data.target.vertices,
+        ...data.obstacle.vertices,
+        ...(data.obstacle.bounds || []),
+        ...(data.ground_plane ? data.ground_plane.corners : []),
+        ...data.markers.flatMap((m) => [m.center, m.contact_a, m.contact_b, m.post_a, m.post_b]),
+      ];
+    }
+    const bounds = allPoints().reduce((acc, point) => {
+      point.forEach((value, axis) => { acc.min[axis] = Math.min(acc.min[axis], value); acc.max[axis] = Math.max(acc.max[axis], value); });
+      return acc;
+    }, { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+    const center = bounds.min.map((value, axis) => 0.5 * (value + bounds.max[axis]));
+    const extent = Math.max(...bounds.max.map((value, axis) => value - bounds.min[axis]), 0.12);
+    function resize() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      draw();
+    }
+    function rotate(point) {
+      const shifted = point.map((value, axis) => value - center[axis]);
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const x1 = cy * shifted[0] + sy * shifted[1];
+      const y1 = -sy * shifted[0] + cy * shifted[1];
+      const z1 = shifted[2];
+      return [x1, cp * y1 + sp * z1, -sp * y1 + cp * z1];
+    }
+    function project(point) {
+      const rect = canvas.getBoundingClientRect();
+      const [x, y, z] = rotate(point);
+      const scale = (0.68 * Math.min(rect.width, rect.height) / extent) * state.zoom;
+      return { x: rect.width * 0.5 + state.panX + x * scale, y: rect.height * 0.5 + state.panY - y * scale, depth: z };
+    }
+    function line(a, b, color, width = 1, alpha = 1) {
+      const pa = project(a), pb = project(b);
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    function polygon(points, color, alpha) {
+      if (!points.length) return;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        const p = project(point);
+        if (index === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    function drawEdges(vertices, edges, color, width, alpha) {
+      edges.forEach(([a, b]) => line(vertices[a], vertices[b], color, width, alpha));
+    }
+    function drawMarker(marker, selected) {
+      const color = colors[marker.status] || "#111827";
+      line(marker.contact_a, marker.contact_b, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      line(marker.contact_a, marker.post_a, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      line(marker.contact_b, marker.post_b, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      if (selected) {
+        const p = project(marker.center);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    function draw() {
+      const rect = canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      if (data.ground_plane) {
+        polygon(data.ground_plane.corners, "#2563eb", 0.12);
+        for (let i = 0; i < data.ground_plane.corners.length; i += 1) {
+          line(data.ground_plane.corners[i], data.ground_plane.corners[(i + 1) % data.ground_plane.corners.length], "#2563eb", 1.4, 0.75);
+        }
+      }
+      if (state.showMesh) {
+        drawEdges(data.obstacle.vertices, data.obstacle.edges, "#64748b", 0.8, 0.22);
+        drawEdges(data.target.vertices, data.target.edges, "#2f6f5e", 1.1, 0.55);
+      }
+      const markers = visibleMarkers();
+      markers.forEach((marker, index) => drawMarker(marker, index === state.selected));
+      renderDetails();
+    }
+    function renderDetails() {
+      const markers = visibleMarkers();
+      if (state.selected >= markers.length) state.selected = 0;
+      const marker = markers[state.selected];
+      details.textContent = [
+        ...data.metadata_lines,
+        "",
+        `raw_markers:      ${data.markers.length}`,
+        `visible_markers:  ${markers.length}`,
+        `status_counts:    ${JSON.stringify(data.status_counts)}`,
+        `target_edges:     ${data.target.edges.length}/${data.target.edge_count_original}`,
+        `obstacle_edges:   ${data.obstacle.edges.length}/${data.obstacle.edge_count_original}`,
+        "",
+        marker ? `selected:         ${marker.grasp_id}` : "selected:         none",
+        marker ? `status:           ${marker.status}` : "",
+        marker ? `reason:           ${marker.reason}` : "",
+        marker ? `score:            ${marker.score === null ? "n/a" : marker.score}` : "",
+        marker ? `roll_angle_rad:   ${marker.roll_angle_rad}` : "",
+        marker ? `jaw_width_m:      ${marker.jaw_width}` : "",
+      ].filter((line) => line !== "").join("\\n");
+    }
+    function selectDelta(delta) {
+      const markers = visibleMarkers();
+      if (!markers.length) return;
+      state.selected = (state.selected + delta + markers.length) % markers.length;
+      draw();
+    }
+    function selectNearest(x, y) {
+      const markers = visibleMarkers();
+      let bestIndex = -1, bestDistance = Infinity;
+      markers.forEach((marker, index) => {
+        const p = project(marker.center);
+        const dist = Math.hypot(p.x - x, p.y - y);
+        if (dist < bestDistance) { bestDistance = dist; bestIndex = index; }
+      });
+      if (bestIndex >= 0 && bestDistance < 24) {
+        state.selected = bestIndex;
+        draw();
+      }
+    }
+    Object.values(controls).forEach((control) => control.addEventListener("change", () => { state.selected = 0; draw(); }));
+    document.getElementById("prevBtn").addEventListener("click", () => selectDelta(-1));
+    document.getElementById("nextBtn").addEventListener("click", () => selectDelta(1));
+    document.getElementById("resetBtn").addEventListener("click", () => { Object.assign(state, { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0 }); draw(); });
+    document.getElementById("meshBtn").addEventListener("click", (event) => { state.showMesh = !state.showMesh; event.target.textContent = state.showMesh ? "Mesh On" : "Mesh Off"; draw(); });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectDelta(-1); }
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectDelta(1); }
+    });
+    canvas.addEventListener("pointerdown", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      if (event.button === 0 && !event.shiftKey) selectNearest(event.clientX - rect.left, event.clientY - rect.top);
+      state.dragging = true;
+      state.dragMode = event.button === 1 || event.shiftKey ? "pan" : "rotate";
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      canvas.setPointerCapture(event.pointerId);
+      canvas.style.cursor = state.dragMode === "pan" ? "move" : "grabbing";
+    });
+    canvas.addEventListener("pointerup", (event) => { state.dragging = false; canvas.releasePointerCapture(event.pointerId); canvas.style.cursor = "grab"; });
+    canvas.addEventListener("pointercancel", () => { state.dragging = false; canvas.style.cursor = "grab"; });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!state.dragging) return;
+      const dx = event.clientX - state.lastX, dy = event.clientY - state.lastY;
+      state.lastX = event.clientX; state.lastY = event.clientY;
+      if (state.dragMode === "pan") { state.panX += dx; state.panY += dy; }
+      else { state.yaw += dx * 0.01; state.pitch -= dy * 0.01; }
+      draw();
+    });
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      state.zoom = Math.max(0.25, Math.min(5, state.zoom * (event.deltaY < 0 ? 1.08 : 1 / 1.08)));
+      draw();
+    }, { passive: false });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("resize", resize);
+    resize();
+  </script>
+</body>
+</html>
+"""
+    output_html.parent.mkdir(parents=True, exist_ok=True)
+    output_html.write_text(document.replace("__DATA_JSON__", data_json), encoding="utf-8")
+    return status_counts
+
+
+def _write_all_generated_grasps_html(
+    output_html: Path,
+    *,
+    target: TargetSpec,
+    orientation: StableOrientation,
+    status: str,
+    stage1,
+    planning: PlanningConfig,
+    stage2=None,
+    error: str = "",
+) -> dict[str, int]:
+    display_pose = orientation.object_pose_world if stage2 is None else stage2.pickup_pose_world
+    obstacle_mesh_local = None
+    if stage1.obstacle_mesh_world is not None:
+        obstacle_mesh_local = _mesh_in_object_frame(stage1.obstacle_mesh_world, stage1.target_pose_in_obj_world)
+    candidate_statuses = _all_generated_grasp_statuses(stage1, stage2=stage2)
+    metadata_lines = [
+        f"target_mesh:      {target.target_mesh_path}",
+        f"assembly:         {target.assembly}",
+        f"part_id:          {target.part_id}",
+        f"orientation:      {orientation.orientation_id}",
+        f"benchmark_status: {status}",
+        f"display_frame:    {FAILED_GRASP_DISPLAY_FRAME}",
+        f"raw_candidates:   {len(stage1.raw_candidates)}",
+        f"stage1_feasible:  {len(stage1.bundle.candidates)}",
+        f"stage2_feasible:  {0 if stage2 is None else len(stage2.accepted)}",
+        f"floor_clearance:  {planning.floor_clearance_margin_m:.6f} m",
+        "marker_shape:     contact bar plus two approach posts",
+    ]
+    if error:
+        metadata_lines.append(f"error:            {error}")
+    return _write_all_generated_grasps_overview_html(
+        output_html,
+        title=f"All Generated Grasps: {target.assembly}/{target.part_id} {orientation.orientation_id}",
+        subtitle="Every generated grasp as a lightweight goalpost marker, colored by the first stage that rejected it.",
+        mesh_local=stage1.target_mesh_local,
+        candidate_statuses=candidate_statuses,
+        object_pose_world=display_pose,
+        ground_plane=ground_plane_overlay_obj(stage1.target_mesh_local, object_pose_world=display_pose, enabled=True),
+        obstacle_mesh_local=obstacle_mesh_local,
+        metadata_lines=metadata_lines,
+    )
+
+
+def _write_failed_grasps_html(
+    output_html: Path,
+    *,
+    target: TargetSpec,
+    orientation: StableOrientation,
+    status: str,
+    stage1,
+    planning: PlanningConfig,
+    mesh_scale: float,
+    stage2=None,
+    error: str = "",
+    limit: int = FAILED_GRASP_HTML_LIMIT,
+    stage1_failure_statuses: list[CandidateStatus] | None = None,
+    stage1_failure_obstacle_parts: list[AssemblyObstaclePart] | None = None,
+) -> tuple[int, dict[str, int]]:
+    obstacle_mesh_local = None
+    display_pose = orientation.object_pose_world
+    ground_plane = ground_plane_overlay_obj(stage1.target_mesh_local, object_pose_world=display_pose, enabled=True)
+    failure_stage = "stage2_floor"
+    obstacle_paths: list[str] = []
+    stage1_rejected_count = 0
+    stage1_pass_count = 0
+
+    if stage1_failure_statuses is None or stage1_failure_obstacle_parts is None:
+        candidate_statuses, obstacle_parts = _stage1_assembly_failure_statuses(
+            target=target,
+            stage1=stage1,
+            planning=planning,
+            mesh_scale=mesh_scale,
+            limit=limit,
+        )
+    else:
+        candidate_statuses = stage1_failure_statuses
+        obstacle_parts = stage1_failure_obstacle_parts
+    if candidate_statuses:
+        stage1_pass_example_limit = min(FAILED_GRASP_STAGE1_PASS_EXAMPLE_LIMIT, max(0, int(limit)))
+        stage1_rejected_limit = max(0, int(limit) - stage1_pass_example_limit)
+        selected_stage1_failures = candidate_statuses[:stage1_rejected_limit]
+        stage1_pass_statuses = _stage1_passed_stage2_failure_statuses(
+            stage2,
+            limit=max(0, int(limit) - len(selected_stage1_failures)),
+        )
+        candidate_statuses = selected_stage1_failures + stage1_pass_statuses
+        stage1_rejected_count = len(selected_stage1_failures)
+        stage1_pass_count = len(stage1_pass_statuses)
+        obstacle_paths = [part.mesh_path for part in obstacle_parts]
+        failure_stage = "stage1_assembly_preferred_with_stage1_pass_examples"
+        if stage1.obstacle_mesh_world is not None:
+            obstacle_mesh_local = _mesh_in_object_frame(stage1.obstacle_mesh_world, stage1.target_pose_in_obj_world)
+    elif stage2 is not None:
+        candidate_statuses = _stage1_passed_stage2_failure_statuses(stage2, limit=limit)
+        stage1_pass_count = len(candidate_statuses)
+        display_pose = stage2.pickup_pose_world
+        ground_plane = ground_plane_overlay_obj(stage2.mesh_local, object_pose_world=display_pose, enabled=True)
+        failure_stage = "stage2_floor_stage1_pass_examples"
+    else:
+        top_candidates = sorted(stage1.bundle.candidates, key=lambda candidate: (-_candidate_score(candidate), candidate.grasp_id))
+        candidate_statuses = _unique_contact_statuses(
+            [
+                CandidateStatus(grasp=candidate, status="rejected", reason=f"orientation_error: {error or 'unknown'}")
+                for candidate in top_candidates
+            ],
+            limit=limit,
+        )
+        failure_stage = "orientation_error"
+
+    constraint_counts = _constraint_counts(candidate_statuses)
+    metadata_lines = [
+        f"target_mesh:      {target.target_mesh_path}",
+        f"assembly:         {target.assembly}",
+        f"part_id:          {target.part_id}",
+        f"orientation:      {orientation.orientation_id}",
+        f"benchmark_status: {status}",
+        f"failure_stage:    {failure_stage}",
+        f"display_frame:    {FAILED_GRASP_DISPLAY_FRAME}",
+        f"displayed_grasps: {len(candidate_statuses)} of max {limit}",
+        f"stage1_rejected_displayed: {stage1_rejected_count}",
+        f"stage1_pass_displayed:     {stage1_pass_count}",
+        f"stage1_feasible:  {len(stage1.bundle.candidates)}",
+        f"floor_clearance:  {planning.floor_clearance_margin_m:.6f} m",
+        (
+            "selection_policy: prefer unique stage-1 assembly failures, plus a comparison slice "
+            "of stage-1-passed/stage-2-failed grasps"
+        ),
+        "render_limits:    target_edges<=8000, obstacle_edges<=8000",
+        f"constraints:      {constraint_counts}",
+    ]
+    if obstacle_paths:
+        metadata_lines.append(f"obstacle_parts:   {obstacle_paths}")
+    if error:
+        metadata_lines.append(f"error:            {error}")
+
+    write_debug_html(
+        title=f"Failed Grasps: {target.assembly}/{target.part_id} {orientation.orientation_id}",
+        subtitle=(
+            "Top failed grasp candidates rendered in the selected floor pose; "
+            "the unsatisfied constraint is encoded in each candidate reason."
+        ),
+        mesh_local=stage1.target_mesh_local,
+        candidate_statuses=candidate_statuses,
+        output_html=output_html,
+        contact_gap_m=planning.detailed_finger_contact_gap_m,
+        ground_plane=ground_plane,
+        obstacle_mesh_local=obstacle_mesh_local,
+        metadata_lines=metadata_lines,
+        display_object_pose_world=display_pose,
+        max_mesh_edges=8000,
+        max_obstacle_edges=8000,
+    )
+    return len(candidate_statuses), constraint_counts
 
 
 def _write_part_orientations_html(
@@ -635,6 +1932,8 @@ def _write_part_orientations_html(
     .grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.6fr); gap: 16px; align-items: start; }
     #scene { width: 100%; aspect-ratio: 1.45 / 1; display: block; border-radius: 8px; background: linear-gradient(180deg, #ffffff, #ebe7dc); }
     .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; margin: 0; }
+    .link-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .link-list a { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 6px 8px; font-size: 13px; }
     .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 13px; }
     .legend span { display: inline-flex; align-items: center; gap: 7px; }
     .swatch { width: 13px; height: 13px; border-radius: 999px; display: inline-block; }
@@ -675,6 +1974,7 @@ def _write_part_orientations_html(
         </section>
         <section class="card">
           <pre id="details" class="kv"></pre>
+          <div id="linkList" class="link-list"></div>
         </section>
       </div>
     </main>
@@ -683,6 +1983,7 @@ def _write_part_orientations_html(
     const data = __DATA_JSON__;
     const scene = document.getElementById("scene");
     const details = document.getElementById("details");
+    const linkList = document.getElementById("linkList");
     const list = document.getElementById("orientationList");
     document.getElementById("title").textContent = data.title;
     document.getElementById("subtitle").textContent = data.subtitle;
@@ -831,7 +2132,13 @@ def _write_part_orientations_html(
     }
     function renderDetails(frame) {
       const grasp = frame.best_grasp;
-      const links = Object.entries(frame.links || {}).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`);
+      linkList.replaceChildren();
+      Object.entries(frame.links || {}).filter(([, value]) => value).forEach(([key, value]) => {
+        const anchor = document.createElement("a");
+        anchor.href = value;
+        anchor.textContent = key;
+        linkList.appendChild(anchor);
+      });
       details.textContent = [
         `target:             ${data.target_mesh_path}`,
         `orientation:        ${frame.orientation.orientation_id}`,
@@ -854,8 +2161,6 @@ def _write_part_orientations_html(
         "",
         frame.fallback ? `fallback_final:    ${frame.fallback.final_grasp_id}` : "",
         frame.error ? `error:             ${frame.error}` : "",
-        "",
-        ...links,
       ].filter((line) => line !== "").join("\\n");
     }
     function renderScene(frame) {
@@ -1019,7 +2324,7 @@ def _benchmark_one_target(
     output_dir: Path,
     target_index: int,
     target_count: int,
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
     part_dir = output_dir / "parts" / _safe_id(target.assembly) / _safe_id(target.part_id)
     stage1_dir = part_dir / "stage1"
     orientations_dir = part_dir / "orientations"
@@ -1032,18 +2337,61 @@ def _benchmark_one_target(
     }
     rows: list[dict[str, object]] = []
     orientation_frames: list[dict[str, object]] = []
+    stage1_failure_debug: tuple[list[CandidateStatus], list[AssemblyObstaclePart]] | None = None
     geometry = GeometryConfig(
         target_mesh_path=target.target_mesh_path,
         mesh_scale=mesh_scale,
         assembly_glob=target.assembly_glob,
     )
 
+    def _stage1_failure_debug() -> tuple[list[CandidateStatus], list[AssemblyObstaclePart]]:
+        nonlocal stage1_failure_debug
+        if stage1_failure_debug is None:
+            stage1_failure_debug = _stage1_assembly_failure_statuses(
+                target=target,
+                stage1=stage1,
+                planning=planning,
+                mesh_scale=mesh_scale,
+                limit=FAILED_GRASP_HTML_LIMIT,
+            )
+        return stage1_failure_debug
+
+    try:
+        target_mesh_obj_world = load_asset_mesh(target.target_mesh_path, scale=mesh_scale)
+        target_mesh_local, target_pose_in_obj_world = canonicalize_target_mesh(target_mesh_obj_world)
+        orientation_result = enumerate_stable_orientations(target_mesh_local, stable_config)
+        stable_json = part_dir / "stable_orientations.json"
+        _write_json(stable_json, stable_orientation_result_payload(orientation_result))
+        upright_approach_axes = _upright_approach_axes_obj(
+            source_frame_pose_obj_world=target_pose_in_obj_world,
+            orientations=orientation_result.orientations,
+        )
+        part_record.update(
+            {
+                "stable_orientations_json": str(stable_json),
+                "stable_orientation_count": len(orientation_result.orientations),
+                "rejected_orientation_candidate_count": len(orientation_result.rejected_candidates),
+                "com_method": orientation_result.com_method,
+                "upright_approach_axis_count": len(upright_approach_axes),
+            }
+        )
+    except Exception as exc:
+        error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+        part_record.update({"status": "orientation_generation_error", "error": error})
+        print(f"  orientation_generation_error: {error}", flush=True)
+        return part_record, rows, None
+
     print(
-        f"[{target_index}/{target_count}] {target.target_mesh_path}: generating stage 1.",
+        f"[{target_index}/{target_count}] {target.target_mesh_path}: generating stage 1 "
+        f"with {len(upright_approach_axes)} upright roll reference axes.",
         flush=True,
     )
     try:
-        stage1 = generate_stage1_result(geometry=geometry, planning=planning)
+        stage1 = generate_stage1_result(
+            geometry=geometry,
+            planning=planning,
+            upright_approach_axes_obj=upright_approach_axes,
+        )
         stage1_json = stage1_dir / "grasps.json"
         stage1_html = stage1_dir / "grasps.html"
         write_stage1_artifacts(stage1, geometry=geometry, planning=planning, output_json=stage1_json, output_html=stage1_html)
@@ -1058,36 +2406,19 @@ def _benchmark_one_target(
                 "stage1_raw_count": stage1.raw_candidate_count,
                 "stage1_assembly_feasible_count": len(stage1.bundle.candidates),
                 "stage1_cache_hit": bool((stage1.bundle.metadata or {}).get("stage1_cache_hit")),
+                "upright_approach_axis_count": len(upright_approach_axes),
             }
         )
     except Exception as exc:
         error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
         part_record.update({"status": "stage1_error", "error": error})
         print(f"  stage1_error: {error}", flush=True)
-        return part_record, rows
-
-    try:
-        orientation_result = enumerate_stable_orientations(stage1.target_mesh_local, stable_config)
-        stable_json = part_dir / "stable_orientations.json"
-        _write_json(stable_json, stable_orientation_result_payload(orientation_result))
-        part_record.update(
-            {
-                "stable_orientations_json": str(stable_json),
-                "stable_orientation_count": len(orientation_result.orientations),
-                "rejected_orientation_candidate_count": len(orientation_result.rejected_candidates),
-                "com_method": orientation_result.com_method,
-            }
-        )
-    except Exception as exc:
-        error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-        part_record.update({"status": "orientation_generation_error", "error": error})
-        print(f"  orientation_generation_error: {error}", flush=True)
-        return part_record, rows
+        return part_record, rows, None
 
     if not orientation_result.orientations:
         part_record.update({"status": "no_stable_orientations"})
         print("  no_stable_orientations", flush=True)
-        return part_record, rows
+        return part_record, rows, _part_browser_payload(target=target, stage1=stage1, orientation_frames=orientation_frames)
 
     for orientation in orientation_result.orientations:
         orientation_dir = orientations_dir / orientation.orientation_id
@@ -1154,6 +2485,48 @@ def _benchmark_one_target(
                 "fallback_json": _relative_link(output_dir, fallback_json) if fallback_summary is not None else "",
                 "fallback_html": _relative_link(output_dir, fallback_html) if fallback_summary is not None else "",
             }
+            all_grasps_html = orientation_dir / "all_generated_grasps.html"
+            try:
+                overview_counts = _write_all_generated_grasps_html(
+                    all_grasps_html,
+                    target=target,
+                    orientation=orientation,
+                    status=status,
+                    stage1=stage1,
+                    planning=planning,
+                    stage2=stage2,
+                )
+                row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
+                row["all_generated_grasp_count"] = sum(overview_counts.values())
+                row["all_generated_grasp_status_counts"] = overview_counts
+            except Exception as debug_exc:
+                row["all_generated_grasps_error"] = "".join(
+                    traceback.format_exception_only(type(debug_exc), debug_exc)
+                ).strip()
+            if status not in SUCCESS_STATUSES:
+                failed_html = orientation_dir / "failed_grasps.html"
+                try:
+                    stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
+                    failed_count, failed_constraint_counts = _write_failed_grasps_html(
+                        failed_html,
+                        target=target,
+                        orientation=orientation,
+                        status=status,
+                        stage1=stage1,
+                        planning=planning,
+                        mesh_scale=mesh_scale,
+                        stage2=stage2,
+                        stage1_failure_statuses=stage1_failure_statuses,
+                        stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
+                    )
+                    row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
+                    row["failed_grasp_count_displayed"] = failed_count
+                    row["failed_constraint_counts"] = failed_constraint_counts
+                    row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
+                except Exception as debug_exc:
+                    row["failed_grasps_error"] = "".join(
+                        traceback.format_exception_only(type(debug_exc), debug_exc)
+                    ).strip()
             row["links"] = row_links
             rows.append(row)
             orientation_frames.append(
@@ -1191,7 +2564,47 @@ def _benchmark_one_target(
                 fallback_summary=None,
                 error=error,
             )
-            row["links"] = {}
+            row_links: dict[str, str] = {}
+            failed_html = orientation_dir / "failed_grasps.html"
+            all_grasps_html = orientation_dir / "all_generated_grasps.html"
+            try:
+                overview_counts = _write_all_generated_grasps_html(
+                    all_grasps_html,
+                    target=target,
+                    orientation=orientation,
+                    status="orientation_error",
+                    stage1=stage1,
+                    planning=planning,
+                    error=error,
+                )
+                row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
+                row["all_generated_grasp_count"] = sum(overview_counts.values())
+                row["all_generated_grasp_status_counts"] = overview_counts
+            except Exception as debug_exc:
+                row["all_generated_grasps_error"] = "".join(
+                    traceback.format_exception_only(type(debug_exc), debug_exc)
+                ).strip()
+            try:
+                stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
+                failed_count, failed_constraint_counts = _write_failed_grasps_html(
+                    failed_html,
+                    target=target,
+                    orientation=orientation,
+                    status="orientation_error",
+                    stage1=stage1,
+                    planning=planning,
+                    mesh_scale=mesh_scale,
+                    error=error,
+                    stage1_failure_statuses=stage1_failure_statuses,
+                    stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
+                )
+                row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
+                row["failed_grasp_count_displayed"] = failed_count
+                row["failed_constraint_counts"] = failed_constraint_counts
+                row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
+            except Exception as debug_exc:
+                row["failed_grasps_error"] = "".join(traceback.format_exception_only(type(debug_exc), debug_exc)).strip()
+            row["links"] = row_links
             rows.append(row)
             orientation_frames.append(
                 _part_orientation_frame(
@@ -1200,7 +2613,7 @@ def _benchmark_one_target(
                     target=target,
                     orientation=orientation,
                     status="orientation_error",
-                    links={},
+                    links=row_links,
                     error=error,
                 )
             )
@@ -1235,7 +2648,7 @@ def _benchmark_one_target(
             "orientations_html": str(orientations_html),
         }
     )
-    return part_record, rows
+    return part_record, rows, _part_browser_payload(target=target, stage1=stage1, orientation_frames=orientation_frames)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1301,8 +2714,9 @@ def main() -> None:
 
     part_records: list[dict[str, object]] = []
     rows: list[dict[str, object]] = []
+    browser_parts: list[dict[str, object]] = []
     for index, target in enumerate(targets, start=1):
-        part_record, part_rows = _benchmark_one_target(
+        part_record, part_rows, browser_part = _benchmark_one_target(
             target=target,
             planning=planning,
             stable_config=stable_config,
@@ -1314,6 +2728,8 @@ def main() -> None:
         )
         part_records.append(part_record)
         rows.extend(part_rows)
+        if browser_part is not None:
+            browser_parts.append(browser_part)
 
     results = {
         "schema_version": 1,
@@ -1326,12 +2742,35 @@ def main() -> None:
             "orientation_count": len(rows),
             "orientation_status_counts": dict(Counter(str(row["status"]) for row in rows)),
             "part_status_counts": dict(Counter(str(part.get("status", "unknown")) for part in part_records)),
+            "failed_grasp_pages_written": sum(
+                1
+                for row in rows
+                if isinstance(row.get("links"), dict) and row["links"].get("failed_grasps_html")
+            ),
+            "all_generated_grasp_pages_written": sum(
+                1
+                for row in rows
+                if isinstance(row.get("links"), dict) and row["links"].get("all_generated_grasps_html")
+            ),
+            "failed_grasp_display_frames": dict(
+                Counter(
+                    str(row.get("failed_grasp_display_frame", "unknown"))
+                    for row in rows
+                    if isinstance(row.get("links"), dict) and row["links"].get("failed_grasps_html")
+                )
+            ),
         },
     }
     _write_json(output_dir / "results.json", results)
     _write_summary_csv(output_dir / "summary.csv", rows)
     _write_summary_md(output_dir / "summary.md", rows=rows, part_records=part_records)
-    _write_index_html(output_dir / "index.html", output_dir=output_dir, rows=rows, part_records=part_records)
+    _write_index_html(
+        output_dir / "index.html",
+        output_dir=output_dir,
+        rows=rows,
+        part_records=part_records,
+        browser_parts=browser_parts,
+    )
 
     print(f"[BENCHMARK] Wrote results to {output_dir / 'results.json'}", flush=True)
     print(f"[BENCHMARK] Wrote summary to {output_dir / 'summary.md'}", flush=True)

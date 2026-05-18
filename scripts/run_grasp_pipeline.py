@@ -19,6 +19,9 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    build_pickup_pose_world,
+    canonicalize_target_mesh,
+    load_asset_mesh,
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
@@ -260,6 +263,35 @@ def _ros2_config(payload: dict[str, object]) -> Ros2Config:
         timeout_s=float(raw.get("timeout_s", 10.0)),
         object_id=str(raw.get("object_id", "")),
     )
+
+
+def _minus_z_axis_in_object_frame(object_pose_world: ObjectWorldPose) -> tuple[float, float, float]:
+    axis_obj = object_pose_world.rotation_world_from_object.T @ np.array([0.0, 0.0, -1.0], dtype=float)
+    norm = float(np.linalg.norm(axis_obj))
+    if norm < 1.0e-12:
+        return (0.0, 0.0, -1.0)
+    return tuple(float(value) for value in (axis_obj / norm).tolist())
+
+
+def _world_upright_axis_for_stage1(
+    geometry: GeometryConfig,
+    *,
+    object_pose_world: ObjectWorldPose | None = None,
+    pickup_pose: PickupPoseConfig | None = None,
+) -> tuple[tuple[float, float, float], ...]:
+    if object_pose_world is None and pickup_pose is None:
+        return ()
+    if object_pose_world is None:
+        mesh_world = load_asset_mesh(geometry.target_mesh_path, scale=geometry.mesh_scale)
+        mesh_local, _ = canonicalize_target_mesh(mesh_world)
+        spec = pickup_pose.to_spec()
+        object_pose_world = build_pickup_pose_world(
+            mesh_local,
+            support_face=spec.support_face,
+            yaw_deg=spec.yaw_deg,
+            xy_world=spec.xy_world,
+        )
+    return (_minus_z_axis_in_object_frame(object_pose_world),)
 
 
 def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
@@ -635,9 +667,18 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
     )
     pickup_pose = _pickup_pose_config(payload)
     execution_world_pose = None if pickup_pose is not None else _execution_pose_config(payload).to_object_pose_world()
+    upright_approach_axes = _world_upright_axis_for_stage1(
+        geometry,
+        object_pose_world=execution_world_pose,
+        pickup_pose=pickup_pose,
+    )
 
     print("[PIPELINE] Loading geometry and generating raw grasps.", flush=True)
-    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
+    stage1 = generate_stage1_result(
+        geometry=geometry,
+        planning=planning,
+        upright_approach_axes_obj=upright_approach_axes,
+    )
     print(
         f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
         f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",
@@ -701,8 +742,13 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     object_pose_world = _resolve_object_pose_world(ros2)
+    upright_approach_axes = _world_upright_axis_for_stage1(geometry, object_pose_world=object_pose_world)
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
-    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
+    stage1 = generate_stage1_result(
+        geometry=geometry,
+        planning=planning,
+        upright_approach_axes_obj=upright_approach_axes,
+    )
     print(
         f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
         f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",
@@ -760,8 +806,13 @@ def run_real(payload: dict[str, object]) -> None:
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     object_pose_world = _resolve_object_pose_world(ros2)
+    upright_approach_axes = _world_upright_axis_for_stage1(geometry, object_pose_world=object_pose_world)
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
-    stage1 = generate_stage1_result(geometry=geometry, planning=planning)
+    stage1 = generate_stage1_result(
+        geometry=geometry,
+        planning=planning,
+        upright_approach_axes_obj=upright_approach_axes,
+    )
     print(
         f"[PIPELINE] Stage 1 complete{_stage1_cache_note(stage1)}: "
         f"kept {len(stage1.bundle.candidates)} / {stage1.raw_candidate_count}.",

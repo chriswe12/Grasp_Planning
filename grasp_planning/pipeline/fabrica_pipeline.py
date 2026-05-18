@@ -64,13 +64,18 @@ class PlanningConfig:
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
 
-    def to_generator_config(self) -> AntipodalGraspGeneratorConfig:
+    def to_generator_config(
+        self,
+        *,
+        upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = (),
+    ) -> AntipodalGraspGeneratorConfig:
         return AntipodalGraspGeneratorConfig(
             num_surface_samples=self.num_surface_samples,
             min_jaw_width=self.min_jaw_width,
             max_jaw_width=self.max_jaw_width,
             antipodal_cosine_threshold=self.antipodal_cosine_threshold,
             roll_angles_rad=self.roll_angles_rad,
+            upright_approach_axes_obj=upright_approach_axes_obj,
             max_pair_checks=self.max_pair_checks,
             detailed_finger_contact_gap_m=self.detailed_finger_contact_gap_m,
             rng_seed=self.rng_seed,
@@ -272,6 +277,45 @@ def _source_frame_pose_from_bundle(bundle: SavedGraspBundle) -> ObjectWorldPose:
     )
 
 
+def _minus_z_axis_in_source_frame(object_pose_world: ObjectWorldPose) -> tuple[float, float, float]:
+    axis_source = object_pose_world.rotation_world_from_object.T @ np.array([0.0, 0.0, -1.0], dtype=float)
+    norm = float(np.linalg.norm(axis_source))
+    if norm < 1.0e-12:
+        return (0.0, 0.0, -1.0)
+    return tuple(float(value) for value in (axis_source / norm).tolist())
+
+
+def _unique_axes(
+    axes: tuple[tuple[float, float, float], ...],
+    *,
+    tolerance: float = 1.0e-8,
+) -> tuple[tuple[float, float, float], ...]:
+    unique: list[tuple[float, float, float]] = []
+    for axis in axes:
+        vector = np.asarray(axis, dtype=float)
+        norm = float(np.linalg.norm(vector))
+        if norm < 1.0e-12:
+            continue
+        normalized = tuple(float(value) for value in (vector / norm).tolist())
+        if all(float(np.linalg.norm(np.asarray(normalized) - np.asarray(existing))) > tolerance for existing in unique):
+            unique.append(normalized)
+    return tuple(unique)
+
+
+def _stage1_upright_approach_axes(
+    *,
+    source_frame_pose_obj_world: ObjectWorldPose,
+    extra_axes_obj: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...]:
+    return _unique_axes(
+        (
+            (0.0, 0.0, -1.0),
+            _minus_z_axis_in_source_frame(source_frame_pose_obj_world),
+            *extra_axes_obj,
+        )
+    )
+
+
 _STAGE1_CACHE_SCHEMA_VERSION = 1
 
 
@@ -310,6 +354,7 @@ def _stage1_cache_key_payload(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
 ) -> dict[str, object]:
     source_frame_payload = None
     if source_frame_pose_obj_world is not None:
@@ -317,7 +362,7 @@ def _stage1_cache_key_payload(
             "position_world": [float(v) for v in source_frame_pose_obj_world.position_world],
             "orientation_xyzw_world": [float(v) for v in source_frame_pose_obj_world.orientation_xyzw_world],
         }
-    return {
+    payload = {
         "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
         "algorithm": "fabrica_stage1_antipodal_v1",
         "geometry": {
@@ -341,6 +386,11 @@ def _stage1_cache_key_payload(
             "rng_seed": int(planning.rng_seed),
         },
     }
+    if upright_approach_axes_obj:
+        payload["planning"]["upright_approach_axes_obj"] = [
+            [float(value) for value in axis] for axis in upright_approach_axes_obj
+        ]
+    return payload
 
 
 def _stage1_cache_path(
@@ -348,11 +398,13 @@ def _stage1_cache_path(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
 ) -> tuple[Path, str, dict[str, object]]:
     key_payload = _stage1_cache_key_payload(
         geometry=geometry,
         planning=planning,
         source_frame_pose_obj_world=source_frame_pose_obj_world,
+        upright_approach_axes_obj=upright_approach_axes_obj,
     )
     key = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     stem = Path(relative_asset_mesh_path(geometry.target_mesh_path)).with_suffix("").as_posix()
@@ -514,6 +566,7 @@ def generate_stage1_result(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None = None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = (),
 ) -> Stage1Result:
     target_mesh_obj_world = load_asset_mesh(geometry.target_mesh_path, scale=geometry.mesh_scale)
     if source_frame_pose_obj_world is None:
@@ -521,6 +574,10 @@ def generate_stage1_result(
     else:
         target_pose_in_obj_world = source_frame_pose_obj_world
         target_mesh_local = _mesh_in_source_frame(target_mesh_obj_world, target_pose_in_obj_world)
+    all_upright_approach_axes_obj = _stage1_upright_approach_axes(
+        source_frame_pose_obj_world=target_pose_in_obj_world,
+        extra_axes_obj=upright_approach_axes_obj,
+    )
 
     cache_path = None
     cache_key = ""
@@ -530,6 +587,7 @@ def generate_stage1_result(
             geometry=geometry,
             planning=planning,
             source_frame_pose_obj_world=source_frame_pose_obj_world,
+            upright_approach_axes_obj=all_upright_approach_axes_obj,
         )
         if cache_path.exists():
             obstacle_mesh_world = None
@@ -552,7 +610,9 @@ def generate_stage1_result(
             if cached is not None:
                 return cached
 
-    generator = AntipodalMeshGraspGenerator(planning.to_generator_config())
+    generator = AntipodalMeshGraspGenerator(
+        planning.to_generator_config(upright_approach_axes_obj=all_upright_approach_axes_obj)
+    )
     raw_candidates = generator.generate(target_mesh_local)
     surface_samples = tuple(getattr(generator, "last_surface_samples", ()))
     serialized_raw = [
@@ -602,6 +662,9 @@ def generate_stage1_result(
             "assembly_obstacle_paths": list(obstacle_paths),
             "contact_lateral_offsets_m": list(planning.contact_lateral_offsets_m),
             "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
+            "upright_approach_axes_obj": [
+                [float(value) for value in axis] for axis in all_upright_approach_axes_obj
+            ],
         },
     )
     result = Stage1Result(

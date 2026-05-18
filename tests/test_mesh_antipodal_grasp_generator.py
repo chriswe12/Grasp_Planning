@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -224,6 +225,26 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         self.assertTrue(base_groups.issubset(set(rolled_group_counts)))
         for count in rolled_group_counts.values():
             self.assertIn(count, {1, 2})
+
+    def test_upright_roll_reference_adds_exact_top_down_angle(self) -> None:
+        generator = AntipodalMeshGraspGenerator(
+            AntipodalGraspGeneratorConfig(
+                roll_angles_rad=(0.0,),
+                upright_approach_axes_obj=((0.0, 0.0, -1.0),),
+            )
+        )
+        closing_axis = np.array([0.0, 1.0, 0.0], dtype=float)
+        base_rotmat = generator._base_grasp_rotmat(closing_axis)
+
+        roll_angles = generator._roll_angles_for_pair(base_rotmat, closing_axis)
+
+        self.assertEqual(len(roll_angles), 2)
+        self.assertTrue(any(abs(math.atan2(math.sin(angle - 1.5 * math.pi), math.cos(angle - 1.5 * math.pi))) < 1.0e-6 for angle in roll_angles))
+        best_alignment = max(
+            float(np.dot(np.sin(angle) * base_rotmat[:, 0] + np.cos(angle) * base_rotmat[:, 2], [0.0, 0.0, -1.0]))
+            for angle in roll_angles
+        )
+        self.assertAlmostEqual(best_alignment, 1.0, places=6)
 
     def test_cylinder_generation_finds_side_grasps(self) -> None:
         cylinder_mesh = _make_cylinder_mesh(radius=0.02, height=0.05, radial_segments=24)

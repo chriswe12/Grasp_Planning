@@ -13,7 +13,7 @@ stable_orientations:
 planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/grasp_generation_benchmark/stage1_cache"
-  num_surface_samples: 256
+  num_surface_samples: 1024
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208

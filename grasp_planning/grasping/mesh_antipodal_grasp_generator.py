@@ -68,6 +68,14 @@ def _axis_angle_to_rotmat(axis: np.ndarray, angle_rad: float) -> np.ndarray:
     )
 
 
+def _periodic_angle_distance(a: float, b: float) -> float:
+    return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
+
+
+def _wrapped_angle(angle_rad: float) -> float:
+    return float(angle_rad % (2.0 * math.pi))
+
+
 def _triangle_points_from_barycentric(vertices: np.ndarray, barycentric_uv: np.ndarray) -> np.ndarray:
     u = barycentric_uv[:, 0:1]
     v = barycentric_uv[:, 1:2]
@@ -138,6 +146,7 @@ class AntipodalGraspGeneratorConfig:
     max_jaw_width: float = 0.08
     antipodal_cosine_threshold: float = 0.94
     roll_angles_rad: tuple[float, ...] = (0.0,)
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = ()
     max_pair_checks: int = 4096
     detailed_finger_contact_gap_m: float = 0.002
     rng_seed: int = 0
@@ -184,7 +193,7 @@ class AntipodalMeshGraspGenerator:
             grasp_center = 0.5 * (point_a + point_b)
             base_rotmat = self._base_grasp_rotmat(closing_axis)
 
-            for roll_angle_rad in self._config.roll_angles_rad:
+            for roll_angle_rad in self._roll_angles_for_pair(base_rotmat, closing_axis):
                 roll_rotmat = _axis_angle_to_rotmat(closing_axis, float(roll_angle_rad))
                 grasp_rotmat = roll_rotmat @ base_rotmat
                 if not self._passes_grasp_collision_check(
@@ -317,6 +326,25 @@ class AntipodalMeshGraspGenerator:
         gripper_z = _normalize(np.cross(gripper_x, gripper_y))
         gripper_x = _normalize(np.cross(gripper_y, gripper_z))
         return np.column_stack((gripper_x, gripper_y, gripper_z))
+
+    def _roll_angles_for_pair(self, base_rotmat: np.ndarray, closing_axis: np.ndarray) -> tuple[float, ...]:
+        angles: list[float] = []
+
+        def _append(angle_rad: float) -> None:
+            wrapped = _wrapped_angle(float(angle_rad))
+            if all(_periodic_angle_distance(wrapped, existing) > 1.0e-6 for existing in angles):
+                angles.append(wrapped)
+
+        for angle in self._config.roll_angles_rad:
+            _append(float(angle))
+        for target_approach_axis in self._config.upright_approach_axes_obj:
+            reference = _normalize(np.asarray(target_approach_axis, dtype=float))
+            if float(np.linalg.norm(reference - np.dot(reference, closing_axis) * closing_axis)) < 1.0e-8:
+                continue
+            base_x = np.asarray(base_rotmat[:, 0], dtype=float)
+            base_z = np.asarray(base_rotmat[:, 2], dtype=float)
+            _append(math.atan2(float(np.dot(reference, base_x)), float(np.dot(reference, base_z))))
+        return tuple(angles)
 
     def _passes_grasp_collision_check(
         self,
