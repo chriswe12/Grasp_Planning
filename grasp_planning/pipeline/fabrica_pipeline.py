@@ -188,12 +188,24 @@ class IsaacPipelineConfig:
     pregrasp_offset: float | None = None
     gripper_width_clearance: float | None = None
     contact_gap_m: float | None = None
+    lift_height_m: float = 0.08
     close_width: float = 0.0
     tcp_to_grasp_offset: tuple[float, float, float] | None = None
     attempt_artifact: str = "artifacts/isaac_pick_attempt.json"
     pregrasp_only: bool = False
     run_seconds: float = 0.0
     headless: bool = False
+    moveit_frame_id: str = "base"
+    moveit_planning_group: str = "fr3_arm"
+    moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_planner_id: str = ""
+    moveit_wait_for_moveit_timeout_s: float = 15.0
+    moveit_ik_timeout_s: float = 2.0
+    moveit_planning_time_s: float = 5.0
+    moveit_num_planning_attempts: int = 5
+    moveit_velocity_scale: float = 0.05
+    moveit_acceleration_scale: float = 0.05
+    moveit_allow_collisions: bool = False
 
 
 @dataclass(frozen=True)

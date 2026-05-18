@@ -35,6 +35,19 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(run_grasp_pipeline._normalize_mode("perception-in-the-loop"), "pitl")
         self.assertEqual(run_grasp_pipeline._normalize_mode("real"), "real")
 
+    def test_subprocess_env_exposes_repo_to_local_launchers(self) -> None:
+        with mock.patch.dict(
+            run_grasp_pipeline.os.environ,
+            {"PYTHONPATH": "/tmp/existing_pythonpath", "TERM": "dumb"},
+            clear=True,
+        ):
+            env = run_grasp_pipeline._subprocess_env()
+
+        pythonpath_entries = env["PYTHONPATH"].split(run_grasp_pipeline.os.pathsep)
+        self.assertEqual(pythonpath_entries[0], str(run_grasp_pipeline.REPO_ROOT))
+        self.assertIn("/tmp/existing_pythonpath", pythonpath_entries)
+        self.assertEqual(env["TERM"], "xterm")
+
     def test_run_mujoco_execution_uses_stage2_bundle(self) -> None:
         cfg = run_grasp_pipeline.MujocoPipelineConfig(
             enabled=True,
@@ -189,6 +202,108 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         command = subprocess_run.call_args.args[0]
         self.assertNotIn("--part-usd", command)
         self.assertIn("--headless", command)
+
+    def test_isaac_execution_config_parses_moveit_controller_config(self) -> None:
+        config = run_grasp_pipeline._isaac_execution_config(
+            {
+                "isaac_execution": {
+                    "controller": "moveit",
+                    "lift_height_m": 0.09,
+                    "moveit_frame_id": "base",
+                    "moveit_planning_group": "fr3_arm",
+                    "moveit_pose_link": "fr3_hand_tcp",
+                    "moveit_planner_id": "RRTConnectkConfigDefault",
+                    "moveit_wait_for_moveit_timeout_s": 12.0,
+                    "moveit_ik_timeout_s": 1.5,
+                    "moveit_planning_time_s": 4.0,
+                    "moveit_num_planning_attempts": 3,
+                    "moveit_velocity_scale": 0.04,
+                    "moveit_acceleration_scale": 0.03,
+                    "moveit_allow_collisions": True,
+                }
+            }
+        )
+
+        self.assertEqual(config.controller, "moveit")
+        self.assertAlmostEqual(config.lift_height_m, 0.09)
+        self.assertEqual(config.moveit_frame_id, "base")
+        self.assertEqual(config.moveit_planning_group, "fr3_arm")
+        self.assertEqual(config.moveit_pose_link, "fr3_hand_tcp")
+        self.assertEqual(config.moveit_planner_id, "RRTConnectkConfigDefault")
+        self.assertAlmostEqual(config.moveit_wait_for_moveit_timeout_s, 12.0)
+        self.assertAlmostEqual(config.moveit_ik_timeout_s, 1.5)
+        self.assertAlmostEqual(config.moveit_planning_time_s, 4.0)
+        self.assertEqual(config.moveit_num_planning_attempts, 3)
+        self.assertAlmostEqual(config.moveit_velocity_scale, 0.04)
+        self.assertAlmostEqual(config.moveit_acceleration_scale, 0.03)
+        self.assertTrue(config.moveit_allow_collisions)
+
+    def test_run_isaac_execution_passes_moveit_controller_config(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(
+            enabled=True,
+            controller="moveit",
+            lift_height_m=0.09,
+            moveit_planner_id="RRTConnectkConfigDefault",
+            moveit_allow_collisions=True,
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertIn("--controller", command)
+        self.assertIn("moveit", command)
+        self.assertIn("--moveit-frame-id", command)
+        self.assertIn("base", command)
+        self.assertIn("--moveit-planner-id", command)
+        self.assertIn("RRTConnectkConfigDefault", command)
+        self.assertIn("--moveit-lift-height-m", command)
+        self.assertIn("0.09", command)
+        self.assertIn("--moveit-allow-collisions", command)
+
+    def test_run_isaac_execution_passes_precomputed_moveit_plan(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(
+            enabled=True,
+            controller="moveit",
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+                moveit_plan_json=Path("artifacts/isaac_moveit_plan.json"),
+                moveit_plan_grasp_id="g0001",
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertIn("--moveit-plan-json", command)
+        self.assertIn("artifacts/isaac_moveit_plan.json", command)
+        self.assertIn("--grasp-id", command)
+        self.assertIn("g0001", command)
+
+    def test_run_isaac_execution_allows_local_isaaclab_launcher_command(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(
+            enabled=True,
+            python_executable="/media/pdz/Elements1/IsaacLab/isaaclab.sh -p",
+            controller="moveit",
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "/media/pdz/Elements1/IsaacLab/isaaclab.sh")
+        self.assertEqual(command[1], "-p")
+        self.assertEqual(command[2], "scripts/run_fabrica_grasp_in_isaac.py")
 
     def test_backend_override_selects_one_execution_backend(self) -> None:
         mujoco_cfg = run_grasp_pipeline.MujocoPipelineConfig(enabled=True)

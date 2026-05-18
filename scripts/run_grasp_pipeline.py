@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import os
+import shlex
 import subprocess
 import sys
 from dataclasses import replace
@@ -23,6 +26,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     canonicalize_target_mesh,
     load_asset_mesh,
 )
+from grasp_planning.grasping.grasp_transforms import saved_grasp_to_world_grasp  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
     ExecutionWorldPoseConfig,
@@ -46,6 +50,16 @@ from grasp_planning.pipeline.regrasp_fallback import (  # noqa: E402
 from grasp_planning.ros2 import (  # noqa: E402
     execute_real_grasp_from_bundle,
     wait_for_debug_frame_pose_message,
+)
+from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
+    MoveItPoseCommander,
+    MoveItPoseCommanderConfig,
+    rclpy,
+)
+from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
+from grasp_planning.start_poses import (  # noqa: E402
+    DEFAULT_ARM_START_JOINT_VALUES,
+    DEFAULT_MOVEIT_ARM_JOINT_NAMES,
 )
 from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # noqa: E402
 
@@ -248,7 +262,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     if raw.get("tcp_to_grasp_offset") not in ("", None):
         tcp_to_grasp_offset = _tuple_floats(raw["tcp_to_grasp_offset"], expected_len=3)
     controller = str(raw.get("controller", "admittance")).strip().lower()
-    if controller not in {"planner", "admittance"}:
+    if controller not in {"planner", "admittance", "moveit"}:
         raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'.")
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
@@ -260,12 +274,24 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
+        lift_height_m=float(raw.get("lift_height_m", 0.08)),
         close_width=float(raw.get("close_width", 0.0)),
         tcp_to_grasp_offset=tcp_to_grasp_offset,
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
         pregrasp_only=bool(raw.get("pregrasp_only", False)),
         run_seconds=float(raw.get("run_seconds", 0.0)),
         headless=bool(raw.get("headless", False)),
+        moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
+        moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
+        moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_planner_id=str(raw.get("moveit_planner_id", "")),
+        moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
+        moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
+        moveit_planning_time_s=float(raw.get("moveit_planning_time_s", 5.0)),
+        moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
+        moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
+        moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
+        moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
 
@@ -395,13 +421,188 @@ def _normalize_mode(raw_mode: str) -> str:
     return aliases.get(normalized, normalized)
 
 
-def _effective_python_executable(raw_value: str) -> str:
+def _effective_python_command(raw_value: str) -> list[str]:
     value = str(raw_value).strip()
     if value:
-        return value
+        return shlex.split(value)
     if sys.executable:
-        return sys.executable
+        return [sys.executable]
     raise RuntimeError("Could not determine a Python executable for simulation execution.")
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if env.get("TERM", "") in {"", "dumb"}:
+        env["TERM"] = "xterm"
+    repo_path = str(REPO_ROOT)
+    pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_entries = [entry for entry in pythonpath.split(os.pathsep) if entry]
+    if repo_path not in pythonpath_entries:
+        env["PYTHONPATH"] = os.pathsep.join([repo_path, *pythonpath_entries])
+    return env
+
+
+def _isaac_pregrasp_offset(isaac_execution: IsaacPipelineConfig) -> float:
+    return 0.20 if isaac_execution.pregrasp_offset is None else float(isaac_execution.pregrasp_offset)
+
+
+def _isaac_gripper_width_clearance(isaac_execution: IsaacPipelineConfig) -> float:
+    return 0.01 if isaac_execution.gripper_width_clearance is None else float(isaac_execution.gripper_width_clearance)
+
+
+def _select_isaac_moveit_grasp(stage2, isaac_execution: IsaacPipelineConfig):
+    min_pregrasp_z = 0.05
+    if not stage2.accepted:
+        raise RuntimeError("Isaac MoveIt execution requested, but stage 2 has no feasible grasps.")
+    if isaac_execution.grasp_id:
+        ordered = [grasp for grasp in stage2.accepted if grasp.grasp_id == isaac_execution.grasp_id]
+        if not ordered:
+            raise RuntimeError(f"Requested Isaac grasp id '{isaac_execution.grasp_id}' is not stage-2 feasible.")
+    else:
+        ordered = sorted(
+            stage2.accepted,
+            key=lambda grasp: float("-inf") if grasp.score is None else float(grasp.score),
+            reverse=True,
+        )
+    for grasp in ordered:
+        world_grasp = saved_grasp_to_world_grasp(
+            grasp,
+            stage2.pickup_pose_world,
+            pregrasp_offset=_isaac_pregrasp_offset(isaac_execution),
+            gripper_width_clearance=_isaac_gripper_width_clearance(isaac_execution),
+        )
+        if world_grasp.pregrasp_position_w[2] > min_pregrasp_z:
+            return grasp, world_grasp
+    raise RuntimeError("Isaac MoveIt execution requested, but no selected stage-2 grasp has a safe pregrasp height.")
+
+
+def _moveit_config_from_isaac_execution(isaac_execution: IsaacPipelineConfig) -> MoveItPoseCommanderConfig:
+    return MoveItPoseCommanderConfig(
+        planning_group=str(isaac_execution.moveit_planning_group),
+        pose_link=str(isaac_execution.moveit_pose_link),
+        joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+        planner_id=str(isaac_execution.moveit_planner_id),
+        wait_for_moveit_timeout_s=float(isaac_execution.moveit_wait_for_moveit_timeout_s),
+        ik_timeout_s=float(isaac_execution.moveit_ik_timeout_s),
+        fk_timeout_s=float(isaac_execution.moveit_ik_timeout_s),
+        planning_time_s=float(isaac_execution.moveit_planning_time_s),
+        num_planning_attempts=int(isaac_execution.moveit_num_planning_attempts),
+        velocity_scale=float(isaac_execution.moveit_velocity_scale),
+        acceleration_scale=float(isaac_execution.moveit_acceleration_scale),
+        post_execute_sleep_s=0.0,
+        avoid_collisions=not bool(isaac_execution.moveit_allow_collisions),
+    )
+
+
+def _trajectory_waypoints_for_joints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+    joint_trajectory = trajectory.joint_trajectory
+    source_joint_names = tuple(str(name) for name in joint_trajectory.joint_names)
+    name_to_index = {name: index for index, name in enumerate(source_joint_names)}
+    missing = [joint_name for joint_name in joint_names if joint_name not in name_to_index]
+    if missing:
+        raise RuntimeError(f"MoveIt trajectory is missing arm joints: {missing}.")
+    ordered_indices = [name_to_index[name] for name in joint_names]
+    waypoints = tuple(
+        tuple(float(point.positions[index]) for index in ordered_indices) for point in tuple(joint_trajectory.points)
+    )
+    if not waypoints:
+        raise RuntimeError("MoveIt returned a trajectory with no points.")
+    return waypoints
+
+
+def _plan_isaac_moveit_joint_trajectories(
+    *, isaac_execution: IsaacPipelineConfig, world_grasp
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    if rclpy is None:
+        raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
+    targets = world_grasp_pose_targets(
+        world_grasp,
+        frame_id=str(isaac_execution.moveit_frame_id),
+        lift_height_m=float(isaac_execution.lift_height_m),
+    )
+    labels = ("pregrasp",) if isaac_execution.pregrasp_only else ("pregrasp", "grasp", "lift")
+    initialized_here = False
+    commander = None
+    try:
+        if not rclpy.ok():
+            rclpy.init()
+            initialized_here = True
+        moveit_config = _moveit_config_from_isaac_execution(isaac_execution)
+        commander = MoveItPoseCommander(moveit_config, node_name="isaac_pipeline_moveit_planner")
+        commander.wait_for_moveit(require_execute=False)
+        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
+        current_start = DEFAULT_ARM_START_JOINT_VALUES
+        for label in labels:
+            print(f"[PIPELINE] Planning Isaac {label} trajectory with MoveIt.", flush=True)
+            trajectory, message = commander.plan_to_pose(
+                targets[label],
+                label=f"isaac_{label}",
+                start_joint_positions=current_start,
+            )
+            if trajectory is None:
+                raise RuntimeError(f"MoveIt failed to plan Isaac {label}: {message}")
+            waypoints = _trajectory_waypoints_for_joints(
+                trajectory,
+                joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+            )
+            print(f"[PIPELINE] MoveIt planned Isaac {label}: waypoints={len(waypoints)}.", flush=True)
+            planned[label] = waypoints
+            current_start = waypoints[-1]
+        return planned
+    finally:
+        if commander is not None:
+            commander.destroy_node()
+        if initialized_here and rclpy.ok():
+            rclpy.shutdown()
+
+
+def _isaac_moveit_plan_artifact_path(isaac_execution: IsaacPipelineConfig) -> Path:
+    attempt_path = Path(isaac_execution.attempt_artifact)
+    return attempt_path.with_name(f"{attempt_path.stem}_moveit_plan.json")
+
+
+def _maybe_write_isaac_moveit_plan(
+    *,
+    stage2,
+    isaac_execution: IsaacPipelineConfig,
+) -> tuple[Path, str] | None:
+    if not isaac_execution.enabled or isaac_execution.controller != "moveit":
+        return None
+    selected_grasp, world_grasp = _select_isaac_moveit_grasp(stage2, isaac_execution)
+    output_path = _isaac_moveit_plan_artifact_path(isaac_execution)
+    print(
+        f"[PIPELINE] Planning Isaac execution with MoveIt before launching Isaac (selected={selected_grasp.grasp_id}).",
+        flush=True,
+    )
+    trajectories = _plan_isaac_moveit_joint_trajectories(
+        isaac_execution=isaac_execution,
+        world_grasp=world_grasp,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(
+            {
+                "selected_grasp_id": selected_grasp.grasp_id,
+                "joint_names": list(DEFAULT_MOVEIT_ARM_JOINT_NAMES),
+                "start_joint_positions": list(DEFAULT_ARM_START_JOINT_VALUES),
+                "trajectories": {
+                    label: [list(waypoint) for waypoint in waypoints] for label, waypoints in trajectories.items()
+                },
+                "moveit": {
+                    "frame_id": isaac_execution.moveit_frame_id,
+                    "planning_group": isaac_execution.moveit_planning_group,
+                    "pose_link": isaac_execution.moveit_pose_link,
+                    "planner_id": isaac_execution.moveit_planner_id,
+                    "lift_height_m": isaac_execution.lift_height_m,
+                    "allow_collisions": bool(isaac_execution.moveit_allow_collisions),
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"[PIPELINE] Wrote Isaac MoveIt plan to {output_path}.", flush=True)
+    return output_path, selected_grasp.grasp_id
 
 
 def _run_mujoco_execution(
@@ -417,7 +618,7 @@ def _run_mujoco_execution(
         raise ValueError("mujoco_execution.robot_config is required when MuJoCo execution is enabled.")
     controller = mujoco_execution.controller
     command = [
-        _effective_python_executable(mujoco_execution.python_executable),
+        *_effective_python_command(mujoco_execution.python_executable),
         "scripts/run_fabrica_grasp_in_mujoco.py",
         "--input-json",
         str(input_json),
@@ -498,7 +699,7 @@ def _run_mujoco_execution(
         if mujoco_execution.moveit_allow_collisions:
             command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting MuJoCo execution.", flush=True)
-    subprocess.run(command, check=True, cwd=REPO_ROOT)
+    subprocess.run(command, check=True, cwd=REPO_ROOT, env=_subprocess_env())
 
 
 def _maybe_write_mujoco_regrasp_plan(
@@ -567,11 +768,14 @@ def _run_isaac_execution(
     *,
     input_json: Path,
     headless: bool,
+    moveit_plan_json: Path | None = None,
+    moveit_plan_grasp_id: str = "",
 ) -> None:
     if not isaac_execution.enabled:
         return
+    grasp_id = isaac_execution.grasp_id or moveit_plan_grasp_id
     command = [
-        _effective_python_executable(isaac_execution.python_executable),
+        *_effective_python_command(isaac_execution.python_executable),
         "scripts/run_fabrica_grasp_in_isaac.py",
         "--input-json",
         str(input_json),
@@ -588,8 +792,8 @@ def _run_isaac_execution(
         command.extend(["--part-usd", isaac_execution.part_usd])
     if isaac_execution.fr3_usd:
         command.extend(["--fr3-usd", isaac_execution.fr3_usd])
-    if isaac_execution.grasp_id:
-        command.extend(["--grasp-id", isaac_execution.grasp_id])
+    if grasp_id:
+        command.extend(["--grasp-id", grasp_id])
     if isaac_execution.pregrasp_offset is not None:
         command.extend(["--pregrasp-offset", str(isaac_execution.pregrasp_offset)])
     if isaac_execution.gripper_width_clearance is not None:
@@ -602,8 +806,39 @@ def _run_isaac_execution(
         command.append("--pregrasp-only")
     if headless or isaac_execution.headless:
         command.append("--headless")
+    if isaac_execution.controller == "moveit":
+        if moveit_plan_json is not None:
+            command.extend(["--moveit-plan-json", str(moveit_plan_json)])
+        command.extend(
+            [
+                "--moveit-frame-id",
+                isaac_execution.moveit_frame_id,
+                "--moveit-planning-group",
+                isaac_execution.moveit_planning_group,
+                "--moveit-pose-link",
+                isaac_execution.moveit_pose_link,
+                "--moveit-planner-id",
+                isaac_execution.moveit_planner_id,
+                "--moveit-wait-for-moveit-timeout-s",
+                str(isaac_execution.moveit_wait_for_moveit_timeout_s),
+                "--moveit-ik-timeout-s",
+                str(isaac_execution.moveit_ik_timeout_s),
+                "--moveit-planning-time-s",
+                str(isaac_execution.moveit_planning_time_s),
+                "--moveit-num-planning-attempts",
+                str(isaac_execution.moveit_num_planning_attempts),
+                "--moveit-velocity-scale",
+                str(isaac_execution.moveit_velocity_scale),
+                "--moveit-acceleration-scale",
+                str(isaac_execution.moveit_acceleration_scale),
+                "--moveit-lift-height-m",
+                str(isaac_execution.lift_height_m),
+            ]
+        )
+        if isaac_execution.moveit_allow_collisions:
+            command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting Isaac execution.", flush=True)
-    subprocess.run(command, check=True, cwd=REPO_ROOT)
+    subprocess.run(command, check=True, cwd=REPO_ROOT, env=_subprocess_env())
 
 
 def _write_part_frame_debug_artifact(*, input_json: Path, output_html: Path) -> None:
@@ -738,7 +973,14 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
         headless=headless,
         regrasp_plan_json=regrasp_plan_json,
     )
-    _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
+    isaac_moveit_plan = _maybe_write_isaac_moveit_plan(stage2=stage2, isaac_execution=isaac_execution)
+    _run_isaac_execution(
+        isaac_execution,
+        input_json=artifacts["stage2_json"],
+        headless=headless,
+        moveit_plan_json=None if isaac_moveit_plan is None else isaac_moveit_plan[0],
+        moveit_plan_grasp_id="" if isaac_moveit_plan is None else isaac_moveit_plan[1],
+    )
 
 
 def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "config") -> None:
@@ -808,7 +1050,14 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
         headless=headless,
         regrasp_plan_json=regrasp_plan_json,
     )
-    _run_isaac_execution(isaac_execution, input_json=artifacts["stage2_json"], headless=headless)
+    isaac_moveit_plan = _maybe_write_isaac_moveit_plan(stage2=stage2, isaac_execution=isaac_execution)
+    _run_isaac_execution(
+        isaac_execution,
+        input_json=artifacts["stage2_json"],
+        headless=headless,
+        moveit_plan_json=None if isaac_moveit_plan is None else isaac_moveit_plan[0],
+        moveit_plan_grasp_id="" if isaac_moveit_plan is None else isaac_moveit_plan[1],
+    )
 
 
 def run_real(payload: dict[str, object]) -> None:

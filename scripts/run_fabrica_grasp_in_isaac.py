@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -32,8 +33,8 @@ parser.add_argument(
     "--controller",
     type=str,
     default="admittance",
-    choices=("planner", "admittance"),
-    help="Execution controller: conservative joint-space planner or Isaac-side admittance controller.",
+    choices=("planner", "admittance", "moveit"),
+    help="Execution controller: conservative joint-space planner, Isaac-side admittance, or MoveIt-planned waypoints.",
 )
 parser.add_argument("--pregrasp-offset", type=float, default=0.20, help="Pregrasp offset in meters.")
 parser.add_argument("--grasp-id", type=str, default="", help="Optional explicit grasp id to execute.")
@@ -79,6 +80,29 @@ parser.add_argument(
     help="Detailed Franka finger contact gap used during the ground recheck.",
 )
 parser.add_argument("--pregrasp-only", action="store_true", help="Stop after reaching pregrasp.")
+parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
+parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
+parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
+parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
+parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
+parser.add_argument("--moveit-planning-time-s", type=float, default=5.0)
+parser.add_argument("--moveit-num-planning-attempts", type=int, default=5)
+parser.add_argument("--moveit-velocity-scale", type=float, default=0.05)
+parser.add_argument("--moveit-acceleration-scale", type=float, default=0.05)
+parser.add_argument(
+    "--moveit-plan-json",
+    type=Path,
+    default=None,
+    help="Precomputed MoveIt joint waypoint plan. Used when IsaacLab Python cannot import ROS2.",
+)
+parser.add_argument(
+    "--moveit-lift-height-m",
+    type=float,
+    default=0.08,
+    help="Lift height for the MoveIt lift pose target, matching real_execution.lift_height_m by default.",
+)
+parser.add_argument("--moveit-allow-collisions", action="store_true")
 parser.add_argument(
     "--run-seconds",
     type=float,
@@ -122,8 +146,15 @@ from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_st
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
     drive_robot_to_start_pose,
+    execute_pick_from_moveit_joint_trajectories,
     execute_pick_from_world_grasp,
 )
+from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
+    MoveItPoseCommander,
+    MoveItPoseCommanderConfig,
+    rclpy,
+)
+from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
 from grasp_planning.scene_defaults import ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BASE_POSITION  # noqa: E402
 
 
@@ -161,6 +192,142 @@ def configure_grasp_tcp_calibration() -> None:
     tcp_to_grasp_offset = tuple(float(value) for value in args_cli.tcp_to_grasp_offset)
     FR3MotionContext._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
     FR3PickController._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
+
+
+def _moveit_config_from_args() -> MoveItPoseCommanderConfig:
+    return MoveItPoseCommanderConfig(
+        planning_group=str(args_cli.moveit_planning_group),
+        pose_link=str(args_cli.moveit_pose_link),
+        planner_id=str(args_cli.moveit_planner_id),
+        wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
+        ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
+        fk_timeout_s=float(args_cli.moveit_ik_timeout_s),
+        planning_time_s=float(args_cli.moveit_planning_time_s),
+        num_planning_attempts=int(args_cli.moveit_num_planning_attempts),
+        velocity_scale=float(args_cli.moveit_velocity_scale),
+        acceleration_scale=float(args_cli.moveit_acceleration_scale),
+        post_execute_sleep_s=0.0,
+        avoid_collisions=not bool(args_cli.moveit_allow_collisions),
+    )
+
+
+def _trajectory_waypoints_for_joints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+    joint_trajectory = trajectory.joint_trajectory
+    source_joint_names = tuple(str(name) for name in joint_trajectory.joint_names)
+    name_to_index = {name: index for index, name in enumerate(source_joint_names)}
+    missing = [joint_name for joint_name in joint_names if joint_name not in name_to_index]
+    if missing:
+        raise RuntimeError(f"MoveIt trajectory is missing arm joints: {missing}.")
+    ordered_indices = [name_to_index[name] for name in joint_names]
+    waypoints = tuple(
+        tuple(float(point.positions[index]) for index in ordered_indices) for point in tuple(joint_trajectory.points)
+    )
+    if not waypoints:
+        raise RuntimeError("MoveIt returned a trajectory with no points.")
+    return waypoints
+
+
+def _plan_moveit_target_sequence(
+    *,
+    targets,
+    labels: tuple[str, ...],
+    start_joint_positions: tuple[float, ...],
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    if rclpy is None:
+        raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
+    initialized_here = False
+    commander = None
+    try:
+        if not rclpy.ok():
+            print("[INFO]: Initializing ROS2 client for MoveIt planning.", flush=True)
+            rclpy.init()
+            initialized_here = True
+        moveit_config = _moveit_config_from_args()
+        print(
+            f"[INFO]: Connecting to MoveIt group={moveit_config.planning_group} link={moveit_config.pose_link}.",
+            flush=True,
+        )
+        commander = MoveItPoseCommander(moveit_config, node_name="isaac_moveit_trajectory_planner")
+        commander.wait_for_moveit(require_execute=False)
+        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
+        current_start = start_joint_positions
+        for label in labels:
+            print(f"[INFO]: Requesting MoveIt plan for {label}.", flush=True)
+            trajectory, message = commander.plan_to_pose(
+                targets[label],
+                label=f"isaac_{label}",
+                start_joint_positions=current_start,
+            )
+            if trajectory is None:
+                raise RuntimeError(f"MoveIt failed to plan {label}: {message}")
+            waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=moveit_config.joint_names)
+            print(f"[INFO]: MoveIt plan for {label} returned {len(waypoints)} waypoints.", flush=True)
+            planned[label] = waypoints
+            current_start = waypoints[-1]
+        return planned
+    finally:
+        if commander is not None:
+            commander.destroy_node()
+        if initialized_here and rclpy.ok():
+            rclpy.shutdown()
+
+
+def _plan_moveit_joint_trajectories(
+    *,
+    world_grasp,
+    start_joint_positions: tuple[float, ...],
+) -> dict[str, tuple[tuple[float, ...], ...]]:
+    print("[INFO]: Building MoveIt pose targets for Isaac attempt.", flush=True)
+    targets = world_grasp_pose_targets(
+        world_grasp,
+        frame_id=str(args_cli.moveit_frame_id),
+        lift_height_m=float(args_cli.moveit_lift_height_m),
+    )
+    print("[INFO]: Built MoveIt pose targets for Isaac attempt.", flush=True)
+    labels = ("pregrasp",) if args_cli.pregrasp_only else ("pregrasp", "grasp", "lift")
+    return _plan_moveit_target_sequence(
+        targets=targets,
+        labels=labels,
+        start_joint_positions=start_joint_positions,
+    )
+
+
+def _current_isaac_arm_joint_positions(*, sim, scene, robot, fixed_gripper_width: float) -> tuple[float, ...]:
+    context = FR3MotionContext(
+        robot=robot,
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=fixed_gripper_width,
+    )
+    return tuple(float(value) for value in context.get_arm_q()[0].tolist())
+
+
+def _print_moveit_joint_trajectory_summary(trajectories: dict[str, tuple[tuple[float, ...], ...]]) -> None:
+    for label, waypoints in trajectories.items():
+        print(
+            f"[INFO]: MoveIt Isaac trajectory {label}: waypoints={len(waypoints)}",
+            flush=True,
+        )
+
+
+def _load_moveit_plan_json(path: Path) -> tuple[dict[str, object], dict[str, tuple[tuple[float, ...], ...]]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected MoveIt plan JSON object in '{path}'.")
+    raw_trajectories = payload.get("trajectories")
+    if not isinstance(raw_trajectories, dict):
+        raise ValueError(f"MoveIt plan JSON '{path}' is missing a trajectories object.")
+    trajectories: dict[str, tuple[tuple[float, ...], ...]] = {}
+    for label, raw_waypoints in raw_trajectories.items():
+        if not isinstance(raw_waypoints, list):
+            raise ValueError(f"MoveIt plan trajectory '{label}' must be a list of waypoints.")
+        waypoints = []
+        for raw_waypoint in raw_waypoints:
+            if not isinstance(raw_waypoint, list | tuple):
+                raise ValueError(f"MoveIt plan trajectory '{label}' contains a non-list waypoint.")
+            waypoints.append(tuple(float(value) for value in raw_waypoint))
+        trajectories[str(label)] = tuple(waypoints)
+    return payload, trajectories
 
 
 def _mesh_in_bundle_local_frame(bundle) -> object:
@@ -365,11 +532,22 @@ def _write_attempt_artifact(
             "gripper_width": selected_world_grasp.gripper_width,
         },
         "execution": {
+            "controller": args_cli.controller,
             "success": execution_result.success,
             "status": execution_result.status,
             "message": execution_result.message,
         },
     }
+    if args_cli.controller == "moveit":
+        artifact["moveit"] = {
+            "frame_id": args_cli.moveit_frame_id,
+            "planning_group": args_cli.moveit_planning_group,
+            "pose_link": args_cli.moveit_pose_link,
+            "planner_id": args_cli.moveit_planner_id,
+            "lift_height_m": args_cli.moveit_lift_height_m,
+            "allow_collisions": bool(args_cli.moveit_allow_collisions),
+            "plan_json": None if args_cli.moveit_plan_json is None else str(args_cli.moveit_plan_json),
+        }
     output = args_cli.attempt_artifact
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
@@ -515,17 +693,50 @@ def run() -> None:
     )
     fixed_gripper_width = selected_world_grasp.gripper_width / 2.0
     print("[INFO]: Executing pick attempt...", flush=True)
-    execution_result = execute_pick_from_world_grasp(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        object_asset=part,
-        world_grasp=selected_world_grasp,
-        controller_type=args_cli.controller,
-        fixed_gripper_width=fixed_gripper_width,
-        closed_gripper_width=float(args_cli.close_width),
-        pregrasp_only=bool(args_cli.pregrasp_only),
-    )
+    if args_cli.controller == "moveit":
+        if args_cli.moveit_plan_json is not None:
+            print(f"[INFO]: Loading precomputed MoveIt plan from {args_cli.moveit_plan_json}.", flush=True)
+            moveit_plan_payload, moveit_joint_trajectories = _load_moveit_plan_json(args_cli.moveit_plan_json)
+            planned_grasp_id = moveit_plan_payload.get("selected_grasp_id")
+            if planned_grasp_id not in ("", None, selected_grasp.grasp_id):
+                raise RuntimeError(
+                    "Precomputed MoveIt plan grasp id "
+                    f"'{planned_grasp_id}' does not match selected Isaac grasp '{selected_grasp.grasp_id}'."
+                )
+        else:
+            start_joint_positions = _current_isaac_arm_joint_positions(
+                sim=sim,
+                scene=scene,
+                robot=robot,
+                fixed_gripper_width=fixed_gripper_width,
+            )
+            print("[INFO]: Planning Isaac attempt with MoveIt.", flush=True)
+            moveit_joint_trajectories = _plan_moveit_joint_trajectories(
+                world_grasp=selected_world_grasp,
+                start_joint_positions=start_joint_positions,
+            )
+        _print_moveit_joint_trajectory_summary(moveit_joint_trajectories)
+        execution_result = execute_pick_from_moveit_joint_trajectories(
+            sim=sim,
+            scene=scene,
+            robot=robot,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            open_gripper_width=fixed_gripper_width,
+            closed_gripper_width=float(args_cli.close_width),
+            pregrasp_only=bool(args_cli.pregrasp_only),
+        )
+    else:
+        execution_result = execute_pick_from_world_grasp(
+            sim=sim,
+            scene=scene,
+            robot=robot,
+            object_asset=part,
+            world_grasp=selected_world_grasp,
+            controller_type=args_cli.controller,
+            fixed_gripper_width=fixed_gripper_width,
+            closed_gripper_width=float(args_cli.close_width),
+            pregrasp_only=bool(args_cli.pregrasp_only),
+        )
     _write_attempt_artifact(
         bundle=bundle,
         placement_spec=placement_spec,
@@ -563,7 +774,17 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    run_error: BaseException | None = None
     try:
         run()
+    except BaseException as exc:
+        run_error = exc
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
     finally:
-        simulation_app.close()
+        try:
+            simulation_app.close()
+        except SystemExit:
+            if run_error is None:
+                raise
+    if run_error is not None:
+        raise run_error

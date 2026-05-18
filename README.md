@@ -135,16 +135,18 @@ Notes:
 
 ## Setup
 
-For Isaac execution, build the repo-specific Isaac container:
+For local Isaac execution, use the local Isaac Lab launcher. The default
+Isaac configs call:
 
 ```bash
-./docker_env.sh build
+/media/pdz/Elements1/IsaacLab/isaaclab.sh -p
 ```
 
-The container includes ROS2 Jazzy and a built `fp_debug_msgs` overlay for `pitl`
-pose intake. The top-level pipeline runs with the container venv at
-`/opt/grasp-pipeline-venv/bin/python`; Isaac execution still runs through
-`/isaac-sim/python.sh` from the `isaac_execution.python_executable` config.
+through `isaac_execution.python_executable`. This field may include launcher
+arguments, so a local Isaac Lab command such as
+`/media/pdz/Elements1/IsaacLab/isaaclab.sh -p` is supported. Docker remains an
+optional helper for reproducing the older containerized environment, not a
+requirement for Isaac sim execution.
 
 Bootstrap the MuJoCo assets:
 
@@ -262,18 +264,18 @@ MuJoCo can either use its native damped-IK arm controller or MoveIt-planned arm 
 
 The MoveIt-backed MuJoCo path requires the FR3 MoveIt stack to be running and sourced, but only uses MoveIt planning services. For direct pickups, MoveIt plans `pregrasp`, `grasp`, and `lift` trajectories from the stage-2 bundle. For regrasp fallback, it plans transfer, staging placement, retreat, and final-pick trajectories. MuJoCo still executes those joint waypoints, closes/opens the gripper, simulates contacts, and evaluates pickup success by object lift height.
 
-For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only.
+For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only. The default Isaac configs use `isaac_execution.controller: "moveit"` for direct pickups: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation. Legacy Isaac-side controllers remain available with `isaac_execution.controller: "admittance"` or `"planner"`.
 
-Run Isaac-backed sim through the container:
+Run Isaac-backed sim locally:
 
 ```bash
-./docker_env.sh run ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_isaac.yaml --headless
+./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_isaac.yaml --headless
 ```
 
 If you want the MuJoCo backend instead, bootstrap its generated robot XML first:
 
 ```bash
-./docker_env.sh run bash scripts/download_required_assets.sh
+bash scripts/download_required_assets.sh
 ```
 
 ## Repo Shape

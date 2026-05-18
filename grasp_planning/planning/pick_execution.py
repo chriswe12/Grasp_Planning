@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import torch
 
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext
+from grasp_planning.start_poses import DEFAULT_ARM_START_JOINT_POS, DEFAULT_HAND_OPEN_WIDTH
 
 from .admittance_controller import FR3AdmittanceController
 from .goal_ik import GoalIKSolver
 from .move_to_pose_controller import FR3MoveToPoseController
-from .types import PoseCommand
+from .trajectory_executor import TrajectoryExecutor
+from .types import JointTrajectory, PoseCommand
 
 
 @dataclass(frozen=True)
@@ -24,8 +27,6 @@ class PickExecutionResult:
 
 def drive_robot_to_start_pose(sim, scene) -> None:
     """Actively settle the FR3 into a safe home pose before planning."""
-
-    from grasp_planning.envs.fr3_cube_env import DEFAULT_ARM_START_JOINT_POS, DEFAULT_HAND_OPEN_WIDTH
 
     robot = scene["robot"]
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
@@ -204,6 +205,101 @@ def _command_gripper_width(
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
+
+
+def _joint_trajectory_from_moveit_waypoints(
+    *,
+    context: FR3MotionContext,
+    waypoints: tuple[tuple[float, ...], ...],
+    label: str,
+) -> JointTrajectory:
+    if not waypoints:
+        raise ValueError(f"MoveIt trajectory '{label}' has no waypoints.")
+    expected = int(context.arm_joint_ids.numel())
+    tensors = []
+    for waypoint in waypoints:
+        if len(waypoint) != expected:
+            raise ValueError(f"MoveIt trajectory '{label}' expected {expected} joints, got {len(waypoint)}.")
+        tensors.append(torch.tensor([waypoint], dtype=torch.float32, device=context.device))
+    return JointTrajectory(waypoints=tensors, dt=context.physics_dt)
+
+
+def _execute_moveit_waypoint_segment(
+    *,
+    context: FR3MotionContext,
+    executor: TrajectoryExecutor,
+    moveit_joint_trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+    label: str,
+) -> tuple[bool, str]:
+    try:
+        trajectory = _joint_trajectory_from_moveit_waypoints(
+            context=context,
+            waypoints=tuple(moveit_joint_trajectories.get(label, ())),
+            label=label,
+        )
+    except ValueError as exc:
+        return False, str(exc)
+    ok, detail = executor.execute(trajectory)
+    return bool(ok), detail
+
+
+def execute_pick_from_moveit_joint_trajectories(
+    *,
+    sim,
+    scene,
+    robot,
+    moveit_joint_trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+    open_gripper_width: float,
+    closed_gripper_width: float,
+    pregrasp_only: bool,
+) -> PickExecutionResult:
+    """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
+
+    context = FR3MotionContext(
+        robot=robot,
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=float(open_gripper_width),
+    )
+    executor = TrajectoryExecutor(context)
+
+    ok, detail = _execute_moveit_waypoint_segment(
+        context=context,
+        executor=executor,
+        moveit_joint_trajectories=moveit_joint_trajectories,
+        label="pregrasp",
+    )
+    if not ok:
+        return PickExecutionResult(False, "moveit_pregrasp_failed", f"MoveIt pregrasp execution failed: {detail}")
+    if pregrasp_only:
+        return PickExecutionResult(True, "ok", "MoveIt pregrasp trajectory executed.")
+
+    ok, detail = _execute_moveit_waypoint_segment(
+        context=context,
+        executor=executor,
+        moveit_joint_trajectories=moveit_joint_trajectories,
+        label="grasp",
+    )
+    if not ok:
+        return PickExecutionResult(False, "moveit_grasp_failed", f"MoveIt grasp execution failed: {detail}")
+
+    _command_gripper_width(
+        sim=sim,
+        scene=scene,
+        robot=robot,
+        width=float(closed_gripper_width),
+        duration_s=1.2,
+    )
+    context.fixed_gripper_width = float(closed_gripper_width)
+    ok, detail = _execute_moveit_waypoint_segment(
+        context=context,
+        executor=executor,
+        moveit_joint_trajectories=moveit_joint_trajectories,
+        label="lift",
+    )
+    if not ok:
+        return PickExecutionResult(False, "moveit_lift_failed", f"MoveIt lift execution failed: {detail}")
+    return PickExecutionResult(True, "ok", "MoveIt direct-pick trajectories executed in Isaac.")
 
 
 def _servo_tcp_line(
