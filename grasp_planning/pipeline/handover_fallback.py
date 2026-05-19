@@ -173,6 +173,7 @@ def plan_handover_fallback(
     max_pair_checks: int = 1000,
     max_accepted_pairs: int = 24,
     max_rejected_pairs: int = 100,
+    transfer_floor_clearance_margin_m: float | None = None,
 ) -> HandoverFallbackResult | None:
     """Search reverse handover pairs after direct pickup and floor regrasp fail.
 
@@ -187,11 +188,16 @@ def plan_handover_fallback(
     if not raw_candidates or not final_candidates:
         return None
 
+    floor_clearance_margin_m = (
+        planning.floor_clearance_margin_m
+        if transfer_floor_clearance_margin_m is None
+        else float(transfer_floor_clearance_margin_m)
+    )
     floor_statuses = evaluate_saved_grasps_against_pickup_pose(
         raw_candidates,
         object_pose_world=direct_stage2.pickup_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
-        floor_clearance_margin_m=planning.floor_clearance_margin_m,
+        floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
         contact_approach_offsets_m=planning.contact_approach_offsets_m,
     )
@@ -216,6 +222,7 @@ def plan_handover_fallback(
                 "transfer_floor_feasible_count": 0,
                 "raw_candidate_count": len(raw_candidates),
                 "rejection_counts": {},
+                "transfer_floor_clearance_margin_m": floor_clearance_margin_m,
             },
         )
 
@@ -315,6 +322,7 @@ def plan_handover_fallback(
             "transfer_floor_feasible_count": len(transfer_candidates),
             "raw_candidate_count": len(raw_candidates),
             "rejection_counts": dict(rejection_counts),
+            "transfer_floor_clearance_margin_m": floor_clearance_margin_m,
             "max_final_candidates": int(max_final_candidates),
             "max_transfer_candidates": int(max_transfer_candidates),
             "max_pair_checks": int(max_pair_checks),

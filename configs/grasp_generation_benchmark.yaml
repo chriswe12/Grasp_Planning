@@ -48,3 +48,4 @@ handover_fallback:
   max_pair_checks: 1000
   max_accepted_pairs: 24
   max_rejected_pairs: 100
+  transfer_floor_clearance_margin_m: 0.0

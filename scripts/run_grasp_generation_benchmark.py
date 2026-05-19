@@ -113,6 +113,7 @@ class HandoverFallbackBenchmarkConfig:
     max_pair_checks: int = 1000
     max_accepted_pairs: int = 24
     max_rejected_pairs: int = 100
+    transfer_floor_clearance_margin_m: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,7 @@ def _handover_fallback_config(payload: dict[str, object]) -> HandoverFallbackBen
         max_pair_checks=int(raw.get("max_pair_checks", 1000)),
         max_accepted_pairs=int(raw.get("max_accepted_pairs", 24)),
         max_rejected_pairs=int(raw.get("max_rejected_pairs", 100)),
+        transfer_floor_clearance_margin_m=float(raw.get("transfer_floor_clearance_margin_m", 0.0)),
     )
 
 
@@ -700,6 +702,7 @@ def _write_summary_csv(output_path: Path, rows: list[dict[str, object]]) -> None
         "handover_transfer_grasp_id",
         "handover_final_grasp_id",
         "handover_accepted_pair_count",
+        "handover_transfer_floor_clearance_margin_m",
         "error",
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1473,12 +1476,18 @@ def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
     return statuses
 
 
-def _raw_pickup_statuses_for_pose(stage1, *, object_pose_world, planning: PlanningConfig) -> list[CandidateStatus]:
+def _raw_pickup_statuses_for_pose(
+    stage1,
+    *,
+    object_pose_world,
+    planning: PlanningConfig,
+    floor_clearance_margin_m: float,
+) -> list[CandidateStatus]:
     return evaluate_saved_grasps_against_pickup_pose(
         stage1.raw_candidates,
         object_pose_world=object_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
-        floor_clearance_margin_m=planning.floor_clearance_margin_m,
+        floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
         contact_approach_offsets_m=planning.contact_approach_offsets_m,
     )
@@ -2044,6 +2053,7 @@ def _write_all_generated_grasps_html(
     status: str,
     stage1,
     planning: PlanningConfig,
+    simple_pickup_floor_clearance_margin_m: float,
     stage2=None,
     error: str = "",
 ) -> dict[str, int]:
@@ -2052,7 +2062,12 @@ def _write_all_generated_grasps_html(
     if stage1.obstacle_mesh_world is not None:
         obstacle_mesh_local = _mesh_in_object_frame(stage1.obstacle_mesh_world, stage1.target_pose_in_obj_world)
     candidate_statuses = _all_generated_grasp_statuses(stage1, stage2=stage2)
-    raw_pickup_statuses = _raw_pickup_statuses_for_pose(stage1, object_pose_world=display_pose, planning=planning)
+    raw_pickup_statuses = _raw_pickup_statuses_for_pose(
+        stage1,
+        object_pose_world=display_pose,
+        planning=planning,
+        floor_clearance_margin_m=simple_pickup_floor_clearance_margin_m,
+    )
     raw_pickup_counts = Counter(entry.status for entry in raw_pickup_statuses)
     metadata_lines = [
         f"target_mesh:      {target.target_mesh_path}",
@@ -2066,7 +2081,8 @@ def _write_all_generated_grasps_html(
         f"stage2_feasible:  {0 if stage2 is None else len(stage2.accepted)}",
         f"raw_pickup_ok:    {raw_pickup_counts.get('accepted', 0)}",
         f"floor_clearance:  {planning.floor_clearance_margin_m:.6f} m",
-        "marker_shape:     contact bar plus two approach posts",
+        f"simple_pickup_floor_clearance: {simple_pickup_floor_clearance_margin_m:.6f} m",
+        "marker_shape:     open grasp side; hand-side crossbar plus stem",
     ]
     if error:
         metadata_lines.append(f"error:            {error}")
@@ -3112,6 +3128,7 @@ def _benchmark_one_target(
                     max_pair_checks=handover_config.max_pair_checks,
                     max_accepted_pairs=handover_config.max_accepted_pairs,
                     max_rejected_pairs=handover_config.max_rejected_pairs,
+                    transfer_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
                 )
                 if handover_result is not None:
                     write_handover_fallback_result(
@@ -3165,6 +3182,10 @@ def _benchmark_one_target(
                 row["handover_rejection_counts"] = handover_result.metadata.get("rejection_counts", {})
                 row["handover_transfer_floor_status_counts"] = handover_result.transfer_floor_status_counts
                 row["handover_checked_pair_count"] = handover_result.metadata.get("checked_pair_count", 0)
+                row["handover_transfer_floor_clearance_margin_m"] = handover_result.metadata.get(
+                    "transfer_floor_clearance_margin_m",
+                    handover_config.transfer_floor_clearance_margin_m,
+                )
             all_grasps_html = orientation_dir / "all_generated_grasps.html"
             try:
                 overview_counts = _write_all_generated_grasps_html(
@@ -3174,6 +3195,7 @@ def _benchmark_one_target(
                     status=status,
                     stage1=stage1,
                     planning=planning,
+                    simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
                     stage2=stage2,
                 )
                 row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
@@ -3261,6 +3283,7 @@ def _benchmark_one_target(
                     status="orientation_error",
                     stage1=stage1,
                     planning=planning,
+                    simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
                     error=error,
                 )
                 row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
