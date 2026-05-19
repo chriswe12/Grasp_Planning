@@ -1574,6 +1574,7 @@ def _write_all_generated_grasps_overview_html(
     button:hover { border-color: var(--mesh); }
     .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .segmented.selection { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .segmented button.active { border-color: var(--mesh); background: #e7f2ef; color: #1f5d4f; }
     .range-row { display: grid; gap: 8px; }
     .inline-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
@@ -1602,12 +1603,14 @@ def _write_all_generated_grasps_overview_html(
         <span><i class="swatch" style="background: var(--accepted)"></i>Accepted in this orientation</span>
         <span><i class="swatch" style="background: var(--pass)"></i>Stage 1 passed, no stage 2 status</span>
       </section>
-      <section class="panel checks">
-        <label>Stage 1 rejects <input id="showStage1" type="checkbox" checked></label>
-        <label>Stage 2 rejects <input id="showStage2" type="checkbox" checked></label>
-        <label>Accepted <input id="showAccepted" type="checkbox" checked></label>
-        <label>Stage 1 pass only <input id="showPass" type="checkbox" checked></label>
-        <label>Raw pickup feasible only <input id="rawPickupOnly" type="checkbox"></label>
+      <section class="panel">
+        <div class="segmented selection" id="selectionModeButtons">
+          <button type="button" class="active" data-selection-mode="all">All Generated</button>
+          <button type="button" data-selection-mode="stage1">Passed Stage 1</button>
+          <button type="button" data-selection-mode="stage2">Passed Stage 2</button>
+          <button type="button" data-selection-mode="pickup">Simple Pickup</button>
+        </div>
+        <p id="selectionNote" class="small-note"></p>
       </section>
       <section class="panel">
         <div class="segmented" id="rollModeButtons">
@@ -1646,17 +1649,12 @@ def _write_all_generated_grasps_overview_html(
     const details = document.getElementById("details");
     document.getElementById("title").textContent = data.title;
     document.getElementById("subtitle").textContent = data.subtitle;
-    const controls = {
-      stage1_rejected: document.getElementById("showStage1"),
-      stage2_rejected: document.getElementById("showStage2"),
-      accepted: document.getElementById("showAccepted"),
-      stage1_pass: document.getElementById("showPass"),
-    };
-    const rawPickupOnly = document.getElementById("rawPickupOnly");
     const samplePct = document.getElementById("samplePct");
     const samplePctLabel = document.getElementById("samplePctLabel");
     const seedLabel = document.getElementById("seedLabel");
+    const selectionNote = document.getElementById("selectionNote");
     const rollNote = document.getElementById("rollNote");
+    const selectionButtons = Array.from(document.querySelectorAll("#selectionModeButtons button"));
     const rollButtons = Array.from(document.querySelectorAll("#rollModeButtons button"));
     const state = {
       yaw: -0.72,
@@ -1670,6 +1668,7 @@ def _write_all_generated_grasps_overview_html(
       lastX: 0,
       lastY: 0,
       showMesh: true,
+      selectionMode: "all",
       rollMode: "all",
       samplePct: 100,
       sampleSeed: 1,
@@ -1748,15 +1747,28 @@ def _write_all_generated_grasps_overview_html(
     function randomRank(marker) {
       return hashString(`${state.sampleSeed}:${marker.grasp_id}`) / 4294967296;
     }
-    function statusVisible(marker) { return controls[marker.status] ? controls[marker.status].checked : true; }
+    function selectionVisible(marker) {
+      if (state.selectionMode === "stage1") return marker.status !== "stage1_rejected";
+      if (state.selectionMode === "stage2") return marker.status === "accepted";
+      if (state.selectionMode === "pickup") return Boolean(marker.raw_pickup_feasible);
+      return true;
+    }
+    function updateSelectionNote() {
+      const counts = {
+        all: data.markers.length,
+        stage1: data.markers.filter((marker) => marker.status !== "stage1_rejected").length,
+        stage2: data.markers.filter((marker) => marker.status === "accepted").length,
+        pickup: data.markers.filter((marker) => marker.raw_pickup_feasible).length,
+      };
+      selectionNote.textContent = `all ${counts.all}, stage1 ${counts.stage1}, stage2 ${counts.stage2}, simple pickup ${counts.pickup}`;
+    }
     function rollVisible(marker, activeRollKeys) {
       if (activeRollKeys === null) return true;
       return activeRollKeys.has(rollKey(marker.roll_angle_rad));
     }
     function markerEligible(marker, activeRollKeys) {
-      if (!statusVisible(marker)) return false;
+      if (!selectionVisible(marker)) return false;
       if (!rollVisible(marker, activeRollKeys)) return false;
-      if (rawPickupOnly.checked && !marker.raw_pickup_feasible) return false;
       return true;
     }
     function eligibleMarkers() {
@@ -1782,13 +1794,24 @@ def _write_all_generated_grasps_overview_html(
         return acc;
       }, {});
     }
+    function markerTopMid(marker) {
+      return marker.contact_a.map((value, axis) => 0.5 * (value + marker.contact_b[axis]));
+    }
+    function markerHandMid(marker) {
+      return marker.post_a.map((value, axis) => 0.5 * (value + marker.post_b[axis]));
+    }
+    function markerStemEnd(marker) {
+      const topMid = markerTopMid(marker);
+      const handMid = markerHandMid(marker);
+      return handMid.map((value, axis) => value + 0.75 * (value - topMid[axis]));
+    }
     function allPoints() {
       return [
         ...data.target.vertices,
         ...data.obstacle.vertices,
         ...(data.obstacle.bounds || []),
         ...(data.ground_plane ? data.ground_plane.corners : []),
-        ...data.markers.flatMap((m) => [m.center, m.contact_a, m.contact_b, m.post_a, m.post_b]),
+        ...data.markers.flatMap((m) => [m.center, m.contact_a, m.contact_b, m.post_a, m.post_b, markerStemEnd(m)]),
       ];
     }
     const bounds = allPoints().reduce((acc, point) => {
@@ -1849,11 +1872,15 @@ def _write_all_generated_grasps_overview_html(
     }
     function drawMarker(marker, selected) {
       const color = colors[marker.status] || "#111827";
-      line(marker.contact_a, marker.contact_b, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      const topMid = markerTopMid(marker);
+      const handMid = markerHandMid(marker);
+      const stemEnd = markerStemEnd(marker);
       line(marker.contact_a, marker.post_a, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
       line(marker.contact_b, marker.post_b, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      line(marker.post_a, marker.post_b, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
+      line(handMid, stemEnd, color, selected ? 2.8 : 1.15, selected ? 1 : 0.58);
       if (selected) {
-        const p = project(marker.center);
+        const p = project(topMid);
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
@@ -1892,6 +1919,7 @@ def _write_all_generated_grasps_overview_html(
         `visible_status:   ${JSON.stringify(countBy(markers, "status"))}`,
         `raw_pickup:       ${JSON.stringify(data.raw_pickup_counts || {})}`,
         `visible_pickup:   ${JSON.stringify(countBy(markers, "raw_pickup_status"))}`,
+        `selection_mode:   ${state.selectionMode}`,
         `roll_mode:        ${state.rollMode}`,
         `sample_percent:   ${state.samplePct}%`,
         `sample_seed:      ${state.sampleSeed}`,
@@ -1918,7 +1946,7 @@ def _write_all_generated_grasps_overview_html(
       const markers = visibleMarkers();
       let bestIndex = -1, bestDistance = Infinity;
       markers.forEach((marker, index) => {
-        const p = project(marker.center);
+        const p = project(markerTopMid(marker));
         const dist = Math.hypot(p.x - x, p.y - y);
         if (dist < bestDistance) { bestDistance = dist; bestIndex = index; }
       });
@@ -1933,12 +1961,18 @@ def _write_all_generated_grasps_overview_html(
     }
     function resetSelectionAndDraw() {
       state.selected = 0;
+      updateSelectionNote();
       updateRollNote();
       updateSampleLabels();
       draw();
     }
-    Object.values(controls).forEach((control) => control.addEventListener("change", resetSelectionAndDraw));
-    rawPickupOnly.addEventListener("change", resetSelectionAndDraw);
+    selectionButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        state.selectionMode = button.dataset.selectionMode || "all";
+        selectionButtons.forEach((item) => item.classList.toggle("active", item === button));
+        resetSelectionAndDraw();
+      });
+    });
     rollButtons.forEach((button) => {
       button.addEventListener("click", () => {
         state.rollMode = button.dataset.rollMode || "all";
@@ -1989,6 +2023,7 @@ def _write_all_generated_grasps_overview_html(
     }, { passive: false });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("resize", resize);
+    updateSelectionNote();
     updateRollNote();
     updateSampleLabels();
     resize();
