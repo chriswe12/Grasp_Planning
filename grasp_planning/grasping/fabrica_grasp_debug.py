@@ -842,32 +842,53 @@ def _assembly_collision_free_for_offset(
     *,
     object_pose_world: ObjectWorldPose,
     obstacle_scene,
-    contact_gap_m: float,
-    lateral_offset_m: float,
-    approach_offset_m: float,
-    hand_vertices_local: np.ndarray,
-    hand_faces: np.ndarray,
+    obstacle_bounds_world: tuple[np.ndarray, np.ndarray] | None,
+    collision_model: FrankaHandFingerCollisionModel,
+    object_candidate: ObjectFrameGraspCandidate | None = None,
+    grasp_rotmat_obj: np.ndarray | None = None,
+    contact_point_a_obj: np.ndarray | None = None,
+    contact_point_b_obj: np.ndarray | None = None,
 ) -> bool:
-    candidate_obj = candidate.to_object_frame_candidate()
-    grasp_rotmat_obj = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
-    collision_model = FrankaHandFingerCollisionModel(
-        hand_vertices_local=hand_vertices_local,
-        hand_faces=hand_faces,
-        contact_gap_m=contact_gap_m,
-        contact_patch_lateral_offset_m=lateral_offset_m,
-        contact_patch_approach_offset_m=approach_offset_m,
-    )
+    candidate_obj = object_candidate or candidate.to_object_frame_candidate()
+    if grasp_rotmat_obj is None:
+        grasp_rotmat_obj = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
+    if contact_point_a_obj is None:
+        contact_point_a_obj = np.asarray(candidate_obj.contact_point_a_obj, dtype=float)
+    if contact_point_b_obj is None:
+        contact_point_b_obj = np.asarray(candidate_obj.contact_point_b_obj, dtype=float)
     for primitive_obj in collision_model.primitives_for_grasp(
         grasp_rotmat=grasp_rotmat_obj,
-        contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
-        contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+        contact_point_a=contact_point_a_obj,
+        contact_point_b=contact_point_b_obj,
     ):
         primitive_world = transform_primitive_to_world(primitive_obj, object_pose_world)
+        if obstacle_bounds_world is not None:
+            primitive_bounds = _primitive_aabb_bounds(primitive_world)
+            if not _aabb_bounds_overlap(primitive_bounds, obstacle_bounds_world):
+                continue
         if isinstance(primitive_world, BoxCollisionPrimitive) and obstacle_scene.intersects_box(primitive_world):
             return False
         if isinstance(primitive_world, MeshCollisionPrimitive) and obstacle_scene.intersects_mesh(primitive_world):
             return False
     return True
+
+
+def _primitive_aabb_bounds(
+    primitive: BoxCollisionPrimitive | MeshCollisionPrimitive,
+) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(primitive, BoxCollisionPrimitive):
+        return primitive.aabb_bounds_obj()
+    vertices = np.asarray(primitive.vertices_obj, dtype=float)
+    return vertices.min(axis=0), vertices.max(axis=0)
+
+
+def _aabb_bounds_overlap(
+    first: tuple[np.ndarray, np.ndarray],
+    second: tuple[np.ndarray, np.ndarray],
+) -> bool:
+    first_min, first_max = first
+    second_min, second_max = second
+    return bool(np.all(first_max >= second_min) and np.all(second_max >= first_min))
 
 
 def filter_grasps_against_assembly(
@@ -889,22 +910,41 @@ def filter_grasps_against_assembly(
             contact_gap_m=contact_gap_m,
         )
     ).build_scene(obstacle_mesh_world)
+    obstacle_vertices_world = np.asarray(obstacle_mesh_world.vertices_obj, dtype=float)
+    obstacle_bounds_world = (obstacle_vertices_world.min(axis=0), obstacle_vertices_world.max(axis=0))
+    collision_models: dict[tuple[float, float], FrankaHandFingerCollisionModel] = {}
     kept: list[SavedGraspCandidate] = []
     for candidate in candidates:
+        object_candidate = candidate.to_object_frame_candidate()
+        grasp_rotmat_obj = quat_to_rotmat_xyzw(object_candidate.grasp_orientation_xyzw_obj)
+        contact_point_a_obj = np.asarray(object_candidate.contact_point_a_obj, dtype=float)
+        contact_point_b_obj = np.asarray(object_candidate.contact_point_b_obj, dtype=float)
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
             candidate,
             contact_lateral_offsets_m=contact_lateral_offsets_m,
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
+            key = (float(lateral_offset_m), float(approach_offset_m))
+            collision_model = collision_models.get(key)
+            if collision_model is None:
+                collision_model = FrankaHandFingerCollisionModel(
+                    hand_vertices_local=hand_vertices_local,
+                    hand_faces=hand_faces,
+                    contact_gap_m=contact_gap_m,
+                    contact_patch_lateral_offset_m=lateral_offset_m,
+                    contact_patch_approach_offset_m=approach_offset_m,
+                )
+                collision_models[key] = collision_model
             if _assembly_collision_free_for_offset(
                 candidate,
                 object_pose_world=object_pose_world,
                 obstacle_scene=obstacle_scene,
-                contact_gap_m=contact_gap_m,
-                lateral_offset_m=lateral_offset_m,
-                approach_offset_m=approach_offset_m,
-                hand_vertices_local=hand_vertices_local,
-                hand_faces=hand_faces,
+                obstacle_bounds_world=obstacle_bounds_world,
+                collision_model=collision_model,
+                object_candidate=object_candidate,
+                grasp_rotmat_obj=grasp_rotmat_obj,
+                contact_point_a_obj=contact_point_a_obj,
+                contact_point_b_obj=contact_point_b_obj,
             ):
                 kept.append(
                     _candidate_with_contact_offset(
@@ -929,7 +969,9 @@ def evaluate_grasps_against_ground(
     statuses: list[CandidateStatus] = []
     hand_vertices_local, hand_faces = _load_franka_hand_mesh()
     ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
+    evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
     for candidate in candidates:
+        object_candidate = candidate.to_object_frame_candidate()
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
@@ -937,16 +979,19 @@ def evaluate_grasps_against_ground(
             contact_lateral_offsets_m=contact_lateral_offsets_m,
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
-            evaluator = WorldCollisionConstraintEvaluator(
-                FrankaHandFingerCollisionModel(
-                    hand_vertices_local=hand_vertices_local,
-                    hand_faces=hand_faces,
-                    contact_gap_m=contact_gap_m,
-                    contact_patch_lateral_offset_m=lateral_offset_m,
-                    contact_patch_approach_offset_m=approach_offset_m,
+            key = (float(lateral_offset_m), float(approach_offset_m))
+            evaluator = evaluators.get(key)
+            if evaluator is None:
+                evaluator = WorldCollisionConstraintEvaluator(
+                    FrankaHandFingerCollisionModel(
+                        hand_vertices_local=hand_vertices_local,
+                        hand_faces=hand_faces,
+                        contact_gap_m=contact_gap_m,
+                        contact_patch_lateral_offset_m=lateral_offset_m,
+                        contact_patch_approach_offset_m=approach_offset_m,
+                    )
                 )
-            )
-            object_candidate = candidate.to_object_frame_candidate()
+                evaluators[key] = evaluator
             if evaluator.is_grasp_above_plane(
                 object_candidate,
                 object_pose_world=object_pose_world,

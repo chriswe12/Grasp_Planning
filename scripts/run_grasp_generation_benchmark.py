@@ -11,6 +11,7 @@ import subprocess
 import sys
 import traceback
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -3369,6 +3370,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--part", action="append", default=[], help="Restrict to a part id/stem. Repeatable.")
     parser.add_argument("--target", action="append", default=[], help="Restrict to a target mesh path. Repeatable.")
     parser.add_argument("--limit-parts", type=int, default=None, help="Cap the number of targets after filtering.")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of part-level benchmark workers to run concurrently. Default: 1.",
+    )
     parser.add_argument("--robust-tilt-deg", type=float, default=None, help="Override stable orientation robust tilt.")
     parser.add_argument("--no-stage1-cache", action="store_true", help="Disable stage-1 cache use for this run.")
     parser.add_argument(
@@ -3384,6 +3391,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.jobs < 1:
+        raise ValueError("--jobs must be >= 1.")
     payload = _load_yaml(args.config)
     configured_output_dir = Path(str(dict(payload.get("benchmark", {})).get("output_dir", DEFAULT_OUTPUT_DIR)))
     output_dir = (args.output_dir or configured_output_dir)
@@ -3425,22 +3434,53 @@ def main() -> None:
     part_records: list[dict[str, object]] = []
     rows: list[dict[str, object]] = []
     browser_parts: list[dict[str, object]] = []
-    for index, target in enumerate(targets, start=1):
-        part_record, part_rows, browser_part = _benchmark_one_target(
-            target=target,
-            planning=planning,
-            stable_config=stable_config,
-            fallback_config=fallback_config,
-            handover_config=handover_config,
-            mesh_scale=mesh_scale,
-            output_dir=output_dir,
-            target_index=index,
-            target_count=len(targets),
-        )
-        part_records.append(part_record)
-        rows.extend(part_rows)
-        if browser_part is not None:
-            browser_parts.append(browser_part)
+    if args.jobs == 1 or len(targets) == 1:
+        for index, target in enumerate(targets, start=1):
+            part_record, part_rows, browser_part = _benchmark_one_target(
+                target=target,
+                planning=planning,
+                stable_config=stable_config,
+                fallback_config=fallback_config,
+                handover_config=handover_config,
+                mesh_scale=mesh_scale,
+                output_dir=output_dir,
+                target_index=index,
+                target_count=len(targets),
+            )
+            part_records.append(part_record)
+            rows.extend(part_rows)
+            if browser_part is not None:
+                browser_parts.append(browser_part)
+    else:
+        worker_count = min(int(args.jobs), len(targets))
+        print(f"[BENCHMARK] Running {len(targets)} targets with {worker_count} part-level workers.", flush=True)
+        completed: dict[int, tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]] = {}
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(
+                    _benchmark_one_target,
+                    target=target,
+                    planning=planning,
+                    stable_config=stable_config,
+                    fallback_config=fallback_config,
+                    handover_config=handover_config,
+                    mesh_scale=mesh_scale,
+                    output_dir=output_dir,
+                    target_index=index,
+                    target_count=len(targets),
+                ): index
+                for index, target in enumerate(targets, start=1)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                completed[index] = future.result()
+                print(f"[BENCHMARK] Completed target {index}/{len(targets)}.", flush=True)
+        for index in sorted(completed):
+            part_record, part_rows, browser_part = completed[index]
+            part_records.append(part_record)
+            rows.extend(part_rows)
+            if browser_part is not None:
+                browser_parts.append(browser_part)
 
     results = {
         "schema_version": 1,
