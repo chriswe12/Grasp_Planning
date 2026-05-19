@@ -36,6 +36,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     SavedGraspCandidate,
     candidate_payload,
     canonicalize_target_mesh,
+    evaluate_saved_grasps_against_pickup_pose,
     ground_plane_overlay_obj,
     load_asset_mesh,
     quat_to_rotmat_xyzw,
@@ -1415,17 +1416,28 @@ def _marker_point(point_obj: np.ndarray, object_pose_world) -> list[float]:
     return _transform_points_for_overview(np.asarray([point_obj], dtype=float), object_pose_world)[0]
 
 
-def _candidate_marker_payload(entry: CandidateStatus, object_pose_world) -> dict[str, object]:
+def _candidate_marker_payload(
+    entry: CandidateStatus,
+    object_pose_world,
+    *,
+    raw_pickup_by_id: dict[str, CandidateStatus] | None = None,
+) -> dict[str, object]:
     candidate = entry.grasp
     contact_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
     contact_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
     center = np.asarray(candidate.grasp_position_obj, dtype=float)
     approach_axis = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)[:, 2]
     marker_offset = np.asarray(approach_axis, dtype=float) * float(ALL_GRASP_OVERVIEW_MARKER_LENGTH_M)
+    raw_pickup_entry = None if raw_pickup_by_id is None else raw_pickup_by_id.get(candidate.grasp_id)
+    raw_pickup_status = "unknown" if raw_pickup_entry is None else raw_pickup_entry.status
+    raw_pickup_reason = "" if raw_pickup_entry is None else raw_pickup_entry.reason
     return {
         "grasp_id": candidate.grasp_id,
         "status": entry.status,
         "reason": entry.reason,
+        "raw_pickup_status": raw_pickup_status,
+        "raw_pickup_reason": raw_pickup_reason,
+        "raw_pickup_feasible": raw_pickup_status == "accepted",
         "score": None if candidate.score is None else round(float(candidate.score), 6),
         "roll_angle_rad": round(float(candidate.roll_angle_rad), 6),
         "jaw_width": round(float(candidate.jaw_width), 6),
@@ -1461,6 +1473,17 @@ def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
     return statuses
 
 
+def _raw_pickup_statuses_for_pose(stage1, *, object_pose_world, planning: PlanningConfig) -> list[CandidateStatus]:
+    return evaluate_saved_grasps_against_pickup_pose(
+        stage1.raw_candidates,
+        object_pose_world=object_pose_world,
+        contact_gap_m=planning.detailed_finger_contact_gap_m,
+        floor_clearance_margin_m=planning.floor_clearance_margin_m,
+        contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
+        contact_approach_offsets_m=planning.contact_approach_offsets_m,
+    )
+
+
 def _write_all_generated_grasps_overview_html(
     output_html: Path,
     *,
@@ -1471,6 +1494,7 @@ def _write_all_generated_grasps_overview_html(
     object_pose_world,
     ground_plane: dict[str, object] | None = None,
     obstacle_mesh_local: TriangleMesh | None = None,
+    raw_pickup_statuses: list[CandidateStatus] | None = None,
     metadata_lines: list[str] | None = None,
 ) -> dict[str, int]:
     target_payload = _mesh_overview_payload(mesh_local, object_pose_world, max_edges=ALL_GRASP_OVERVIEW_MAX_MESH_EDGES)
@@ -1483,6 +1507,12 @@ def _write_all_generated_grasps_overview_html(
         )
         obstacle_payload["bounds"] = _bounds_corners(obstacle_payload["vertices"])  # type: ignore[index]
     status_counts = dict(Counter(entry.status for entry in candidate_statuses))
+    raw_pickup_by_id = (
+        {}
+        if raw_pickup_statuses is None
+        else {entry.grasp.grasp_id: entry for entry in raw_pickup_statuses}
+    )
+    raw_pickup_counts = dict(Counter(entry.status for entry in raw_pickup_by_id.values()))
     data = {
         "title": title,
         "subtitle": subtitle,
@@ -1500,7 +1530,11 @@ def _write_all_generated_grasps_overview_html(
             }
         ),
         "status_counts": status_counts,
-        "markers": [_candidate_marker_payload(entry, object_pose_world) for entry in candidate_statuses],
+        "raw_pickup_counts": raw_pickup_counts,
+        "markers": [
+            _candidate_marker_payload(entry, object_pose_world, raw_pickup_by_id=raw_pickup_by_id)
+            for entry in candidate_statuses
+        ],
     }
     data_json = json.dumps(data, indent=2)
     document = """<!DOCTYPE html>
@@ -1535,9 +1569,15 @@ def _write_all_generated_grasps_overview_html(
     .checks { display: grid; gap: 8px; }
     label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); }
     input[type="checkbox"] { width: 18px; height: 18px; }
+    input[type="range"] { width: 100%; }
     button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 8px 10px; font: inherit; cursor: pointer; }
     button:hover { border-color: var(--mesh); }
     .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .segmented button.active { border-color: var(--mesh); background: #e7f2ef; color: #1f5d4f; }
+    .range-row { display: grid; gap: 8px; }
+    .inline-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+    .small-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
     .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; margin: 0; }
     .legend { display: grid; gap: 7px; font-size: 13px; color: var(--muted); }
     .legend span { display: flex; align-items: center; gap: 8px; }
@@ -1567,6 +1607,23 @@ def _write_all_generated_grasps_overview_html(
         <label>Stage 2 rejects <input id="showStage2" type="checkbox" checked></label>
         <label>Accepted <input id="showAccepted" type="checkbox" checked></label>
         <label>Stage 1 pass only <input id="showPass" type="checkbox" checked></label>
+        <label>Raw pickup feasible only <input id="rawPickupOnly" type="checkbox"></label>
+      </section>
+      <section class="panel">
+        <div class="segmented" id="rollModeButtons">
+          <button type="button" class="active" data-roll-mode="all">All Rolls</button>
+          <button type="button" data-roll-mode="zero">0 Roll</button>
+          <button type="button" data-roll-mode="three">3 Rolls</button>
+        </div>
+        <p id="rollNote" class="small-note"></p>
+      </section>
+      <section class="panel range-row">
+        <label>Shown <output id="samplePctLabel">100%</output></label>
+        <input id="samplePct" type="range" min="0" max="100" value="100" step="1">
+        <div class="inline-controls">
+          <span id="seedLabel" class="small-note">seed: 1</span>
+          <button id="newSeedBtn" type="button">New Seed</button>
+        </div>
       </section>
       <section class="panel controls">
         <button id="prevBtn" type="button">Previous</button>
@@ -1595,10 +1652,136 @@ def _write_all_generated_grasps_overview_html(
       accepted: document.getElementById("showAccepted"),
       stage1_pass: document.getElementById("showPass"),
     };
-    const state = { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0, selected: 0, dragging: false, dragMode: "rotate", lastX: 0, lastY: 0, showMesh: true };
+    const rawPickupOnly = document.getElementById("rawPickupOnly");
+    const samplePct = document.getElementById("samplePct");
+    const samplePctLabel = document.getElementById("samplePctLabel");
+    const seedLabel = document.getElementById("seedLabel");
+    const rollNote = document.getElementById("rollNote");
+    const rollButtons = Array.from(document.querySelectorAll("#rollModeButtons button"));
+    const state = {
+      yaw: -0.72,
+      pitch: 0.52,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      selected: 0,
+      dragging: false,
+      dragMode: "rotate",
+      lastX: 0,
+      lastY: 0,
+      showMesh: true,
+      rollMode: "all",
+      samplePct: 100,
+      sampleSeed: 1,
+    };
     const colors = { stage1_rejected: "#b91c1c", stage2_rejected: "#d97706", accepted: "#15803d", stage1_pass: "#1d4ed8" };
-    function visible(marker) { return controls[marker.status] ? controls[marker.status].checked : true; }
-    function visibleMarkers() { return data.markers.filter(visible); }
+    const TAU = Math.PI * 2;
+    function normalizeRoll(value) {
+      let roll = Number(value || 0) % TAU;
+      if (roll < 0) roll += TAU;
+      if (Math.abs(roll - TAU) < 1e-6) roll = 0;
+      return roll;
+    }
+    function rollKey(value) { return String(Math.round(normalizeRoll(value) * 1e6)); }
+    const rollBucketMap = new Map();
+    data.markers.forEach((marker) => {
+      const key = rollKey(marker.roll_angle_rad);
+      if (!rollBucketMap.has(key)) rollBucketMap.set(key, normalizeRoll(marker.roll_angle_rad));
+    });
+    const rollBuckets = Array.from(rollBucketMap.entries())
+      .map(([key, angle]) => ({ key, angle }))
+      .sort((a, b) => a.angle - b.angle);
+    function angularDistance(a, b) {
+      const diff = Math.abs(a - b) % TAU;
+      return Math.min(diff, TAU - diff);
+    }
+    function chooseNearestRollBucket(target, usedKeys) {
+      let best = null;
+      let bestDistance = Infinity;
+      rollBuckets.forEach((bucket) => {
+        if (usedKeys.has(bucket.key)) return;
+        const distance = angularDistance(bucket.angle, target);
+        if (distance < bestDistance) {
+          best = bucket;
+          bestDistance = distance;
+        }
+      });
+      return best;
+    }
+    function rollBucketsForMode() {
+      if (state.rollMode === "all") return null;
+      if (!rollBuckets.length) return [];
+      if (state.rollMode === "zero") {
+        const exactZero = rollBuckets.filter((bucket) => angularDistance(bucket.angle, 0) <= 1e-4);
+        if (exactZero.length) return exactZero;
+        const nearest = chooseNearestRollBucket(0, new Set());
+        return nearest ? [nearest] : [];
+      }
+      const used = new Set();
+      const selected = [];
+      [0, TAU / 3, (2 * TAU) / 3].forEach((target) => {
+        const bucket = chooseNearestRollBucket(target, used);
+        if (bucket) {
+          selected.push(bucket);
+          used.add(bucket.key);
+        }
+      });
+      return selected;
+    }
+    function updateRollNote() {
+      const buckets = rollBucketsForMode();
+      if (buckets === null) {
+        rollNote.textContent = `${rollBuckets.length} roll buckets available.`;
+        return;
+      }
+      const degrees = buckets.map((bucket) => `${(bucket.angle * 180 / Math.PI).toFixed(1)} deg`).join(", ");
+      rollNote.textContent = buckets.length ? `showing roll bucket(s): ${degrees}` : "no roll bucket selected.";
+    }
+    function hashString(text) {
+      let hash = 2166136261;
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+    function randomRank(marker) {
+      return hashString(`${state.sampleSeed}:${marker.grasp_id}`) / 4294967296;
+    }
+    function statusVisible(marker) { return controls[marker.status] ? controls[marker.status].checked : true; }
+    function rollVisible(marker, activeRollKeys) {
+      if (activeRollKeys === null) return true;
+      return activeRollKeys.has(rollKey(marker.roll_angle_rad));
+    }
+    function markerEligible(marker, activeRollKeys) {
+      if (!statusVisible(marker)) return false;
+      if (!rollVisible(marker, activeRollKeys)) return false;
+      if (rawPickupOnly.checked && !marker.raw_pickup_feasible) return false;
+      return true;
+    }
+    function eligibleMarkers() {
+      const activeRollBuckets = rollBucketsForMode();
+      const activeRollKeys = activeRollBuckets === null ? null : new Set(activeRollBuckets.map((bucket) => bucket.key));
+      return data.markers.filter((marker) => markerEligible(marker, activeRollKeys));
+    }
+    function visibleMarkers() {
+      const eligible = eligibleMarkers();
+      if (state.samplePct >= 100) return eligible;
+      if (state.samplePct <= 0 || !eligible.length) return [];
+      const count = Math.ceil(eligible.length * state.samplePct / 100);
+      return eligible
+        .map((marker) => ({ marker, rank: randomRank(marker) }))
+        .sort((a, b) => a.rank - b.rank || a.marker.grasp_id.localeCompare(b.marker.grasp_id))
+        .slice(0, count)
+        .map((entry) => entry.marker);
+    }
+    function countBy(markers, key) {
+      return markers.reduce((acc, marker) => {
+        const value = marker[key] || "unknown";
+        acc[value] = (acc[value] || 0) + 1;
+        return acc;
+      }, {});
+    }
     function allPoints() {
       return [
         ...data.target.vertices,
@@ -1696,20 +1879,30 @@ def _write_all_generated_grasps_overview_html(
     }
     function renderDetails() {
       const markers = visibleMarkers();
+      const eligible = eligibleMarkers();
       if (state.selected >= markers.length) state.selected = 0;
       const marker = markers[state.selected];
       details.textContent = [
         ...data.metadata_lines,
         "",
         `raw_markers:      ${data.markers.length}`,
+        `eligible_markers: ${eligible.length}`,
         `visible_markers:  ${markers.length}`,
         `status_counts:    ${JSON.stringify(data.status_counts)}`,
+        `visible_status:   ${JSON.stringify(countBy(markers, "status"))}`,
+        `raw_pickup:       ${JSON.stringify(data.raw_pickup_counts || {})}`,
+        `visible_pickup:   ${JSON.stringify(countBy(markers, "raw_pickup_status"))}`,
+        `roll_mode:        ${state.rollMode}`,
+        `sample_percent:   ${state.samplePct}%`,
+        `sample_seed:      ${state.sampleSeed}`,
         `target_edges:     ${data.target.edges.length}/${data.target.edge_count_original}`,
         `obstacle_edges:   ${data.obstacle.edges.length}/${data.obstacle.edge_count_original}`,
         "",
         marker ? `selected:         ${marker.grasp_id}` : "selected:         none",
         marker ? `status:           ${marker.status}` : "",
         marker ? `reason:           ${marker.reason}` : "",
+        marker ? `raw_pickup:       ${marker.raw_pickup_status}` : "",
+        marker ? `raw_pickup_reason:${marker.raw_pickup_reason}` : "",
         marker ? `score:            ${marker.score === null ? "n/a" : marker.score}` : "",
         marker ? `roll_angle_rad:   ${marker.roll_angle_rad}` : "",
         marker ? `jaw_width_m:      ${marker.jaw_width}` : "",
@@ -1734,7 +1927,33 @@ def _write_all_generated_grasps_overview_html(
         draw();
       }
     }
-    Object.values(controls).forEach((control) => control.addEventListener("change", () => { state.selected = 0; draw(); }));
+    function updateSampleLabels() {
+      samplePctLabel.textContent = `${state.samplePct}%`;
+      seedLabel.textContent = `seed: ${state.sampleSeed}`;
+    }
+    function resetSelectionAndDraw() {
+      state.selected = 0;
+      updateRollNote();
+      updateSampleLabels();
+      draw();
+    }
+    Object.values(controls).forEach((control) => control.addEventListener("change", resetSelectionAndDraw));
+    rawPickupOnly.addEventListener("change", resetSelectionAndDraw);
+    rollButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        state.rollMode = button.dataset.rollMode || "all";
+        rollButtons.forEach((item) => item.classList.toggle("active", item === button));
+        resetSelectionAndDraw();
+      });
+    });
+    samplePct.addEventListener("input", () => {
+      state.samplePct = Number(samplePct.value);
+      resetSelectionAndDraw();
+    });
+    document.getElementById("newSeedBtn").addEventListener("click", () => {
+      state.sampleSeed += 1;
+      resetSelectionAndDraw();
+    });
     document.getElementById("prevBtn").addEventListener("click", () => selectDelta(-1));
     document.getElementById("nextBtn").addEventListener("click", () => selectDelta(1));
     document.getElementById("resetBtn").addEventListener("click", () => { Object.assign(state, { yaw: -0.72, pitch: 0.52, zoom: 1, panX: 0, panY: 0 }); draw(); });
@@ -1770,6 +1989,8 @@ def _write_all_generated_grasps_overview_html(
     }, { passive: false });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("resize", resize);
+    updateRollNote();
+    updateSampleLabels();
     resize();
   </script>
 </body>
@@ -1796,6 +2017,8 @@ def _write_all_generated_grasps_html(
     if stage1.obstacle_mesh_world is not None:
         obstacle_mesh_local = _mesh_in_object_frame(stage1.obstacle_mesh_world, stage1.target_pose_in_obj_world)
     candidate_statuses = _all_generated_grasp_statuses(stage1, stage2=stage2)
+    raw_pickup_statuses = _raw_pickup_statuses_for_pose(stage1, object_pose_world=display_pose, planning=planning)
+    raw_pickup_counts = Counter(entry.status for entry in raw_pickup_statuses)
     metadata_lines = [
         f"target_mesh:      {target.target_mesh_path}",
         f"assembly:         {target.assembly}",
@@ -1806,6 +2029,7 @@ def _write_all_generated_grasps_html(
         f"raw_candidates:   {len(stage1.raw_candidates)}",
         f"stage1_feasible:  {len(stage1.bundle.candidates)}",
         f"stage2_feasible:  {0 if stage2 is None else len(stage2.accepted)}",
+        f"raw_pickup_ok:    {raw_pickup_counts.get('accepted', 0)}",
         f"floor_clearance:  {planning.floor_clearance_margin_m:.6f} m",
         "marker_shape:     contact bar plus two approach posts",
     ]
@@ -1820,6 +2044,7 @@ def _write_all_generated_grasps_html(
         object_pose_world=display_pose,
         ground_plane=ground_plane_overlay_obj(stage1.target_mesh_local, object_pose_world=display_pose, enabled=True),
         obstacle_mesh_local=obstacle_mesh_local,
+        raw_pickup_statuses=raw_pickup_statuses,
         metadata_lines=metadata_lines,
     )
 
