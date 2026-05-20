@@ -13,7 +13,7 @@ stable_orientations:
 planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/grasp_generation_benchmark/stage1_cache"
-  num_surface_samples: 256
+  num_surface_samples: 1024
   min_jaw_width: 0.002
   max_jaw_width: 0.09
   antipodal_cosine_threshold: 0.984807753012208
@@ -32,11 +32,32 @@ geometry:
 
 fallback:
   enabled: true
-  yaw_angles_deg: [0.0]
-  max_orientations: 24
-  max_placement_options: 18
+  yaw_angles_deg: [0.0, 90.0, 180.0, 270.0]
+  max_orientations: 96
+  max_placement_options: 72
   min_facet_area_m2: 0.000001
   stability_margin_m: 0.0
   coplanar_tolerance_m: 0.000001
   staging_xy_offsets_m:
     - [0.0, 0.0]
+    - [0.06, 0.0]
+    - [-0.06, 0.0]
+    - [0.0, 0.06]
+    - [0.0, -0.06]
+    - [0.12, 0.0]
+    - [-0.12, 0.0]
+    - [0.0, 0.12]
+    - [0.0, -0.12]
+    - [0.06, 0.06]
+    - [0.06, -0.06]
+    - [-0.06, 0.06]
+    - [-0.06, -0.06]
+
+handover_fallback:
+  enabled: true
+  max_final_candidates: 80
+  max_transfer_candidates: 160
+  max_pair_checks: 4000
+  max_accepted_pairs: 48
+  max_rejected_pairs: 200
+  transfer_floor_clearance_margin_m: 0.0

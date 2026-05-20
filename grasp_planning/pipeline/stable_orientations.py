@@ -139,9 +139,8 @@ def _convex_hull_facets(mesh_local: object, *, coplanar_tolerance_m: float) -> l
         for group in groups:
             group_normal = np.asarray(group["normal"], dtype=float)
             group_offset = float(group["offset"])
-            if (
-                float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6
-                and abs(offset - group_offset) <= float(coplanar_tolerance_m)
+            if float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6 and abs(offset - group_offset) <= float(
+                coplanar_tolerance_m
             ):
                 matched = group
                 break
@@ -176,7 +175,11 @@ def _mesh_center_of_mass(mesh_local: object) -> tuple[np.ndarray, str]:
         try:
             mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
             center_mass = np.asarray(mesh.center_mass, dtype=float)
-            if bool(getattr(mesh, "is_volume", False)) and center_mass.shape == (3,) and np.all(np.isfinite(center_mass)):
+            if (
+                bool(getattr(mesh, "is_volume", False))
+                and center_mass.shape == (3,)
+                and np.all(np.isfinite(center_mass))
+            ):
                 return center_mass, "volume"
         except Exception:
             pass

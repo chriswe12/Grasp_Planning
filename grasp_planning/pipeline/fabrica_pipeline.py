@@ -43,6 +43,9 @@ class GeometryConfig:
     target_mesh_path: str
     mesh_scale: float = 1.0
     assembly_glob: str | None = None
+    assembly_obstacle_paths: tuple[str, ...] | None = None
+    assembly_obstacle_sweep_vector_m: tuple[float, float, float] | None = None
+    assembly_obstacle_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -64,13 +67,18 @@ class PlanningConfig:
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
 
-    def to_generator_config(self) -> AntipodalGraspGeneratorConfig:
+    def to_generator_config(
+        self,
+        *,
+        upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = (),
+    ) -> AntipodalGraspGeneratorConfig:
         return AntipodalGraspGeneratorConfig(
             num_surface_samples=self.num_surface_samples,
             min_jaw_width=self.min_jaw_width,
             max_jaw_width=self.max_jaw_width,
             antipodal_cosine_threshold=self.antipodal_cosine_threshold,
             roll_angles_rad=self.roll_angles_rad,
+            upright_approach_axes_obj=upright_approach_axes_obj,
             max_pair_checks=self.max_pair_checks,
             detailed_finger_contact_gap_m=self.detailed_finger_contact_gap_m,
             rng_seed=self.rng_seed,
@@ -272,7 +280,46 @@ def _source_frame_pose_from_bundle(bundle: SavedGraspBundle) -> ObjectWorldPose:
     )
 
 
-_STAGE1_CACHE_SCHEMA_VERSION = 1
+def _minus_z_axis_in_source_frame(object_pose_world: ObjectWorldPose) -> tuple[float, float, float]:
+    axis_source = object_pose_world.rotation_world_from_object.T @ np.array([0.0, 0.0, -1.0], dtype=float)
+    norm = float(np.linalg.norm(axis_source))
+    if norm < 1.0e-12:
+        return (0.0, 0.0, -1.0)
+    return tuple(float(value) for value in (axis_source / norm).tolist())
+
+
+def _unique_axes(
+    axes: tuple[tuple[float, float, float], ...],
+    *,
+    tolerance: float = 1.0e-8,
+) -> tuple[tuple[float, float, float], ...]:
+    unique: list[tuple[float, float, float]] = []
+    for axis in axes:
+        vector = np.asarray(axis, dtype=float)
+        norm = float(np.linalg.norm(vector))
+        if norm < 1.0e-12:
+            continue
+        normalized = tuple(float(value) for value in (vector / norm).tolist())
+        if all(float(np.linalg.norm(np.asarray(normalized) - np.asarray(existing))) > tolerance for existing in unique):
+            unique.append(normalized)
+    return tuple(unique)
+
+
+def _stage1_upright_approach_axes(
+    *,
+    source_frame_pose_obj_world: ObjectWorldPose,
+    extra_axes_obj: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...]:
+    return _unique_axes(
+        (
+            (0.0, 0.0, -1.0),
+            _minus_z_axis_in_source_frame(source_frame_pose_obj_world),
+            *extra_axes_obj,
+        )
+    )
+
+
+_STAGE1_CACHE_SCHEMA_VERSION = 3
 
 
 def _path_cache_record(path: str | Path) -> dict[str, object]:
@@ -285,24 +332,66 @@ def _path_cache_record(path: str | Path) -> dict[str, object]:
     }
 
 
-def _assembly_cache_records(geometry: GeometryConfig, planning: PlanningConfig) -> list[dict[str, object]]:
-    if planning.skip_stage1_collision_checks or not geometry.assembly_glob:
+def _explicit_assembly_obstacle_paths(geometry: GeometryConfig) -> tuple[str, ...] | None:
+    if geometry.assembly_obstacle_paths is None:
+        return None
+    return tuple(str(path) for path in geometry.assembly_obstacle_paths)
+
+
+def _assembly_obstacle_mode(geometry: GeometryConfig) -> str:
+    return "explicit" if geometry.assembly_obstacle_paths is not None else "glob"
+
+
+def _assembly_obstacle_sweep_vector(geometry: GeometryConfig) -> tuple[float, float, float] | None:
+    if geometry.assembly_obstacle_sweep_vector_m is None:
+        return None
+    vector = tuple(float(value) for value in geometry.assembly_obstacle_sweep_vector_m)
+    if len(vector) != 3:
+        raise ValueError("assembly_obstacle_sweep_vector_m must contain exactly three values.")
+    if float(np.linalg.norm(np.asarray(vector, dtype=float))) < 1.0e-12:
+        return None
+    return vector
+
+
+def _assembly_obstacle_sweep_distance_m(geometry: GeometryConfig) -> float:
+    vector = _assembly_obstacle_sweep_vector(geometry)
+    if vector is None:
+        return 0.0
+    return float(np.linalg.norm(np.asarray(vector, dtype=float)))
+
+
+def _resolved_assembly_obstacle_paths(geometry: GeometryConfig, planning: PlanningConfig) -> list[Path]:
+    if planning.skip_stage1_collision_checks:
         return []
-    pattern_path = Path(geometry.assembly_glob).expanduser()
-    if pattern_path.is_absolute():
-        matches = (Path(path) for path in glob.glob(str(pattern_path)))
+    if geometry.assembly_obstacle_paths is not None:
+        raw_paths = [resolve_asset_mesh_path(path) for path in geometry.assembly_obstacle_paths]
     else:
-        matches = DEFAULT_ASSET_MESH_DIR.glob(geometry.assembly_glob)
+        if not geometry.assembly_glob:
+            return []
+        pattern_path = Path(geometry.assembly_glob).expanduser()
+        if pattern_path.is_absolute():
+            raw_paths = [Path(path) for path in glob.glob(str(pattern_path))]
+        else:
+            raw_paths = list(DEFAULT_ASSET_MESH_DIR.glob(geometry.assembly_glob))
+
     target_resolved = resolve_asset_mesh_path(geometry.target_mesh_path).resolve()
-    obstacle_paths = []
-    for path in matches:
-        if not path.is_file():
+    obstacle_paths: list[Path] = []
+    seen: set[Path] = set()
+    for path in raw_paths:
+        resolved = resolve_asset_mesh_path(path).resolve()
+        if resolved in seen:
             continue
-        resolved = path.resolve()
+        seen.add(resolved)
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Assembly obstacle mesh not found at '{resolved}'.")
         if resolved == target_resolved:
             continue
         obstacle_paths.append(resolved)
-    return [_path_cache_record(path) for path in sorted(obstacle_paths)]
+    return sorted(obstacle_paths)
+
+
+def _assembly_cache_records(geometry: GeometryConfig, planning: PlanningConfig) -> list[dict[str, object]]:
+    return [_path_cache_record(path) for path in _resolved_assembly_obstacle_paths(geometry, planning)]
 
 
 def _stage1_cache_key_payload(
@@ -310,6 +399,7 @@ def _stage1_cache_key_payload(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
 ) -> dict[str, object]:
     source_frame_payload = None
     if source_frame_pose_obj_world is not None:
@@ -317,13 +407,25 @@ def _stage1_cache_key_payload(
             "position_world": [float(v) for v in source_frame_pose_obj_world.position_world],
             "orientation_xyzw_world": [float(v) for v in source_frame_pose_obj_world.orientation_xyzw_world],
         }
-    return {
+    payload = {
         "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
         "algorithm": "fabrica_stage1_antipodal_v1",
         "geometry": {
             "target_mesh": _path_cache_record(geometry.target_mesh_path),
             "mesh_scale": float(geometry.mesh_scale),
             "assembly_glob": geometry.assembly_glob,
+            "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
+            "assembly_obstacle_paths": (
+                None
+                if geometry.assembly_obstacle_paths is None
+                else [str(path) for path in geometry.assembly_obstacle_paths]
+            ),
+            "assembly_obstacle_sweep_vector_m": (
+                None
+                if _assembly_obstacle_sweep_vector(geometry) is None
+                else [float(value) for value in _assembly_obstacle_sweep_vector(geometry)]
+            ),
+            "assembly_obstacle_metadata": geometry.assembly_obstacle_metadata or {},
             "assembly_meshes": _assembly_cache_records(geometry, planning),
             "source_frame_pose_obj_world": source_frame_payload,
         },
@@ -341,6 +443,11 @@ def _stage1_cache_key_payload(
             "rng_seed": int(planning.rng_seed),
         },
     }
+    if upright_approach_axes_obj:
+        payload["planning"]["upright_approach_axes_obj"] = [
+            [float(value) for value in axis] for axis in upright_approach_axes_obj
+        ]
+    return payload
 
 
 def _stage1_cache_path(
@@ -348,11 +455,13 @@ def _stage1_cache_path(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
 ) -> tuple[Path, str, dict[str, object]]:
     key_payload = _stage1_cache_key_payload(
         geometry=geometry,
         planning=planning,
         source_frame_pose_obj_world=source_frame_pose_obj_world,
+        upright_approach_axes_obj=upright_approach_axes_obj,
     )
     key = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     stem = Path(relative_asset_mesh_path(geometry.target_mesh_path)).with_suffix("").as_posix()
@@ -386,7 +495,8 @@ def _saved_candidate_from_cache_payload(item: dict[str, object]) -> SavedGraspCa
         grasp_id=str(item["grasp_id"]),
         grasp_position_obj=tuple(float(v) for v in item["grasp_pose_obj"]["position"]),  # type: ignore[index]
         grasp_orientation_xyzw_obj=tuple(
-            float(v) for v in item["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
+            float(v)
+            for v in item["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
         ),
         contact_point_a_obj=tuple(float(v) for v in item["contact_points_obj"][0]),  # type: ignore[index]
         contact_point_b_obj=tuple(float(v) for v in item["contact_points_obj"][1]),  # type: ignore[index]
@@ -495,9 +605,7 @@ def _write_stage1_cache(
                 "mesh_path": result.bundle.target_mesh_path,
                 "mesh_scale": float(result.bundle.mesh_scale),
                 "source_frame_origin_obj_world": list(result.bundle.source_frame_origin_obj_world),
-                "source_frame_orientation_xyzw_obj_world": list(
-                    result.bundle.source_frame_orientation_xyzw_obj_world
-                ),
+                "source_frame_orientation_xyzw_obj_world": list(result.bundle.source_frame_orientation_xyzw_obj_world),
             },
             "metadata": result.bundle.metadata,
             "candidates": [_saved_candidate_to_cache_payload(candidate) for candidate in result.bundle.candidates],
@@ -514,6 +622,7 @@ def generate_stage1_result(
     geometry: GeometryConfig,
     planning: PlanningConfig,
     source_frame_pose_obj_world: ObjectWorldPose | None = None,
+    upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = (),
 ) -> Stage1Result:
     target_mesh_obj_world = load_asset_mesh(geometry.target_mesh_path, scale=geometry.mesh_scale)
     if source_frame_pose_obj_world is None:
@@ -521,6 +630,10 @@ def generate_stage1_result(
     else:
         target_pose_in_obj_world = source_frame_pose_obj_world
         target_mesh_local = _mesh_in_source_frame(target_mesh_obj_world, target_pose_in_obj_world)
+    all_upright_approach_axes_obj = _stage1_upright_approach_axes(
+        source_frame_pose_obj_world=target_pose_in_obj_world,
+        extra_axes_obj=upright_approach_axes_obj,
+    )
 
     cache_path = None
     cache_key = ""
@@ -530,12 +643,15 @@ def generate_stage1_result(
             geometry=geometry,
             planning=planning,
             source_frame_pose_obj_world=source_frame_pose_obj_world,
+            upright_approach_axes_obj=all_upright_approach_axes_obj,
         )
         if cache_path.exists():
             obstacle_mesh_world = None
             if not planning.skip_stage1_collision_checks:
                 obstacle_mesh_world, _ = load_assembly_obstacle_mesh(
                     assembly_glob=geometry.assembly_glob,
+                    assembly_paths=_explicit_assembly_obstacle_paths(geometry),
+                    obstacle_sweep_vector_m=_assembly_obstacle_sweep_vector(geometry),
                     target_stl_path=geometry.target_mesh_path,
                     stl_scale=geometry.mesh_scale,
                 )
@@ -552,7 +668,9 @@ def generate_stage1_result(
             if cached is not None:
                 return cached
 
-    generator = AntipodalMeshGraspGenerator(planning.to_generator_config())
+    generator = AntipodalMeshGraspGenerator(
+        planning.to_generator_config(upright_approach_axes_obj=all_upright_approach_axes_obj)
+    )
     raw_candidates = generator.generate(target_mesh_local)
     surface_samples = tuple(getattr(generator, "last_surface_samples", ()))
     serialized_raw = [
@@ -567,6 +685,8 @@ def generate_stage1_result(
     else:
         obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
             assembly_glob=geometry.assembly_glob,
+            assembly_paths=_explicit_assembly_obstacle_paths(geometry),
+            obstacle_sweep_vector_m=_assembly_obstacle_sweep_vector(geometry),
             target_stl_path=geometry.target_mesh_path,
             stl_scale=geometry.mesh_scale,
         )
@@ -588,6 +708,14 @@ def generate_stage1_result(
         candidates=tuple(kept_candidates),
         metadata={
             "assembly_glob": geometry.assembly_glob,
+            "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
+            "assembly_obstacle_sweep_vector_m": (
+                None
+                if _assembly_obstacle_sweep_vector(geometry) is None
+                else list(_assembly_obstacle_sweep_vector(geometry))
+            ),
+            "assembly_obstacle_sweep_distance_m": _assembly_obstacle_sweep_distance_m(geometry),
+            "assembly_obstacle_metadata": geometry.assembly_obstacle_metadata or {},
             "collision_backend": generator.collision_backend_name,
             "stage1_collision_checks_skipped": planning.skip_stage1_collision_checks,
             "stage1_cache_enabled": planning.stage1_cache_enabled,
@@ -602,6 +730,7 @@ def generate_stage1_result(
             "assembly_obstacle_paths": list(obstacle_paths),
             "contact_lateral_offsets_m": list(planning.contact_lateral_offsets_m),
             "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
+            "upright_approach_axes_obj": [[float(value) for value in axis] for axis in all_upright_approach_axes_obj],
         },
     )
     result = Stage1Result(
@@ -631,6 +760,24 @@ def write_stage1_artifacts(
     obstacle_mesh_local = None
     if result.obstacle_mesh_world is not None:
         obstacle_mesh_local = _mesh_in_source_frame(result.obstacle_mesh_world, result.target_pose_in_obj_world)
+    obstacle_metadata = dict(result.bundle.metadata.get("assembly_obstacle_metadata", {}) or {})
+    metadata_lines = [
+        f"target_mesh:      {relative_asset_mesh_path(geometry.target_mesh_path)}",
+        f"assembly_glob:    {geometry.assembly_glob}",
+        f"obstacle_mode:    {_assembly_obstacle_mode(geometry)}",
+        f"obstacle_count:   {len(result.bundle.metadata.get('assembly_obstacle_paths', []))}",
+        f"sweep_vector_m:   {result.bundle.metadata.get('assembly_obstacle_sweep_vector_m')}",
+        f"sweep_distance_m: {float(result.bundle.metadata.get('assembly_obstacle_sweep_distance_m', 0.0)):.6f}",
+        f"precedence_plan:  {obstacle_metadata.get('precedence_plan_path', 'none')}",
+        f"assembled_before: {obstacle_metadata.get('already_assembled_part_ids', [])}",
+        f"collision_backend:{result.collision_backend_name}",
+        f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
+        f"raw_candidates:   {result.raw_candidate_count}",
+        f"assembly_feasible:{len(result.bundle.candidates)}",
+        f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
+        f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
+        f"local_origin_src: {tuple(round(v, 6) for v in result.target_pose_in_obj_world.position_world)}",
+    ]
     write_debug_html(
         title="Fabrica Assembly-Feasible Grasps",
         subtitle="Offline assembly collision screening. Candidates are stored and visualized in the target part-local frame.",
@@ -646,17 +793,7 @@ def write_stage1_artifacts(
         output_html=output_html,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
         obstacle_mesh_local=obstacle_mesh_local,
-        metadata_lines=[
-            f"target_mesh:      {relative_asset_mesh_path(geometry.target_mesh_path)}",
-            f"assembly_glob:    {geometry.assembly_glob}",
-            f"collision_backend:{result.collision_backend_name}",
-            f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
-            f"raw_candidates:   {result.raw_candidate_count}",
-            f"assembly_feasible:{len(result.bundle.candidates)}",
-            f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
-            f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
-            f"local_origin_src: {tuple(round(v, 6) for v in result.target_pose_in_obj_world.position_world)}",
-        ],
+        metadata_lines=metadata_lines,
     )
 
 

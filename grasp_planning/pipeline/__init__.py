@@ -16,6 +16,12 @@ from .fabrica_pipeline import (
     write_stage1_artifacts,
     write_stage2_artifacts,
 )
+from .handover_fallback import (
+    HandoverFallbackResult,
+    HandoverGraspPair,
+    plan_handover_fallback,
+    write_handover_fallback_result,
+)
 from .regrasp_debug_html import write_mujoco_regrasp_debug_html
 from .regrasp_fallback import (
     HullSupportFacet,
@@ -46,6 +52,8 @@ __all__ = [
     "Ros2Config",
     "Stage1Result",
     "HullSupportFacet",
+    "HandoverFallbackResult",
+    "HandoverGraspPair",
     "MujocoRegraspFallbackPlan",
     "MujocoRegraspPlacementOption",
     "StableOrientation",
@@ -55,10 +63,12 @@ __all__ = [
     "enumerate_stable_orientations",
     "generate_stage1_result",
     "load_mujoco_regrasp_plan",
+    "plan_handover_fallback",
     "plan_mujoco_regrasp_fallback",
     "recheck_stage2_result",
     "stable_orientation_result_payload",
     "write_mujoco_regrasp_plan",
+    "write_handover_fallback_result",
     "write_mujoco_regrasp_debug_html",
     "write_stage1_artifacts",
     "write_stage2_artifacts",

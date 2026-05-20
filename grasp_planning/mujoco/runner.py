@@ -856,11 +856,7 @@ class MujocoPickupRuntime:
         ) -> MujocoRegraspAttemptResult:
             staged = staged_object_position_world if staged_position is None else staged_position
             final_position = self.object_position_world()
-            final_lift_height_m = (
-                0.0
-                if not final_grasp_reached
-                else float(final_position[2] - float(staged[2]))
-            )
+            final_lift_height_m = 0.0 if not final_grasp_reached else float(final_position[2] - float(staged[2]))
             return MujocoRegraspAttemptResult(
                 success=bool(success),
                 status=status,
@@ -1310,8 +1306,7 @@ class MujocoPickupRuntime:
         else:
             status = "final_lift_failed"
             message = (
-                f"Final pickup lifted object by {final_lift_height_m:.4f} m "
-                f"(required {target_lift_height_m:.4f} m)."
+                f"Final pickup lifted object by {final_lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
             )
         return _result(
             success=success,

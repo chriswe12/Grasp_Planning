@@ -1,0 +1,45 @@
+Assembly: plumbers_block
+Source: logs/precedence_only/plumbers_block/precedence.pkl
+
+Semantics:
+  Poses are [x, y, z, rx, ry, rz], with xyz in cm and Euler xyz rotations in radians.
+  If your OBJ is already in assembled coordinates, apply final_to_pre_insertion_transform_cm to place it at pre-insertion.
+  Insert by moving from the pre-insertion pose back to the final pose.
+  static_base parts are fixed seed/support parts and do not have a pre-insertion pose.
+
+Parts:
+  Part 0 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [-0.0, -21.565001, 0.0, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [-0.0, -6.565001, 0.0, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [0.0, 6.565001, -0.0]
+    pre_to_final_insertion_distance_cm: 6.565001
+    disassembly_path_waypoints: 1313
+  Part 1 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.0, -15.0, 5.05, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.0, 0.0, 5.05, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.0, 0.0, -5.05]
+    pre_to_final_insertion_distance_cm: 5.05
+    disassembly_path_waypoints: 1010
+  Part 2 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [3.535, -15.0, 0.0, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [3.535, 0.0, 0.0, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-3.535, 0.0, -0.0]
+    pre_to_final_insertion_distance_cm: 3.535
+    disassembly_path_waypoints: 707
+  Part 3 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.0, -15.0, 0.505, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.0, 0.0, 0.505, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.0, 0.0, -0.505]
+    pre_to_final_insertion_distance_cm: 0.505
+    disassembly_path_waypoints: 101
+  Part 4 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.0, -15.0, 5.05, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.0, 0.0, 5.05, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.0, 0.0, -5.05]
+    pre_to_final_insertion_distance_cm: 5.05
+    disassembly_path_waypoints: 1010

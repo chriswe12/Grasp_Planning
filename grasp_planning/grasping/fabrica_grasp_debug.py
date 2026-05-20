@@ -320,24 +320,72 @@ def transform_mesh_to_world(mesh: TriangleMesh, object_pose_world: ObjectWorldPo
     return TriangleMesh(vertices_obj=vertices_world, faces=np.asarray(mesh.faces, dtype=np.int64))
 
 
+def linear_sweep_triangle_mesh(
+    mesh: TriangleMesh,
+    offset_m: tuple[float, float, float] | np.ndarray,
+) -> TriangleMesh:
+    offset = np.asarray(offset_m, dtype=float)
+    if offset.shape != (3,):
+        raise ValueError("linear sweep offset must have shape (3,).")
+    if float(np.linalg.norm(offset)) < 1.0e-12:
+        return mesh
+
+    vertices = np.asarray(mesh.vertices_obj, dtype=float)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    vertex_count = len(vertices)
+    shifted_vertices = vertices + offset[None, :]
+    shifted_faces = faces[:, [0, 2, 1]] + vertex_count
+
+    side_faces: list[tuple[int, int, int]] = []
+    for start, end in unique_edges(faces):
+        start_shifted = int(start) + vertex_count
+        end_shifted = int(end) + vertex_count
+        side_faces.append((int(start), int(end), end_shifted))
+        side_faces.append((int(start), end_shifted, start_shifted))
+
+    swept_faces = np.vstack(
+        [
+            faces,
+            shifted_faces,
+            np.asarray(side_faces, dtype=np.int64),
+        ]
+    )
+    return TriangleMesh(vertices_obj=np.vstack([vertices, shifted_vertices]), faces=swept_faces)
+
+
 def load_assembly_obstacle_mesh(
     *,
     assembly_glob: str | None,
+    assembly_paths: Iterable[str | Path] | None = None,
+    obstacle_sweep_vector_m: tuple[float, float, float] | None = None,
     target_stl_path: str | Path | None,
     stl_scale: float,
 ) -> tuple[TriangleMesh | None, tuple[str, ...]]:
-    if not assembly_glob:
+    if assembly_paths is None and not assembly_glob:
         return None, ()
     target_resolved = None if target_stl_path is None else resolve_mesh_path(target_stl_path)
     resolved_paths = []
-    for path in sorted(REPO_ROOT.joinpath("assets").glob(assembly_glob)):
-        if not path.is_file():
+    if assembly_paths is None:
+        raw_paths = sorted(REPO_ROOT.joinpath("assets").glob(str(assembly_glob)))
+    else:
+        raw_paths = [resolve_mesh_path(path) for path in assembly_paths]
+    seen: set[Path] = set()
+    for path in raw_paths:
+        resolved = resolve_mesh_path(path).resolve()
+        if resolved in seen:
             continue
-        resolved = path.resolve()
+        seen.add(resolved)
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Assembly obstacle mesh not found at '{resolved}'.")
         if target_resolved is not None and resolved == target_resolved:
             continue
         resolved_paths.append(resolved)
-    meshes = [load_triangle_mesh(path, scale=stl_scale) for path in resolved_paths]
+    meshes = []
+    for path in resolved_paths:
+        mesh = load_triangle_mesh(path, scale=stl_scale)
+        if obstacle_sweep_vector_m is not None:
+            mesh = linear_sweep_triangle_mesh(mesh, obstacle_sweep_vector_m)
+        meshes.append(mesh)
     return combine_triangle_meshes(meshes), tuple(relative_mesh_path(path) for path in resolved_paths)
 
 
@@ -842,32 +890,53 @@ def _assembly_collision_free_for_offset(
     *,
     object_pose_world: ObjectWorldPose,
     obstacle_scene,
-    contact_gap_m: float,
-    lateral_offset_m: float,
-    approach_offset_m: float,
-    hand_vertices_local: np.ndarray,
-    hand_faces: np.ndarray,
+    obstacle_bounds_world: tuple[np.ndarray, np.ndarray] | None,
+    collision_model: FrankaHandFingerCollisionModel,
+    object_candidate: ObjectFrameGraspCandidate | None = None,
+    grasp_rotmat_obj: np.ndarray | None = None,
+    contact_point_a_obj: np.ndarray | None = None,
+    contact_point_b_obj: np.ndarray | None = None,
 ) -> bool:
-    candidate_obj = candidate.to_object_frame_candidate()
-    grasp_rotmat_obj = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
-    collision_model = FrankaHandFingerCollisionModel(
-        hand_vertices_local=hand_vertices_local,
-        hand_faces=hand_faces,
-        contact_gap_m=contact_gap_m,
-        contact_patch_lateral_offset_m=lateral_offset_m,
-        contact_patch_approach_offset_m=approach_offset_m,
-    )
+    candidate_obj = object_candidate or candidate.to_object_frame_candidate()
+    if grasp_rotmat_obj is None:
+        grasp_rotmat_obj = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
+    if contact_point_a_obj is None:
+        contact_point_a_obj = np.asarray(candidate_obj.contact_point_a_obj, dtype=float)
+    if contact_point_b_obj is None:
+        contact_point_b_obj = np.asarray(candidate_obj.contact_point_b_obj, dtype=float)
     for primitive_obj in collision_model.primitives_for_grasp(
         grasp_rotmat=grasp_rotmat_obj,
-        contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
-        contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+        contact_point_a=contact_point_a_obj,
+        contact_point_b=contact_point_b_obj,
     ):
         primitive_world = transform_primitive_to_world(primitive_obj, object_pose_world)
+        if obstacle_bounds_world is not None:
+            primitive_bounds = _primitive_aabb_bounds(primitive_world)
+            if not _aabb_bounds_overlap(primitive_bounds, obstacle_bounds_world):
+                continue
         if isinstance(primitive_world, BoxCollisionPrimitive) and obstacle_scene.intersects_box(primitive_world):
             return False
         if isinstance(primitive_world, MeshCollisionPrimitive) and obstacle_scene.intersects_mesh(primitive_world):
             return False
     return True
+
+
+def _primitive_aabb_bounds(
+    primitive: BoxCollisionPrimitive | MeshCollisionPrimitive,
+) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(primitive, BoxCollisionPrimitive):
+        return primitive.aabb_bounds_obj()
+    vertices = np.asarray(primitive.vertices_obj, dtype=float)
+    return vertices.min(axis=0), vertices.max(axis=0)
+
+
+def _aabb_bounds_overlap(
+    first: tuple[np.ndarray, np.ndarray],
+    second: tuple[np.ndarray, np.ndarray],
+) -> bool:
+    first_min, first_max = first
+    second_min, second_max = second
+    return bool(np.all(first_max >= second_min) and np.all(second_max >= first_min))
 
 
 def filter_grasps_against_assembly(
@@ -889,22 +958,41 @@ def filter_grasps_against_assembly(
             contact_gap_m=contact_gap_m,
         )
     ).build_scene(obstacle_mesh_world)
+    obstacle_vertices_world = np.asarray(obstacle_mesh_world.vertices_obj, dtype=float)
+    obstacle_bounds_world = (obstacle_vertices_world.min(axis=0), obstacle_vertices_world.max(axis=0))
+    collision_models: dict[tuple[float, float], FrankaHandFingerCollisionModel] = {}
     kept: list[SavedGraspCandidate] = []
     for candidate in candidates:
+        object_candidate = candidate.to_object_frame_candidate()
+        grasp_rotmat_obj = quat_to_rotmat_xyzw(object_candidate.grasp_orientation_xyzw_obj)
+        contact_point_a_obj = np.asarray(object_candidate.contact_point_a_obj, dtype=float)
+        contact_point_b_obj = np.asarray(object_candidate.contact_point_b_obj, dtype=float)
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
             candidate,
             contact_lateral_offsets_m=contact_lateral_offsets_m,
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
+            key = (float(lateral_offset_m), float(approach_offset_m))
+            collision_model = collision_models.get(key)
+            if collision_model is None:
+                collision_model = FrankaHandFingerCollisionModel(
+                    hand_vertices_local=hand_vertices_local,
+                    hand_faces=hand_faces,
+                    contact_gap_m=contact_gap_m,
+                    contact_patch_lateral_offset_m=lateral_offset_m,
+                    contact_patch_approach_offset_m=approach_offset_m,
+                )
+                collision_models[key] = collision_model
             if _assembly_collision_free_for_offset(
                 candidate,
                 object_pose_world=object_pose_world,
                 obstacle_scene=obstacle_scene,
-                contact_gap_m=contact_gap_m,
-                lateral_offset_m=lateral_offset_m,
-                approach_offset_m=approach_offset_m,
-                hand_vertices_local=hand_vertices_local,
-                hand_faces=hand_faces,
+                obstacle_bounds_world=obstacle_bounds_world,
+                collision_model=collision_model,
+                object_candidate=object_candidate,
+                grasp_rotmat_obj=grasp_rotmat_obj,
+                contact_point_a_obj=contact_point_a_obj,
+                contact_point_b_obj=contact_point_b_obj,
             ):
                 kept.append(
                     _candidate_with_contact_offset(
@@ -929,7 +1017,9 @@ def evaluate_grasps_against_ground(
     statuses: list[CandidateStatus] = []
     hand_vertices_local, hand_faces = _load_franka_hand_mesh()
     ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
+    evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
     for candidate in candidates:
+        object_candidate = candidate.to_object_frame_candidate()
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
@@ -937,16 +1027,19 @@ def evaluate_grasps_against_ground(
             contact_lateral_offsets_m=contact_lateral_offsets_m,
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
-            evaluator = WorldCollisionConstraintEvaluator(
-                FrankaHandFingerCollisionModel(
-                    hand_vertices_local=hand_vertices_local,
-                    hand_faces=hand_faces,
-                    contact_gap_m=contact_gap_m,
-                    contact_patch_lateral_offset_m=lateral_offset_m,
-                    contact_patch_approach_offset_m=approach_offset_m,
+            key = (float(lateral_offset_m), float(approach_offset_m))
+            evaluator = evaluators.get(key)
+            if evaluator is None:
+                evaluator = WorldCollisionConstraintEvaluator(
+                    FrankaHandFingerCollisionModel(
+                        hand_vertices_local=hand_vertices_local,
+                        hand_faces=hand_faces,
+                        contact_gap_m=contact_gap_m,
+                        contact_patch_lateral_offset_m=lateral_offset_m,
+                        contact_patch_approach_offset_m=approach_offset_m,
+                    )
                 )
-            )
-            object_candidate = candidate.to_object_frame_candidate()
+                evaluators[key] = evaluator
             if evaluator.is_grasp_above_plane(
                 object_candidate,
                 object_pose_world=object_pose_world,
@@ -1228,6 +1321,42 @@ def candidate_payload(
     return payload
 
 
+def _sample_edges(edges: list[tuple[int, int]], max_edges: int | None) -> list[tuple[int, int]]:
+    if max_edges is None or max_edges <= 0 or len(edges) <= max_edges:
+        return edges
+    indices = np.linspace(0, len(edges) - 1, int(max_edges), dtype=np.int64)
+    return [edges[int(index)] for index in indices]
+
+
+def _compact_vertices_for_edges(
+    vertices: list[list[float]],
+    edges: list[tuple[int, int]],
+) -> tuple[list[list[float]], list[tuple[int, int]]]:
+    if not edges:
+        return [], []
+    old_to_new: dict[int, int] = {}
+    compact_vertices: list[list[float]] = []
+    compact_edges: list[tuple[int, int]] = []
+    for start, end in edges:
+        remapped: list[int] = []
+        for old_index in (int(start), int(end)):
+            if old_index not in old_to_new:
+                old_to_new[old_index] = len(compact_vertices)
+                compact_vertices.append(vertices[old_index])
+            remapped.append(old_to_new[old_index])
+        compact_edges.append((remapped[0], remapped[1]))
+    return compact_vertices, compact_edges
+
+
+def _bounds_corners(points: list[list[float]]) -> list[list[float]]:
+    if not points:
+        return []
+    array = np.asarray(points, dtype=float)
+    mins = array.min(axis=0)
+    maxs = array.max(axis=0)
+    return [fmt_vec([x, y, z]) for x in (mins[0], maxs[0]) for y in (mins[1], maxs[1]) for z in (mins[2], maxs[2])]
+
+
 def write_debug_html(
     *,
     title: str,
@@ -1240,6 +1369,8 @@ def write_debug_html(
     obstacle_mesh_local: TriangleMesh | None = None,
     metadata_lines: list[str] | None = None,
     display_object_pose_world: ObjectWorldPose | None = None,
+    max_mesh_edges: int | None = None,
+    max_obstacle_edges: int | None = None,
 ) -> None:
     mesh_vertices_display = (
         [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()]
@@ -1261,6 +1392,15 @@ def write_debug_html(
             ]
         )
     )
+    mesh_edges = _sample_edges(unique_edges(mesh_local.faces), max_mesh_edges)
+    obstacle_edges = [] if obstacle_mesh_local is None else unique_edges(obstacle_mesh_local.faces)
+    obstacle_edge_count_original = len(obstacle_edges)
+    obstacle_bounds_display = _bounds_corners(obstacle_vertices_display)
+    obstacle_edges = _sample_edges(obstacle_edges, max_obstacle_edges)
+    if obstacle_mesh_local is not None and max_obstacle_edges is not None:
+        obstacle_vertices_display, obstacle_edges = _compact_vertices_for_edges(
+            obstacle_vertices_display, obstacle_edges
+        )
     ground_plane_display = (
         ground_plane
         if ground_plane is None or display_object_pose_world is None
@@ -1275,10 +1415,13 @@ def write_debug_html(
         "title": title,
         "subtitle": subtitle,
         "vertices_obj": mesh_vertices_display,
-        "edges": unique_edges(mesh_local.faces),
+        "edges": mesh_edges,
+        "edge_count_original": len(unique_edges(mesh_local.faces)),
         "faces": [[int(v) for v in face] for face in mesh_local.faces.tolist()],
         "obstacle_vertices_obj": obstacle_vertices_display,
-        "obstacle_edges": [] if obstacle_mesh_local is None else unique_edges(obstacle_mesh_local.faces),
+        "obstacle_edges": obstacle_edges,
+        "obstacle_edge_count_original": obstacle_edge_count_original,
+        "obstacle_bounds_obj": obstacle_bounds_display,
         "ground_plane_overlay": ground_plane_display,
         "metadata_lines": metadata_lines or [],
         "candidates": candidate_payload(
@@ -1341,6 +1484,7 @@ def write_debug_html(
     .item-meta { margin-top: 8px; color: var(--muted); font-size: 13px; font-family: "IBM Plex Mono", monospace; }
     .status.accepted { color: var(--accepted); }
     .status.rejected { color: var(--rejected); }
+    .status.stage1_pass { color: var(--ground); }
     .main { padding: 18px; overflow: auto; }
     .cards { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr); gap: 18px; align-items: start; }
     .card { border: 1px solid var(--line); border-radius: 20px; background: rgba(255,250,240,0.88); padding: 16px; box-shadow: 0 14px 32px rgba(72,51,28,0.08); }
@@ -1438,6 +1582,7 @@ def write_debug_html(
     const points = [
       ...data.vertices_obj,
       ...data.obstacle_vertices_obj,
+      ...(data.obstacle_bounds_obj || []),
       ...(data.ground_plane_overlay ? data.ground_plane_overlay.corners_obj : []),
       ...data.candidates.flatMap((candidate) => [candidate.grasp_position_obj, candidate.contact_point_a_obj, candidate.contact_point_b_obj, ...candidate.franka_hand_vertices_obj, ...candidate.franka_left_boxes.flatMap((box) => box.corners), ...candidate.franka_right_boxes.flatMap((box) => box.corners)]),
     ];
@@ -1642,6 +1787,26 @@ def write_debug_html(
       renderScene(candidate);
       renderDetails(candidate);
     }
+    let sceneRenderPending = false;
+    function renderCurrentScene() {
+      const candidates = visibleCandidates();
+      if (candidates.length === 0) {
+        scene.replaceChildren();
+        return;
+      }
+      if (state.selectedIndex >= candidates.length) {
+        state.selectedIndex = 0;
+      }
+      renderScene(candidates[state.selectedIndex]);
+    }
+    function scheduleSceneRender() {
+      if (sceneRenderPending) return;
+      sceneRenderPending = true;
+      window.requestAnimationFrame(() => {
+        sceneRenderPending = false;
+        renderCurrentScene();
+      });
+    }
     window.addEventListener("keydown", (event) => {
       const candidates = visibleCandidates();
       if (candidates.length === 0) return;
@@ -1663,7 +1828,7 @@ def write_debug_html(
     meshModeBtn.addEventListener("click", () => {
       state.meshRenderMode = state.meshRenderMode === "wireframe" ? "solid" : "wireframe";
       meshModeBtn.textContent = state.meshRenderMode === "wireframe" ? "Solid Mesh" : "Wireframe Mesh";
-      render();
+      renderCurrentScene();
     });
     acceptedOnlyBtn.addEventListener("click", () => {
       state.acceptedOnly = !state.acceptedOnly;
@@ -1704,13 +1869,13 @@ def write_debug_html(
         state.yaw = wrapAngle(state.yaw + dx * 0.01);
         state.pitch = wrapAngle(state.pitch - dy * 0.01);
       }
-      render();
+      scheduleSceneRender();
     });
     scene.addEventListener("wheel", (event) => {
       event.preventDefault();
       const zoomFactor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
       state.zoom = clamp(state.zoom * zoomFactor, 0.35, 4.0);
-      render();
+      scheduleSceneRender();
     }, { passive: false });
     scene.style.cursor = "grab";
     scene.addEventListener("contextmenu", (event) => event.preventDefault());

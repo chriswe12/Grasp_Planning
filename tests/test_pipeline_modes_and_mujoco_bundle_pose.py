@@ -12,7 +12,12 @@ import numpy as np
 import grasp_planning.pipeline.fabrica_pipeline as fabrica_pipeline
 import grasp_planning.pipeline.regrasp_debug_html as regrasp_debug_html
 import grasp_planning.pipeline.regrasp_fallback as regrasp_fallback
-from grasp_planning.grasping.fabrica_grasp_debug import CandidateStatus, SavedGraspBundle, SavedGraspCandidate
+from grasp_planning.grasping.fabrica_grasp_debug import (
+    CandidateStatus,
+    SavedGraspBundle,
+    SavedGraspCandidate,
+    linear_sweep_triangle_mesh,
+)
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import (
     ObjectFrameGraspCandidate,
     SurfaceSample,
@@ -20,7 +25,7 @@ from grasp_planning.grasping.mesh_antipodal_grasp_generator import (
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.pipeline import GeometryConfig, PlanningConfig, generate_stage1_result
-from scripts import run_fabrica_grasp_in_mujoco, run_grasp_pipeline
+from scripts import run_fabrica_grasp_in_mujoco, run_grasp_generation_benchmark, run_grasp_pipeline
 
 
 class RunGraspPipelineModeTests(unittest.TestCase):
@@ -278,9 +283,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertAlmostEqual(config.top_grasp_score_weight, 0.8)
 
     def test_planning_config_parses_regrasp_transfer_top_grasp_score_weight(self) -> None:
-        config = run_grasp_pipeline._planning_config(
-            {"planning": {"regrasp_transfer_top_grasp_score_weight": 0.9}}
-        )
+        config = run_grasp_pipeline._planning_config({"planning": {"regrasp_transfer_top_grasp_score_weight": 0.9}})
 
         self.assertAlmostEqual(config.regrasp_transfer_top_grasp_score_weight, 0.9)
 
@@ -400,6 +403,79 @@ class Stage1CollisionSkipTests(unittest.TestCase):
         self.assertIn("obj/fabrica/beam/0.obj", paths)
         self.assertIn("obj/fabrica/beam/1.obj", paths)
         self.assertNotIn("obj/fabrica/beam/2.obj", paths)
+
+    def test_stage1_cache_key_records_explicit_assembly_obstacle_files(self) -> None:
+        records = fabrica_pipeline._assembly_cache_records(
+            GeometryConfig(
+                target_mesh_path="obj/fabrica/beam/2.obj",
+                mesh_scale=0.01,
+                assembly_glob="obj/fabrica/beam/*.obj",
+                assembly_obstacle_paths=("obj/fabrica/beam/6.obj", "obj/fabrica/beam/2.obj"),
+            ),
+            PlanningConfig(stage1_cache_enabled=True),
+        )
+
+        paths = [str(record["path"]) for record in records]
+        self.assertEqual(paths, ["obj/fabrica/beam/6.obj"])
+
+    def test_linear_sweep_triangle_mesh_extrudes_vertices_and_edges(self) -> None:
+        mesh = TriangleMesh(
+            vertices_obj=np.array(
+                [[0.0, 0.0, 0.0], [0.04, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]],
+                dtype=float,
+            ),
+            faces=np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.int64),
+        )
+
+        swept = linear_sweep_triangle_mesh(mesh, (0.0, 0.0, -0.02))
+
+        self.assertEqual(len(swept.vertices_obj), 8)
+        self.assertEqual(len(swept.faces), 20)
+        np.testing.assert_allclose(swept.vertices_obj[4:], mesh.vertices_obj + np.array([0.0, 0.0, -0.02]))
+
+    def test_stage1_cache_key_records_obstacle_sweep_vector(self) -> None:
+        payload = fabrica_pipeline._stage1_cache_key_payload(
+            geometry=GeometryConfig(
+                target_mesh_path="obj/fabrica/beam/2.obj",
+                mesh_scale=0.01,
+                assembly_glob="obj/fabrica/beam/*.obj",
+                assembly_obstacle_paths=("obj/fabrica/beam/6.obj",),
+                assembly_obstacle_sweep_vector_m=(0.0, 0.0, -0.0202),
+            ),
+            planning=PlanningConfig(stage1_cache_enabled=True),
+            source_frame_pose_obj_world=None,
+            upright_approach_axes_obj=(),
+        )
+
+        self.assertEqual(payload["geometry"]["assembly_obstacle_sweep_vector_m"], [0.0, 0.0, -0.0202])
+
+    def test_benchmark_target_uses_selected_precedence_order_as_obstacles(self) -> None:
+        spec = run_grasp_generation_benchmark._target_spec_from_asset_path(
+            Path("obj/fabrica/beam/0.obj"),
+            target_root="obj/fabrica",
+        )
+
+        self.assertEqual(spec.selected_assembly_order, ("6", "2", "0", "3", "1"))
+        self.assertEqual(spec.already_assembled_part_ids, ("6", "2"))
+        self.assertEqual(
+            spec.assembly_obstacle_paths,
+            ("obj/fabrica/beam/6.obj", "obj/fabrica/beam/2.obj"),
+        )
+        self.assertEqual(spec.precedence_plan_path, "obj/fabrica/beam/precedence_plan.json")
+        self.assertEqual(spec.pre_insertion_poses_path, "obj/fabrica/beam/pre_insertion_poses.json")
+        self.assertEqual(spec.insertion_sweep_vector_m, (-0.0, 0.0, -0.0202))
+        self.assertAlmostEqual(spec.insertion_sweep_distance_m, 0.0202)
+
+    def test_benchmark_first_precedence_part_has_empty_explicit_obstacle_set(self) -> None:
+        spec = run_grasp_generation_benchmark._target_spec_from_asset_path(
+            Path("obj/fabrica/beam/6.obj"),
+            target_root="obj/fabrica",
+        )
+
+        self.assertEqual(spec.already_assembled_part_ids, ())
+        self.assertEqual(spec.assembly_obstacle_paths, ())
+        self.assertIsNone(spec.insertion_sweep_vector_m)
+        self.assertEqual(spec.pre_insertion_role, "static_base")
 
     def test_generate_stage1_reuses_cached_grasps_and_surface_samples(self) -> None:
         mesh = TriangleMesh(
@@ -570,7 +646,10 @@ class MujocoRegraspFallbackPlanningTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.metadata["reason"], "forced")
-        self.assertNotEqual(plan.staging_object_pose_world.orientation_xyzw_world, direct_stage2.pickup_pose_world.orientation_xyzw_world)
+        self.assertNotEqual(
+            plan.staging_object_pose_world.orientation_xyzw_world,
+            direct_stage2.pickup_pose_world.orientation_xyzw_world,
+        )
         self.assertEqual(plan.final_grasp.grasp_id, "final")
         self.assertIn(plan.transfer_grasp.grasp_id, {"transfer", "final"})
         self.assertGreaterEqual(len(plan.transfer_grasp_candidates), 1)
