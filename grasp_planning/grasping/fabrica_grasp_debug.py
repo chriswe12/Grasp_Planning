@@ -320,24 +320,72 @@ def transform_mesh_to_world(mesh: TriangleMesh, object_pose_world: ObjectWorldPo
     return TriangleMesh(vertices_obj=vertices_world, faces=np.asarray(mesh.faces, dtype=np.int64))
 
 
+def linear_sweep_triangle_mesh(
+    mesh: TriangleMesh,
+    offset_m: tuple[float, float, float] | np.ndarray,
+) -> TriangleMesh:
+    offset = np.asarray(offset_m, dtype=float)
+    if offset.shape != (3,):
+        raise ValueError("linear sweep offset must have shape (3,).")
+    if float(np.linalg.norm(offset)) < 1.0e-12:
+        return mesh
+
+    vertices = np.asarray(mesh.vertices_obj, dtype=float)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    vertex_count = len(vertices)
+    shifted_vertices = vertices + offset[None, :]
+    shifted_faces = faces[:, [0, 2, 1]] + vertex_count
+
+    side_faces: list[tuple[int, int, int]] = []
+    for start, end in unique_edges(faces):
+        start_shifted = int(start) + vertex_count
+        end_shifted = int(end) + vertex_count
+        side_faces.append((int(start), int(end), end_shifted))
+        side_faces.append((int(start), end_shifted, start_shifted))
+
+    swept_faces = np.vstack(
+        [
+            faces,
+            shifted_faces,
+            np.asarray(side_faces, dtype=np.int64),
+        ]
+    )
+    return TriangleMesh(vertices_obj=np.vstack([vertices, shifted_vertices]), faces=swept_faces)
+
+
 def load_assembly_obstacle_mesh(
     *,
     assembly_glob: str | None,
+    assembly_paths: Iterable[str | Path] | None = None,
+    obstacle_sweep_vector_m: tuple[float, float, float] | None = None,
     target_stl_path: str | Path | None,
     stl_scale: float,
 ) -> tuple[TriangleMesh | None, tuple[str, ...]]:
-    if not assembly_glob:
+    if assembly_paths is None and not assembly_glob:
         return None, ()
     target_resolved = None if target_stl_path is None else resolve_mesh_path(target_stl_path)
     resolved_paths = []
-    for path in sorted(REPO_ROOT.joinpath("assets").glob(assembly_glob)):
-        if not path.is_file():
+    if assembly_paths is None:
+        raw_paths = sorted(REPO_ROOT.joinpath("assets").glob(str(assembly_glob)))
+    else:
+        raw_paths = [resolve_mesh_path(path) for path in assembly_paths]
+    seen: set[Path] = set()
+    for path in raw_paths:
+        resolved = resolve_mesh_path(path).resolve()
+        if resolved in seen:
             continue
-        resolved = path.resolve()
+        seen.add(resolved)
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Assembly obstacle mesh not found at '{resolved}'.")
         if target_resolved is not None and resolved == target_resolved:
             continue
         resolved_paths.append(resolved)
-    meshes = [load_triangle_mesh(path, scale=stl_scale) for path in resolved_paths]
+    meshes = []
+    for path in resolved_paths:
+        mesh = load_triangle_mesh(path, scale=stl_scale)
+        if obstacle_sweep_vector_m is not None:
+            mesh = linear_sweep_triangle_mesh(mesh, obstacle_sweep_vector_m)
+        meshes.append(mesh)
     return combine_triangle_meshes(meshes), tuple(relative_mesh_path(path) for path in resolved_paths)
 
 

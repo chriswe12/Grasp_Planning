@@ -1,0 +1,66 @@
+Assembly: duct
+Source: logs/precedence_only/duct/precedence.pkl
+
+Semantics:
+  Poses are [x, y, z, rx, ry, rz], with xyz in cm and Euler xyz rotations in radians.
+  If your OBJ is already in assembled coordinates, apply final_to_pre_insertion_transform_cm to place it at pre-insertion.
+  Insert by moving from the pre-insertion pose back to the final pose.
+  static_base parts are fixed seed/support parts and do not have a pre-insertion pose.
+
+Parts:
+  Part 0 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [-0.013925, -2.186761, 0.001935, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [-0.013925, 12.813239, 0.001935, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [0.013925, -12.813239, -0.001935]
+    pre_to_final_insertion_distance_cm: 12.813247
+    disassembly_path_waypoints: 2727
+  Part 1 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.650796, -15.00012, 1.887859, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.650796, -0.00012, 1.887859, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.650796, 0.00012, -1.887859]
+    pre_to_final_insertion_distance_cm: 1.996884
+    disassembly_path_waypoints: 404
+  Part 2 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.855196, -14.998776, 1.823133, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.855196, 0.001224, 1.823133, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.855196, -0.001224, -1.823133]
+    pre_to_final_insertion_distance_cm: 2.013747
+    disassembly_path_waypoints: 404
+  Part 3 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [1.048139, -15.0, 1.726791, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [1.048139, 0.0, 1.726791, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-1.048139, 0.0, -1.726791]
+    pre_to_final_insertion_distance_cm: 2.02
+    disassembly_path_waypoints: 404
+  Part 4 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [1.088922, -15.000046, 2.274767, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [1.088922, -4.6e-05, 2.274767, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-1.088922, 4.6e-05, -2.274767]
+    pre_to_final_insertion_distance_cm: 2.521966
+    disassembly_path_waypoints: 505
+  Part 5 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [1.071435, -15.000079, 2.28146, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [1.071435, -7.9e-05, 2.28146, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-1.071435, 7.9e-05, -2.28146]
+    pre_to_final_insertion_distance_cm: 2.520522
+    disassembly_path_waypoints: 505
+  Part 6 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [1.059657, -15.0, 1.719746, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [1.059657, 0.0, 1.719746, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-1.059657, 0.0, -1.719746]
+    pre_to_final_insertion_distance_cm: 2.02
+    disassembly_path_waypoints: 404
+  Part 7 (moving_part):
+    final_pose_world_cm_euler_xyz: [0.0, -15.0, 0.0, 0.0, 0.0, 0.0]
+    pre_insertion_pose_world_cm_euler_xyz: [0.861074, -14.999045, 1.821962, 0.0, 0.0, 0.0]
+    final_to_pre_insertion_pose_cm_euler_xyz: [0.861074, 0.000955, 1.821962, 0.0, 0.0, 0.0]
+    pre_to_final_insertion_vector_cm: [-0.861074, -0.000955, -1.821962]
+    pre_to_final_insertion_distance_cm: 2.015191
+    disassembly_path_waypoints: 404

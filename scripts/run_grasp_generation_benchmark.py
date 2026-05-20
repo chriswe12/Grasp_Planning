@@ -39,6 +39,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     canonicalize_target_mesh,
     evaluate_saved_grasps_against_pickup_pose,
     ground_plane_overlay_obj,
+    linear_sweep_triangle_mesh,
     load_asset_mesh,
     quat_to_rotmat_xyzw,
     relative_asset_mesh_path,
@@ -92,6 +93,126 @@ class TargetSpec:
     part_id: str
     target_mesh_path: str
     assembly_glob: str
+    assembly_obstacle_paths: tuple[str, ...] | None = None
+    precedence_plan_path: str = ""
+    selected_assembly_order: tuple[str, ...] = ()
+    already_assembled_part_ids: tuple[str, ...] = ()
+    pre_insertion_poses_path: str = ""
+    pre_insertion_role: str = ""
+    insertion_sweep_vector_m: tuple[float, float, float] | None = None
+    insertion_sweep_distance_m: float = 0.0
+    final_to_pre_insertion_translation_m: tuple[float, float, float] | None = None
+
+
+def _precedence_target_state(*, assembly_dir: Path, part_id: str) -> dict[str, object]:
+    plan_path = assembly_dir / "precedence_plan.json"
+    if not plan_path.is_file():
+        return {
+            "assembly_obstacle_paths": None,
+            "precedence_plan_path": "",
+            "selected_assembly_order": (),
+            "already_assembled_part_ids": (),
+        }
+    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    orders = payload.get("forward_assembly_orders")
+    if not isinstance(orders, list) or not orders:
+        raise ValueError(f"Precedence plan '{plan_path}' does not contain forward_assembly_orders.")
+    selected_order = tuple(str(item) for item in orders[0])
+    if part_id not in selected_order:
+        raise ValueError(f"Part '{part_id}' is not present in selected precedence order from '{plan_path}'.")
+    part_index = selected_order.index(part_id)
+    already_assembled = selected_order[:part_index]
+    obstacle_paths = []
+    for obstacle_part_id in already_assembled:
+        obstacle_path = assembly_dir / f"{obstacle_part_id}.obj"
+        if not obstacle_path.is_file():
+            raise FileNotFoundError(
+                f"Precedence plan '{plan_path}' references missing obstacle part '{obstacle_path}'."
+            )
+        obstacle_paths.append(relative_asset_mesh_path(obstacle_path))
+    return {
+        "assembly_obstacle_paths": tuple(obstacle_paths),
+        "precedence_plan_path": relative_asset_mesh_path(plan_path),
+        "selected_assembly_order": selected_order,
+        "already_assembled_part_ids": already_assembled,
+    }
+
+
+def _target_assembly_obstacle_metadata(target: TargetSpec) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if target.precedence_plan_path:
+        metadata.update(
+            {
+                "precedence_plan_path": target.precedence_plan_path,
+                "selected_assembly_order": list(target.selected_assembly_order),
+                "already_assembled_part_ids": list(target.already_assembled_part_ids),
+                "current_part_index": len(target.already_assembled_part_ids),
+            }
+        )
+    if target.pre_insertion_poses_path:
+        metadata.update(
+            {
+                "pre_insertion_poses_path": target.pre_insertion_poses_path,
+                "pre_insertion_role": target.pre_insertion_role,
+                "insertion_sweep_vector_m": None
+                if target.insertion_sweep_vector_m is None
+                else list(target.insertion_sweep_vector_m),
+                "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+                "final_to_pre_insertion_translation_m": None
+                if target.final_to_pre_insertion_translation_m is None
+                else list(target.final_to_pre_insertion_translation_m),
+            }
+        )
+    return metadata
+
+
+def _pre_insertion_target_state(*, assembly_dir: Path, part_id: str) -> dict[str, object]:
+    poses_path = assembly_dir / "pre_insertion_poses.json"
+    if not poses_path.is_file():
+        return {
+            "pre_insertion_poses_path": "",
+            "pre_insertion_role": "",
+            "insertion_sweep_vector_m": None,
+            "insertion_sweep_distance_m": 0.0,
+            "final_to_pre_insertion_translation_m": None,
+        }
+    payload = json.loads(poses_path.read_text(encoding="utf-8"))
+    parts = payload.get("parts")
+    if not isinstance(parts, dict):
+        raise ValueError(f"Pre-insertion poses file '{poses_path}' does not contain a parts mapping.")
+    if part_id not in parts:
+        raise ValueError(f"Part '{part_id}' is not present in pre-insertion poses file '{poses_path}'.")
+    part_payload = dict(parts[part_id])
+    transform = np.asarray(part_payload.get("final_to_pre_insertion_transform_m"), dtype=float)
+    if transform.shape != (4, 4):
+        raise ValueError(f"Part '{part_id}' in '{poses_path}' has an invalid final_to_pre_insertion_transform_m.")
+    if not np.allclose(transform[:3, :3], np.eye(3), atol=1.0e-9):
+        raise ValueError(
+            f"Part '{part_id}' in '{poses_path}' has a rotational pre-insertion transform; "
+            "linear swept obstacles currently support translation-only insertions."
+        )
+    translation = tuple(float(value) for value in transform[:3, 3])
+    raw_vector = part_payload.get("pre_to_final_insertion_vector_m")
+    if raw_vector is None:
+        sweep_vector = None
+        distance_m = 0.0
+    else:
+        vector_array = np.asarray(raw_vector, dtype=float)
+        if vector_array.shape != (3,):
+            raise ValueError(f"Part '{part_id}' in '{poses_path}' has an invalid pre_to_final_insertion_vector_m.")
+        if not np.allclose(vector_array + np.asarray(translation, dtype=float), np.zeros(3), atol=1.0e-6):
+            raise ValueError(
+                f"Part '{part_id}' in '{poses_path}' has inconsistent final_to_pre and pre_to_final vectors."
+            )
+        distance_m = float(np.linalg.norm(vector_array))
+        sweep_vector = None if distance_m < 1.0e-12 else tuple(float(value) for value in vector_array)
+    return {
+        "pre_insertion_poses_path": relative_asset_mesh_path(poses_path),
+        "pre_insertion_role": str(part_payload.get("role", "")),
+        "insertion_sweep_vector_m": sweep_vector,
+        "insertion_sweep_distance_m": distance_m,
+        "final_to_pre_insertion_translation_m": translation,
+    }
 
 
 @dataclass(frozen=True)
@@ -274,11 +395,24 @@ def _target_spec_from_asset_path(path: Path, *, target_root: str) -> TargetSpec:
         raise ValueError(f"Target '{assets_relative}' must be under an assembly directory.")
     assembly = rel.parts[0]
     part_id = rel.stem
+    precedence_state = _precedence_target_state(assembly_dir=resolved.parent, part_id=part_id)
+    pre_insertion_state = _pre_insertion_target_state(assembly_dir=resolved.parent, part_id=part_id)
     return TargetSpec(
         assembly=assembly,
         part_id=part_id,
         target_mesh_path=assets_relative.as_posix(),
         assembly_glob=(root_relative / assembly / "*.obj").as_posix(),
+        assembly_obstacle_paths=precedence_state["assembly_obstacle_paths"],  # type: ignore[arg-type]
+        precedence_plan_path=str(precedence_state["precedence_plan_path"]),
+        selected_assembly_order=precedence_state["selected_assembly_order"],  # type: ignore[arg-type]
+        already_assembled_part_ids=precedence_state["already_assembled_part_ids"],  # type: ignore[arg-type]
+        pre_insertion_poses_path=str(pre_insertion_state["pre_insertion_poses_path"]),
+        pre_insertion_role=str(pre_insertion_state["pre_insertion_role"]),
+        insertion_sweep_vector_m=pre_insertion_state["insertion_sweep_vector_m"],  # type: ignore[arg-type]
+        insertion_sweep_distance_m=float(pre_insertion_state["insertion_sweep_distance_m"]),
+        final_to_pre_insertion_translation_m=pre_insertion_state[  # type: ignore[arg-type]
+            "final_to_pre_insertion_translation_m"
+        ],
     )
 
 
@@ -448,13 +582,19 @@ def _assembly_obstacle_parts(
     target_resolved = resolve_mesh_path(target.target_mesh_path)
     evaluator = GraspCollisionEvaluator(FrankaHandFingerCollisionModel(contact_gap_m=contact_gap_m))
     parts: list[AssemblyObstaclePart] = []
-    for path in sorted(REPO_ROOT.joinpath("assets").glob(target.assembly_glob)):
-        if not path.is_file():
-            continue
-        resolved = path.resolve()
+    if target.assembly_obstacle_paths is None:
+        obstacle_paths = sorted(REPO_ROOT.joinpath("assets").glob(target.assembly_glob))
+    else:
+        obstacle_paths = [resolve_mesh_path(path) for path in target.assembly_obstacle_paths]
+    for path in obstacle_paths:
+        resolved = resolve_mesh_path(path).resolve()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Assembly obstacle mesh not found at '{resolved}'.")
         if resolved == target_resolved:
             continue
         mesh_world = load_asset_mesh(resolved, scale=mesh_scale)
+        if target.insertion_sweep_vector_m is not None:
+            mesh_world = linear_sweep_triangle_mesh(mesh_world, target.insertion_sweep_vector_m)
         parts.append(
             AssemblyObstaclePart(
                 part_id=resolved.stem,
@@ -558,9 +698,11 @@ def _stage1_assembly_failure_statuses(
         if collisions:
             shown = ", ".join(collisions[:4])
             suffix = "" if len(collisions) <= 4 else f", +{len(collisions) - 4} more"
-            reason = f"part: {shown}{suffix}"
+            constraint_kind = "part_sweep" if target.insertion_sweep_vector_m is not None else "part"
+            reason = f"{constraint_kind}: {shown}{suffix}"
         else:
-            reason = "part: no_collision_at_saved_offset"
+            constraint_kind = "part_sweep" if target.insertion_sweep_vector_m is not None else "part"
+            reason = f"{constraint_kind}: no_collision_at_saved_offset"
 
         contact_key = _candidate_contact_key(candidate)
         if contact_key in seen_contact_keys:
@@ -580,6 +722,21 @@ def _raw_stage1_payload(stage1, target: TargetSpec) -> dict[str, object]:
     return {
         "target_mesh_path": target.target_mesh_path,
         "assembly_glob": target.assembly_glob,
+        "assembly_obstacle_paths": None
+        if target.assembly_obstacle_paths is None
+        else list(target.assembly_obstacle_paths),
+        "precedence_plan_path": target.precedence_plan_path,
+        "selected_assembly_order": list(target.selected_assembly_order),
+        "already_assembled_part_ids": list(target.already_assembled_part_ids),
+        "pre_insertion_poses_path": target.pre_insertion_poses_path,
+        "pre_insertion_role": target.pre_insertion_role,
+        "insertion_sweep_vector_m": None
+        if target.insertion_sweep_vector_m is None
+        else list(target.insertion_sweep_vector_m),
+        "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+        "final_to_pre_insertion_translation_m": None
+        if target.final_to_pre_insertion_translation_m is None
+        else list(target.final_to_pre_insertion_translation_m),
         "raw_candidate_count": stage1.raw_candidate_count,
         "scored_raw_candidate_count": len(stage1.raw_candidates),
         "candidates": [_candidate_payload(candidate) for candidate in stage1.raw_candidates],
@@ -1144,6 +1301,12 @@ def _write_index_html(
       const grasp = frame.best_grasp;
       details.textContent = [
         `target:             ${part.target_mesh_path}`,
+        `precedence_plan:    ${part.precedence_plan_path || "none"}`,
+        `assembled_before:   ${JSON.stringify(part.already_assembled_part_ids || [])}`,
+        `obstacle_paths:     ${JSON.stringify(part.assembly_obstacle_paths === null ? "glob" : (part.assembly_obstacle_paths || []))}`,
+        `pre_insert_path:    ${part.pre_insertion_poses_path || "none"}`,
+        `sweep_vector_m:     ${JSON.stringify(part.insertion_sweep_vector_m || null)}`,
+        `sweep_distance_m:   ${fmt(part.insertion_sweep_distance_m || 0, 6)}`,
         `orientation:        ${frame.orientation.orientation_id}`,
         `status:             ${frame.status}`,
         `stage1_feasible:    ${frame.stage1_assembly_feasible_count}`,
@@ -1321,6 +1484,21 @@ def _part_orientation_frame(
             "assembly": target.assembly,
             "part_id": target.part_id,
             "target_mesh_path": target.target_mesh_path,
+            "assembly_obstacle_paths": None
+            if target.assembly_obstacle_paths is None
+            else list(target.assembly_obstacle_paths),
+            "precedence_plan_path": target.precedence_plan_path,
+            "selected_assembly_order": list(target.selected_assembly_order),
+            "already_assembled_part_ids": list(target.already_assembled_part_ids),
+            "pre_insertion_poses_path": target.pre_insertion_poses_path,
+            "pre_insertion_role": target.pre_insertion_role,
+            "insertion_sweep_vector_m": None
+            if target.insertion_sweep_vector_m is None
+            else list(target.insertion_sweep_vector_m),
+            "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+            "final_to_pre_insertion_translation_m": None
+            if target.final_to_pre_insertion_translation_m is None
+            else list(target.final_to_pre_insertion_translation_m),
         },
         "orientation": stable_orientation_payload(orientation),
         "status": status,
@@ -1349,6 +1527,21 @@ def _part_browser_payload(
         "assembly": target.assembly,
         "part_id": target.part_id,
         "target_mesh_path": target.target_mesh_path,
+        "assembly_obstacle_paths": None
+        if target.assembly_obstacle_paths is None
+        else list(target.assembly_obstacle_paths),
+        "precedence_plan_path": target.precedence_plan_path,
+        "selected_assembly_order": list(target.selected_assembly_order),
+        "already_assembled_part_ids": list(target.already_assembled_part_ids),
+        "pre_insertion_poses_path": target.pre_insertion_poses_path,
+        "pre_insertion_role": target.pre_insertion_role,
+        "insertion_sweep_vector_m": None
+        if target.insertion_sweep_vector_m is None
+        else list(target.insertion_sweep_vector_m),
+        "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+        "final_to_pre_insertion_translation_m": None
+        if target.final_to_pre_insertion_translation_m is None
+        else list(target.final_to_pre_insertion_translation_m),
         "vertices_local": [
             [float(value) for value in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()
         ],
@@ -1456,10 +1649,15 @@ def _candidate_marker_payload(
 def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
     stage1_ids = {candidate.grasp_id for candidate in stage1.bundle.candidates}
     stage2_by_id = {} if stage2 is None else {entry.grasp.grasp_id: entry for entry in stage2.statuses}
+    rejected_reason = (
+        "part_sweep: stage1 insertion-swept assembly rejected"
+        if (stage1.bundle.metadata or {}).get("assembly_obstacle_sweep_vector_m") is not None
+        else "part: stage1 assembly rejected"
+    )
     statuses: list[CandidateStatus] = []
     for candidate in sorted(stage1.raw_candidates, key=lambda grasp: (-_candidate_score(grasp), grasp.grasp_id)):
         if candidate.grasp_id not in stage1_ids:
-            statuses.append(CandidateStatus(grasp=candidate, status="stage1_rejected", reason="part: stage1 assembly rejected"))
+            statuses.append(CandidateStatus(grasp=candidate, status="stage1_rejected", reason=rejected_reason))
             continue
         stage2_entry = stage2_by_id.get(candidate.grasp_id)
         if stage2_entry is None:
@@ -2074,6 +2272,12 @@ def _write_all_generated_grasps_html(
         f"target_mesh:      {target.target_mesh_path}",
         f"assembly:         {target.assembly}",
         f"part_id:          {target.part_id}",
+        f"precedence_plan:  {target.precedence_plan_path or 'none'}",
+        f"assembled_before: {list(target.already_assembled_part_ids)}",
+        f"obstacle_paths:   {list(target.assembly_obstacle_paths) if target.assembly_obstacle_paths is not None else 'glob'}",
+        f"pre_insert_path:  {target.pre_insertion_poses_path or 'none'}",
+        f"sweep_vector_m:   {target.insertion_sweep_vector_m}",
+        f"sweep_distance_m: {target.insertion_sweep_distance_m:.6f}",
         f"orientation:      {orientation.orientation_id}",
         f"benchmark_status: {status}",
         f"display_frame:    {FAILED_GRASP_DISPLAY_FRAME}",
@@ -2143,6 +2347,12 @@ def _write_handover_grasp_pairs_html(
         "target_mesh_path": target.target_mesh_path,
         "metadata_lines": [
             f"benchmark_status: {status}",
+            f"precedence_plan:  {target.precedence_plan_path or 'none'}",
+            f"assembled_before: {list(target.already_assembled_part_ids)}",
+            f"obstacle_paths:   {list(target.assembly_obstacle_paths) if target.assembly_obstacle_paths is not None else 'glob'}",
+            f"pre_insert_path:  {target.pre_insertion_poses_path or 'none'}",
+            f"sweep_vector_m:   {target.insertion_sweep_vector_m}",
+            f"sweep_distance_m: {target.insertion_sweep_distance_m:.6f}",
             f"raw_candidates:   {len(stage1.raw_candidates)}",
             f"stage1_feasible:  {len(stage1.bundle.candidates)}",
             f"accepted_pairs:   {len(result.accepted_pairs)}",
@@ -2469,6 +2679,12 @@ def _write_failed_grasps_html(
         f"target_mesh:      {target.target_mesh_path}",
         f"assembly:         {target.assembly}",
         f"part_id:          {target.part_id}",
+        f"precedence_plan:  {target.precedence_plan_path or 'none'}",
+        f"assembled_before: {list(target.already_assembled_part_ids)}",
+        f"obstacle_paths:   {list(target.assembly_obstacle_paths) if target.assembly_obstacle_paths is not None else 'glob'}",
+        f"pre_insert_path:  {target.pre_insertion_poses_path or 'none'}",
+        f"sweep_vector_m:   {target.insertion_sweep_vector_m}",
+        f"sweep_distance_m: {target.insertion_sweep_distance_m:.6f}",
         f"orientation:      {orientation.orientation_id}",
         f"benchmark_status: {status}",
         f"failure_stage:    {failure_stage}",
@@ -2522,6 +2738,21 @@ def _write_part_orientations_html(
         "title": f"{target.assembly}/{target.part_id} Stable Orientations",
         "subtitle": "One frame per stable orientation. The grasp shown is the highest-scoring direct stage-2 grasp when one exists.",
         "target_mesh_path": target.target_mesh_path,
+        "precedence_plan_path": target.precedence_plan_path,
+        "assembly_obstacle_paths": None
+        if target.assembly_obstacle_paths is None
+        else list(target.assembly_obstacle_paths),
+        "selected_assembly_order": list(target.selected_assembly_order),
+        "already_assembled_part_ids": list(target.already_assembled_part_ids),
+        "pre_insertion_poses_path": target.pre_insertion_poses_path,
+        "pre_insertion_role": target.pre_insertion_role,
+        "insertion_sweep_vector_m": None
+        if target.insertion_sweep_vector_m is None
+        else list(target.insertion_sweep_vector_m),
+        "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+        "final_to_pre_insertion_translation_m": None
+        if target.final_to_pre_insertion_translation_m is None
+        else list(target.final_to_pre_insertion_translation_m),
         "vertices_local": [[float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()],
         "faces": [[int(value) for value in face] for face in np.asarray(mesh_local.faces, dtype=np.int64).tolist()],
         "edges": unique_edges(mesh_local.faces),
@@ -2783,6 +3014,12 @@ def _write_part_orientations_html(
       });
       details.textContent = [
         `target:             ${data.target_mesh_path}`,
+        `precedence_plan:    ${data.precedence_plan_path || "none"}`,
+        `assembled_before:   ${JSON.stringify(data.already_assembled_part_ids || [])}`,
+        `obstacle_paths:     ${JSON.stringify(data.assembly_obstacle_paths === null ? "glob" : (data.assembly_obstacle_paths || []))}`,
+        `pre_insert_path:    ${data.pre_insertion_poses_path || "none"}`,
+        `sweep_vector_m:     ${JSON.stringify(data.insertion_sweep_vector_m || null)}`,
+        `sweep_distance_m:   ${fmt(data.insertion_sweep_distance_m || 0, 6)}`,
         `orientation:        ${frame.orientation.orientation_id}`,
         `status:             ${frame.status}`,
         `stage1_feasible:    ${frame.stage1_assembly_feasible_count}`,
@@ -2913,6 +3150,21 @@ def _write_orientation_details(
             "part_id": target.part_id,
             "target_mesh_path": target.target_mesh_path,
             "assembly_glob": target.assembly_glob,
+            "assembly_obstacle_paths": None
+            if target.assembly_obstacle_paths is None
+            else list(target.assembly_obstacle_paths),
+            "precedence_plan_path": target.precedence_plan_path,
+            "selected_assembly_order": list(target.selected_assembly_order),
+            "already_assembled_part_ids": list(target.already_assembled_part_ids),
+            "pre_insertion_poses_path": target.pre_insertion_poses_path,
+            "pre_insertion_role": target.pre_insertion_role,
+            "insertion_sweep_vector_m": None
+            if target.insertion_sweep_vector_m is None
+            else list(target.insertion_sweep_vector_m),
+            "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+            "final_to_pre_insertion_translation_m": None
+            if target.final_to_pre_insertion_translation_m is None
+            else list(target.final_to_pre_insertion_translation_m),
         },
         "orientation": stable_orientation_payload(orientation),
         "status": status,
@@ -2981,6 +3233,21 @@ def _benchmark_one_target(
         "part_id": target.part_id,
         "target_mesh_path": target.target_mesh_path,
         "assembly_glob": target.assembly_glob,
+        "assembly_obstacle_paths": None
+        if target.assembly_obstacle_paths is None
+        else list(target.assembly_obstacle_paths),
+        "precedence_plan_path": target.precedence_plan_path,
+        "selected_assembly_order": list(target.selected_assembly_order),
+        "already_assembled_part_ids": list(target.already_assembled_part_ids),
+        "pre_insertion_poses_path": target.pre_insertion_poses_path,
+        "pre_insertion_role": target.pre_insertion_role,
+        "insertion_sweep_vector_m": None
+        if target.insertion_sweep_vector_m is None
+        else list(target.insertion_sweep_vector_m),
+        "insertion_sweep_distance_m": target.insertion_sweep_distance_m,
+        "final_to_pre_insertion_translation_m": None
+        if target.final_to_pre_insertion_translation_m is None
+        else list(target.final_to_pre_insertion_translation_m),
         "status": "pending",
     }
     rows: list[dict[str, object]] = []
@@ -2990,6 +3257,9 @@ def _benchmark_one_target(
         target_mesh_path=target.target_mesh_path,
         mesh_scale=mesh_scale,
         assembly_glob=target.assembly_glob,
+        assembly_obstacle_paths=target.assembly_obstacle_paths,
+        assembly_obstacle_sweep_vector_m=target.insertion_sweep_vector_m,
+        assembly_obstacle_metadata=_target_assembly_obstacle_metadata(target),
     )
 
     def _stage1_failure_debug() -> tuple[list[CandidateStatus], list[AssemblyObstaclePart]]:

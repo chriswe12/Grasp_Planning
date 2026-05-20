@@ -43,6 +43,9 @@ class GeometryConfig:
     target_mesh_path: str
     mesh_scale: float = 1.0
     assembly_glob: str | None = None
+    assembly_obstacle_paths: tuple[str, ...] | None = None
+    assembly_obstacle_sweep_vector_m: tuple[float, float, float] | None = None
+    assembly_obstacle_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -316,7 +319,7 @@ def _stage1_upright_approach_axes(
     )
 
 
-_STAGE1_CACHE_SCHEMA_VERSION = 1
+_STAGE1_CACHE_SCHEMA_VERSION = 3
 
 
 def _path_cache_record(path: str | Path) -> dict[str, object]:
@@ -329,24 +332,66 @@ def _path_cache_record(path: str | Path) -> dict[str, object]:
     }
 
 
-def _assembly_cache_records(geometry: GeometryConfig, planning: PlanningConfig) -> list[dict[str, object]]:
-    if planning.skip_stage1_collision_checks or not geometry.assembly_glob:
+def _explicit_assembly_obstacle_paths(geometry: GeometryConfig) -> tuple[str, ...] | None:
+    if geometry.assembly_obstacle_paths is None:
+        return None
+    return tuple(str(path) for path in geometry.assembly_obstacle_paths)
+
+
+def _assembly_obstacle_mode(geometry: GeometryConfig) -> str:
+    return "explicit" if geometry.assembly_obstacle_paths is not None else "glob"
+
+
+def _assembly_obstacle_sweep_vector(geometry: GeometryConfig) -> tuple[float, float, float] | None:
+    if geometry.assembly_obstacle_sweep_vector_m is None:
+        return None
+    vector = tuple(float(value) for value in geometry.assembly_obstacle_sweep_vector_m)
+    if len(vector) != 3:
+        raise ValueError("assembly_obstacle_sweep_vector_m must contain exactly three values.")
+    if float(np.linalg.norm(np.asarray(vector, dtype=float))) < 1.0e-12:
+        return None
+    return vector
+
+
+def _assembly_obstacle_sweep_distance_m(geometry: GeometryConfig) -> float:
+    vector = _assembly_obstacle_sweep_vector(geometry)
+    if vector is None:
+        return 0.0
+    return float(np.linalg.norm(np.asarray(vector, dtype=float)))
+
+
+def _resolved_assembly_obstacle_paths(geometry: GeometryConfig, planning: PlanningConfig) -> list[Path]:
+    if planning.skip_stage1_collision_checks:
         return []
-    pattern_path = Path(geometry.assembly_glob).expanduser()
-    if pattern_path.is_absolute():
-        matches = (Path(path) for path in glob.glob(str(pattern_path)))
+    if geometry.assembly_obstacle_paths is not None:
+        raw_paths = [resolve_asset_mesh_path(path) for path in geometry.assembly_obstacle_paths]
     else:
-        matches = DEFAULT_ASSET_MESH_DIR.glob(geometry.assembly_glob)
+        if not geometry.assembly_glob:
+            return []
+        pattern_path = Path(geometry.assembly_glob).expanduser()
+        if pattern_path.is_absolute():
+            raw_paths = [Path(path) for path in glob.glob(str(pattern_path))]
+        else:
+            raw_paths = list(DEFAULT_ASSET_MESH_DIR.glob(geometry.assembly_glob))
+
     target_resolved = resolve_asset_mesh_path(geometry.target_mesh_path).resolve()
-    obstacle_paths = []
-    for path in matches:
-        if not path.is_file():
+    obstacle_paths: list[Path] = []
+    seen: set[Path] = set()
+    for path in raw_paths:
+        resolved = resolve_asset_mesh_path(path).resolve()
+        if resolved in seen:
             continue
-        resolved = path.resolve()
+        seen.add(resolved)
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Assembly obstacle mesh not found at '{resolved}'.")
         if resolved == target_resolved:
             continue
         obstacle_paths.append(resolved)
-    return [_path_cache_record(path) for path in sorted(obstacle_paths)]
+    return sorted(obstacle_paths)
+
+
+def _assembly_cache_records(geometry: GeometryConfig, planning: PlanningConfig) -> list[dict[str, object]]:
+    return [_path_cache_record(path) for path in _resolved_assembly_obstacle_paths(geometry, planning)]
 
 
 def _stage1_cache_key_payload(
@@ -369,6 +414,18 @@ def _stage1_cache_key_payload(
             "target_mesh": _path_cache_record(geometry.target_mesh_path),
             "mesh_scale": float(geometry.mesh_scale),
             "assembly_glob": geometry.assembly_glob,
+            "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
+            "assembly_obstacle_paths": (
+                None
+                if geometry.assembly_obstacle_paths is None
+                else [str(path) for path in geometry.assembly_obstacle_paths]
+            ),
+            "assembly_obstacle_sweep_vector_m": (
+                None
+                if _assembly_obstacle_sweep_vector(geometry) is None
+                else [float(value) for value in _assembly_obstacle_sweep_vector(geometry)]
+            ),
+            "assembly_obstacle_metadata": geometry.assembly_obstacle_metadata or {},
             "assembly_meshes": _assembly_cache_records(geometry, planning),
             "source_frame_pose_obj_world": source_frame_payload,
         },
@@ -594,6 +651,8 @@ def generate_stage1_result(
             if not planning.skip_stage1_collision_checks:
                 obstacle_mesh_world, _ = load_assembly_obstacle_mesh(
                     assembly_glob=geometry.assembly_glob,
+                    assembly_paths=_explicit_assembly_obstacle_paths(geometry),
+                    obstacle_sweep_vector_m=_assembly_obstacle_sweep_vector(geometry),
                     target_stl_path=geometry.target_mesh_path,
                     stl_scale=geometry.mesh_scale,
                 )
@@ -627,6 +686,8 @@ def generate_stage1_result(
     else:
         obstacle_mesh_world, obstacle_paths = load_assembly_obstacle_mesh(
             assembly_glob=geometry.assembly_glob,
+            assembly_paths=_explicit_assembly_obstacle_paths(geometry),
+            obstacle_sweep_vector_m=_assembly_obstacle_sweep_vector(geometry),
             target_stl_path=geometry.target_mesh_path,
             stl_scale=geometry.mesh_scale,
         )
@@ -648,6 +709,14 @@ def generate_stage1_result(
         candidates=tuple(kept_candidates),
         metadata={
             "assembly_glob": geometry.assembly_glob,
+            "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
+            "assembly_obstacle_sweep_vector_m": (
+                None
+                if _assembly_obstacle_sweep_vector(geometry) is None
+                else list(_assembly_obstacle_sweep_vector(geometry))
+            ),
+            "assembly_obstacle_sweep_distance_m": _assembly_obstacle_sweep_distance_m(geometry),
+            "assembly_obstacle_metadata": geometry.assembly_obstacle_metadata or {},
             "collision_backend": generator.collision_backend_name,
             "stage1_collision_checks_skipped": planning.skip_stage1_collision_checks,
             "stage1_cache_enabled": planning.stage1_cache_enabled,
@@ -694,6 +763,24 @@ def write_stage1_artifacts(
     obstacle_mesh_local = None
     if result.obstacle_mesh_world is not None:
         obstacle_mesh_local = _mesh_in_source_frame(result.obstacle_mesh_world, result.target_pose_in_obj_world)
+    obstacle_metadata = dict(result.bundle.metadata.get("assembly_obstacle_metadata", {}) or {})
+    metadata_lines = [
+        f"target_mesh:      {relative_asset_mesh_path(geometry.target_mesh_path)}",
+        f"assembly_glob:    {geometry.assembly_glob}",
+        f"obstacle_mode:    {_assembly_obstacle_mode(geometry)}",
+        f"obstacle_count:   {len(result.bundle.metadata.get('assembly_obstacle_paths', []))}",
+        f"sweep_vector_m:   {result.bundle.metadata.get('assembly_obstacle_sweep_vector_m')}",
+        f"sweep_distance_m: {float(result.bundle.metadata.get('assembly_obstacle_sweep_distance_m', 0.0)):.6f}",
+        f"precedence_plan:  {obstacle_metadata.get('precedence_plan_path', 'none')}",
+        f"assembled_before: {obstacle_metadata.get('already_assembled_part_ids', [])}",
+        f"collision_backend:{result.collision_backend_name}",
+        f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
+        f"raw_candidates:   {result.raw_candidate_count}",
+        f"assembly_feasible:{len(result.bundle.candidates)}",
+        f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
+        f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
+        f"local_origin_src: {tuple(round(v, 6) for v in result.target_pose_in_obj_world.position_world)}",
+    ]
     write_debug_html(
         title="Fabrica Assembly-Feasible Grasps",
         subtitle="Offline assembly collision screening. Candidates are stored and visualized in the target part-local frame.",
@@ -709,17 +796,7 @@ def write_stage1_artifacts(
         output_html=output_html,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
         obstacle_mesh_local=obstacle_mesh_local,
-        metadata_lines=[
-            f"target_mesh:      {relative_asset_mesh_path(geometry.target_mesh_path)}",
-            f"assembly_glob:    {geometry.assembly_glob}",
-            f"collision_backend:{result.collision_backend_name}",
-            f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
-            f"raw_candidates:   {result.raw_candidate_count}",
-            f"assembly_feasible:{len(result.bundle.candidates)}",
-            f"contact_offsets_x:{tuple(planning.contact_lateral_offsets_m)}",
-            f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
-            f"local_origin_src: {tuple(round(v, 6) for v in result.target_pose_in_obj_world.position_world)}",
-        ],
+        metadata_lines=metadata_lines,
     )
 
 

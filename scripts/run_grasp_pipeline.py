@@ -96,10 +96,24 @@ def _optional_float(raw: dict[str, object], key: str) -> float | None:
 
 def _geometry_config(payload: dict[str, object]) -> GeometryConfig:
     raw = dict(payload.get("geometry", {}))
+    raw_obstacle_paths = raw.get("assembly_obstacle_paths")
+    if raw_obstacle_paths in ("", None):
+        assembly_obstacle_paths = None
+    elif isinstance(raw_obstacle_paths, (list, tuple)):
+        assembly_obstacle_paths = tuple(str(path) for path in raw_obstacle_paths)
+    else:
+        raise ValueError("geometry.assembly_obstacle_paths must be a list of asset-relative mesh paths.")
+    raw_sweep_vector = raw.get("assembly_obstacle_sweep_vector_m")
+    if raw_sweep_vector in ("", None):
+        assembly_obstacle_sweep_vector_m = None
+    else:
+        assembly_obstacle_sweep_vector_m = _tuple_floats(raw_sweep_vector, expected_len=3)
     return GeometryConfig(
         target_mesh_path=str(raw["target_mesh_path"]),
         mesh_scale=float(raw.get("mesh_scale", 1.0)),
         assembly_glob=None if raw.get("assembly_glob") in ("", None) else str(raw["assembly_glob"]),
+        assembly_obstacle_paths=assembly_obstacle_paths,
+        assembly_obstacle_sweep_vector_m=assembly_obstacle_sweep_vector_m,
     )
 
 
