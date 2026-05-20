@@ -79,7 +79,7 @@ class CandidateTransform:
 
 def _clean_float(value: float, *, digits: int = 10) -> float:
     rounded = round(float(value), digits)
-    if abs(rounded) < 10 ** -digits:
+    if abs(rounded) < 10**-digits:
         return 0.0
     return rounded
 
@@ -1069,7 +1069,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-face-axes", type=int, default=12)
     parser.add_argument("--axis-grid-samples", type=int, default=0)
     parser.add_argument("--near-miss-count", type=int, default=12)
-    parser.add_argument("--no-write-assets", action="store_true", help="Only write report artifacts, not symmetries.json.")
+    parser.add_argument(
+        "--no-write-assets", action="store_true", help="Only write report artifacts, not symmetries.json."
+    )
     parser.add_argument(
         "--write-partial-assets",
         action="store_true",

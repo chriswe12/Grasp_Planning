@@ -98,7 +98,9 @@ def _pair_payload(pair: HandoverGraspPair) -> dict[str, object]:
     }
 
 
-def _contact_pair_key(candidate: SavedGraspCandidate, *, tolerance_m: float = 1.0e-5) -> tuple[tuple[int, int, int], ...]:
+def _contact_pair_key(
+    candidate: SavedGraspCandidate, *, tolerance_m: float = 1.0e-5
+) -> tuple[tuple[int, int, int], ...]:
     points = (
         tuple(int(round(float(value) / tolerance_m)) for value in candidate.contact_point_a_obj),
         tuple(int(round(float(value) / tolerance_m)) for value in candidate.contact_point_b_obj),
@@ -150,7 +152,10 @@ def _manager_collides(
     manager,
     query_primitives: tuple[BoxCollisionPrimitive | MeshCollisionPrimitive, ...],
 ) -> bool:
-    return any(bool(manager.in_collision_single(_primitive_mesh(primitive), return_data=False)) for primitive in query_primitives)
+    return any(
+        bool(manager.in_collision_single(_primitive_mesh(primitive), return_data=False))
+        for primitive in query_primitives
+    )
 
 
 def _pair_score(transfer_grasp: SavedGraspCandidate, final_grasp: SavedGraspCandidate) -> float:
@@ -304,7 +309,12 @@ def plan_handover_fallback(
 
     accepted_pairs = sorted(
         accepted_pairs,
-        key=lambda pair: (-_candidate_score(pair.final_grasp), -_candidate_score(pair.transfer_grasp), pair.final_grasp.grasp_id, pair.transfer_grasp.grasp_id),
+        key=lambda pair: (
+            -_candidate_score(pair.final_grasp),
+            -_candidate_score(pair.transfer_grasp),
+            pair.final_grasp.grasp_id,
+            pair.transfer_grasp.grasp_id,
+        ),
     )
     return HandoverFallbackResult(
         target_mesh_path=stage1.bundle.target_mesh_path,

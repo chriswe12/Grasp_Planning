@@ -495,7 +495,8 @@ def _saved_candidate_from_cache_payload(item: dict[str, object]) -> SavedGraspCa
         grasp_id=str(item["grasp_id"]),
         grasp_position_obj=tuple(float(v) for v in item["grasp_pose_obj"]["position"]),  # type: ignore[index]
         grasp_orientation_xyzw_obj=tuple(
-            float(v) for v in item["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
+            float(v)
+            for v in item["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
         ),
         contact_point_a_obj=tuple(float(v) for v in item["contact_points_obj"][0]),  # type: ignore[index]
         contact_point_b_obj=tuple(float(v) for v in item["contact_points_obj"][1]),  # type: ignore[index]
@@ -604,9 +605,7 @@ def _write_stage1_cache(
                 "mesh_path": result.bundle.target_mesh_path,
                 "mesh_scale": float(result.bundle.mesh_scale),
                 "source_frame_origin_obj_world": list(result.bundle.source_frame_origin_obj_world),
-                "source_frame_orientation_xyzw_obj_world": list(
-                    result.bundle.source_frame_orientation_xyzw_obj_world
-                ),
+                "source_frame_orientation_xyzw_obj_world": list(result.bundle.source_frame_orientation_xyzw_obj_world),
             },
             "metadata": result.bundle.metadata,
             "candidates": [_saved_candidate_to_cache_payload(candidate) for candidate in result.bundle.candidates],
@@ -731,9 +730,7 @@ def generate_stage1_result(
             "assembly_obstacle_paths": list(obstacle_paths),
             "contact_lateral_offsets_m": list(planning.contact_lateral_offsets_m),
             "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
-            "upright_approach_axes_obj": [
-                [float(value) for value in axis] for axis in all_upright_approach_axes_obj
-            ],
+            "upright_approach_axes_obj": [[float(value) for value in axis] for axis in all_upright_approach_axes_obj],
         },
     )
     result = Stage1Result(

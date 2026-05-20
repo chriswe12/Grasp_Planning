@@ -546,7 +546,9 @@ def _minus_z_axis_in_object_frame(object_pose_world) -> tuple[float, float, floa
     return tuple(float(value) for value in (axis_obj / norm).tolist())
 
 
-def _unique_axes(axes: Iterable[tuple[float, float, float]], *, tolerance: float = 1.0e-8) -> tuple[tuple[float, float, float], ...]:
+def _unique_axes(
+    axes: Iterable[tuple[float, float, float]], *, tolerance: float = 1.0e-8
+) -> tuple[tuple[float, float, float], ...]:
     unique: list[tuple[float, float, float]] = []
     for axis in axes:
         vector = np.asarray(axis, dtype=float)
@@ -826,7 +828,9 @@ def _orientation_row(
         "fallback_found": fallback_summary is not None,
         "fallback_transfer_grasp_id": "" if fallback_summary is None else fallback_summary["transfer_grasp_id"],
         "fallback_final_grasp_id": "" if fallback_summary is None else fallback_summary["final_grasp_id"],
-        "fallback_placement_option_count": 0 if fallback_summary is None else fallback_summary["placement_option_count"],
+        "fallback_placement_option_count": 0
+        if fallback_summary is None
+        else fallback_summary["placement_option_count"],
         "handover_fallback_found": handover_summary is not None,
         "handover_transfer_grasp_id": "" if handover_summary is None else handover_summary["transfer_grasp_id"],
         "handover_final_grasp_id": "" if handover_summary is None else handover_summary["final_grasp_id"],
@@ -871,7 +875,9 @@ def _write_summary_csv(output_path: Path, rows: list[dict[str, object]]) -> None
             writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
-def _write_summary_md(output_path: Path, *, rows: list[dict[str, object]], part_records: list[dict[str, object]]) -> None:
+def _write_summary_md(
+    output_path: Path, *, rows: list[dict[str, object]], part_records: list[dict[str, object]]
+) -> None:
     status_counts = Counter(str(row["status"]) for row in rows)
     part_status_counts = Counter(str(part.get("status", "unknown")) for part in part_records)
     direct = status_counts.get("direct_success", 0)
@@ -1661,7 +1667,9 @@ def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
             continue
         stage2_entry = stage2_by_id.get(candidate.grasp_id)
         if stage2_entry is None:
-            statuses.append(CandidateStatus(grasp=candidate, status="stage1_pass", reason="stage1 passed; no stage2 status"))
+            statuses.append(
+                CandidateStatus(grasp=candidate, status="stage1_pass", reason="stage1 passed; no stage2 status")
+            )
         elif stage2_entry.status == "accepted":
             statuses.append(CandidateStatus(grasp=stage2_entry.grasp, status="accepted", reason=stage2_entry.reason))
         else:
@@ -1716,9 +1724,7 @@ def _write_all_generated_grasps_overview_html(
         obstacle_payload["bounds"] = _bounds_corners(obstacle_payload["vertices"])  # type: ignore[index]
     status_counts = dict(Counter(entry.status for entry in candidate_statuses))
     raw_pickup_by_id = (
-        {}
-        if raw_pickup_statuses is None
-        else {entry.grasp.grasp_id: entry for entry in raw_pickup_statuses}
+        {} if raw_pickup_statuses is None else {entry.grasp.grasp_id: entry for entry in raw_pickup_statuses}
     )
     raw_pickup_counts = dict(Counter(entry.status for entry in raw_pickup_by_id.values()))
     data = {
@@ -2361,7 +2367,9 @@ def _write_handover_grasp_pairs_html(
             f"rejection_counts: {result.metadata.get('rejection_counts', {})}",
             f"floor_counts:     {result.transfer_floor_status_counts}",
         ],
-        "vertices_obj": [[float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()],
+        "vertices_obj": [
+            [float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()
+        ],
         "edges": unique_edges(mesh_local.faces),
         "faces": [[int(value) for value in face] for face in np.asarray(mesh_local.faces, dtype=np.int64).tolist()],
         "status_counts": status_counts,
@@ -2664,7 +2672,9 @@ def _write_failed_grasps_html(
         ground_plane = ground_plane_overlay_obj(stage2.mesh_local, object_pose_world=display_pose, enabled=True)
         failure_stage = "stage2_floor_stage1_pass_examples"
     else:
-        top_candidates = sorted(stage1.bundle.candidates, key=lambda candidate: (-_candidate_score(candidate), candidate.grasp_id))
+        top_candidates = sorted(
+            stage1.bundle.candidates, key=lambda candidate: (-_candidate_score(candidate), candidate.grasp_id)
+        )
         candidate_statuses = _unique_contact_statuses(
             [
                 CandidateStatus(grasp=candidate, status="rejected", reason=f"orientation_error: {error or 'unknown'}")
@@ -2753,7 +2763,9 @@ def _write_part_orientations_html(
         "final_to_pre_insertion_translation_m": None
         if target.final_to_pre_insertion_translation_m is None
         else list(target.final_to_pre_insertion_translation_m),
-        "vertices_local": [[float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()],
+        "vertices_local": [
+            [float(v) for v in vertex] for vertex in np.asarray(mesh_local.vertices_obj, dtype=float).tolist()
+        ],
         "faces": [[int(value) for value in face] for face in np.asarray(mesh_local.faces, dtype=np.int64).tolist()],
         "edges": unique_edges(mesh_local.faces),
         "frames": orientation_frames,
@@ -3312,7 +3324,9 @@ def _benchmark_one_target(
         )
         stage1_json = stage1_dir / "grasps.json"
         stage1_html = stage1_dir / "grasps.html"
-        write_stage1_artifacts(stage1, geometry=geometry, planning=planning, output_json=stage1_json, output_html=stage1_html)
+        write_stage1_artifacts(
+            stage1, geometry=geometry, planning=planning, output_json=stage1_json, output_html=stage1_html
+        )
         _write_json(stage1_dir / "raw_grasps.json", _raw_stage1_payload(stage1, target))
         part_frame_html = part_dir / "part_frame.html"
         write_part_frame_debug_html(input_json=stage1_json, output_html=part_frame_html)
@@ -3336,7 +3350,11 @@ def _benchmark_one_target(
     if not orientation_result.orientations:
         part_record.update({"status": "no_stable_orientations"})
         print("  no_stable_orientations", flush=True)
-        return part_record, rows, _part_browser_payload(target=target, stage1=stage1, orientation_frames=orientation_frames)
+        return (
+            part_record,
+            rows,
+            _part_browser_payload(target=target, stage1=stage1, orientation_frames=orientation_frames),
+        )
 
     for orientation in orientation_result.orientations:
         orientation_dir = orientations_dir / orientation.orientation_id
@@ -3583,7 +3601,9 @@ def _benchmark_one_target(
                 row["failed_constraint_counts"] = failed_constraint_counts
                 row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
             except Exception as debug_exc:
-                row["failed_grasps_error"] = "".join(traceback.format_exception_only(type(debug_exc), debug_exc)).strip()
+                row["failed_grasps_error"] = "".join(
+                    traceback.format_exception_only(type(debug_exc), debug_exc)
+                ).strip()
             row["links"] = row_links
             rows.append(row)
             orientation_frames.append(
@@ -3614,7 +3634,9 @@ def _benchmark_one_target(
         stage1=stage1,
         orientation_frames=orientation_frames,
     )
-    part_statuses = Counter(str(row["status"]) for row in rows if row["assembly"] == target.assembly and row["part_id"] == target.part_id)
+    part_statuses = Counter(
+        str(row["status"]) for row in rows if row["assembly"] == target.assembly and row["part_id"] == target.part_id
+    )
     if any(part_statuses.get(status, 0) for status in SUCCESS_STATUSES):
         part_status = "has_generation_success"
     elif part_statuses:
@@ -3632,10 +3654,14 @@ def _benchmark_one_target(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark grasp generation across Fabrica OBJ parts and stable poses.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark grasp generation across Fabrica OBJ parts and stable poses."
+    )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Benchmark YAML config path.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Override benchmark output directory.")
-    parser.add_argument("--clean", action="store_true", help="Remove stale benchmark artifacts, preserving stage1_cache.")
+    parser.add_argument(
+        "--clean", action="store_true", help="Remove stale benchmark artifacts, preserving stage1_cache."
+    )
     parser.add_argument("--assembly", action="append", default=[], help="Restrict to an assembly name. Repeatable.")
     parser.add_argument("--part", action="append", default=[], help="Restrict to a part id/stem. Repeatable.")
     parser.add_argument("--target", action="append", default=[], help="Restrict to a target mesh path. Repeatable.")
@@ -3665,7 +3691,7 @@ def main() -> None:
         raise ValueError("--jobs must be >= 1.")
     payload = _load_yaml(args.config)
     configured_output_dir = Path(str(dict(payload.get("benchmark", {})).get("output_dir", DEFAULT_OUTPUT_DIR)))
-    output_dir = (args.output_dir or configured_output_dir)
+    output_dir = args.output_dir or configured_output_dir
     if not output_dir.is_absolute():
         output_dir = (REPO_ROOT / output_dir).resolve()
     payload = _apply_cli_overrides(payload, args, output_dir)
@@ -3764,9 +3790,7 @@ def main() -> None:
             "orientation_status_counts": dict(Counter(str(row["status"]) for row in rows)),
             "part_status_counts": dict(Counter(str(part.get("status", "unknown")) for part in part_records)),
             "failed_grasp_pages_written": sum(
-                1
-                for row in rows
-                if isinstance(row.get("links"), dict) and row["links"].get("failed_grasps_html")
+                1 for row in rows if isinstance(row.get("links"), dict) and row["links"].get("failed_grasps_html")
             ),
             "all_generated_grasp_pages_written": sum(
                 1
@@ -3774,9 +3798,7 @@ def main() -> None:
                 if isinstance(row.get("links"), dict) and row["links"].get("all_generated_grasps_html")
             ),
             "handover_fallback_pages_written": sum(
-                1
-                for row in rows
-                if isinstance(row.get("links"), dict) and row["links"].get("handover_html")
+                1 for row in rows if isinstance(row.get("links"), dict) and row["links"].get("handover_html")
             ),
             "failed_grasp_display_frames": dict(
                 Counter(

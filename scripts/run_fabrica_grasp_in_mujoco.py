@@ -1473,7 +1473,9 @@ def main() -> None:
                     placement_reached=False,
                     final_pregrasp_reached=False,
                     final_grasp_reached=False,
-                    initial_object_position_world=tuple(float(v) for v in plan.initial_object_pose_world.position_world),
+                    initial_object_position_world=tuple(
+                        float(v) for v in plan.initial_object_pose_world.position_world
+                    ),
                     staged_object_position_world=tuple(
                         float(v) for v in active_plan.staging_object_pose_world.position_world
                     ),

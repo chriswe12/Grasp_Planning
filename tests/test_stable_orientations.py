@@ -84,7 +84,10 @@ class StableOrientationTests(unittest.TestCase):
         self.assertEqual(len(result.orientations), 6)
         self.assertEqual(result.raw_facet_count, 6)
         self.assertEqual(result.com_method, "volume")
-        self.assertEqual([orientation.orientation_id for orientation in result.orientations], [f"orientation_{i:03d}" for i in range(6)])
+        self.assertEqual(
+            [orientation.orientation_id for orientation in result.orientations],
+            [f"orientation_{i:03d}" for i in range(6)],
+        )
         for orientation in result.orientations:
             self.assertGreaterEqual(orientation.max_stable_tilt_deg, 44.0)
             vertices_world = orientation.object_pose_world.transform_points_to_world(mesh.vertices_obj)
@@ -141,7 +144,9 @@ class StableOrientationTests(unittest.TestCase):
 
         self.assertEqual(result.com_method, "surface_centroid_fallback")
         self.assertTrue(result.orientations)
-        self.assertTrue(all(orientation.com_method == "surface_centroid_fallback" for orientation in result.orientations))
+        self.assertTrue(
+            all(orientation.com_method == "surface_centroid_fallback" for orientation in result.orientations)
+        )
 
     def test_robust_tilt_threshold_rejects_marginal_supports(self) -> None:
         mesh = _make_box_mesh((0.05, 0.05, 0.05))

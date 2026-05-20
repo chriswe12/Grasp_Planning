@@ -171,9 +171,8 @@ def _convex_hull_facets(mesh_local: object, *, coplanar_tolerance_m: float) -> l
         for group in groups:
             group_normal = np.asarray(group["normal"], dtype=float)
             group_offset = float(group["offset"])
-            if (
-                float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6
-                and abs(offset - group_offset) <= float(coplanar_tolerance_m)
+            if float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6 and abs(offset - group_offset) <= float(
+                coplanar_tolerance_m
             ):
                 matched = group
                 break
@@ -413,7 +412,8 @@ def _candidate_from_payload(payload: dict[str, object]) -> SavedGraspCandidate:
         grasp_id=str(payload["grasp_id"]),
         grasp_position_obj=tuple(float(v) for v in payload["grasp_pose_obj"]["position"]),  # type: ignore[index]
         grasp_orientation_xyzw_obj=tuple(
-            float(v) for v in payload["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
+            float(v)
+            for v in payload["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
         ),
         contact_point_a_obj=tuple(float(v) for v in payload["contact_points_obj"][0]),  # type: ignore[index]
         contact_point_b_obj=tuple(float(v) for v in payload["contact_points_obj"][1]),  # type: ignore[index]
@@ -750,12 +750,10 @@ def write_mujoco_regrasp_plan(
         "transfer_grasp": _candidate_payload(plan.transfer_grasp),
         "final_grasp": _candidate_payload(plan.final_grasp),
         "transfer_grasp_candidates": [
-            _candidate_payload(candidate)
-            for candidate in (plan.transfer_grasp_candidates or (plan.transfer_grasp,))
+            _candidate_payload(candidate) for candidate in (plan.transfer_grasp_candidates or (plan.transfer_grasp,))
         ],
         "final_grasp_candidates": [
-            _candidate_payload(candidate)
-            for candidate in (plan.final_grasp_candidates or (plan.final_grasp,))
+            _candidate_payload(candidate) for candidate in (plan.final_grasp_candidates or (plan.final_grasp,))
         ],
         "placement_options": [
             _placement_option_payload(option)

@@ -1354,12 +1354,7 @@ def _bounds_corners(points: list[list[float]]) -> list[list[float]]:
     array = np.asarray(points, dtype=float)
     mins = array.min(axis=0)
     maxs = array.max(axis=0)
-    return [
-        fmt_vec([x, y, z])
-        for x in (mins[0], maxs[0])
-        for y in (mins[1], maxs[1])
-        for z in (mins[2], maxs[2])
-    ]
+    return [fmt_vec([x, y, z]) for x in (mins[0], maxs[0]) for y in (mins[1], maxs[1]) for z in (mins[2], maxs[2])]
 
 
 def write_debug_html(
@@ -1403,7 +1398,9 @@ def write_debug_html(
     obstacle_bounds_display = _bounds_corners(obstacle_vertices_display)
     obstacle_edges = _sample_edges(obstacle_edges, max_obstacle_edges)
     if obstacle_mesh_local is not None and max_obstacle_edges is not None:
-        obstacle_vertices_display, obstacle_edges = _compact_vertices_for_edges(obstacle_vertices_display, obstacle_edges)
+        obstacle_vertices_display, obstacle_edges = _compact_vertices_for_edges(
+            obstacle_vertices_display, obstacle_edges
+        )
     ground_plane_display = (
         ground_plane
         if ground_plane is None or display_object_pose_world is None

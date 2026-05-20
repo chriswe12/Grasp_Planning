@@ -239,7 +239,12 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         roll_angles = generator._roll_angles_for_pair(base_rotmat, closing_axis)
 
         self.assertEqual(len(roll_angles), 2)
-        self.assertTrue(any(abs(math.atan2(math.sin(angle - 1.5 * math.pi), math.cos(angle - 1.5 * math.pi))) < 1.0e-6 for angle in roll_angles))
+        self.assertTrue(
+            any(
+                abs(math.atan2(math.sin(angle - 1.5 * math.pi), math.cos(angle - 1.5 * math.pi))) < 1.0e-6
+                for angle in roll_angles
+            )
+        )
         best_alignment = max(
             float(np.dot(np.sin(angle) * base_rotmat[:, 0] + np.cos(angle) * base_rotmat[:, 2], [0.0, 0.0, -1.0]))
             for angle in roll_angles

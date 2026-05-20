@@ -283,9 +283,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertAlmostEqual(config.top_grasp_score_weight, 0.8)
 
     def test_planning_config_parses_regrasp_transfer_top_grasp_score_weight(self) -> None:
-        config = run_grasp_pipeline._planning_config(
-            {"planning": {"regrasp_transfer_top_grasp_score_weight": 0.9}}
-        )
+        config = run_grasp_pipeline._planning_config({"planning": {"regrasp_transfer_top_grasp_score_weight": 0.9}})
 
         self.assertAlmostEqual(config.regrasp_transfer_top_grasp_score_weight, 0.9)
 
@@ -648,7 +646,10 @@ class MujocoRegraspFallbackPlanningTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.metadata["reason"], "forced")
-        self.assertNotEqual(plan.staging_object_pose_world.orientation_xyzw_world, direct_stage2.pickup_pose_world.orientation_xyzw_world)
+        self.assertNotEqual(
+            plan.staging_object_pose_world.orientation_xyzw_world,
+            direct_stage2.pickup_pose_world.orientation_xyzw_world,
+        )
         self.assertEqual(plan.final_grasp.grasp_id, "final")
         self.assertIn(plan.transfer_grasp.grasp_id, {"transfer", "final"})
         self.assertGreaterEqual(len(plan.transfer_grasp_candidates), 1)
