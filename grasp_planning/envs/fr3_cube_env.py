@@ -10,6 +10,14 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
+from grasp_planning.start_poses import (
+    DEFAULT_ARM_START_JOINT_POS,
+    DEFAULT_HAND_START_JOINT_POS,
+)
+from grasp_planning.start_poses import DEFAULT_HAND_OPEN_WIDTH as _DEFAULT_HAND_OPEN_WIDTH
+
+DEFAULT_HAND_OPEN_WIDTH = _DEFAULT_HAND_OPEN_WIDTH
+
 
 @configclass
 class DefaultRobotCfg:
@@ -33,17 +41,6 @@ class DefaultCubeCfg:
 
 DEFAULT_ROBOT_CFG = DefaultRobotCfg()
 DEFAULT_CUBE_CFG = DefaultCubeCfg()
-DEFAULT_ARM_START_JOINT_POS = {
-    "panda_joint1": 0.0,
-    "panda_joint2": -0.785,
-    "panda_joint3": 0.0,
-    "panda_joint4": -2.356,
-    "panda_joint5": 0.0,
-    "panda_joint6": 1.571,
-    "panda_joint7": 0.785,
-}
-DEFAULT_HAND_START_JOINT_POS = {"panda_finger_joint.*": 0.04}
-DEFAULT_HAND_OPEN_WIDTH = 0.04
 
 
 @configclass

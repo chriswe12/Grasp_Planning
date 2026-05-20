@@ -48,20 +48,32 @@ mujoco_execution:
 
 isaac_execution:
   enabled: true
-  python_executable: "/isaac-sim/python.sh"
+  python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
   part_usd: ""  # optional; runner generates a bundle-local USD by default
   fr3_usd: ""
-  controller: "admittance"
+  controller: "moveit"
   grasp_id: ""
   pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
+  lift_height_m: 0.08
   close_width: 0.0
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
   attempt_artifact: "artifacts/sim_isaac_pick_attempt.json"
   pregrasp_only: false
   run_seconds: 0.0
   headless: false
+  moveit_frame_id: "base"
+  moveit_planning_group: "fr3_arm"
+  moveit_pose_link: "fr3_hand_tcp"
+  moveit_planner_id: ""
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_allow_collisions: false
 
 ros2:
   debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
