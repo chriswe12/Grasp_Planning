@@ -457,6 +457,7 @@ def _moveit_config_from_args(args_cli, *, joint_names: tuple[str, ...]) -> MoveI
         planning_group=str(args_cli.moveit_planning_group),
         pose_link=str(args_cli.moveit_pose_link),
         joint_names=joint_names,
+        pipeline_id=str(args_cli.moveit_pipeline_id),
         planner_id=str(args_cli.moveit_planner_id),
         wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
         ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
@@ -873,6 +874,7 @@ def main() -> None:
     parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
     parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
     parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+    parser.add_argument("--moveit-pipeline-id", type=str, default="", help="Optional MoveIt planning pipeline id.")
     parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
     parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
     parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)

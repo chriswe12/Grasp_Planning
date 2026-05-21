@@ -83,6 +83,7 @@ parser.add_argument("--pregrasp-only", action="store_true", help="Stop after rea
 parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
 parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
 parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+parser.add_argument("--moveit-pipeline-id", type=str, default="", help="Optional MoveIt planning pipeline id.")
 parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
 parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
 parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
@@ -223,6 +224,7 @@ def _moveit_config_from_args() -> MoveItPoseCommanderConfig:
     return MoveItPoseCommanderConfig(
         planning_group=str(args_cli.moveit_planning_group),
         pose_link=str(args_cli.moveit_pose_link),
+        pipeline_id=str(args_cli.moveit_pipeline_id),
         planner_id=str(args_cli.moveit_planner_id),
         wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
         ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
@@ -642,6 +644,7 @@ def _write_attempt_artifact(
             "frame_id": args_cli.moveit_frame_id,
             "planning_group": args_cli.moveit_planning_group,
             "pose_link": args_cli.moveit_pose_link,
+            "pipeline_id": args_cli.moveit_pipeline_id,
             "planner_id": args_cli.moveit_planner_id,
             "lift_height_m": args_cli.moveit_lift_height_m,
             "allow_collisions": bool(args_cli.moveit_allow_collisions),

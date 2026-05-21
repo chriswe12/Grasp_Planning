@@ -12,7 +12,7 @@ try:
     from geometry_msgs.msg import PoseStamped
     from moveit_msgs.action import ExecuteTrajectory
     from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes
-    from moveit_msgs.srv import GetMotionPlan, GetPositionFK, GetPositionIK
+    from moveit_msgs.srv import GetMotionPlan, GetPositionFK, GetPositionIK, QueryPlannerInterfaces
     from rclpy.action import ActionClient
     from rclpy.node import Node
 except Exception:  # pragma: no cover - optional dependency path
@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover - optional dependency path
     GetMotionPlan = None
     GetPositionFK = None
     GetPositionIK = None
+    QueryPlannerInterfaces = None
     ActionClient = None
     Node = object
 
@@ -116,8 +117,10 @@ class MoveItPoseCommanderConfig:
     joint_names: tuple[str, ...] = field(default_factory=lambda: tuple(f"fr3_joint{i}" for i in range(1, 8)))
     ik_service_name: str = "/compute_ik"
     planning_service_name: str = "/plan_kinematic_path"
+    query_planner_interface_service_name: str = "/query_planner_interface"
     fk_service_name: str = "/compute_fk"
     execute_action_name: str = "/execute_trajectory"
+    pipeline_id: str = ""
     planner_id: str = ""
     wait_for_moveit_timeout_s: float = 15.0
     ik_timeout_s: float = 2.0
@@ -141,6 +144,7 @@ class MoveItPoseCommander(Node):
             or GetPositionIK is None
             or GetMotionPlan is None
             or GetPositionFK is None
+            or QueryPlannerInterfaces is None
             or ExecuteTrajectory is None
         ):
             raise RuntimeError(
@@ -151,6 +155,10 @@ class MoveItPoseCommander(Node):
         self._config = config
         self._ik_client = self.create_client(GetPositionIK, config.ik_service_name)
         self._plan_client = self.create_client(GetMotionPlan, config.planning_service_name)
+        self._planner_query_client = self.create_client(
+            QueryPlannerInterfaces,
+            config.query_planner_interface_service_name,
+        )
         self._fk_client = self.create_client(GetPositionFK, config.fk_service_name)
         self._execute_client = ActionClient(self, ExecuteTrajectory, config.execute_action_name)
         self._active_goal_handle = None
@@ -165,13 +173,41 @@ class MoveItPoseCommander(Node):
             raise RuntimeError(f"MoveIt IK service '{self.config.ik_service_name}' is unavailable.")
         if not self._plan_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
             raise RuntimeError(f"MoveIt planning service '{self.config.planning_service_name}' is unavailable.")
+        if self.config.pipeline_id and not self._planner_query_client.wait_for_service(
+            timeout_sec=self.config.wait_for_moveit_timeout_s
+        ):
+            raise RuntimeError(
+                f"MoveIt planner-query service '{self.config.query_planner_interface_service_name}' is unavailable."
+            )
         if not self._fk_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
             raise RuntimeError(f"MoveIt FK service '{self.config.fk_service_name}' is unavailable.")
         if require_execute and not self._execute_client.wait_for_server(
             timeout_sec=self.config.wait_for_moveit_timeout_s
         ):
             raise RuntimeError(f"MoveIt execute action '{self.config.execute_action_name}' is unavailable.")
+        if self.config.pipeline_id:
+            self._validate_requested_pipeline()
         self.get_logger().info("MoveIt connection ready.")
+
+    def _validate_requested_pipeline(self) -> None:
+        requested = str(self.config.pipeline_id)
+        response = self._wait_for_future(
+            self._planner_query_client.call_async(QueryPlannerInterfaces.Request()),
+            timeout_s=self.config.wait_for_moveit_timeout_s,
+            label="planner-interface query",
+        )
+        available = tuple(
+            str(interface.pipeline_id)
+            for interface in tuple(getattr(response, "planner_interfaces", ()))
+            if str(interface.pipeline_id)
+        )
+        if requested in available:
+            return
+        detail = ", ".join(available) if available else "none"
+        raise RuntimeError(
+            f"Requested MoveIt planning pipeline '{requested}' is unavailable. "
+            f"Available planning pipeline ids: {detail}."
+        )
 
     def move_to_pose(self, target: PoseTarget, *, label: str, execute: bool) -> tuple[bool, str]:
         self.get_logger().info(
@@ -310,6 +346,8 @@ class MoveItPoseCommander(Node):
             motion_request.start_state.is_diff = False
             motion_request.start_state.joint_state.name = list(self.config.joint_names)
             motion_request.start_state.joint_state.position = list(start_joint_positions)
+        if self.config.pipeline_id:
+            motion_request.pipeline_id = self.config.pipeline_id
         if self.config.planner_id:
             motion_request.planner_id = self.config.planner_id
 

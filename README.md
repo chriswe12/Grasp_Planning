@@ -207,6 +207,7 @@ Git does not enable repository hooks from tracked files by default. Once enabled
 
 Pipeline configs:
 - `configs/grasp_pipeline_sim.yaml`
+- `configs/grasp_pipeline_sim_cumotion.yaml`
 - `configs/grasp_pipeline_sim_isaac.yaml`
 - `configs/grasp_pipeline_pitl.yaml`
 - `configs/grasp_pipeline_pitl_isaac.yaml`
@@ -293,8 +294,25 @@ This writes `artifacts/plumbers_mujoco_regrasp_plan.html` without launching MuJo
 MuJoCo can either use its native damped-IK arm controller or MoveIt-planned arm trajectories:
 - default sim config: `mujoco_execution.controller: "moveit"`
 - native MuJoCo IK: set `mujoco_execution.controller: "native"`
+- cuMotion through MoveIt: use `configs/grasp_pipeline_sim_cumotion.yaml`
 
 The MoveIt-backed MuJoCo path requires the FR3 MoveIt stack to be running and sourced, but only uses MoveIt planning services. For direct pickups, MoveIt plans `pregrasp`, `grasp`, and `lift` trajectories from the stage-2 bundle. For regrasp fallback, it plans transfer, staging placement, retreat, and final-pick trajectories. MuJoCo still executes those joint waypoints, closes/opens the gripper, simulates contacts, and evaluates pickup success by object lift height.
+
+The cuMotion sim config keeps MoveIt as the ROS2 integration layer and asks `/plan_kinematic_path` to use `moveit_pipeline_id: "isaac_ros_cumotion"` and `moveit_planner_id: "cuMotion"`. This requires a running MoveIt stack that has NVIDIA Isaac ROS cuMotion installed and configured under those identifiers. If your local MoveIt config uses different names, override `moveit_pipeline_id` or `moveit_planner_id` in the YAML.
+
+Start the local fake-hardware cuMotion + MoveIt stack in one terminal:
+
+```bash
+./start_cumotion_moveit.sh
+```
+
+Leave that script running, then run the MuJoCo sim from another terminal.
+
+Run MuJoCo sim with cuMotion-backed MoveIt planning:
+
+```bash
+./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_cumotion.yaml --backend mujoco --headless
+```
 
 For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. Disable `mujoco_execution.enabled` if you want Isaac only. The default Isaac configs use `isaac_execution.controller: "moveit"` for direct pickups: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation. Legacy Isaac-side controllers remain available with `isaac_execution.controller: "admittance"` or `"planner"`.
 

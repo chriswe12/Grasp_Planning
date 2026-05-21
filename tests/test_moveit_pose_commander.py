@@ -7,6 +7,8 @@ import numpy as np
 
 from grasp_planning.ros2.moveit_pose_commander import (
     DEFAULT_FR3_MOVEIT_RPY,
+    MoveItPoseCommander,
+    MoveItPoseCommanderConfig,
     PoseTarget,
     normalize_quaternion_xyzw,
     quaternion_from_rpy,
@@ -169,5 +171,47 @@ def test_commander_config_from_args_uses_slow_defaults() -> None:
 
     config = commander_config_from_args(args)
 
+    assert config.pipeline_id == ""
     assert math.isclose(config.velocity_scale, 0.05)
     assert math.isclose(config.acceleration_scale, 0.05)
+
+
+def test_validate_requested_pipeline_accepts_available_pipeline() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(pipeline_id="isaac_ros_cumotion")
+    commander._planner_query_client = _FakePlannerQueryClient()
+    commander._wait_for_future = lambda future, *, timeout_s, label: _FakePlannerQueryResponse(
+        ["move_group", "isaac_ros_cumotion"]
+    )
+
+    commander._validate_requested_pipeline()
+
+
+def test_validate_requested_pipeline_reports_available_pipeline_ids() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(pipeline_id="isaac_ros_cumotion")
+    commander._planner_query_client = _FakePlannerQueryClient()
+    commander._wait_for_future = lambda future, *, timeout_s, label: _FakePlannerQueryResponse(["move_group"])
+
+    try:
+        commander._validate_requested_pipeline()
+    except RuntimeError as exc:
+        assert "isaac_ros_cumotion" in str(exc)
+        assert "move_group" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("Expected unavailable pipeline validation to raise.")
+
+
+class _FakePlannerQueryClient:
+    def call_async(self, request):
+        return object()
+
+
+class _FakePlannerQueryResponse:
+    def __init__(self, pipeline_ids: list[str]) -> None:
+        self.planner_interfaces = [_FakePlannerInterface(pipeline_id) for pipeline_id in pipeline_ids]
+
+
+class _FakePlannerInterface:
+    def __init__(self, pipeline_id: str) -> None:
+        self.pipeline_id = pipeline_id

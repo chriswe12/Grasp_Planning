@@ -157,6 +157,7 @@ class MujocoPipelineConfig:
     moveit_frame_id: str = "base"
     moveit_planning_group: str = "fr3_arm"
     moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_pipeline_id: str = ""
     moveit_planner_id: str = ""
     moveit_wait_for_moveit_timeout_s: float = 15.0
     moveit_ik_timeout_s: float = 2.0
@@ -218,6 +219,7 @@ class IsaacPipelineConfig:
     moveit_frame_id: str = "base"
     moveit_planning_group: str = "fr3_arm"
     moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_pipeline_id: str = ""
     moveit_planner_id: str = ""
     moveit_wait_for_moveit_timeout_s: float = 15.0
     moveit_ik_timeout_s: float = 2.0

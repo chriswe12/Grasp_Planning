@@ -112,6 +112,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             robot_config="configs/mujoco_fr3_with_hand.json",
             controller="moveit",
             moveit_frame_id="base",
+            moveit_pipeline_id="isaac_ros_cumotion",
             moveit_planner_id="RRTConnectkConfigDefault",
             moveit_allow_collisions=True,
             regrasp_moveit_max_candidate_plans=17,
@@ -131,6 +132,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("moveit", command)
         self.assertIn("--moveit-frame-id", command)
         self.assertIn("base", command)
+        self.assertIn("--moveit-pipeline-id", command)
+        self.assertIn("isaac_ros_cumotion", command)
         self.assertIn("--moveit-planner-id", command)
         self.assertIn("RRTConnectkConfigDefault", command)
         self.assertIn("--moveit-allow-collisions", command)
@@ -213,6 +216,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                     "moveit_frame_id": "base",
                     "moveit_planning_group": "fr3_arm",
                     "moveit_pose_link": "fr3_hand_tcp",
+                    "moveit_pipeline_id": "isaac_ros_cumotion",
                     "moveit_planner_id": "RRTConnectkConfigDefault",
                     "moveit_wait_for_moveit_timeout_s": 12.0,
                     "moveit_ik_timeout_s": 1.5,
@@ -230,6 +234,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(config.moveit_frame_id, "base")
         self.assertEqual(config.moveit_planning_group, "fr3_arm")
         self.assertEqual(config.moveit_pose_link, "fr3_hand_tcp")
+        self.assertEqual(config.moveit_pipeline_id, "isaac_ros_cumotion")
         self.assertEqual(config.moveit_planner_id, "RRTConnectkConfigDefault")
         self.assertAlmostEqual(config.moveit_wait_for_moveit_timeout_s, 12.0)
         self.assertAlmostEqual(config.moveit_ik_timeout_s, 1.5)
@@ -244,6 +249,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             enabled=True,
             controller="moveit",
             lift_height_m=0.09,
+            moveit_pipeline_id="isaac_ros_cumotion",
             moveit_planner_id="RRTConnectkConfigDefault",
             moveit_allow_collisions=True,
         )
@@ -260,6 +266,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("moveit", command)
         self.assertIn("--moveit-frame-id", command)
         self.assertIn("base", command)
+        self.assertIn("--moveit-pipeline-id", command)
+        self.assertIn("isaac_ros_cumotion", command)
         self.assertIn("--moveit-planner-id", command)
         self.assertIn("RRTConnectkConfigDefault", command)
         self.assertIn("--moveit-lift-height-m", command)
@@ -345,6 +353,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             {
                 "mujoco_execution": {
                     "regrasp_html_artifact": "artifacts/regrasp_debug.html",
+                    "moveit_pipeline_id": "isaac_ros_cumotion",
                     "regrasp_staging_xy_offsets_m": [[0.0, 0.0], [0.1, -0.1]],
                     "regrasp_max_placement_options": 4,
                     "regrasp_moveit_max_candidate_plans": 12,
@@ -355,6 +364,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         )
 
         self.assertEqual(config.regrasp_html_artifact, "artifacts/regrasp_debug.html")
+        self.assertEqual(config.moveit_pipeline_id, "isaac_ros_cumotion")
         self.assertEqual(config.regrasp_staging_xy_offsets_m, ((0.0, 0.0), (0.1, -0.1)))
         self.assertEqual(config.regrasp_max_placement_options, 4)
         self.assertEqual(config.regrasp_moveit_max_candidate_plans, 12)

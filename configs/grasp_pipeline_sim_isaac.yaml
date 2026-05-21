@@ -68,6 +68,7 @@ isaac_execution:
   moveit_frame_id: "base"
   moveit_planning_group: "fr3_arm"
   moveit_pose_link: "fr3_hand_tcp"
+  moveit_pipeline_id: ""
   moveit_planner_id: ""
   moveit_wait_for_moveit_timeout_s: 15.0
   moveit_ik_timeout_s: 2.0
