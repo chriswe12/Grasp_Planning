@@ -59,6 +59,7 @@ isaac_execution:
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   lift_height_m: 0.08
+  success_height_margin_m: 0.05
   close_width: 0.0
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
   attempt_artifact: "artifacts/sim_isaac_pick_attempt.json"

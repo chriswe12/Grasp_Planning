@@ -23,6 +23,8 @@ class PickExecutionResult:
     success: bool
     status: str
     message: str
+    object_lift_height_m: float | None = None
+    target_lift_height_m: float | None = None
 
 
 StepCallback = Callable[[], None]
@@ -215,6 +217,55 @@ def _command_gripper_width(
             step_callback()
 
 
+def _object_root_z(object_asset) -> float | None:
+    if object_asset is None:
+        return None
+    try:
+        value = object_asset.data.root_link_pose_w[0, 2]
+    except (AttributeError, IndexError, TypeError):
+        return None
+    if hasattr(value, "item"):
+        return float(value.item())
+    return float(value)
+
+
+def _validate_object_lift(
+    *,
+    object_asset,
+    initial_object_z: float | None,
+    success_height_margin_m: float,
+) -> PickExecutionResult | None:
+    if object_asset is None:
+        return None
+    final_object_z = _object_root_z(object_asset)
+    if initial_object_z is None or final_object_z is None:
+        return PickExecutionResult(
+            False,
+            "object_pose_unavailable",
+            "Could not read Isaac object pose to validate pickup lift.",
+            target_lift_height_m=float(success_height_margin_m),
+        )
+
+    object_lift_height_m = float(final_object_z - initial_object_z)
+    target_lift_height_m = float(success_height_margin_m)
+    lift_message = f"Isaac pickup lifted object by {object_lift_height_m:.4f} m"
+    if object_lift_height_m < target_lift_height_m:
+        return PickExecutionResult(
+            False,
+            "object_lift_failed",
+            f"{lift_message} (required {target_lift_height_m:.4f} m).",
+            object_lift_height_m=object_lift_height_m,
+            target_lift_height_m=target_lift_height_m,
+        )
+    return PickExecutionResult(
+        True,
+        "ok",
+        f"{lift_message}.",
+        object_lift_height_m=object_lift_height_m,
+        target_lift_height_m=target_lift_height_m,
+    )
+
+
 def _joint_trajectory_from_moveit_waypoints(
     *,
     context: FR3MotionContext,
@@ -256,10 +307,12 @@ def execute_pick_from_moveit_joint_trajectories(
     sim,
     scene,
     robot,
+    object_asset=None,
     moveit_joint_trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
     open_gripper_width: float,
     closed_gripper_width: float,
     pregrasp_only: bool,
+    success_height_margin_m: float = 0.05,
     step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
@@ -272,6 +325,7 @@ def execute_pick_from_moveit_joint_trajectories(
     )
     executor_kwargs = {} if step_callback is None else {"step_callback": step_callback}
     executor = TrajectoryExecutor(context, **executor_kwargs)
+    initial_object_z = _object_root_z(object_asset)
 
     ok, detail = _execute_moveit_waypoint_segment(
         context=context,
@@ -310,6 +364,13 @@ def execute_pick_from_moveit_joint_trajectories(
     )
     if not ok:
         return PickExecutionResult(False, "moveit_lift_failed", f"MoveIt lift execution failed: {detail}")
+    lift_result = _validate_object_lift(
+        object_asset=object_asset,
+        initial_object_z=initial_object_z,
+        success_height_margin_m=success_height_margin_m,
+    )
+    if lift_result is not None:
+        return lift_result
     return PickExecutionResult(True, "ok", "MoveIt direct-pick trajectories executed in Isaac.")
 
 
@@ -403,10 +464,12 @@ def execute_vertical_pick_sequence(
     open_gripper_width: float,
     closed_gripper_width: float,
     controller_type: str,
+    success_height_margin_m: float = 0.05,
     step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute a direct grasp move, close, and direct retreat sequence."""
 
+    initial_object_z = _object_root_z(object_asset)
     target_tcp_position_w = (
         float(start_tcp_position_w[0]),
         float(start_tcp_position_w[1]),
@@ -446,6 +509,13 @@ def execute_vertical_pick_sequence(
         step_callback=step_callback,
     ):
         return PickExecutionResult(False, "retreat_failed", "Vertical retreat failed after gripper close.")
+    lift_result = _validate_object_lift(
+        object_asset=object_asset,
+        initial_object_z=initial_object_z,
+        success_height_margin_m=success_height_margin_m,
+    )
+    if lift_result is not None:
+        return lift_result
     return PickExecutionResult(True, "ok", "Pick sequence executed.")
 
 
@@ -460,6 +530,7 @@ def execute_pick_from_world_grasp(
     fixed_gripper_width: float,
     closed_gripper_width: float,
     pregrasp_only: bool,
+    success_height_margin_m: float = 0.05,
     step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Run pregrasp and optionally a simple vertical pick sequence."""
@@ -513,5 +584,6 @@ def execute_pick_from_world_grasp(
         open_gripper_width=world_grasp.gripper_width / 2.0,
         closed_gripper_width=closed_gripper_width,
         controller_type=controller_type,
+        success_height_margin_m=success_height_margin_m,
         step_callback=step_callback,
     )

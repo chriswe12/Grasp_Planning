@@ -143,6 +143,7 @@ class FR3MotionContext:
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
+        r"panda_fingertip_centered",
         r".*tcp.*",
         r"panda_hand",
         r".*hand.*",

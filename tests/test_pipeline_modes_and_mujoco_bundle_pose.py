@@ -213,6 +213,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                 "isaac_execution": {
                     "controller": "moveit",
                     "lift_height_m": 0.09,
+                    "success_height_margin_m": 0.04,
                     "moveit_frame_id": "base",
                     "moveit_planning_group": "fr3_arm",
                     "moveit_pose_link": "fr3_hand_tcp",
@@ -231,6 +232,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
         self.assertEqual(config.controller, "moveit")
         self.assertAlmostEqual(config.lift_height_m, 0.09)
+        self.assertAlmostEqual(config.success_height_margin_m, 0.04)
         self.assertEqual(config.moveit_frame_id, "base")
         self.assertEqual(config.moveit_planning_group, "fr3_arm")
         self.assertEqual(config.moveit_pose_link, "fr3_hand_tcp")
@@ -249,6 +251,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             enabled=True,
             controller="moveit",
             lift_height_m=0.09,
+            success_height_margin_m=0.04,
             moveit_pipeline_id="isaac_ros_cumotion",
             moveit_planner_id="RRTConnectkConfigDefault",
             moveit_allow_collisions=True,
@@ -272,6 +275,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("RRTConnectkConfigDefault", command)
         self.assertIn("--moveit-lift-height-m", command)
         self.assertIn("0.09", command)
+        self.assertIn("--success-height-margin-m", command)
+        self.assertIn("0.04", command)
         self.assertIn("--moveit-allow-collisions", command)
 
     def test_run_isaac_execution_passes_precomputed_moveit_plan(self) -> None:

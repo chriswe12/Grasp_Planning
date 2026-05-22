@@ -68,6 +68,68 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         command_gripper_width.assert_called_once()
         self.assertEqual(command_gripper_width.call_args.kwargs["width"], 0.0)
 
+    def test_moveit_pick_validates_object_lift_when_asset_is_available(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(pick_execution, "_command_gripper_width"),
+            mock.patch.object(pick_execution, "_object_root_z", side_effect=(0.02, 0.08)),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                object_asset=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=0.04,
+                closed_gripper_width=0.0,
+                pregrasp_only=False,
+                success_height_margin_m=0.05,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "ok")
+        self.assertAlmostEqual(result.object_lift_height_m, 0.06)
+        self.assertAlmostEqual(result.target_lift_height_m, 0.05)
+
+    def test_moveit_pick_fails_when_object_does_not_lift(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(pick_execution, "_command_gripper_width"),
+            mock.patch.object(pick_execution, "_object_root_z", side_effect=(0.02, 0.021)),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                object_asset=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=0.04,
+                closed_gripper_width=0.0,
+                pregrasp_only=False,
+                success_height_margin_m=0.05,
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "object_lift_failed")
+        self.assertAlmostEqual(result.object_lift_height_m, 0.001)
+        self.assertAlmostEqual(result.target_lift_height_m, 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

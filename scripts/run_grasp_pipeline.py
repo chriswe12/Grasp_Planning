@@ -282,6 +282,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
         lift_height_m=float(raw.get("lift_height_m", 0.08)),
+        success_height_margin_m=float(raw.get("success_height_margin_m", IsaacPipelineConfig.success_height_margin_m)),
         close_width=float(raw.get("close_width", 0.0)),
         tcp_to_grasp_offset=tcp_to_grasp_offset,
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
@@ -797,6 +798,8 @@ def _run_isaac_execution(
         isaac_execution.attempt_artifact,
         "--close-width",
         str(isaac_execution.close_width),
+        "--success-height-margin-m",
+        str(isaac_execution.success_height_margin_m),
         "--run-seconds",
         str(isaac_execution.run_seconds),
     ]

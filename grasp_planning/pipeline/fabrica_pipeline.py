@@ -210,6 +210,7 @@ class IsaacPipelineConfig:
     gripper_width_clearance: float | None = None
     contact_gap_m: float | None = None
     lift_height_m: float = 0.08
+    success_height_margin_m: float = 0.05
     close_width: float = 0.0
     tcp_to_grasp_offset: tuple[float, float, float] | None = None
     attempt_artifact: str = "artifacts/isaac_pick_attempt.json"

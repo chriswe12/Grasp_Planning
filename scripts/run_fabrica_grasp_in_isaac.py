@@ -46,6 +46,12 @@ parser.add_argument(
 )
 parser.add_argument("--close-width", type=float, default=0.0, help="Finger joint target width for close.")
 parser.add_argument(
+    "--success-height-margin-m",
+    type=float,
+    default=0.05,
+    help="Minimum object lift height required to report Isaac pickup success.",
+)
+parser.add_argument(
     "--tcp-to-grasp-offset",
     type=float,
     nargs=3,
@@ -165,6 +171,7 @@ from grasp_planning import (  # noqa: E402
 )
 from grasp_planning.controllers.fr3_pick_controller import FR3PickController  # noqa: E402
 from grasp_planning.envs import make_fr3_part_scene_cfg  # noqa: E402
+from grasp_planning.envs.franka_collisions import expose_franka_mesh_collisions  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import load_stl_mesh  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_stl  # noqa: E402
@@ -210,8 +217,8 @@ def resolve_fr3_usd_path() -> str:
         return args_cli.fr3_usd
     assets_root_path = get_assets_root_path()
     if not assets_root_path:
-        raise RuntimeError("Unable to resolve Isaac asset root for the built-in Panda asset.")
-    return assets_root_path + "/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
+        raise RuntimeError("Unable to resolve Isaac asset root for the built-in Franka Factory asset.")
+    return assets_root_path + "/Isaac/IsaacLab/Factory/franka_mimic.usd"
 
 
 def configure_grasp_tcp_calibration() -> None:
@@ -559,15 +566,33 @@ def build_scene(
     *, object_pose_world, part_usd_path: str
 ) -> tuple[sim_utils.SimulationContext, InteractiveScene, Camera | None]:
     print("[INFO]: Creating simulation context...", flush=True)
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
+    sim_cfg = sim_utils.SimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physx=sim_utils.PhysxCfg(
+            solver_type=1,
+            max_position_iteration_count=192,
+            max_velocity_iteration_count=1,
+            bounce_threshold_velocity=0.2,
+            friction_offset_threshold=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
+            gpu_collision_stack_size=2**28,
+            gpu_max_num_partitions=1,
+        ),
+        physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0),
+    )
     sim = sim_utils.SimulationContext(sim_cfg)
     sim._app_control_on_stop_handle = None
     sim._disable_app_control_on_stop_handle = True
     sim.set_camera_view([1.6, -1.2, 1.0], [0.35, 0.0, 0.3])
 
     print("[INFO]: Building Franka Panda + part scene config...", flush=True)
+    fr3_usd_path = resolve_fr3_usd_path()
+    print(f"[INFO]: Isaac robot USD: {fr3_usd_path}", flush=True)
     scene_cfg = make_fr3_part_scene_cfg(
-        fr3_asset_path=resolve_fr3_usd_path(),
+        fr3_asset_path=fr3_usd_path,
         part_usd_path=part_usd_path,
         part_position=object_pose_world.position_world,
         part_orientation_xyzw=object_pose_world.orientation_xyzw_world,
@@ -580,6 +605,26 @@ def build_scene(
     print("[INFO]: Waiting for stage assets to finish loading...", flush=True)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
+    enabled_collision_count, _enabled_collision_paths = expose_franka_mesh_collisions(
+        mesh_path_patterns=(
+            r"(?:panda|fr3)_hand",
+            r"(?:panda|fr3)_leftfinger",
+            r"(?:panda|fr3)_rightfinger",
+            r"finger",
+            r"gripper",
+        )
+    )
+    if enabled_collision_count > 0:
+        print(
+            f"[INFO]: Enabled Isaac collision on {enabled_collision_count} Franka gripper mesh prims.",
+            flush=True,
+        )
+    else:
+        print(
+            "[WARN]: No Franka gripper mesh prims were found while enabling Isaac robot collisions; "
+            "gripper-object contacts may be missing.",
+            flush=True,
+        )
     print("[INFO]: Resetting simulator...", flush=True)
     sim.reset()
     print("[INFO]: Resetting scene buffers...", flush=True)
@@ -631,6 +676,12 @@ def _write_attempt_artifact(
             "message": execution_result.message,
         },
     }
+    object_lift_height_m = getattr(execution_result, "object_lift_height_m", None)
+    target_lift_height_m = getattr(execution_result, "target_lift_height_m", None)
+    if object_lift_height_m is not None:
+        artifact["execution"]["object_lift_height_m"] = object_lift_height_m
+    if target_lift_height_m is not None:
+        artifact["execution"]["target_lift_height_m"] = target_lift_height_m
     if video_recorder is not None:
         artifact["video"] = {
             "path": video_recorder.output_path,
@@ -845,10 +896,12 @@ def run() -> None:
             sim=sim,
             scene=scene,
             robot=robot,
+            object_asset=part,
             moveit_joint_trajectories=moveit_joint_trajectories,
             open_gripper_width=fixed_gripper_width,
             closed_gripper_width=float(args_cli.close_width),
             pregrasp_only=bool(args_cli.pregrasp_only),
+            success_height_margin_m=float(args_cli.success_height_margin_m),
             step_callback=_record_step,
         )
     else:
@@ -862,6 +915,7 @@ def run() -> None:
             fixed_gripper_width=fixed_gripper_width,
             closed_gripper_width=float(args_cli.close_width),
             pregrasp_only=bool(args_cli.pregrasp_only),
+            success_height_margin_m=float(args_cli.success_height_margin_m),
             step_callback=_record_step,
         )
     if video_recorder is not None:
