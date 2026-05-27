@@ -17,6 +17,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     SavedGraspBundle,
     SavedGraspCandidate,
     linear_sweep_triangle_mesh,
+    rotmat_to_quat_xyzw,
 )
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import (
     ObjectFrameGraspCandidate,
@@ -402,6 +403,36 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
         self.assertAlmostEqual(config.regrasp_transfer_top_grasp_score_weight, 0.9)
 
+    def test_planning_config_parses_reachability_proxy_settings(self) -> None:
+        config = run_grasp_pipeline._planning_config(
+            {"planning": {"reachability_proxy_score_weight": 0.2, "reachability_proxy_hand_offset_m": 0.12}}
+        )
+
+        self.assertAlmostEqual(config.reachability_proxy_score_weight, 0.2)
+        self.assertAlmostEqual(config.reachability_proxy_hand_offset_m, 0.12)
+
+    def test_shipped_regrasp_transfer_defaults_preserve_object_score_with_reachability(self) -> None:
+        config_names = (
+            "grasp_pipeline_sim.yaml",
+            "grasp_pipeline_pitl.yaml",
+            "grasp_pipeline_real.yaml",
+            "grasp_pipeline_sim_isaac.yaml",
+            "grasp_pipeline_pitl_isaac.yaml",
+            "grasp_pipeline_sim_plumbers_regrasp.yaml",
+        )
+
+        for config_name in config_names:
+            with self.subTest(config=config_name):
+                config = run_grasp_pipeline._planning_config(
+                    run_grasp_pipeline._load_yaml(run_grasp_pipeline.REPO_ROOT / "configs" / config_name)
+                )
+                transfer_world_weight = (
+                    config.regrasp_transfer_top_grasp_score_weight + config.reachability_proxy_score_weight
+                )
+
+                self.assertAlmostEqual(transfer_world_weight, 0.85)
+                self.assertAlmostEqual(1.0 - transfer_world_weight, 0.15)
+
     def test_planning_config_expands_roll_angle_step_degrees(self) -> None:
         config = run_grasp_pipeline._planning_config({"planning": {"roll_angle_step_deg": 90.0}})
 
@@ -427,6 +458,51 @@ def _saved_candidate(grasp_id: str, orientation_xyzw: tuple[float, float, float,
 
 
 class Stage2WorldTopApproachScoringTests(unittest.TestCase):
+    @staticmethod
+    def _cube_mesh() -> TriangleMesh:
+        half = 0.02
+        vertices = np.array(
+            [
+                [-half, -half, -half],
+                [half, -half, -half],
+                [half, half, -half],
+                [-half, half, -half],
+                [-half, -half, half],
+                [half, -half, half],
+                [half, half, half],
+                [-half, half, half],
+            ],
+            dtype=float,
+        )
+        faces = np.array(
+            [
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 1, 5],
+                [0, 5, 4],
+                [3, 7, 6],
+                [3, 6, 2],
+                [0, 4, 7],
+                [0, 7, 3],
+                [1, 2, 6],
+                [1, 6, 5],
+            ],
+            dtype=np.int64,
+        )
+        return TriangleMesh(vertices_obj=vertices, faces=faces)
+
+    @staticmethod
+    def _orientation_with_approach_axis(axis_obj: tuple[float, float, float]) -> tuple[float, float, float, float]:
+        approach = np.asarray(axis_obj, dtype=float)
+        approach /= np.linalg.norm(approach)
+        x_axis = np.array([0.0, 1.0, 0.0], dtype=float)
+        y_axis = np.cross(approach, x_axis)
+        y_axis /= np.linalg.norm(y_axis)
+        rot = np.column_stack((x_axis, y_axis, approach))
+        return rotmat_to_quat_xyzw(rot)
+
     def test_stage2_scoring_prefers_top_down_world_approach(self) -> None:
         bottom_up = _saved_candidate("bottom_up", (0.0, 0.0, 0.0, 1.0))
         top_down = _saved_candidate("top_down", (1.0, 0.0, 0.0, 0.0))
@@ -451,6 +527,52 @@ class Stage2WorldTopApproachScoringTests(unittest.TestCase):
         self.assertEqual(scored[0].grasp_id, "top_down")
         self.assertAlmostEqual(scored[0].score_components["top_down_approach"], 1.0)
         self.assertAlmostEqual(scored[0].score_components["world_approach_z"], -1.0)
+
+    def test_reachability_proxy_prefers_near_side_when_object_is_far(self) -> None:
+        near_side = _saved_candidate("near_side", self._orientation_with_approach_axis((1.0, 0.0, 0.0)))
+        far_side = _saved_candidate("far_side", self._orientation_with_approach_axis((-1.0, 0.0, 0.0)))
+
+        def fake_score_grasps(grasps: list[SavedGraspCandidate], *, mesh_local: object) -> list[SavedGraspCandidate]:
+            return [replace(grasp, score=0.5, score_components={"score": 0.5}) for grasp in grasps]
+
+        with mock.patch.object(fabrica_pipeline, "score_grasps", side_effect=fake_score_grasps):
+            scored = fabrica_pipeline._score_grasps_for_world_top_approach(
+                [near_side, far_side],
+                mesh_local=self._cube_mesh(),
+                object_pose_world=ObjectWorldPose(
+                    position_world=(0.80, 0.0, 0.10),
+                    orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+                ),
+                top_grasp_score_weight=0.0,
+                reachability_proxy_score_weight=1.0,
+            )
+
+        self.assertEqual(scored[0].grasp_id, "near_side")
+        self.assertLess(scored[0].score_components["reachability_hand_side"], 0.0)
+        self.assertAlmostEqual(scored[0].score_components["reachability_target_side"], -1.0)
+
+    def test_reachability_proxy_prefers_far_side_when_object_is_close(self) -> None:
+        near_side = _saved_candidate("near_side", self._orientation_with_approach_axis((1.0, 0.0, 0.0)))
+        far_side = _saved_candidate("far_side", self._orientation_with_approach_axis((-1.0, 0.0, 0.0)))
+
+        def fake_score_grasps(grasps: list[SavedGraspCandidate], *, mesh_local: object) -> list[SavedGraspCandidate]:
+            return [replace(grasp, score=0.5, score_components={"score": 0.5}) for grasp in grasps]
+
+        with mock.patch.object(fabrica_pipeline, "score_grasps", side_effect=fake_score_grasps):
+            scored = fabrica_pipeline._score_grasps_for_world_top_approach(
+                [near_side, far_side],
+                mesh_local=self._cube_mesh(),
+                object_pose_world=ObjectWorldPose(
+                    position_world=(0.25, 0.0, 0.10),
+                    orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+                ),
+                top_grasp_score_weight=0.0,
+                reachability_proxy_score_weight=1.0,
+            )
+
+        self.assertEqual(scored[0].grasp_id, "far_side")
+        self.assertGreater(scored[0].score_components["reachability_hand_side"], 0.0)
+        self.assertAlmostEqual(scored[0].score_components["reachability_target_side"], 1.0)
 
 
 class Stage1CollisionSkipTests(unittest.TestCase):
@@ -563,6 +685,27 @@ class Stage1CollisionSkipTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["geometry"]["assembly_obstacle_sweep_vector_m"], [0.0, 0.0, -0.0202])
+
+    def test_stage1_cache_key_records_grasp_scoring_algorithm(self) -> None:
+        kwargs = {
+            "geometry": GeometryConfig(
+                target_mesh_path="obj/fabrica/beam/2.obj",
+                mesh_scale=0.01,
+                assembly_glob="obj/fabrica/beam/*.obj",
+            ),
+            "planning": PlanningConfig(stage1_cache_enabled=True),
+            "source_frame_pose_obj_world": None,
+            "upright_approach_axes_obj": (),
+        }
+
+        _, baseline_key, payload = fabrica_pipeline._stage1_cache_path(**kwargs)
+
+        self.assertEqual(payload["grasp_scoring_algorithm"], fabrica_pipeline.GRASP_SCORING_ALGORITHM_VERSION)
+        with mock.patch.object(fabrica_pipeline, "GRASP_SCORING_ALGORITHM_VERSION", "unit-test-scoring-vnext"):
+            _, changed_key, changed_payload = fabrica_pipeline._stage1_cache_path(**kwargs)
+
+        self.assertNotEqual(changed_key, baseline_key)
+        self.assertEqual(changed_payload["grasp_scoring_algorithm"], "unit-test-scoring-vnext")
 
     def test_benchmark_target_uses_selected_precedence_order_as_obstacles(self) -> None:
         spec = run_grasp_generation_benchmark._target_spec_from_asset_path(
@@ -857,6 +1000,91 @@ class MujocoRegraspFallbackPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(plan.transfer_grasp.score_components["top_grasp_score_weight"], 0.9)
         self.assertAlmostEqual(plan.metadata["transfer_top_grasp_score_weight"], 0.9)
         self.assertAlmostEqual(plan.metadata["final_top_grasp_score_weight"], 0.1)
+
+    def test_regrasp_final_candidates_are_rescored_for_each_staging_offset(self) -> None:
+        transfer = self._candidate("transfer")
+        left_final = self._candidate("left_final")
+        right_final = self._candidate("right_final")
+        bundle = SavedGraspBundle(
+            target_mesh_path="obj/fabrica/beam/2.obj",
+            mesh_scale=0.01,
+            source_frame_origin_obj_world=(0.0, 0.0, 0.0),
+            source_frame_orientation_xyzw_obj_world=(0.0, 0.0, 0.0, 1.0),
+            candidates=(left_final, right_final),
+            metadata={},
+        )
+        stage1 = fabrica_pipeline.Stage1Result(
+            bundle=bundle,
+            target_mesh_local=self._cube_mesh(),
+            target_pose_in_obj_world=ObjectWorldPose(
+                position_world=(0.0, 0.0, 0.0),
+                orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+            ),
+            obstacle_mesh_world=None,
+            collision_backend_name="unit-test",
+            raw_candidate_count=1,
+            raw_candidates=(transfer,),
+        )
+        direct_stage2 = SimpleNamespace(
+            accepted=(),
+            pickup_pose_world=ObjectWorldPose(
+                position_world=(0.0, 0.0, 0.02),
+                orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+            ),
+        )
+
+        def accept_all(grasps, **_kwargs):
+            return [CandidateStatus(grasp=grasp, status="accepted", reason="unit_test") for grasp in grasps]
+
+        def score_for_pose(grasps, *, mesh_local, object_pose_world, top_grasp_score_weight, **_kwargs):
+            candidates = list(grasps)
+            ids = {candidate.grasp_id for candidate in candidates}
+            if ids <= {"left_final", "right_final"}:
+                x_world = round(float(object_pose_world.position_world[0]), 6)
+                scores = (
+                    {"left_final": 0.2, "right_final": 1.0}
+                    if x_world >= 0.2
+                    else {"left_final": 0.6, "right_final": 0.1}
+                )
+            else:
+                scores = {candidate.grasp_id: 0.8 for candidate in candidates}
+            return sorted(
+                [
+                    replace(
+                        candidate,
+                        score=scores[candidate.grasp_id],
+                        score_components={"score": scores[candidate.grasp_id]},
+                    )
+                    for candidate in candidates
+                ],
+                key=lambda candidate: (float(candidate.score), candidate.grasp_id),
+                reverse=True,
+            )
+
+        with (
+            mock.patch.object(regrasp_fallback, "evaluate_saved_grasps_against_pickup_pose", side_effect=accept_all),
+            mock.patch.object(regrasp_fallback, "_score_grasps_for_world_top_approach", side_effect=score_for_pose),
+        ):
+            plan = regrasp_fallback.plan_mujoco_regrasp_fallback(
+                stage1=stage1,
+                direct_stage2=direct_stage2,
+                planning=PlanningConfig(reachability_proxy_score_weight=0.15),
+                force=True,
+                staging_xy_world=(0.0, 0.0),
+                staging_xy_offsets_m=((0.0, 0.0), (0.2, 0.0)),
+                yaw_angles_deg=(0.0,),
+                max_orientations=4,
+                max_placement_options=2,
+            )
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        options_by_x = {
+            round(float(option.metadata["staging_xy_world"][0]), 6): option for option in plan.placement_options
+        }
+        self.assertEqual(options_by_x[0.0].final_grasp.grasp_id, "left_final")
+        self.assertEqual(options_by_x[0.2].final_grasp.grasp_id, "right_final")
+        self.assertEqual(plan.final_grasp.grasp_id, "right_final")
 
     def test_force_regrasp_does_not_fall_back_to_direct_pose(self) -> None:
         transfer = self._candidate("transfer")

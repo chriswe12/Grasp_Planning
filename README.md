@@ -221,16 +221,36 @@ This writes a mesh-only HTML view showing the saved bundle-local part, its
 area-weighted centroid, and the transformed execution/world pose when the input
 bundle contains `metadata.execution_world_pose`.
 
+Scoring debug views:
+
+```bash
+python3 scripts/write_grasp_score_comparison_html.py \
+  --input-json artifacts/pipeline_stage1_assembly_grasps.json \
+  --output-html artifacts/grasp_score_comparison.html
+
+python3 scripts/write_grasp_pose_score_sweep_html.py \
+  --input-json artifacts/pipeline_stage2_ground_feasible.json \
+  --config configs/grasp_pipeline_sim.yaml \
+  --output-html artifacts/grasp_pose_score_sweep.html
+```
+
+The comparison view shows the retired vertex-count support score beside the
+current pad-footprint support score. The pose sweep view rescales the same
+object-score pool across floor poses with the stage-2 top-down and reachability
+terms.
+
 Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
 
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
-- `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
+- `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh, stage-1 planning settings, and grasp-scoring algorithm version. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
+- object-local `contact_support` is pad-footprint based: each Franka pad is sampled as a small contact patch, and support drops when the patch is not backed by compatible mesh faces.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
-- `regrasp_transfer_top_grasp_score_weight` applies the same top-down score to the regrasp transfer pickup in the initial pose. It defaults higher than `top_grasp_score_weight` because the first pickup is more sensitive to wrist orientation than setting the object back down.
+- `reachability_proxy_score_weight` adds a lightweight XY/radius/clearance proxy to world-pose scoring; `reachability_proxy_hand_offset_m` controls the backoff point used for that proxy. If top-down plus reachability weights exceed `1.0`, they are normalized and the remainder is the object-score weight.
+- `regrasp_transfer_top_grasp_score_weight` applies the same top-down score to the regrasp transfer pickup in the initial pose. Shipped configs pair `0.70` transfer top-down weight with `0.15` reachability weight, preserving a `0.15` object-score contribution.
 - `skip_stage1_collision_checks: true` keeps all generated stage-1 grasps and skips offline assembly collision filtering. For a one-off run, pass `--skip-stage1-collision-checks`.
 
 Use `configs/mujoco_simulation.yaml` to tune:
@@ -290,6 +310,8 @@ Kept code is limited to the pipeline product:
 - `scripts/convert_stl_to_usd.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
 - `scripts/run_grasp_generation_benchmark.py`
+- `scripts/write_grasp_score_comparison_html.py`
+- `scripts/write_grasp_pose_score_sweep_html.py`
 - `scripts/download_required_assets.sh`
 - `scripts/download_ros2_dependencies.sh`
 - `configs/grasp_generation_benchmark.yaml`

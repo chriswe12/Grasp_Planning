@@ -171,6 +171,11 @@ DEFAULT_GRASP_SCORING_SUPPORT_TARGET = 80
 DEFAULT_GRASP_SCORING_CONTACT_RADIUS_M = (
     0.5 * math.hypot(FRANKA_CONTACT_PATCH_LATERAL_SIZE_M, FRANKA_CONTACT_PATCH_APPROACH_SIZE_M) + 0.003
 )
+DEFAULT_GRASP_SCORING_PAD_SURFACE_TOLERANCE_M = 0.003
+DEFAULT_GRASP_SCORING_PAD_NORMAL_MIN_COS = 0.85
+DEFAULT_GRASP_SCORING_VERTEX_FACE_CANDIDATES = 8
+DEFAULT_GRASP_SCORING_NEARBY_FACE_CANDIDATES = 32
+GRASP_SCORING_ALGORITHM_VERSION = "pad_footprint_v1"
 
 
 def quat_to_rotmat_xyzw(quat_xyzw: tuple[float, float, float, float]) -> np.ndarray:
@@ -695,27 +700,43 @@ def _candidate_with_contact_offset(
 @dataclass(frozen=True)
 class _MeshNeighborhoodIndex:
     vertices_obj: np.ndarray
-    vertex_normals_obj: np.ndarray
     tree: cKDTree
+    face_vertices_obj: np.ndarray
+    face_normals_obj: np.ndarray
+    face_valid_mask: np.ndarray
+    face_centroids_obj: np.ndarray
+    face_tree: cKDTree
+    vertex_faces: tuple[tuple[int, ...], ...]
     center_of_mass_obj: np.ndarray
 
 
-def _mesh_vertex_normals(mesh: TriangleMesh) -> np.ndarray:
-    vertices = np.asarray(mesh.vertices_obj, dtype=float)
-    faces = np.asarray(mesh.faces, dtype=np.int64)
-    normals = np.zeros_like(vertices)
-    triangles = vertices[faces]
-    raw_face_normals = np.cross(triangles[:, 1, :] - triangles[:, 0, :], triangles[:, 2, :] - triangles[:, 0, :])
-    for face_index, face in enumerate(faces):
-        face_normal = raw_face_normals[face_index]
-        for vertex_index in face:
-            normals[int(vertex_index)] += face_normal
-    lengths = np.linalg.norm(normals, axis=1)
+@dataclass(frozen=True)
+class _PadFootprintScore:
+    score: float
+    support_fraction: float
+    normal_consistency: float
+    supported_samples: int
+    total_samples: int
+
+
+def _mesh_face_normals(face_vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    raw_normals = np.cross(
+        face_vertices[:, 1, :] - face_vertices[:, 0, :],
+        face_vertices[:, 2, :] - face_vertices[:, 0, :],
+    )
+    lengths = np.linalg.norm(raw_normals, axis=1)
     valid = lengths > 1.0e-12
-    normals[valid] /= lengths[valid][:, None]
-    if np.any(~valid):
-        normals[~valid] = np.array([0.0, 0.0, 1.0], dtype=float)
-    return normals
+    normals = np.zeros_like(raw_normals)
+    normals[valid] = raw_normals[valid] / lengths[valid][:, None]
+    return normals, valid
+
+
+def _mesh_vertex_faces(mesh: TriangleMesh) -> tuple[tuple[int, ...], ...]:
+    face_indices_by_vertex: list[list[int]] = [[] for _ in range(len(mesh.vertices_obj))]
+    for face_index, face in enumerate(np.asarray(mesh.faces, dtype=np.int64)):
+        for vertex_index in face:
+            face_indices_by_vertex[int(vertex_index)].append(int(face_index))
+    return tuple(tuple(indices) for indices in face_indices_by_vertex)
 
 
 def _mesh_surface_centroid(mesh: TriangleMesh) -> np.ndarray:
@@ -736,30 +757,160 @@ def _mesh_center_of_mass(mesh: TriangleMesh) -> np.ndarray:
 
 def _build_mesh_neighborhood_index(mesh: TriangleMesh) -> _MeshNeighborhoodIndex:
     vertices = np.asarray(mesh.vertices_obj, dtype=float)
+    face_vertices = np.asarray(mesh.face_vertices, dtype=float)
+    face_normals, face_valid_mask = _mesh_face_normals(face_vertices)
+    face_centroids = np.mean(face_vertices, axis=1)
     return _MeshNeighborhoodIndex(
         vertices_obj=vertices,
-        vertex_normals_obj=_mesh_vertex_normals(mesh),
         tree=cKDTree(vertices),
+        face_vertices_obj=face_vertices,
+        face_normals_obj=face_normals,
+        face_valid_mask=face_valid_mask,
+        face_centroids_obj=face_centroids,
+        face_tree=cKDTree(face_centroids),
+        vertex_faces=_mesh_vertex_faces(mesh),
         center_of_mass_obj=_mesh_center_of_mass(mesh),
     )
 
 
-def _contact_neighborhood_indices(
+def _candidate_face_indices_for_point(
     index: _MeshNeighborhoodIndex,
-    contact_point_obj: np.ndarray,
-    *,
-    radius_m: float,
-) -> np.ndarray:
-    indices = index.tree.query_ball_point(np.asarray(contact_point_obj, dtype=float), r=float(radius_m))
-    if indices:
-        return np.asarray(indices, dtype=np.int64)
-    _, nearest_index = index.tree.query(np.asarray(contact_point_obj, dtype=float), k=1)
-    return np.asarray([int(nearest_index)], dtype=np.int64)
+    point_obj: np.ndarray,
+) -> tuple[int, ...]:
+    face_indices: set[int] = set()
+    vertex_count = len(index.vertices_obj)
+    if vertex_count:
+        nearest_vertex_count = min(DEFAULT_GRASP_SCORING_VERTEX_FACE_CANDIDATES, vertex_count)
+        _, vertex_indices = index.tree.query(np.asarray(point_obj, dtype=float), k=nearest_vertex_count)
+        for vertex_index in np.atleast_1d(vertex_indices):
+            face_indices.update(index.vertex_faces[int(vertex_index)])
+
+    face_count = len(index.face_vertices_obj)
+    if face_count:
+        nearest_face_count = min(DEFAULT_GRASP_SCORING_NEARBY_FACE_CANDIDATES, face_count)
+        _, nearby_face_indices = index.face_tree.query(np.asarray(point_obj, dtype=float), k=nearest_face_count)
+        face_indices.update(int(face_index) for face_index in np.atleast_1d(nearby_face_indices))
+    return tuple(sorted(face_indices))
 
 
 def _project_onto_plane(vec: np.ndarray, normal: np.ndarray) -> np.ndarray:
     normal = np.asarray(normal, dtype=float)
     return np.asarray(vec, dtype=float) - float(np.dot(vec, normal)) * normal
+
+
+def _triangle_barycentric(point_obj: np.ndarray, triangle_obj: np.ndarray) -> np.ndarray | None:
+    edge_0 = triangle_obj[1] - triangle_obj[0]
+    edge_1 = triangle_obj[2] - triangle_obj[0]
+    point_vec = np.asarray(point_obj, dtype=float) - triangle_obj[0]
+    dot_00 = float(np.dot(edge_0, edge_0))
+    dot_01 = float(np.dot(edge_0, edge_1))
+    dot_11 = float(np.dot(edge_1, edge_1))
+    dot_20 = float(np.dot(point_vec, edge_0))
+    dot_21 = float(np.dot(point_vec, edge_1))
+    denom = dot_00 * dot_11 - dot_01 * dot_01
+    if abs(denom) < 1.0e-18:
+        return None
+    v = (dot_11 * dot_20 - dot_01 * dot_21) / denom
+    w = (dot_00 * dot_21 - dot_01 * dot_20) / denom
+    u = 1.0 - v - w
+    return np.array([u, v, w], dtype=float)
+
+
+def _best_supported_surface_alignment(
+    index: _MeshNeighborhoodIndex,
+    sample_point_obj: np.ndarray,
+    *,
+    expected_normal_obj: np.ndarray,
+) -> float | None:
+    best_alignment: float | None = None
+    for face_index in _candidate_face_indices_for_point(index, sample_point_obj):
+        if not bool(index.face_valid_mask[face_index]):
+            continue
+        face_normal = index.face_normals_obj[face_index]
+        normal_alignment = float(np.dot(face_normal, expected_normal_obj))
+        if normal_alignment < DEFAULT_GRASP_SCORING_PAD_NORMAL_MIN_COS:
+            continue
+
+        triangle = index.face_vertices_obj[face_index]
+        plane_distance = abs(float(np.dot(sample_point_obj - triangle[0], face_normal)))
+        if plane_distance > DEFAULT_GRASP_SCORING_PAD_SURFACE_TOLERANCE_M:
+            continue
+
+        projected = sample_point_obj - float(np.dot(sample_point_obj - triangle[0], face_normal)) * face_normal
+        barycentric = _triangle_barycentric(projected, triangle)
+        if barycentric is None or float(np.min(barycentric)) < -1.0e-9:
+            continue
+
+        if best_alignment is None or normal_alignment > best_alignment:
+            best_alignment = normal_alignment
+    return best_alignment
+
+
+def _pad_footprint_score(
+    index: _MeshNeighborhoodIndex,
+    *,
+    contact_point_obj: np.ndarray,
+    expected_normal_obj: np.ndarray,
+    grasp_rotmat_obj: np.ndarray,
+    contact_patch_lateral_offset_m: float,
+    contact_patch_approach_offset_m: float,
+) -> _PadFootprintScore:
+    """Estimate how much of a fingertip-pad rectangle is backed by compatible mesh surface."""
+
+    expected_normal_norm = float(np.linalg.norm(expected_normal_obj))
+    if expected_normal_norm < 1.0e-12:
+        return _PadFootprintScore(
+            score=0.0,
+            support_fraction=0.0,
+            normal_consistency=0.0,
+            supported_samples=0,
+            total_samples=len(DEFAULT_CONTACT_LATERAL_OFFSETS_M) * len(DEFAULT_CONTACT_APPROACH_OFFSETS_M),
+        )
+    expected_normal = expected_normal_obj / expected_normal_norm
+    pad_center_obj = np.asarray(contact_point_obj, dtype=float) - grasp_rotmat_obj @ np.array(
+        [
+            float(contact_patch_lateral_offset_m),
+            0.0,
+            float(contact_patch_approach_offset_m),
+        ],
+        dtype=float,
+    )
+
+    alignments: list[float] = []
+    total_samples = 0
+    for lateral_offset_m in DEFAULT_CONTACT_LATERAL_OFFSETS_M:
+        for approach_offset_m in DEFAULT_CONTACT_APPROACH_OFFSETS_M:
+            total_samples += 1
+            sample_point = pad_center_obj + grasp_rotmat_obj @ np.array(
+                [float(lateral_offset_m), 0.0, float(approach_offset_m)],
+                dtype=float,
+            )
+            alignment = _best_supported_surface_alignment(
+                index,
+                sample_point,
+                expected_normal_obj=expected_normal,
+            )
+            if alignment is not None:
+                alignments.append(alignment)
+
+    if not alignments:
+        return _PadFootprintScore(
+            score=0.0,
+            support_fraction=0.0,
+            normal_consistency=0.0,
+            supported_samples=0,
+            total_samples=total_samples,
+        )
+
+    support_fraction = float(len(alignments)) / float(max(1, total_samples))
+    normal_consistency = float(np.mean(alignments))
+    return _PadFootprintScore(
+        score=min(1.0, max(0.0, support_fraction * normal_consistency)),
+        support_fraction=support_fraction,
+        normal_consistency=normal_consistency,
+        supported_samples=len(alignments),
+        total_samples=total_samples,
+    )
 
 
 def _grasp_score_components(
@@ -768,8 +919,6 @@ def _grasp_score_components(
     mesh_index: _MeshNeighborhoodIndex,
     sigma_center_m: float = DEFAULT_GRASP_SCORING_SIGMA_CENTER_M,
     sigma_com_m: float = DEFAULT_GRASP_SCORING_SIGMA_COM_M,
-    support_target: int = DEFAULT_GRASP_SCORING_SUPPORT_TARGET,
-    contact_radius_m: float = DEFAULT_GRASP_SCORING_CONTACT_RADIUS_M,
 ) -> dict[str, float]:
     grasp_center = np.asarray(candidate.grasp_position_obj, dtype=float)
     contact_right = np.asarray(candidate.contact_point_a_obj, dtype=float)
@@ -791,11 +940,24 @@ def _grasp_score_components(
     d_center = float(np.linalg.norm(center_offset_plane))
     s_center = math.exp(-((d_center * d_center) / (sigma_center_m * sigma_center_m)))
 
-    left_indices = _contact_neighborhood_indices(mesh_index, contact_left, radius_m=contact_radius_m)
-    right_indices = _contact_neighborhood_indices(mesh_index, contact_right, radius_m=contact_radius_m)
-    n_left = int(left_indices.size)
-    n_right = int(right_indices.size)
-    s_support = min(1.0, float(n_left + n_right) / float(max(1, support_target)))
+    grasp_rotmat = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+    left_support = _pad_footprint_score(
+        mesh_index,
+        contact_point_obj=contact_left,
+        expected_normal_obj=normal_left,
+        grasp_rotmat_obj=grasp_rotmat,
+        contact_patch_lateral_offset_m=candidate.contact_patch_lateral_offset_m,
+        contact_patch_approach_offset_m=candidate.contact_patch_approach_offset_m,
+    )
+    right_support = _pad_footprint_score(
+        mesh_index,
+        contact_point_obj=contact_right,
+        expected_normal_obj=normal_right,
+        grasp_rotmat_obj=grasp_rotmat,
+        contact_patch_lateral_offset_m=candidate.contact_patch_lateral_offset_m,
+        contact_patch_approach_offset_m=candidate.contact_patch_approach_offset_m,
+    )
+    s_support = min(left_support.score, right_support.score)
 
     com_offset_plane = _project_onto_plane(mesh_index.center_of_mass_obj - grasp_center, closing_axis)
     d_com = float(np.linalg.norm(com_offset_plane))
@@ -808,8 +970,16 @@ def _grasp_score_components(
         "centering": float(s_center),
         "contact_support": float(s_support),
         "com_offset": float(s_com),
-        "contact_count_left": float(n_left),
-        "contact_count_right": float(n_right),
+        "pad_support_left": float(left_support.score),
+        "pad_support_right": float(right_support.score),
+        "pad_support_fraction_left": float(left_support.support_fraction),
+        "pad_support_fraction_right": float(right_support.support_fraction),
+        "pad_normal_consistency_left": float(left_support.normal_consistency),
+        "pad_normal_consistency_right": float(right_support.normal_consistency),
+        "pad_supported_samples_left": float(left_support.supported_samples),
+        "pad_supported_samples_right": float(right_support.supported_samples),
+        "pad_total_samples_left": float(left_support.total_samples),
+        "pad_total_samples_right": float(right_support.total_samples),
         "center_offset_plane_m": float(d_center),
         "com_offset_plane_m": float(d_com),
         "score": float(total),
@@ -822,8 +992,6 @@ def score_grasps(
     mesh_local: TriangleMesh,
     sigma_center_m: float = DEFAULT_GRASP_SCORING_SIGMA_CENTER_M,
     sigma_com_m: float = DEFAULT_GRASP_SCORING_SIGMA_COM_M,
-    support_target: int = DEFAULT_GRASP_SCORING_SUPPORT_TARGET,
-    contact_radius_m: float = DEFAULT_GRASP_SCORING_CONTACT_RADIUS_M,
 ) -> list[SavedGraspCandidate]:
     mesh_index = _build_mesh_neighborhood_index(mesh_local)
     scored: list[SavedGraspCandidate] = []
@@ -833,8 +1001,6 @@ def score_grasps(
             mesh_index=mesh_index,
             sigma_center_m=sigma_center_m,
             sigma_com_m=sigma_com_m,
-            support_target=support_target,
-            contact_radius_m=contact_radius_m,
         )
         scored.append(
             SavedGraspCandidate(
@@ -1761,7 +1927,10 @@ def write_debug_html(
         `score_com:        ${candidate.score_components ? candidate.score_components.com_offset.toFixed(6) : "n/a"}`,
         `score_object:     ${candidate.score_components && candidate.score_components.object_score !== undefined ? candidate.score_components.object_score.toFixed(6) : "n/a"}`,
         `score_top_down:   ${candidate.score_components && candidate.score_components.top_down_approach !== undefined ? candidate.score_components.top_down_approach.toFixed(6) : "n/a"}`,
+        `score_reach:      ${candidate.score_components && candidate.score_components.reachability_proxy !== undefined ? candidate.score_components.reachability_proxy.toFixed(6) : "n/a"}`,
         `world_approach_z: ${candidate.score_components && candidate.score_components.world_approach_z !== undefined ? candidate.score_components.world_approach_z.toFixed(6) : "n/a"}`,
+        `reach_hand_r:     ${candidate.score_components && candidate.score_components.reachability_hand_radius_m !== undefined ? candidate.score_components.reachability_hand_radius_m.toFixed(6) : "n/a"}`,
+        `reach_side:       ${candidate.score_components && candidate.score_components.reachability_side !== undefined ? candidate.score_components.reachability_side.toFixed(6) : "n/a"}`,
         `jaw_width:        ${candidate.jaw_width.toFixed(6)} m`,
         `roll_angle_rad:   ${candidate.roll_angle_rad.toFixed(6)}`,
         `contact_offset_x: ${candidate.contact_patch_lateral_offset_m.toFixed(6)} m`,

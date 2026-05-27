@@ -147,6 +147,8 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         skip_stage1_collision_checks=bool(raw.get("skip_stage1_collision_checks", False)),
         top_grasp_score_weight=float(raw.get("top_grasp_score_weight", 0.35)),
         regrasp_transfer_top_grasp_score_weight=float(raw.get("regrasp_transfer_top_grasp_score_weight", 0.85)),
+        reachability_proxy_score_weight=float(raw.get("reachability_proxy_score_weight", 0.0)),
+        reachability_proxy_hand_offset_m=float(raw.get("reachability_proxy_hand_offset_m", 0.10)),
         contact_lateral_offsets_m=_tuple_floats(raw.get("contact_lateral_offsets_m", []))
         or DEFAULT_CONTACT_LATERAL_OFFSETS_M,
         contact_approach_offsets_m=_tuple_floats(raw.get("contact_approach_offsets_m", []))
