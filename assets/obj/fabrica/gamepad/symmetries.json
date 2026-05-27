@@ -30,14 +30,16 @@
       ],
       "extent_m": 0.02853392,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0014776746,
-      "sample_spacing_p95_m": 0.0003184497,
+      "effective_tolerance_m": 0.0011713957,
+      "sample_spacing_p95_m": 0.0001142638,
       "candidate_summary": {
         "axes_tested": 48,
         "centers_tested": 4,
         "candidates_tested": 2112,
-        "accepted_count": 8,
+        "accepted_count": 22,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -61,10 +63,13 @@
         ],
         "mesh_vertices": 26165,
         "mesh_faces": 52326,
+        "mesh_welded_vertices": 26161,
+        "mesh_welded_faces": 52318,
+        "mesh_probe_vertices": 2013,
         "validation_vertices": 5000,
-        "surface_samples": 10000,
-        "visual_faces": 800,
-        "visual_edges": 1200
+        "surface_samples": 80000,
+        "visual_faces": 3910,
+        "visual_edges": 5865
       },
       "continuous_symmetries": [
         {
@@ -119,9 +124,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -131,6 +137,136 @@
             "p99_m": 0.0,
             "max_m": 0.0
           }
+        },
+        {
+          "name": "object_x_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X (bounds center)",
+          "source": "object_frame:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0,
+              -0.02769958
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0,
+            -0.02769958,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013160246,
+            "vertex_p95_m": 0.0022914915,
+            "vertex_p99_m": 0.0027675758,
+            "vertex_max_m": 0.0032545115,
+            "mean_m": 0.0005718358,
+            "p95_m": 0.0010043196,
+            "p99_m": 0.0010078915,
+            "max_m": 0.0010197602
+          },
+          "axis_obj": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_y_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +Y (bounds center)",
+          "source": "object_frame:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -1.0,
+              0.0,
+              0.0,
+              -0.0395282
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0395282,
+            0.0,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013140721,
+            "vertex_p95_m": 0.002297964,
+            "vertex_p99_m": 0.002690457,
+            "vertex_max_m": 0.0032070543,
+            "mean_m": 0.0005718795,
+            "p95_m": 0.0010043534,
+            "p99_m": 0.0010079798,
+            "max_m": 0.0010258679
+          },
+          "axis_obj": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
         },
         {
           "name": "object_z_bounds_center_order2_step1",
@@ -173,17 +309,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001132793,
             "vertex_p95_m": 0.0002535033,
             "vertex_p99_m": 0.0004046312,
             "vertex_max_m": 0.0015213039,
-            "mean_m": 0.0001271399,
-            "p95_m": 0.0002787532,
-            "p99_m": 0.0003713535,
-            "max_m": 0.0005792267
+            "mean_m": 5.64089e-05,
+            "p95_m": 0.0001112751,
+            "p99_m": 0.0001385034,
+            "max_m": 0.0002226297
           },
           "axis_obj": [
             0.0,
@@ -237,17 +374,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001131211,
             "vertex_p95_m": 0.000249406,
             "vertex_p99_m": 0.0003815161,
             "vertex_max_m": 0.0019508868,
-            "mean_m": 0.0001264623,
-            "p95_m": 0.0002798819,
-            "p99_m": 0.0003665687,
-            "max_m": 0.0005844472
+            "mean_m": 5.62987e-05,
+            "p95_m": 0.0001106843,
+            "p99_m": 0.0001381436,
+            "max_m": 0.0002139039
           },
           "axis_obj": [
             0.0,
@@ -301,17 +439,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001130247,
             "vertex_p95_m": 0.00024814,
             "vertex_p99_m": 0.0003802198,
             "vertex_max_m": 0.0017364862,
-            "mean_m": 0.0001272801,
-            "p95_m": 0.0002820889,
-            "p99_m": 0.0003716821,
-            "max_m": 0.0005670422
+            "mean_m": 5.64052e-05,
+            "p95_m": 0.000111059,
+            "p99_m": 0.0001388705,
+            "max_m": 0.0002706548
           },
           "axis_obj": [
             0.0,
@@ -365,17 +504,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001142162,
             "vertex_p95_m": 0.0002466965,
             "vertex_p99_m": 0.0003814417,
             "vertex_max_m": 0.0013052664,
-            "mean_m": 0.0001277671,
-            "p95_m": 0.0002811143,
-            "p99_m": 0.0003700713,
-            "max_m": 0.0005941432
+            "mean_m": 5.64683e-05,
+            "p95_m": 0.0001106615,
+            "p99_m": 0.0001376759,
+            "max_m": 0.0002434547
           },
           "axis_obj": [
             0.0,
@@ -429,17 +569,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001144076,
             "vertex_p95_m": 0.0002486912,
             "vertex_p99_m": 0.0003918739,
             "vertex_max_m": 0.0017364549,
-            "mean_m": 0.0001285432,
-            "p95_m": 0.000283904,
-            "p99_m": 0.0003766731,
-            "max_m": 0.0005479867
+            "mean_m": 5.64906e-05,
+            "p95_m": 0.0001112499,
+            "p99_m": 0.0001386618,
+            "max_m": 0.000232908
           },
           "axis_obj": [
             0.0,
@@ -493,17 +634,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001142581,
             "vertex_p95_m": 0.0002532306,
             "vertex_p99_m": 0.0004158809,
             "vertex_max_m": 0.0015212782,
-            "mean_m": 0.0001279895,
-            "p95_m": 0.0002813266,
-            "p99_m": 0.000365531,
-            "max_m": 0.0005501467
+            "mean_m": 5.63762e-05,
+            "p95_m": 0.000110953,
+            "p99_m": 0.0001383321,
+            "max_m": 0.000230001
           },
           "axis_obj": [
             0.0,
@@ -557,22 +699,803 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014776746,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001139454,
             "vertex_p95_m": 0.0002489524,
             "vertex_p99_m": 0.0004220302,
             "vertex_max_m": 0.0015212684,
-            "mean_m": 0.0001278823,
-            "p95_m": 0.0002833546,
-            "p99_m": 0.0003664188,
-            "max_m": 0.0006094776
+            "mean_m": 5.63916e-05,
+            "p95_m": 0.0001111375,
+            "p99_m": 0.0001388324,
+            "max_m": 0.0002263391
           },
           "axis_obj": [
             0.0,
             0.0,
             1.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_xy_sum_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X +Y diagonal (bounds center)",
+          "source": "object_frame_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.0,
+              1.0,
+              0.0,
+              -0.00591431
+            ],
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.00591431
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.00591431,
+            0.00591431,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013179154,
+            "vertex_p95_m": 0.0022973625,
+            "vertex_p99_m": 0.0027304787,
+            "vertex_max_m": 0.0032352882,
+            "mean_m": 0.0005719385,
+            "p95_m": 0.0010043458,
+            "p99_m": 0.0010079754,
+            "max_m": 0.0010240664
+          },
+          "axis_obj": [
+            0.7071067812,
+            0.7071067812,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_xy_diff_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X -Y diagonal (bounds center)",
+          "source": "object_frame_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.0,
+              -1.0,
+              0.0,
+              -0.03361389
+            ],
+            [
+              -1.0,
+              0.0,
+              0.0,
+              -0.03361389
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.03361389,
+            -0.03361389,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013182938,
+            "vertex_p95_m": 0.0023077547,
+            "vertex_p99_m": 0.002750923,
+            "vertex_max_m": 0.0032662961,
+            "mean_m": 0.0005719619,
+            "p95_m": 0.0010043148,
+            "p99_m": 0.0010080114,
+            "max_m": 0.0010274996
+          },
+          "axis_obj": [
+            0.7071067812,
+            -0.7071067812,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_1_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.9676, 0.2526, 0.0015] (bounds center)",
+          "source": "vertex_pca:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.8724000677,
+              0.4887838518,
+              0.0029099993,
+              0.0041624891
+            ],
+            [
+              0.4887838518,
+              -0.8724045903,
+              0.0007596457,
+              -0.01629427
+            ],
+            [
+              0.0029099993,
+              0.0007596457,
+              -0.9999954774,
+              0.0586017821
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0041624891,
+            -0.01629427,
+            0.0586017821
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013170656,
+            "vertex_p95_m": 0.0023042185,
+            "vertex_p99_m": 0.0027562407,
+            "vertex_max_m": 0.0032777679,
+            "mean_m": 0.0005720391,
+            "p95_m": 0.0010263914,
+            "p99_m": 0.0010347339,
+            "max_m": 0.001047933
+          },
+          "axis_obj": [
+            0.967574304,
+            0.2525820755,
+            0.0015037601
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_2_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.2526, 0.9676, -0.0002] (bounds center)",
+          "source": "vertex_pca:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.8724046535,
+              -0.4887843149,
+              0.0001184585,
+              -0.0437794198
+            ],
+            [
+              -0.4887843149,
+              0.8724045435,
+              -0.0004537836,
+              -0.0114142715
+            ],
+            [
+              0.0001184585,
+              -0.0004537836,
+              -0.99999989,
+              0.0585299332
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0437794198,
+            -0.0114142715,
+            0.0585299332
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013159555,
+            "vertex_p95_m": 0.0022975085,
+            "vertex_p99_m": 0.0027822662,
+            "vertex_max_m": 0.0032443121,
+            "mean_m": 0.000571889,
+            "p95_m": 0.0010062312,
+            "p99_m": 0.0010098757,
+            "max_m": 0.0010233474
+          },
+          "axis_obj": [
+            -0.2525820129,
+            0.9675754605,
+            -0.0002344952
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_yz_sum_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.5056, 0.8628, 0.0009] (bounds center)",
+          "source": "vertex_pca_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.4887860236,
+              0.8724032322,
+              0.0009075146,
+              -0.0173684745
+            ],
+            [
+              0.8724032322,
+              0.4887844126,
+              0.0015487031,
+              0.0101167104
+            ],
+            [
+              0.0009075146,
+              0.0015487031,
+              -0.999998389,
+              0.0585732183
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0173684745,
+            0.0101167104,
+            0.0585732183
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013196122,
+            "vertex_p95_m": 0.0023045897,
+            "vertex_p99_m": 0.0027566755,
+            "vertex_max_m": 0.0032327818,
+            "mean_m": 0.0005719646,
+            "p95_m": 0.0010166512,
+            "p99_m": 0.0010220648,
+            "max_m": 0.0010350247
+          },
+          "axis_obj": [
+            0.5055758976,
+            0.8627816678,
+            0.0008975058
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_yz_diff_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.8628, -0.5056, 0.0012] (bounds center)",
+          "source": "vertex_pca_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.4887814378,
+              -0.8724036953,
+              0.0021209432,
+              -0.0222484563
+            ],
+            [
+              -0.8724036953,
+              -0.4887844594,
+              -0.0012428411,
+              -0.0378252518
+            ],
+            [
+              0.0021209432,
+              -0.0012428411,
+              -0.9999969785,
+              0.058558497
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0222484563,
+            -0.0378252518,
+            0.058558497
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013158194,
+            "vertex_p95_m": 0.0023017601,
+            "vertex_p99_m": 0.0027228292,
+            "vertex_max_m": 0.0032583192,
+            "mean_m": 0.0005719254,
+            "p95_m": 0.0010220148,
+            "p99_m": 0.0010289712,
+            "max_m": 0.0010411354
+          },
+          "axis_obj": [
+            0.8627808058,
+            -0.5055766711,
+            0.0012291321
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52161_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.6258, 0.78, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.2167881288,
+              -0.976218678,
+              0.0,
+              -0.0375691459
+            ],
+            [
+              -0.976218678,
+              0.2167881288,
+              0.0,
+              -0.0301414035
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0375691459,
+            -0.0301414035,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013199336,
+            "vertex_p95_m": 0.0023153182,
+            "vertex_p99_m": 0.0028072031,
+            "vertex_max_m": 0.0032575145,
+            "mean_m": 0.0005720141,
+            "p95_m": 0.0010042706,
+            "p99_m": 0.0010080204,
+            "max_m": 0.0010252675
+          },
+          "axis_obj": [
+            -0.6257842564,
+            0.7799961951,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52017_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.6258, 0.78, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.2168230249,
+              0.976210928,
+              0.0,
+              -0.0105290956
+            ],
+            [
+              0.976210928,
+              0.2168230249,
+              0.0,
+              0.0084470938
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0105290956,
+            0.0084470938,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013220916,
+            "vertex_p95_m": 0.0023019239,
+            "vertex_p99_m": 0.0027345345,
+            "vertex_max_m": 0.0032226632,
+            "mean_m": 0.0005719911,
+            "p95_m": 0.0010043405,
+            "p99_m": 0.0010080405,
+            "max_m": 0.0010236377
+          },
+          "axis_obj": [
+            0.6257703153,
+            0.7800073797,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52004_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.1088, 0.9941, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.9763047099,
+              0.2164003544,
+              0.0,
+              -0.0360627845
+            ],
+            [
+              0.2164003544,
+              0.9763047099,
+              0.0,
+              0.0039487835
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0360627845,
+            0.0039487835,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013184839,
+            "vertex_p95_m": 0.0023099384,
+            "vertex_p99_m": 0.0027778195,
+            "vertex_max_m": 0.0032500133,
+            "mean_m": 0.0005718558,
+            "p95_m": 0.0010042134,
+            "p99_m": 0.0010079426,
+            "max_m": 0.0010210558
+          },
+          "axis_obj": [
+            0.108846888,
+            0.9940585269,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52148_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.1088, 0.9941, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.9763244235,
+              -0.2163113961,
+              0.0,
+              -0.0420561409
+            ],
+            [
+              -0.2163113961,
+              0.9763244235,
+              0.0,
+              -0.0046031018
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0420561409,
+            -0.0046031018,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013125738,
+            "vertex_p95_m": 0.0022996986,
+            "vertex_p99_m": 0.0027997324,
+            "vertex_max_m": 0.0032172086,
+            "mean_m": 0.0005718887,
+            "p95_m": 0.0010043091,
+            "p99_m": 0.0010079109,
+            "max_m": 0.0010213033
+          },
+          "axis_obj": [
+            -0.1088016004,
+            0.9940634848,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_51919_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.4422, 0.8969, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.6089476848,
+              -0.7932103865,
+              0.0,
+              -0.0427852002
+            ],
+            [
+              -0.7932103865,
+              0.6089476848,
+              0.0,
+              -0.0210930818
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0427852002,
+            -0.0210930818,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013141478,
+            "vertex_p95_m": 0.0022964083,
+            "vertex_p99_m": 0.0028057226,
+            "vertex_max_m": 0.003214132,
+            "mean_m": 0.0005719287,
+            "p95_m": 0.001004268,
+            "p99_m": 0.0010080652,
+            "max_m": 0.0010211045
+          },
+          "axis_obj": [
+            -0.4421833982,
+            0.8969246582,
+            0.0
+          ],
+          "center_obj_m": [
+            -0.0197641,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52026_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.8766, 0.4812, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.5368171312,
+              0.8436986237,
+              0.0,
+              0.0025306562
+            ],
+            [
+              0.8436986237,
+              -0.5368171312,
+              0.0,
+              -0.0046096506
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0025306562,
+            -0.0046096506,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011713957,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013187814,
+            "vertex_p95_m": 0.0023079507,
+            "vertex_p99_m": 0.0027727251,
+            "vertex_max_m": 0.0032388704,
+            "mean_m": 0.0005719153,
+            "p95_m": 0.0010043365,
+            "p99_m": 0.0010080402,
+            "max_m": 0.0010263827
+          },
+          "axis_obj": [
+            0.8765891658,
+            0.4812394772,
+            0.0
           ],
           "center_obj_m": [
             -0.0197641,
@@ -600,14 +1523,16 @@
       ],
       "extent_m": 0.03000002,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0017711393,
-      "sample_spacing_p95_m": 0.0005140929,
+      "effective_tolerance_m": 0.0012751159,
+      "sample_spacing_p95_m": 0.0001834106,
       "candidate_summary": {
         "axes_tested": 48,
         "centers_tested": 3,
         "candidates_tested": 1584,
         "accepted_count": 4,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -630,8 +1555,11 @@
         ],
         "mesh_vertices": 336,
         "mesh_faces": 668,
+        "mesh_welded_vertices": 336,
+        "mesh_welded_faces": 668,
+        "mesh_probe_vertices": 336,
         "validation_vertices": 336,
-        "surface_samples": 10000,
+        "surface_samples": 80000,
         "visual_faces": 668,
         "visual_edges": 1002
       },
@@ -688,9 +1616,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017711393,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012751159,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -742,17 +1671,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017711393,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012751159,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 9.6e-08,
             "vertex_p95_m": 1.118e-07,
             "vertex_p99_m": 1.414e-07,
             "vertex_max_m": 1.414e-07,
-            "mean_m": 0.0002513332,
-            "p95_m": 0.0005036154,
-            "p99_m": 0.0006276027,
-            "max_m": 0.0008548359
+            "mean_m": 9.32248e-05,
+            "p95_m": 0.0001824878,
+            "p99_m": 0.000225388,
+            "max_m": 0.0003587033
           },
           "axis_obj": [
             0.0,
@@ -806,17 +1736,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017711393,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012751159,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 7.87e-08,
             "vertex_p95_m": 1.414e-07,
             "vertex_p99_m": 1.414e-07,
             "vertex_max_m": 1.414e-07,
-            "mean_m": 0.0002538757,
-            "p95_m": 0.000511267,
-            "p99_m": 0.0006337619,
-            "max_m": 0.0009502848
+            "mean_m": 9.33269e-05,
+            "p95_m": 0.0001829632,
+            "p99_m": 0.0002262373,
+            "max_m": 0.0003339827
           },
           "axis_obj": [
             0.0,
@@ -870,17 +1801,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017711393,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012751159,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 7.87e-08,
             "vertex_p95_m": 1.414e-07,
             "vertex_p99_m": 1.414e-07,
             "vertex_max_m": 1.414e-07,
-            "mean_m": 0.0002531633,
-            "p95_m": 0.0005068574,
-            "p99_m": 0.0006362413,
-            "max_m": 0.0010697207
+            "mean_m": 9.3251e-05,
+            "p95_m": 0.0001825439,
+            "p99_m": 0.0002272887,
+            "max_m": 0.0003868434
           },
           "axis_obj": [
             0.0,
@@ -913,14 +1845,16 @@
       ],
       "extent_m": 0.03000002,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0017943872,
-      "sample_spacing_p95_m": 0.0005295915,
+      "effective_tolerance_m": 0.0012808622,
+      "sample_spacing_p95_m": 0.0001872415,
       "candidate_summary": {
         "axes_tested": 37,
         "centers_tested": 4,
         "candidates_tested": 1628,
         "accepted_count": 4,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -942,10 +1876,13 @@
         ],
         "mesh_vertices": 2600,
         "mesh_faces": 5196,
+        "mesh_welded_vertices": 2600,
+        "mesh_welded_faces": 5196,
+        "mesh_probe_vertices": 2600,
         "validation_vertices": 2600,
-        "surface_samples": 10000,
-        "visual_faces": 800,
-        "visual_edges": 1200
+        "surface_samples": 80000,
+        "visual_faces": 3788,
+        "visual_edges": 5682
       },
       "continuous_symmetries": [
         {
@@ -1000,9 +1937,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017943872,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012808622,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -1054,17 +1992,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017943872,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012808622,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 9.59e-08,
             "vertex_p95_m": 1.281e-07,
             "vertex_p99_m": 1.281e-07,
             "vertex_max_m": 1.281e-07,
-            "mean_m": 0.0002058049,
-            "p95_m": 0.0004902497,
-            "p99_m": 0.0006236376,
-            "max_m": 0.0009063431
+            "mean_m": 9.21202e-05,
+            "p95_m": 0.0001856261,
+            "p99_m": 0.0002297089,
+            "max_m": 0.0003583024
           },
           "axis_obj": [
             0.0,
@@ -1118,17 +2057,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017943872,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012808622,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 7.17e-08,
             "vertex_p95_m": 1.421e-07,
             "vertex_p99_m": 1.421e-07,
             "vertex_max_m": 1.421e-07,
-            "mean_m": 0.0002042228,
-            "p95_m": 0.0004880575,
-            "p99_m": 0.0006268852,
-            "max_m": 0.0009248937
+            "mean_m": 9.24287e-05,
+            "p95_m": 0.0001854193,
+            "p99_m": 0.0002304043,
+            "max_m": 0.0003837419
           },
           "axis_obj": [
             0.0,
@@ -1182,17 +2122,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0017943872,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012808622,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 7.17e-08,
             "vertex_p95_m": 1.421e-07,
             "vertex_p99_m": 1.421e-07,
             "vertex_max_m": 1.421e-07,
-            "mean_m": 0.0002065541,
-            "p95_m": 0.0005004759,
-            "p99_m": 0.0006340097,
-            "max_m": 0.0009053478
+            "mean_m": 9.26725e-05,
+            "p95_m": 0.0001860334,
+            "p99_m": 0.0002312478,
+            "max_m": 0.0003854849
           },
           "axis_obj": [
             0.0,
@@ -1225,14 +2166,16 @@
       ],
       "extent_m": 0.1352036,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0034163143,
-      "sample_spacing_p95_m": 0.0016108762,
+      "effective_tolerance_m": 0.0018539084,
+      "sample_spacing_p95_m": 0.0005692723,
       "candidate_summary": {
         "axes_tested": 38,
         "centers_tested": 4,
         "candidates_tested": 1672,
         "accepted_count": 1,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -1254,10 +2197,13 @@
         ],
         "mesh_vertices": 3224,
         "mesh_faces": 6444,
+        "mesh_welded_vertices": 3224,
+        "mesh_welded_faces": 6444,
+        "mesh_probe_vertices": 3224,
         "validation_vertices": 3224,
-        "surface_samples": 10000,
-        "visual_faces": 800,
-        "visual_edges": 1200
+        "surface_samples": 80000,
+        "visual_faces": 2918,
+        "visual_edges": 4377
       },
       "continuous_symmetries": [],
       "symmetries": [
@@ -1302,9 +2248,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0034163143,
-            "max_allowed_distance_m": 0.0085407858,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0018539084,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -1335,14 +2282,16 @@
       ],
       "extent_m": 0.06,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0016849077,
-      "sample_spacing_p95_m": 0.0004566051,
+      "effective_tolerance_m": 0.0012481344,
+      "sample_spacing_p95_m": 0.000165423,
       "candidate_summary": {
         "axes_tested": 38,
         "centers_tested": 4,
         "candidates_tested": 1672,
         "accepted_count": 1,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -1364,10 +2313,13 @@
         ],
         "mesh_vertices": 10687,
         "mesh_faces": 21370,
+        "mesh_welded_vertices": 10687,
+        "mesh_welded_faces": 21370,
+        "mesh_probe_vertices": 2138,
         "validation_vertices": 5000,
-        "surface_samples": 10000,
-        "visual_faces": 800,
-        "visual_edges": 1200
+        "surface_samples": 80000,
+        "visual_faces": 3982,
+        "visual_edges": 5939
       },
       "continuous_symmetries": [],
       "symmetries": [
@@ -1412,9 +2364,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0016849077,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0012481344,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -1445,14 +2398,16 @@
       ],
       "extent_m": 0.02853392,
       "tolerance_m": 0.001,
-      "effective_tolerance_m": 0.0014789985,
-      "sample_spacing_p95_m": 0.0003193323,
+      "effective_tolerance_m": 0.0011716699,
+      "sample_spacing_p95_m": 0.0001144466,
       "candidate_summary": {
         "axes_tested": 44,
         "centers_tested": 4,
         "candidates_tested": 1936,
-        "accepted_count": 8,
+        "accepted_count": 21,
         "near_miss_count": 12,
+        "validation_mode": "geometric",
+        "skip_geometric_vertex_prefilter": true,
         "orders": [
           2,
           3,
@@ -1476,10 +2431,13 @@
         ],
         "mesh_vertices": 26165,
         "mesh_faces": 52326,
+        "mesh_welded_vertices": 26160,
+        "mesh_welded_faces": 52316,
+        "mesh_probe_vertices": 2013,
         "validation_vertices": 5000,
-        "surface_samples": 10000,
-        "visual_faces": 800,
-        "visual_edges": 1200
+        "surface_samples": 80000,
+        "visual_faces": 3910,
+        "visual_edges": 5865
       },
       "continuous_symmetries": [
         {
@@ -1534,9 +2492,10 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0,
             "vertex_p95_m": 0.0,
             "vertex_p99_m": 0.0,
@@ -1546,6 +2505,136 @@
             "p99_m": 0.0,
             "max_m": 0.0
           }
+        },
+        {
+          "name": "object_x_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X (bounds center)",
+          "source": "object_frame:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0,
+              -0.02769958
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0,
+            -0.02769958,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013582414,
+            "vertex_p95_m": 0.002483801,
+            "vertex_p99_m": 0.0033995584,
+            "vertex_max_m": 0.0040732693,
+            "mean_m": 0.0005718673,
+            "p95_m": 0.0010042775,
+            "p99_m": 0.0010078475,
+            "max_m": 0.0010238547
+          },
+          "axis_obj": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_y_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +Y (bounds center)",
+          "source": "object_frame:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -1.0,
+              0.0,
+              0.0,
+              0.03952821
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.03952821,
+            0.0,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013627451,
+            "vertex_p95_m": 0.0024851338,
+            "vertex_p99_m": 0.0033073579,
+            "vertex_max_m": 0.0040656998,
+            "mean_m": 0.0005719092,
+            "p95_m": 0.0010043327,
+            "p99_m": 0.0010079214,
+            "max_m": 0.0010220506
+          },
+          "axis_obj": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
         },
         {
           "name": "object_z_bounds_center_order2_step1",
@@ -1588,17 +2677,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001144397,
             "vertex_p95_m": 0.0002543024,
             "vertex_p99_m": 0.0004059562,
             "vertex_max_m": 0.0025189589,
-            "mean_m": 0.0001273955,
-            "p95_m": 0.0002783681,
-            "p99_m": 0.0003633237,
-            "max_m": 0.0005792181
+            "mean_m": 5.63915e-05,
+            "p95_m": 0.0001110276,
+            "p99_m": 0.000138192,
+            "max_m": 0.0002226261
           },
           "axis_obj": [
             0.0,
@@ -1652,17 +2742,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001145382,
             "vertex_p95_m": 0.0002495489,
             "vertex_p99_m": 0.0003827923,
             "vertex_max_m": 0.0025424194,
-            "mean_m": 0.000126985,
-            "p95_m": 0.0002798744,
-            "p99_m": 0.000365928,
-            "max_m": 0.0006503752
+            "mean_m": 5.63009e-05,
+            "p95_m": 0.0001104688,
+            "p99_m": 0.0001382235,
+            "max_m": 0.000215988
           },
           "axis_obj": [
             0.0,
@@ -1716,17 +2807,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.000113485,
             "vertex_p95_m": 0.0002483334,
             "vertex_p99_m": 0.0003938087,
             "vertex_max_m": 0.0021643588,
-            "mean_m": 0.000127424,
-            "p95_m": 0.0002813978,
-            "p99_m": 0.0003669364,
-            "max_m": 0.0005902794
+            "mean_m": 5.63559e-05,
+            "p95_m": 0.0001105496,
+            "p99_m": 0.0001385253,
+            "max_m": 0.0002706328
           },
           "axis_obj": [
             0.0,
@@ -1780,17 +2872,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001149938,
             "vertex_p95_m": 0.0002467207,
             "vertex_p99_m": 0.0003785223,
             "vertex_max_m": 0.0025000002,
-            "mean_m": 0.0001284447,
-            "p95_m": 0.0002815593,
-            "p99_m": 0.0003709018,
-            "max_m": 0.000677686
+            "mean_m": 5.63748e-05,
+            "p95_m": 0.0001103599,
+            "p99_m": 0.000136943,
+            "max_m": 0.0002434462
           },
           "axis_obj": [
             0.0,
@@ -1844,17 +2937,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001159544,
             "vertex_p95_m": 0.0002487382,
             "vertex_p99_m": 0.0003811961,
             "vertex_max_m": 0.0025423883,
-            "mean_m": 0.0001287934,
-            "p95_m": 0.0002830726,
-            "p99_m": 0.0003751537,
-            "max_m": 0.0005856196
+            "mean_m": 5.64679e-05,
+            "p95_m": 0.0001109091,
+            "p99_m": 0.0001377315,
+            "max_m": 0.0002328902
           },
           "axis_obj": [
             0.0,
@@ -1908,17 +3002,18 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.0001145009,
             "vertex_p95_m": 0.0002526634,
             "vertex_p99_m": 0.0003808004,
             "vertex_max_m": 0.0025189504,
-            "mean_m": 0.0001276542,
-            "p95_m": 0.0002828016,
-            "p99_m": 0.000363264,
-            "max_m": 0.0005926545
+            "mean_m": 5.62904e-05,
+            "p95_m": 0.0001103694,
+            "p99_m": 0.0001373619,
+            "max_m": 0.0002299974
           },
           "axis_obj": [
             0.0,
@@ -1972,22 +3067,738 @@
           ],
           "validation": {
             "accepted": true,
-            "validation_mode": "surface",
-            "effective_tolerance_m": 0.0014789985,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
             "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
             "vertex_mean_m": 0.000114365,
             "vertex_p95_m": 0.0002486255,
             "vertex_p99_m": 0.0003937336,
             "vertex_max_m": 0.0025189647,
-            "mean_m": 0.0001275617,
-            "p95_m": 0.0002821411,
-            "p99_m": 0.000368553,
-            "max_m": 0.0006431537
+            "mean_m": 5.64176e-05,
+            "p95_m": 0.0001110494,
+            "p99_m": 0.0001382052,
+            "max_m": 0.0002263549
           },
           "axis_obj": [
             0.0,
             0.0,
             1.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_xy_sum_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X +Y diagonal (bounds center)",
+          "source": "object_frame_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.033613895
+            ],
+            [
+              1.0,
+              0.0,
+              0.0,
+              -0.033613895
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.033613895,
+            -0.033613895,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013648428,
+            "vertex_p95_m": 0.0024962508,
+            "vertex_p99_m": 0.0034310187,
+            "vertex_max_m": 0.0040683724,
+            "mean_m": 0.0005719271,
+            "p95_m": 0.0010042924,
+            "p99_m": 0.0010079078,
+            "max_m": 0.0010263826
+          },
+          "axis_obj": [
+            0.7071067812,
+            0.7071067812,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "object_xy_diff_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about +X -Y diagonal (bounds center)",
+          "source": "object_frame_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.0,
+              -1.0,
+              0.0,
+              0.005914315
+            ],
+            [
+              -1.0,
+              0.0,
+              0.0,
+              0.005914315
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.005914315,
+            0.005914315,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013595893,
+            "vertex_p95_m": 0.0024884351,
+            "vertex_p99_m": 0.0034512857,
+            "vertex_max_m": 0.0040700025,
+            "mean_m": 0.0005719897,
+            "p95_m": 0.0010042688,
+            "p99_m": 0.0010079876,
+            "max_m": 0.0010217296
+          },
+          "axis_obj": [
+            0.7071067812,
+            -0.7071067812,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_1_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.9676, 0.2526, 0.0015] (bounds center)",
+          "source": "vertex_pca:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.8724036449,
+              0.4887774672,
+              0.002909961,
+              0.0092061274
+            ],
+            [
+              0.4887774672,
+              -0.8724081674,
+              0.0007596243,
+              -0.035614941
+            ],
+            [
+              0.002909961,
+              0.0007596243,
+              -0.9999954775,
+              0.0584867555
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0092061274,
+            -0.035614941,
+            0.0584867555
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013556198,
+            "vertex_p95_m": 0.002465278,
+            "vertex_p99_m": 0.0033227476,
+            "vertex_max_m": 0.0040612982,
+            "mean_m": 0.0005720287,
+            "p95_m": 0.0010264096,
+            "p99_m": 0.0010346216,
+            "max_m": 0.0010477669
+          },
+          "axis_obj": [
+            0.9675752283,
+            0.2525785349,
+            0.0015037389
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_2_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.2526, 0.9676, -0.0002] (bounds center)",
+          "source": "vertex_pca:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.8724082306,
+              -0.4887779304,
+              0.0001184513,
+              0.0302335345
+            ],
+            [
+              -0.4887779304,
+              0.8724081206,
+              -0.0004537627,
+              0.0079064178
+            ],
+            [
+              0.0001184513,
+              -0.0004537627,
+              -0.99999989,
+              0.0585252512
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0302335345,
+            0.0079064178,
+            0.0585252512
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013585819,
+            "vertex_p95_m": 0.0024879926,
+            "vertex_p99_m": 0.0033974157,
+            "vertex_max_m": 0.0040683991,
+            "mean_m": 0.0005719157,
+            "p95_m": 0.001006214,
+            "p99_m": 0.0010098442,
+            "max_m": 0.0010232676
+          },
+          "axis_obj": [
+            -0.2525784724,
+            0.9675763847,
+            -0.0002344842
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_yz_sum_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.5056, 0.8628, 0.0009] (bounds center)",
+          "source": "vertex_pca_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.488779639,
+              0.8724068093,
+              0.000907513,
+              0.0414804881
+            ],
+            [
+              0.8724068093,
+              0.488778028,
+              0.0015486874,
+              -0.0243679821
+            ],
+            [
+              0.000907513,
+              0.0015486874,
+              -0.999998389,
+              0.0585373457
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0414804881,
+            -0.0243679821,
+            0.0585373457
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013710543,
+            "vertex_p95_m": 0.0025118647,
+            "vertex_p99_m": 0.0033946938,
+            "vertex_max_m": 0.0040543916,
+            "mean_m": 0.0005719393,
+            "p95_m": 0.0010166484,
+            "p99_m": 0.0010219966,
+            "max_m": 0.0010343708
+          },
+          "axis_obj": [
+            0.5055790546,
+            0.8627798178,
+            0.0008974986
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "pca_yz_diff_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.8628, -0.5056, 0.0012] (bounds center)",
+          "source": "vertex_pca_combinations:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.4887750534,
+              -0.8724072724,
+              0.0021208993,
+              -0.0020408262
+            ],
+            [
+              -0.8724072724,
+              -0.4887780748,
+              -0.0012428258,
+              -0.0033405411
+            ],
+            [
+              0.0021208993,
+              -0.0012428258,
+              -0.9999969786,
+              0.058474661
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            -0.0020408262,
+            -0.0033405411,
+            0.058474661
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013652672,
+            "vertex_p95_m": 0.0024744315,
+            "vertex_p99_m": 0.0034484694,
+            "vertex_max_m": 0.0040549815,
+            "mean_m": 0.0005719462,
+            "p95_m": 0.0010221138,
+            "p99_m": 0.0010290162,
+            "max_m": 0.0010455762
+          },
+          "axis_obj": [
+            0.8627789559,
+            -0.5055798281,
+            0.0012291093
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52141_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.1951, 0.9808, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.9239044617,
+              0.3826232425,
+              0.0,
+              0.0433235013
+            ],
+            [
+              0.3826232425,
+              0.9239044617,
+              0.0,
+              -0.0086161132
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0433235013,
+            -0.0086161132,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013654158,
+            "vertex_p95_m": 0.0024891092,
+            "vertex_p99_m": 0.0034166697,
+            "vertex_max_m": 0.0040582207,
+            "mean_m": 0.0005718813,
+            "p95_m": 0.0010043017,
+            "p99_m": 0.0010079259,
+            "max_m": 0.0010215963
+          },
+          "axis_obj": [
+            0.1950583737,
+            0.9807916348,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_51954_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.8766, 0.4812, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.5368171312,
+              0.8436986237,
+              0.0,
+              0.0208394436
+            ],
+            [
+              0.8436986237,
+              -0.5368171312,
+              0.0,
+              -0.0379595427
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0208394436,
+            -0.0379595427,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013631596,
+            "vertex_p95_m": 0.0024872072,
+            "vertex_p99_m": 0.0034765282,
+            "vertex_max_m": 0.0040592535,
+            "mean_m": 0.0005718697,
+            "p95_m": 0.0010043234,
+            "p99_m": 0.0010080472,
+            "max_m": 0.0010224277
+          },
+          "axis_obj": [
+            0.8765891658,
+            0.4812394772,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_51990_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [-0.4809, 0.8768, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              -0.5374607357,
+              -0.8432887748,
+              0.0,
+              0.018707163
+            ],
+            [
+              -0.8432887748,
+              0.5374607357,
+              0.0,
+              0.0102607762
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.018707163,
+            0.0102607762,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013606314,
+            "vertex_p95_m": 0.0024892799,
+            "vertex_p99_m": 0.0034603805,
+            "vertex_max_m": 0.0040578489,
+            "mean_m": 0.0005718492,
+            "p95_m": 0.0010043021,
+            "p99_m": 0.0010079591,
+            "max_m": 0.0010243518
+          },
+          "axis_obj": [
+            -0.4809050137,
+            0.8767727002,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_51981_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.7798, -0.6261, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.2160526815,
+              -0.9763817075,
+              0.0,
+              0.0019713355
+            ],
+            [
+              -0.9763817075,
+              -0.2160526815,
+              0.0,
+              0.0024552363
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0019713355,
+            0.0024552363,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.001362452,
+            "vertex_p95_m": 0.0024984516,
+            "vertex_p99_m": 0.0035172328,
+            "vertex_max_m": 0.0040656077,
+            "mean_m": 0.0005719443,
+            "p95_m": 0.0010042974,
+            "p99_m": 0.0010078553,
+            "max_m": 0.0010264129
+          },
+          "axis_obj": [
+            0.779760438,
+            -0.6260779978,
+            0.0
+          ],
+          "center_obj_m": [
+            0.019764105,
+            -0.01384979,
+            0.02926694
+          ]
+        },
+        {
+          "name": "face_normal_52125_bounds_center_order2_step1",
+          "type": "finite_rotation",
+          "description": "180\u00b0 about [0.7798, 0.6261, 0.0] (bounds center)",
+          "source": "large_face_normal:bounds_center",
+          "angle_deg": 180.0,
+          "order": 2,
+          "step": 1,
+          "matrix_obj": [
+            [
+              0.216047078,
+              0.9763829475,
+              0.0,
+              0.0290168266
+            ],
+            [
+              0.9763829475,
+              -0.216047078,
+              0.0,
+              -0.0361393318
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0,
+              0.05853388
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "translation_obj_m": [
+            0.0290168266,
+            -0.0361393318,
+            0.05853388
+          ],
+          "validation": {
+            "accepted": true,
+            "validation_mode": "geometric_surface_no_vertex_prefilter",
+            "effective_tolerance_m": 0.0011716699,
+            "max_allowed_distance_m": 0.006,
+            "vertex_prefilter_skipped": true,
+            "vertex_mean_m": 0.0013606332,
+            "vertex_p95_m": 0.0024865354,
+            "vertex_p99_m": 0.0033932885,
+            "vertex_max_m": 0.0040722826,
+            "mean_m": 0.0005718957,
+            "p95_m": 0.001004346,
+            "p99_m": 0.0010079602,
+            "max_m": 0.001021669
+          },
+          "axis_obj": [
+            0.7797586415,
+            0.6260802353,
+            0.0
           ],
           "center_obj_m": [
             0.019764105,

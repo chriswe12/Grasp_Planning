@@ -329,6 +329,7 @@ def _candidate_payload(candidate: SavedGraspCandidate) -> dict[str, object]:
         ],
         "score": candidate.score,
         "score_components": candidate.score_components,
+        "metadata": candidate.metadata or {},
     }
 
 
@@ -449,6 +450,7 @@ def _best_candidate_payload(candidates: Iterable[SavedGraspCandidate]) -> dict[s
     if not candidates_tuple:
         return None
     best = candidates_tuple[0]
+    metadata = dict(best.metadata or {})
     return {
         "grasp_id": best.grasp_id,
         "score": best.score,
@@ -456,6 +458,9 @@ def _best_candidate_payload(candidates: Iterable[SavedGraspCandidate]) -> dict[s
             best.contact_patch_lateral_offset_m,
             best.contact_patch_approach_offset_m,
         ],
+        "metadata": metadata,
+        "parent_grasp_id": str(metadata.get("symmetry_pickup_parent_grasp_id", best.grasp_id)),
+        "pickup_symmetry_name": str(metadata.get("symmetry_pickup_name", "identity")),
     }
 
 
@@ -807,8 +812,13 @@ def _orientation_row(
     best_direct: dict[str, object] | None,
     fallback_summary: dict[str, object] | None,
     handover_summary: dict[str, object] | None = None,
+    stage2_metadata: dict[str, object] | None = None,
     error: str = "",
 ) -> dict[str, object]:
+    stage2_metadata = dict(stage2_metadata or {})
+    next_options = stage2_metadata.get("symmetry_next_orientation_options", [])
+    next_option_count = len(next_options) if isinstance(next_options, list) else 0
+    best_next = next_options[0] if isinstance(next_options, list) and next_options else {}
     return {
         "assembly": target.assembly,
         "part_id": target.part_id,
@@ -823,7 +833,14 @@ def _orientation_row(
         "stage1_raw_count": stage1_raw_count,
         "stage1_assembly_feasible_count": stage1_count,
         "stage2_ground_feasible_count": stage2_count,
+        "stage2_pickup_input_count": stage2_metadata.get("ground_input_count", ""),
+        "symmetry_pickup_status": stage2_metadata.get("symmetry_pickup_load_status", "disabled"),
+        "symmetry_pickup_derived_count": stage2_metadata.get("symmetry_pickup_derived_candidate_count", 0),
+        "symmetry_next_orientation_count": next_option_count,
+        "best_next_final_symmetry": "" if not best_next else str(best_next.get("final_symmetry_name", "")),
         "best_direct_grasp_id": "" if best_direct is None else str(best_direct.get("grasp_id", "")),
+        "best_direct_parent_grasp_id": "" if best_direct is None else str(best_direct.get("parent_grasp_id", "")),
+        "best_direct_pickup_symmetry": "" if best_direct is None else str(best_direct.get("pickup_symmetry_name", "")),
         "best_direct_score": "" if best_direct is None else best_direct.get("score", ""),
         "fallback_found": fallback_summary is not None,
         "fallback_transfer_grasp_id": "" if fallback_summary is None else fallback_summary["transfer_grasp_id"],
@@ -854,7 +871,14 @@ def _write_summary_csv(output_path: Path, rows: list[dict[str, object]]) -> None
         "stage1_raw_count",
         "stage1_assembly_feasible_count",
         "stage2_ground_feasible_count",
+        "stage2_pickup_input_count",
+        "symmetry_pickup_status",
+        "symmetry_pickup_derived_count",
+        "symmetry_next_orientation_count",
+        "best_next_final_symmetry",
         "best_direct_grasp_id",
+        "best_direct_parent_grasp_id",
+        "best_direct_pickup_symmetry",
         "best_direct_score",
         "fallback_found",
         "fallback_transfer_grasp_id",
@@ -1511,6 +1535,18 @@ def _part_orientation_frame(
         "error": error,
         "stage1_assembly_feasible_count": len(stage1.bundle.candidates),
         "stage2_ground_feasible_count": 0 if stage2 is None else len(stage2.accepted),
+        "stage2_pickup_input_count": 0
+        if stage2 is None
+        else stage2.accepted_bundle.metadata.get("ground_input_count", len(stage2.source_bundle.candidates)),
+        "stage2_symmetry_pickup_status": "disabled"
+        if stage2 is None
+        else stage2.accepted_bundle.metadata.get("symmetry_pickup_load_status", "disabled"),
+        "stage2_symmetry_pickup_derived_count": 0
+        if stage2 is None
+        else stage2.accepted_bundle.metadata.get("symmetry_pickup_derived_candidate_count", 0),
+        "stage2_symmetry_next_orientation_options": []
+        if stage2 is None
+        else stage2.accepted_bundle.metadata.get("symmetry_next_orientation_options", []),
         "stage2_reason_counts": {} if stage2 is None else _reason_counts(stage2.statuses),
         "fallback": fallback_summary,
         "handover_fallback": handover_summary,
@@ -1642,6 +1678,7 @@ def _candidate_marker_payload(
         "raw_pickup_reason": raw_pickup_reason,
         "raw_pickup_feasible": raw_pickup_status == "accepted",
         "score": None if candidate.score is None else round(float(candidate.score), 6),
+        "metadata": candidate.metadata or {},
         "roll_angle_rad": round(float(candidate.roll_angle_rad), 6),
         "jaw_width": round(float(candidate.jaw_width), 6),
         "center": _marker_point(center, object_pose_world),
@@ -1680,6 +1717,26 @@ def _all_generated_grasp_statuses(stage1, stage2=None) -> list[CandidateStatus]:
                     reason=f"floor: {stage2_entry.reason}",
                 )
             )
+    if stage2 is not None:
+        for entry in sorted(stage2.statuses, key=lambda item: item.grasp.grasp_id):
+            if entry.grasp.grasp_id in stage1_ids:
+                continue
+            if entry.status == "accepted":
+                statuses.append(
+                    CandidateStatus(
+                        grasp=entry.grasp,
+                        status="accepted",
+                        reason=f"symmetry_pickup: {entry.reason}",
+                    )
+                )
+            else:
+                statuses.append(
+                    CandidateStatus(
+                        grasp=entry.grasp,
+                        status="stage2_rejected",
+                        reason=f"symmetry_pickup floor: {entry.reason}",
+                    )
+                )
     return statuses
 
 
@@ -2290,6 +2347,9 @@ def _write_all_generated_grasps_html(
         f"raw_candidates:   {len(stage1.raw_candidates)}",
         f"stage1_feasible:  {len(stage1.bundle.candidates)}",
         f"stage2_feasible:  {0 if stage2 is None else len(stage2.accepted)}",
+        f"pickup_expanded:  {0 if stage2 is None else stage2.accepted_bundle.metadata.get('ground_input_count', len(stage2.source_bundle.candidates))}",
+        f"symmetry_pickup:  {'disabled' if stage2 is None else stage2.accepted_bundle.metadata.get('symmetry_pickup_load_status', 'disabled')}",
+        f"symmetry_variants:{0 if stage2 is None else stage2.accepted_bundle.metadata.get('symmetry_pickup_derived_candidate_count', 0)}",
         f"raw_pickup_ok:    {raw_pickup_counts.get('accepted', 0)}",
         f"floor_clearance:  {planning.floor_clearance_margin_m:.6f} m",
         f"simple_pickup_floor_clearance: {simple_pickup_floor_clearance_margin_m:.6f} m",
@@ -3190,6 +3250,17 @@ def _write_orientation_details(
         if stage2 is None
         else {
             "ground_feasible_count": len(stage2.accepted),
+            "pickup_input_count": stage2.accepted_bundle.metadata.get(
+                "ground_input_count", len(stage2.source_bundle.candidates)
+            ),
+            "symmetry_pickup_status": stage2.accepted_bundle.metadata.get("symmetry_pickup_load_status", "disabled"),
+            "symmetry_pickup_derived_count": stage2.accepted_bundle.metadata.get(
+                "symmetry_pickup_derived_candidate_count", 0
+            ),
+            "symmetry_parent_summaries": stage2.accepted_bundle.metadata.get("symmetry_pickup_parent_summaries", []),
+            "symmetry_next_orientation_options": stage2.accepted_bundle.metadata.get(
+                "symmetry_next_orientation_options", []
+            ),
             "reason_counts": _reason_counts(stage2.statuses),
             "best_direct_grasp": _best_candidate_payload(stage2.accepted),
         },
@@ -3214,6 +3285,14 @@ def _apply_cli_overrides(payload: dict[str, object], args: argparse.Namespace, o
         planning["stage1_cache_enabled"] = False
     if args.skip_stage1_collision_checks:
         planning["skip_stage1_collision_checks"] = True
+    if args.symmetry_pickup_enabled is not None:
+        planning["symmetry_pickup_enabled"] = bool(args.symmetry_pickup_enabled)
+    if args.symmetry_asset_path:
+        planning["symmetry_asset_path"] = str(args.symmetry_asset_path)
+    if args.symmetry_max_transforms is not None:
+        planning["symmetry_max_transforms"] = int(args.symmetry_max_transforms)
+    if args.symmetry_next_orientation_limit is not None:
+        planning["symmetry_next_orientation_limit"] = int(args.symmetry_next_orientation_limit)
     effective["planning"] = planning
     if args.fallback_enabled is not None:
         fallback = dict(effective.get("fallback", {}))
@@ -3455,6 +3534,7 @@ def _benchmark_one_target(
                 best_direct=_best_candidate_payload(stage2.accepted),
                 fallback_summary=fallback_summary,
                 handover_summary=handover_summary,
+                stage2_metadata=stage2.accepted_bundle.metadata,
             )
             row_links = {
                 "stage2_json": _relative_link(output_dir, stage2_json),
@@ -3679,6 +3759,37 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Bypass only stage-1 assembly collision filtering.",
     )
+    symmetry_group = parser.add_mutually_exclusive_group()
+    symmetry_group.add_argument(
+        "--symmetry-pickup",
+        dest="symmetry_pickup_enabled",
+        action="store_true",
+        default=None,
+        help="Enable stage-2 pickup expansion with precomputed object symmetries.",
+    )
+    symmetry_group.add_argument(
+        "--no-symmetry-pickup",
+        dest="symmetry_pickup_enabled",
+        action="store_false",
+        help="Disable stage-2 symmetry pickup expansion even if the config enables it.",
+    )
+    parser.add_argument(
+        "--symmetry-asset-path",
+        default="",
+        help="Override the precomputed symmetries.json path used for stage-2 pickup expansion.",
+    )
+    parser.add_argument(
+        "--symmetry-max-transforms",
+        type=int,
+        default=None,
+        help="Cap finite symmetry transforms per part for stage-2 pickup expansion. Use 0 for all.",
+    )
+    parser.add_argument(
+        "--symmetry-next-orientation-limit",
+        type=int,
+        default=None,
+        help="Cap recorded symmetry-equivalent next-orientation options per benchmark orientation.",
+    )
     fallback_group = parser.add_mutually_exclusive_group()
     fallback_group.add_argument("--fallback", dest="fallback_enabled", action="store_true", default=None)
     fallback_group.add_argument("--no-fallback", dest="fallback_enabled", action="store_false")
@@ -3789,6 +3900,13 @@ def main() -> None:
             "orientation_count": len(rows),
             "orientation_status_counts": dict(Counter(str(row["status"]) for row in rows)),
             "part_status_counts": dict(Counter(str(part.get("status", "unknown")) for part in part_records)),
+            "symmetry_pickup_enabled": bool(planning.symmetry_pickup_enabled),
+            "symmetry_pickup_orientation_counts": dict(
+                Counter(str(row.get("symmetry_pickup_status", "disabled")) for row in rows)
+            ),
+            "symmetry_pickup_derived_candidate_total": int(
+                sum(int(row.get("symmetry_pickup_derived_count", 0) or 0) for row in rows)
+            ),
             "failed_grasp_pages_written": sum(
                 1 for row in rows if isinstance(row.get("links"), dict) and row["links"].get("failed_grasps_html")
             ),
