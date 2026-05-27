@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     quat_to_rotmat_xyzw,
     relative_asset_mesh_path,
     resolve_asset_mesh_path,
+    rotmat_to_quat_xyzw,
     save_grasp_bundle,
     score_grasps,
     serialize_saved_candidate,
@@ -63,6 +65,10 @@ class PlanningConfig:
     skip_stage1_collision_checks: bool = False
     top_grasp_score_weight: float = 0.35
     regrasp_transfer_top_grasp_score_weight: float = 0.85
+    symmetry_pickup_enabled: bool = False
+    symmetry_asset_path: str = ""
+    symmetry_max_transforms: int = 0
+    symmetry_next_orientation_limit: int = 24
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
@@ -498,6 +504,7 @@ def _saved_candidate_to_cache_payload(candidate: SavedGraspCandidate) -> dict[st
         ],
         "score": candidate.score,
         "score_components": candidate.score_components,
+        "metadata": candidate.metadata or {},
     }
 
 
@@ -524,6 +531,7 @@ def _saved_candidate_from_cache_payload(item: dict[str, object]) -> SavedGraspCa
             if item.get("score_components") is None
             else {str(k): float(v) for k, v in dict(item["score_components"]).items()}  # type: ignore[arg-type]
         ),
+        metadata=dict(item.get("metadata", {})) or None,
     )
 
 
@@ -851,6 +859,414 @@ def _score_grasps_for_world_top_approach(
     )
 
 
+def _symmetry_part_key(target_mesh_path: str) -> tuple[str, str] | None:
+    relative_path = Path(relative_asset_mesh_path(target_mesh_path))
+    parts = relative_path.parts
+    if "fabrica" not in parts:
+        return None
+    fabrica_index = parts.index("fabrica")
+    if len(parts) <= fabrica_index + 2:
+        return None
+    return parts[fabrica_index + 1], Path(parts[fabrica_index + 2]).stem
+
+
+def _configured_symmetry_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    if path.parts and path.parts[0] == "assets":
+        return (DEFAULT_ASSET_MESH_DIR.parent / path).resolve()
+    return (DEFAULT_ASSET_MESH_DIR / path).resolve()
+
+
+def _default_symmetry_path(target_mesh_path: str) -> Path | None:
+    key = _symmetry_part_key(target_mesh_path)
+    if key is None:
+        return None
+    assembly, _part_id = key
+    return (DEFAULT_ASSET_MESH_DIR / "obj" / "fabrica" / assembly / "symmetries.json").resolve()
+
+
+def _identity_symmetry_record() -> dict[str, object]:
+    return {
+        "name": "identity",
+        "type": "identity",
+        "description": "Identity",
+        "matrix_obj": np.eye(4, dtype=float).tolist(),
+        "angle_deg": 0.0,
+        "source": "identity",
+    }
+
+
+def _clean_symmetry_record(record: dict[str, object], *, translation_scale: float = 1.0) -> dict[str, object] | None:
+    try:
+        matrix = np.asarray(record.get("matrix_obj"), dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if matrix.shape != (4, 4) or not np.all(np.isfinite(matrix)):
+        return None
+    matrix = matrix.copy()
+    matrix[:3, 3] *= float(translation_scale)
+    name = str(record.get("name") or "symmetry")
+    return {
+        "name": name,
+        "type": str(record.get("type") or "finite_rotation"),
+        "description": str(record.get("description") or name),
+        "source": str(record.get("source") or "unknown"),
+        "angle_deg": float(record.get("angle_deg", 0.0) or 0.0),
+        "matrix_obj": [[float(value) for value in row] for row in matrix.tolist()],
+    }
+
+
+def _is_identity_symmetry(record: dict[str, object]) -> bool:
+    if str(record.get("type", "")) == "identity" or str(record.get("name", "")) == "identity":
+        return True
+    return bool(np.allclose(np.asarray(record["matrix_obj"], dtype=float), np.eye(4), atol=1.0e-9))
+
+
+def _positive_finite_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+    return number
+
+
+def _symmetry_asset_mesh_scale(payload: dict[str, object], part_payload: dict[str, object]) -> float | None:
+    return _positive_finite_float(part_payload.get("mesh_scale", payload.get("mesh_scale")))
+
+
+def _symmetry_matrix_in_source_frame(bundle: SavedGraspBundle, record: dict[str, object]) -> np.ndarray:
+    matrix_obj = np.asarray(record["matrix_obj"], dtype=float)
+    source_frame_pose = _source_frame_pose_from_bundle(bundle)
+    rotation_obj_from_source = source_frame_pose.rotation_world_from_object
+    translation_obj_from_source = source_frame_pose.translation_world
+
+    obj_from_source = np.eye(4, dtype=float)
+    obj_from_source[:3, :3] = rotation_obj_from_source
+    obj_from_source[:3, 3] = translation_obj_from_source
+
+    source_from_obj = np.eye(4, dtype=float)
+    source_from_obj[:3, :3] = rotation_obj_from_source.T
+    source_from_obj[:3, 3] = -(rotation_obj_from_source.T @ translation_obj_from_source)
+
+    return source_from_obj @ matrix_obj @ obj_from_source
+
+
+def _symmetry_records_for_bundle(
+    bundle: SavedGraspBundle,
+    planning: PlanningConfig,
+) -> tuple[tuple[dict[str, object], ...], dict[str, object]]:
+    metadata: dict[str, object] = {
+        "symmetry_pickup_enabled": bool(planning.symmetry_pickup_enabled),
+        "symmetry_pickup_load_status": "disabled",
+    }
+    if not planning.symmetry_pickup_enabled:
+        return (), metadata
+
+    part_key = _symmetry_part_key(bundle.target_mesh_path)
+    if part_key is None:
+        metadata["symmetry_pickup_load_status"] = "unsupported_mesh_path"
+        return (), metadata
+    assembly, part_id = part_key
+    raw_path = str(planning.symmetry_asset_path).strip()
+    symmetry_path = _configured_symmetry_path(raw_path) if raw_path else _default_symmetry_path(bundle.target_mesh_path)
+    metadata.update(
+        {
+            "symmetry_pickup_assembly": assembly,
+            "symmetry_pickup_part_id": part_id,
+            "symmetry_pickup_source_path": None if symmetry_path is None else str(symmetry_path),
+        }
+    )
+    if symmetry_path is None or not symmetry_path.exists():
+        metadata["symmetry_pickup_load_status"] = "missing_file"
+        return (), metadata
+
+    payload = json.loads(symmetry_path.read_text(encoding="utf-8"))
+    part_payload = dict(dict(payload.get("parts", {})).get(part_id, {}) or {})
+    raw_records = part_payload.get("symmetries", [])
+    if not isinstance(raw_records, list):
+        metadata["symmetry_pickup_load_status"] = "missing_part"
+        return (), metadata
+
+    bundle_mesh_scale = _positive_finite_float(bundle.mesh_scale)
+    if bundle_mesh_scale is None:
+        metadata["symmetry_pickup_load_status"] = "invalid_bundle_mesh_scale"
+        metadata["symmetry_pickup_bundle_mesh_scale"] = float(bundle.mesh_scale)
+        return (), metadata
+
+    asset_mesh_scale = _symmetry_asset_mesh_scale(payload, part_payload)
+    if asset_mesh_scale is None:
+        if not math.isclose(bundle_mesh_scale, 1.0, rel_tol=1.0e-12, abs_tol=1.0e-12):
+            metadata.update(
+                {
+                    "symmetry_pickup_load_status": "missing_mesh_scale",
+                    "symmetry_pickup_bundle_mesh_scale": bundle_mesh_scale,
+                }
+            )
+            return (), metadata
+        asset_mesh_scale = 1.0
+    translation_scale = bundle_mesh_scale / asset_mesh_scale
+
+    cleaned = [
+        record
+        for item in raw_records
+        if isinstance(item, dict)
+        for record in [_clean_symmetry_record(item, translation_scale=translation_scale)]
+        if record
+    ]
+    if not cleaned:
+        metadata["symmetry_pickup_load_status"] = "no_valid_records"
+        return (), metadata
+
+    identity_records = [record for record in cleaned if _is_identity_symmetry(record)] or [_identity_symmetry_record()]
+    nonidentity_records = [record for record in cleaned if not _is_identity_symmetry(record)]
+    max_transforms = int(planning.symmetry_max_transforms)
+    if max_transforms > 0:
+        nonidentity_records = nonidentity_records[:max_transforms]
+    records = tuple([identity_records[0], *nonidentity_records])
+    metadata.update(
+        {
+            "symmetry_pickup_load_status": "loaded",
+            "symmetry_pickup_available_transform_count": len(cleaned),
+            "symmetry_pickup_transform_count": len(nonidentity_records),
+            "symmetry_pickup_transform_names": [str(record["name"]) for record in nonidentity_records],
+            "symmetry_pickup_asset_mesh_scale": asset_mesh_scale,
+            "symmetry_pickup_bundle_mesh_scale": bundle_mesh_scale,
+            "symmetry_pickup_translation_scale": translation_scale,
+        }
+    )
+    return records, metadata
+
+
+def _safe_symmetry_id_fragment(name: str) -> str:
+    fragment = "".join(char if char.isalnum() or char in "._-" else "_" for char in name.strip())
+    return fragment[:80] or "symmetry"
+
+
+def _normalize_vector_tuple(vector: object) -> tuple[float, float, float]:
+    array = np.asarray(vector, dtype=float)
+    norm = float(np.linalg.norm(array))
+    if norm <= 1.0e-12:
+        return tuple(float(value) for value in array.tolist())  # type: ignore[return-value]
+    return tuple(float(value) for value in (array / norm).tolist())  # type: ignore[return-value]
+
+
+def _symmetry_pickup_metadata(candidate: SavedGraspCandidate, record: dict[str, object]) -> dict[str, object]:
+    metadata = dict(candidate.metadata or {})
+    metadata.update(
+        {
+            "symmetry_pickup_parent_grasp_id": candidate.grasp_id,
+            "symmetry_pickup_name": str(record["name"]),
+            "symmetry_pickup_description": str(record["description"]),
+            "symmetry_pickup_source": str(record["source"]),
+            "symmetry_pickup_angle_deg": float(record["angle_deg"]),
+            "symmetry_pickup_matrix_obj": record["matrix_obj"],
+            "symmetry_pickup_is_identity": _is_identity_symmetry(record),
+        }
+    )
+    return metadata
+
+
+def _candidate_with_identity_symmetry(
+    candidate: SavedGraspCandidate,
+    record: dict[str, object],
+) -> SavedGraspCandidate:
+    return replace(candidate, metadata=_symmetry_pickup_metadata(candidate, record))
+
+
+def _candidate_transformed_by_symmetry(
+    candidate: SavedGraspCandidate,
+    record: dict[str, object],
+    bundle: SavedGraspBundle,
+) -> SavedGraspCandidate:
+    matrix = _symmetry_matrix_in_source_frame(bundle, record)
+    rotation = matrix[:3, :3]
+    translation = matrix[:3, 3]
+
+    def transform_point(point: tuple[float, float, float]) -> tuple[float, float, float]:
+        transformed = rotation @ np.asarray(point, dtype=float) + translation
+        return tuple(float(value) for value in transformed.tolist())
+
+    def transform_vector(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+        return _normalize_vector_tuple(rotation @ np.asarray(vector, dtype=float))
+
+    grasp_rotation = rotation @ quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+    return SavedGraspCandidate(
+        grasp_id=f"{candidate.grasp_id}__sym_{_safe_symmetry_id_fragment(str(record['name']))}",
+        grasp_position_obj=transform_point(candidate.grasp_position_obj),
+        grasp_orientation_xyzw_obj=rotmat_to_quat_xyzw(grasp_rotation),
+        contact_point_a_obj=transform_point(candidate.contact_point_a_obj),
+        contact_point_b_obj=transform_point(candidate.contact_point_b_obj),
+        contact_normal_a_obj=transform_vector(candidate.contact_normal_a_obj),
+        contact_normal_b_obj=transform_vector(candidate.contact_normal_b_obj),
+        jaw_width=candidate.jaw_width,
+        roll_angle_rad=candidate.roll_angle_rad,
+        contact_patch_lateral_offset_m=candidate.contact_patch_lateral_offset_m,
+        contact_patch_approach_offset_m=candidate.contact_patch_approach_offset_m,
+        score=candidate.score,
+        score_components=None if candidate.score_components is None else dict(candidate.score_components),
+        metadata=_symmetry_pickup_metadata(candidate, record),
+    )
+
+
+def _rounded_grasp_values(values: tuple[float, ...]) -> tuple[float, ...]:
+    return tuple(round(float(value), 7) for value in values)
+
+
+def _grasp_geometry_key(candidate: SavedGraspCandidate) -> tuple[float, ...]:
+    quat = np.asarray(candidate.grasp_orientation_xyzw_obj, dtype=float)
+    if quat[3] < 0.0:
+        quat = -quat
+    return _rounded_grasp_values(
+        tuple(candidate.grasp_position_obj)
+        + tuple(float(value) for value in quat.tolist())
+        + tuple(candidate.contact_point_a_obj)
+        + tuple(candidate.contact_point_b_obj)
+        + tuple(candidate.contact_normal_a_obj)
+        + tuple(candidate.contact_normal_b_obj)
+        + (
+            float(candidate.jaw_width),
+            float(candidate.contact_patch_lateral_offset_m),
+            float(candidate.contact_patch_approach_offset_m),
+        )
+    )
+
+
+def _symmetry_pickup_candidates(
+    bundle: SavedGraspBundle,
+    planning: PlanningConfig,
+) -> tuple[tuple[SavedGraspCandidate, ...], tuple[dict[str, object], ...], dict[str, object]]:
+    records, metadata = _symmetry_records_for_bundle(bundle, planning)
+    if not records:
+        metadata.update(
+            {
+                "symmetry_pickup_source_candidate_count": len(bundle.candidates),
+                "symmetry_pickup_expanded_candidate_count": len(bundle.candidates),
+                "symmetry_pickup_deduplicated_candidate_count": 0,
+            }
+        )
+        return tuple(bundle.candidates), records, metadata
+
+    identity = records[0]
+    transforms = records[1:]
+    expanded: list[SavedGraspCandidate] = []
+    seen: set[tuple[float, ...]] = set()
+    deduplicated = 0
+    for candidate in bundle.candidates:
+        for expanded_candidate in (
+            _candidate_with_identity_symmetry(candidate, identity),
+            *(_candidate_transformed_by_symmetry(candidate, record, bundle) for record in transforms),
+        ):
+            key = _grasp_geometry_key(expanded_candidate)
+            if key in seen:
+                deduplicated += 1
+                continue
+            seen.add(key)
+            expanded.append(expanded_candidate)
+    metadata.update(
+        {
+            "symmetry_pickup_source_candidate_count": len(bundle.candidates),
+            "symmetry_pickup_expanded_candidate_count": len(expanded),
+            "symmetry_pickup_derived_candidate_count": max(0, len(expanded) - len(bundle.candidates)),
+            "symmetry_pickup_deduplicated_candidate_count": deduplicated,
+        }
+    )
+    return tuple(expanded), records, metadata
+
+
+def _symmetry_parent_summaries(candidates: list[SavedGraspCandidate]) -> list[dict[str, object]]:
+    by_parent: dict[str, dict[str, object]] = {}
+    for candidate in candidates:
+        metadata = dict(candidate.metadata or {})
+        parent_id = str(metadata.get("symmetry_pickup_parent_grasp_id", candidate.grasp_id))
+        summary = by_parent.setdefault(
+            parent_id,
+            {
+                "parent_grasp_id": parent_id,
+                "feasible_variant_count": 0,
+                "feasible_symmetry_names": set(),
+            },
+        )
+        summary["feasible_variant_count"] = int(summary["feasible_variant_count"]) + 1
+        summary["feasible_symmetry_names"].add(str(metadata.get("symmetry_pickup_name", "identity")))
+    normalized: list[dict[str, object]] = []
+    for summary in by_parent.values():
+        normalized.append(
+            {
+                "parent_grasp_id": summary["parent_grasp_id"],
+                "feasible_variant_count": summary["feasible_variant_count"],
+                "feasible_symmetry_names": sorted(summary["feasible_symmetry_names"]),
+            }
+        )
+    return sorted(normalized, key=lambda item: (-int(item["feasible_variant_count"]), str(item["parent_grasp_id"])))
+
+
+def _object_pose_after_symmetry(base_pose: ObjectWorldPose, matrix: np.ndarray) -> ObjectWorldPose:
+    rotation = base_pose.rotation_world_from_object @ matrix[:3, :3]
+    translation = base_pose.rotation_world_from_object @ matrix[:3, 3] + base_pose.translation_world
+    return ObjectWorldPose(
+        position_world=tuple(float(value) for value in translation.tolist()),
+        orientation_xyzw_world=rotmat_to_quat_xyzw(rotation),
+    )
+
+
+def _rotation_angle_rad(rotation: np.ndarray) -> float:
+    cosine = 0.5 * (float(np.trace(rotation)) - 1.0)
+    return float(math.acos(min(1.0, max(-1.0, cosine))))
+
+
+def _point_to_world(point_obj: tuple[float, float, float], pose: ObjectWorldPose) -> np.ndarray:
+    return pose.rotation_world_from_object @ np.asarray(point_obj, dtype=float) + pose.translation_world
+
+
+def _symmetry_next_orientation_options(
+    accepted: list[SavedGraspCandidate],
+    *,
+    bundle: SavedGraspBundle,
+    pickup_pose_world: ObjectWorldPose,
+    final_pose_world: ObjectWorldPose,
+    symmetry_records: tuple[dict[str, object], ...],
+    limit: int,
+) -> list[dict[str, object]]:
+    if not accepted or not symmetry_records or limit <= 0:
+        return []
+    options: list[dict[str, object]] = []
+    for grasp in accepted:
+        grasp_rotation_obj = quat_to_rotmat_xyzw(grasp.grasp_orientation_xyzw_obj)
+        pickup_grasp_rotation = pickup_pose_world.rotation_world_from_object @ grasp_rotation_obj
+        pickup_grasp_position = _point_to_world(grasp.grasp_position_obj, pickup_pose_world)
+        pickup_metadata = dict(grasp.metadata or {})
+        for record in symmetry_records:
+            final_pose = _object_pose_after_symmetry(
+                final_pose_world,
+                _symmetry_matrix_in_source_frame(bundle, record),
+            )
+            final_grasp_rotation = final_pose.rotation_world_from_object @ grasp_rotation_obj
+            wrist_rotation_rad = _rotation_angle_rad(final_grasp_rotation @ pickup_grasp_rotation.T)
+            final_grasp_position = _point_to_world(grasp.grasp_position_obj, final_pose)
+            translation_m = float(np.linalg.norm(final_grasp_position - pickup_grasp_position))
+            options.append(
+                {
+                    "pickup_grasp_id": grasp.grasp_id,
+                    "parent_grasp_id": str(pickup_metadata.get("symmetry_pickup_parent_grasp_id", grasp.grasp_id)),
+                    "pickup_symmetry_name": str(pickup_metadata.get("symmetry_pickup_name", "identity")),
+                    "final_symmetry_name": str(record["name"]),
+                    "final_symmetry_description": str(record["description"]),
+                    "rank_score": float(wrist_rotation_rad + translation_m),
+                    "wrist_rotation_deg": float(math.degrees(wrist_rotation_rad)),
+                    "grasp_translation_m": translation_m,
+                    "final_object_pose": {
+                        "position_world": list(final_pose.position_world),
+                        "orientation_xyzw_world": list(final_pose.orientation_xyzw_world),
+                    },
+                }
+            )
+    return sorted(options, key=lambda item: (float(item["rank_score"]), str(item["pickup_grasp_id"])))[:limit]
+
+
 def recheck_stage2_result(
     *,
     bundle: SavedGraspBundle,
@@ -871,8 +1287,14 @@ def recheck_stage2_result(
         )
     else:
         pickup_pose_world = object_pose_world
+    pickup_candidates, symmetry_records, symmetry_metadata = _symmetry_pickup_candidates(bundle, planning)
+    source_bundle = replace(
+        bundle,
+        candidates=tuple(pickup_candidates),
+        metadata={**dict(bundle.metadata), **symmetry_metadata},
+    )
     statuses = evaluate_saved_grasps_against_pickup_pose(
-        bundle.candidates,
+        pickup_candidates,
         object_pose_world=pickup_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
         floor_clearance_margin_m=planning.floor_clearance_margin_m,
@@ -894,7 +1316,16 @@ def recheck_stage2_result(
         )
         for entry in statuses
     ]
-    metadata = dict(bundle.metadata)
+    final_pose_world = _source_frame_pose_from_bundle(bundle)
+    next_orientation_options = _symmetry_next_orientation_options(
+        accepted,
+        bundle=bundle,
+        pickup_pose_world=pickup_pose_world,
+        final_pose_world=final_pose_world,
+        symmetry_records=symmetry_records,
+        limit=int(planning.symmetry_next_orientation_limit),
+    )
+    metadata = dict(source_bundle.metadata)
     metadata.update(
         {
             "pickup_support_face": None if pickup_spec is None else pickup_spec.support_face,
@@ -904,8 +1335,16 @@ def recheck_stage2_result(
                 "position_world": list(pickup_pose_world.position_world),
                 "orientation_xyzw_world": list(pickup_pose_world.orientation_xyzw_world),
             },
-            "ground_input_count": len(bundle.candidates),
+            "nominal_assembly_world_pose": {
+                "position_world": list(final_pose_world.position_world),
+                "orientation_xyzw_world": list(final_pose_world.orientation_xyzw_world),
+            },
+            "ground_original_input_count": len(bundle.candidates),
+            "ground_input_count": len(pickup_candidates),
             "ground_feasible_count": len(accepted),
+            "symmetry_pickup_feasible_count": len(accepted),
+            "symmetry_pickup_parent_summaries": _symmetry_parent_summaries(accepted),
+            "symmetry_next_orientation_options": next_orientation_options,
             "top_grasp_score_weight": planning.top_grasp_score_weight,
         }
     )
@@ -918,7 +1357,7 @@ def recheck_stage2_result(
         metadata=metadata,
     )
     return GroundRecheckResult(
-        source_bundle=bundle,
+        source_bundle=source_bundle,
         accepted_bundle=accepted_bundle,
         mesh_local=mesh_local,
         pickup_pose_world=pickup_pose_world,
@@ -947,8 +1386,11 @@ def write_stage2_artifacts(
         display_object_pose_world=result.pickup_pose_world,
         metadata_lines=[
             f"target_mesh:      {relative_asset_mesh_path(result.source_bundle.target_mesh_path)}",
-            f"input_grasps:     {len(result.source_bundle.candidates)}",
+            f"input_grasps:     {result.accepted_bundle.metadata.get('ground_original_input_count', len(result.source_bundle.candidates))}",
+            f"pickup_expanded:  {len(result.source_bundle.candidates)}",
             f"ground_feasible:  {len(result.accepted)}",
+            f"symmetry_pickup:  {result.accepted_bundle.metadata.get('symmetry_pickup_load_status', 'disabled')}",
+            f"symmetry_variants:{result.accepted_bundle.metadata.get('symmetry_pickup_derived_candidate_count', 0)}",
             f"support_face:     {result.pickup_spec.support_face if result.pickup_spec is not None else 'explicit_pose'}",
             f"pickup_yaw_deg:   {float(result.pickup_spec.yaw_deg):.1f}"
             if result.pickup_spec is not None

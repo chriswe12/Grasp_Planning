@@ -402,6 +402,7 @@ def _candidate_payload(candidate: SavedGraspCandidate) -> dict[str, object]:
         ],
         "score": candidate.score,
         "score_components": candidate.score_components,
+        "metadata": candidate.metadata or {},
     }
 
 
@@ -427,6 +428,7 @@ def _candidate_from_payload(payload: dict[str, object]) -> SavedGraspCandidate:
         score_components=None
         if score_components is None
         else {str(key): float(value) for key, value in dict(score_components).items()},
+        metadata=dict(payload.get("metadata", {})) or None,
     )
 
 

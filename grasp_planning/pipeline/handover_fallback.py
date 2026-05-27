@@ -77,6 +77,7 @@ def _candidate_payload(candidate: SavedGraspCandidate) -> dict[str, object]:
         ],
         "score": candidate.score,
         "score_components": candidate.score_components,
+        "metadata": candidate.metadata or {},
     }
 
 
