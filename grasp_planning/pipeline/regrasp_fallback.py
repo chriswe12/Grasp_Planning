@@ -609,43 +609,6 @@ def plan_mujoco_regrasp_fallback(
             if support.stability_margin_m < float(stability_margin_m):
                 continue
             stable_orientations += 1
-            filter_pose = _pose_for_support_facet(
-                mesh_local=stage1.target_mesh_local,
-                normal_obj=support.normal_obj,
-                xy_world=staging_xy,
-                yaw_deg=float(yaw_deg),
-            )
-            final_statuses = _pickup_statuses(
-                "stage1_final",
-                stage1.bundle.candidates,
-                object_pose_world=filter_pose,
-            )
-            final_candidates = _score_grasps_for_world_top_approach(
-                accepted_grasps(final_statuses),
-                mesh_local=stage1.target_mesh_local,
-                object_pose_world=filter_pose,
-                top_grasp_score_weight=planning.top_grasp_score_weight,
-            )
-            if not final_candidates:
-                continue
-
-            transfer_staging_statuses = _pickup_statuses(
-                "raw_transfer",
-                raw_candidates,
-                object_pose_world=filter_pose,
-            )
-            staging_by_key = _accepted_by_grasp_and_contact_offset(transfer_staging_statuses)
-            common_keys = sorted(set(initial_by_key).intersection(staging_by_key))
-            if not common_keys:
-                continue
-            transfer_candidates = _score_grasps_for_world_top_approach(
-                [initial_by_key[key] for key in common_keys],
-                mesh_local=stage1.target_mesh_local,
-                object_pose_world=initial_pose,
-                top_grasp_score_weight=planning.regrasp_transfer_top_grasp_score_weight,
-            )
-            if not transfer_candidates:
-                continue
             for staging_xy_candidate in staging_xy_candidates:
                 checked_placements += 1
                 staging_pose = _pose_for_support_facet(
@@ -654,6 +617,42 @@ def plan_mujoco_regrasp_fallback(
                     xy_world=staging_xy_candidate,
                     yaw_deg=float(yaw_deg),
                 )
+                final_statuses = _pickup_statuses(
+                    "stage1_final",
+                    stage1.bundle.candidates,
+                    object_pose_world=staging_pose,
+                )
+                final_candidates = _score_grasps_for_world_top_approach(
+                    accepted_grasps(final_statuses),
+                    mesh_local=stage1.target_mesh_local,
+                    object_pose_world=staging_pose,
+                    top_grasp_score_weight=planning.top_grasp_score_weight,
+                    reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+                    reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
+                )
+                if not final_candidates:
+                    continue
+
+                transfer_staging_statuses = _pickup_statuses(
+                    "raw_transfer",
+                    raw_candidates,
+                    object_pose_world=staging_pose,
+                )
+                staging_by_key = _accepted_by_grasp_and_contact_offset(transfer_staging_statuses)
+                common_keys = sorted(set(initial_by_key).intersection(staging_by_key))
+                if not common_keys:
+                    continue
+                transfer_candidates = _score_grasps_for_world_top_approach(
+                    [initial_by_key[key] for key in common_keys],
+                    mesh_local=stage1.target_mesh_local,
+                    object_pose_world=initial_pose,
+                    top_grasp_score_weight=planning.regrasp_transfer_top_grasp_score_weight,
+                    reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+                    reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
+                )
+                if not transfer_candidates:
+                    continue
+
                 placement_score = _placement_option_score(
                     initial_xy_world=(float(initial_pose.position_world[0]), float(initial_pose.position_world[1])),
                     staging_xy_world=staging_xy_candidate,
@@ -723,6 +722,8 @@ def plan_mujoco_regrasp_fallback(
             "transfer_feasible_count_for_staging_pose": len(selected.transfer_grasp_candidates),
             "transfer_top_grasp_score_weight": planning.regrasp_transfer_top_grasp_score_weight,
             "final_top_grasp_score_weight": planning.top_grasp_score_weight,
+            "reachability_proxy_score_weight": planning.reachability_proxy_score_weight,
+            "reachability_proxy_hand_offset_m": planning.reachability_proxy_hand_offset_m,
         },
         transfer_grasp_candidates=selected.transfer_grasp_candidates,
         final_grasp_candidates=selected.final_grasp_candidates,

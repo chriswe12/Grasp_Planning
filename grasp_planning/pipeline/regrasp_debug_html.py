@@ -76,6 +76,8 @@ def _transfer_statuses(
         mesh_local=mesh_local,
         object_pose_world=object_pose_world,
         top_grasp_score_weight=top_grasp_score_weight,
+        reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+        reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
     )
     return _rescore_statuses(statuses, scored)
 
@@ -100,6 +102,8 @@ def _final_statuses(
         mesh_local=mesh_local,
         object_pose_world=object_pose_world,
         top_grasp_score_weight=planning.top_grasp_score_weight,
+        reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+        reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
     )
     return _rescore_statuses(statuses, scored)
 

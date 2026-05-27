@@ -15,6 +15,7 @@ from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMesh
 from grasp_planning.grasping.fabrica_grasp_debug import (
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    GRASP_SCORING_ALGORITHM_VERSION,
     CandidateStatus,
     PickupPlacementSpec,
     SavedGraspBundle,
@@ -38,6 +39,17 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import SurfaceSample
 from grasp_planning.grasping.mesh_io import DEFAULT_ASSET_MESH_DIR
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+
+DEFAULT_REACHABILITY_PROXY_SCORE_WEIGHT = 0.0
+DEFAULT_REACHABILITY_PROXY_HAND_OFFSET_M = 0.10
+DEFAULT_REACHABILITY_PROXY_COMFORT_RADIUS_M = 0.50
+DEFAULT_REACHABILITY_PROXY_COMFORT_BAND_M = 0.18
+DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_ZERO_MIN_M = 0.20
+DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_FULL_MIN_M = 0.35
+DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_FULL_MAX_M = 0.65
+DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_ZERO_MAX_M = 0.85
+DEFAULT_REACHABILITY_PROXY_OBJECT_CLEARANCE_M = 0.04
+DEFAULT_REACHABILITY_PROXY_FLOOR_CLEARANCE_M = 0.05
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,8 @@ class PlanningConfig:
     skip_stage1_collision_checks: bool = False
     top_grasp_score_weight: float = 0.35
     regrasp_transfer_top_grasp_score_weight: float = 0.85
+    reachability_proxy_score_weight: float = DEFAULT_REACHABILITY_PROXY_SCORE_WEIGHT
+    reachability_proxy_hand_offset_m: float = DEFAULT_REACHABILITY_PROXY_HAND_OFFSET_M
     symmetry_pickup_enabled: bool = False
     symmetry_asset_path: str = ""
     symmetry_max_transforms: int = 0
@@ -428,6 +442,7 @@ def _stage1_cache_key_payload(
     payload = {
         "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
         "algorithm": "fabrica_stage1_antipodal_v1",
+        "grasp_scoring_algorithm": GRASP_SCORING_ALGORITHM_VERSION,
         "geometry": {
             "target_mesh": _path_cache_record(geometry.target_mesh_path),
             "mesh_scale": float(geometry.mesh_scale),
@@ -742,6 +757,7 @@ def generate_stage1_result(
             "stage1_cache_hit": False,
             "stage1_cache_path": None if cache_path is None else str(cache_path),
             "stage1_cache_key": cache_key or None,
+            "grasp_scoring_algorithm": GRASP_SCORING_ALGORITHM_VERSION,
             "num_surface_samples": planning.num_surface_samples,
             "surface_sample_count": len(surface_samples),
             "raw_candidate_count": len(serialized_raw),
@@ -823,10 +839,19 @@ def _score_grasps_for_world_top_approach(
     mesh_local,
     object_pose_world: ObjectWorldPose,
     top_grasp_score_weight: float,
+    reachability_proxy_score_weight: float = DEFAULT_REACHABILITY_PROXY_SCORE_WEIGHT,
+    reachability_proxy_hand_offset_m: float = DEFAULT_REACHABILITY_PROXY_HAND_OFFSET_M,
 ) -> list[SavedGraspCandidate]:
     object_scored = score_grasps(grasps, mesh_local=mesh_local)
-    weight = min(1.0, max(0.0, float(top_grasp_score_weight)))
-    if weight <= 0.0:
+    top_weight = min(1.0, max(0.0, float(top_grasp_score_weight)))
+    reachability_weight = min(1.0, max(0.0, float(reachability_proxy_score_weight)))
+    world_weight = top_weight + reachability_weight
+    if world_weight > 1.0:
+        top_weight /= world_weight
+        reachability_weight /= world_weight
+        world_weight = 1.0
+    object_weight = 1.0 - world_weight
+    if top_weight <= 0.0 and reachability_weight <= 0.0:
         return object_scored
 
     world_scored: list[SavedGraspCandidate] = []
@@ -834,13 +859,27 @@ def _score_grasps_for_world_top_approach(
         grasp_rot_obj = quat_to_rotmat_xyzw(grasp.grasp_orientation_xyzw_obj)
         approach_axis_world = object_pose_world.rotation_world_from_object @ grasp_rot_obj[:, 2]
         top_down_score = min(1.0, max(0.0, float(-approach_axis_world[2])))
+        reachability = _runtime_reachability_proxy_components(
+            grasp,
+            mesh_local=mesh_local,
+            object_pose_world=object_pose_world,
+            approach_axis_world=approach_axis_world,
+            hand_offset_m=reachability_proxy_hand_offset_m,
+        )
         object_score = 0.0 if grasp.score is None else float(grasp.score)
-        combined_score = (1.0 - weight) * object_score + weight * top_down_score
+        combined_score = (
+            object_weight * object_score
+            + top_weight * top_down_score
+            + reachability_weight * reachability["reachability_proxy"]
+        )
         score_components = dict(grasp.score_components or {})
         score_components["object_score"] = object_score
         score_components["top_down_approach"] = top_down_score
         score_components["world_approach_z"] = float(approach_axis_world[2])
-        score_components["top_grasp_score_weight"] = weight
+        score_components["top_grasp_score_weight"] = top_weight
+        score_components["reachability_proxy_score_weight"] = reachability_weight
+        score_components["world_object_score_weight"] = object_weight
+        score_components.update(reachability)
         score_components["score"] = float(combined_score)
         world_scored.append(
             replace(
@@ -857,6 +896,140 @@ def _score_grasps_for_world_top_approach(
         ),
         reverse=True,
     )
+
+
+def _runtime_reachability_proxy_components(
+    grasp: SavedGraspCandidate,
+    *,
+    mesh_local,
+    object_pose_world: ObjectWorldPose,
+    approach_axis_world: np.ndarray,
+    hand_offset_m: float,
+) -> dict[str, float]:
+    object_center_world = _mesh_aabb_center_world(mesh_local, object_pose_world)
+    grasp_position_world = object_pose_world.transform_points_to_world(
+        np.asarray([grasp.grasp_position_obj], dtype=float)
+    )[0]
+    backoff_axis_world = -_normalize_or_zero(np.asarray(approach_axis_world, dtype=float))
+    hand_position_world = grasp_position_world + backoff_axis_world * max(0.0, float(hand_offset_m))
+
+    base_xy = np.zeros(2, dtype=float)
+    object_xy = object_center_world[:2]
+    hand_xy = hand_position_world[:2]
+    object_from_base_xy = object_xy - base_xy
+    object_radius_m = float(np.linalg.norm(object_from_base_xy))
+    hand_radius_m = float(np.linalg.norm(hand_xy - base_xy))
+    object_direction_xy = _normalize_or_zero(object_from_base_xy)
+    backoff_xy = _normalize_or_zero(backoff_axis_world[:2])
+    hand_side = 0.0 if np.linalg.norm(object_direction_xy) < 1.0e-9 else float(np.dot(backoff_xy, object_direction_xy))
+    hand_side = float(np.clip(hand_side, -1.0, 1.0))
+    target_side = float(
+        np.clip(
+            (DEFAULT_REACHABILITY_PROXY_COMFORT_RADIUS_M - object_radius_m)
+            / max(DEFAULT_REACHABILITY_PROXY_COMFORT_BAND_M, 1.0e-9),
+            -1.0,
+            1.0,
+        )
+    )
+    if target_side >= 0.0:
+        raw_side_score = 0.5 * (1.0 + hand_side)
+    else:
+        raw_side_score = 0.5 * (1.0 - hand_side)
+    side_strength = abs(target_side)
+    side_score = (1.0 - side_strength) + side_strength * raw_side_score
+    hand_radial_score = _trapezoid_score(
+        hand_radius_m,
+        zero_below=DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_ZERO_MIN_M,
+        full_from=DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_FULL_MIN_M,
+        full_to=DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_FULL_MAX_M,
+        zero_above=DEFAULT_REACHABILITY_PROXY_HAND_RADIUS_ZERO_MAX_M,
+    )
+    pregrasp_clearance_score, pregrasp_clearance_m, pregrasp_floor_margin_m = _pregrasp_clearance_score(
+        hand_position_world,
+        mesh_local=mesh_local,
+        object_pose_world=object_pose_world,
+    )
+    reachability_proxy = 0.65 * hand_radial_score + 0.25 * _clamp01(side_score) + 0.10 * pregrasp_clearance_score
+    return {
+        "reachability_proxy": _clamp01(reachability_proxy),
+        "reachability_hand_radial": hand_radial_score,
+        "reachability_side": _clamp01(side_score),
+        "reachability_pregrasp_clearance": pregrasp_clearance_score,
+        "reachability_hand_radius_m": hand_radius_m,
+        "reachability_object_radius_m": object_radius_m,
+        "reachability_hand_side": hand_side,
+        "reachability_target_side": target_side,
+        "reachability_hand_offset_m": max(0.0, float(hand_offset_m)),
+        "reachability_pregrasp_clearance_m": pregrasp_clearance_m,
+        "reachability_pregrasp_floor_margin_m": pregrasp_floor_margin_m,
+        "reachability_pregrasp_x_world": float(hand_position_world[0]),
+        "reachability_pregrasp_y_world": float(hand_position_world[1]),
+        "reachability_pregrasp_z_world": float(hand_position_world[2]),
+    }
+
+
+def _mesh_aabb_center_world(mesh_local, object_pose_world: ObjectWorldPose) -> np.ndarray:
+    vertices_obj = getattr(mesh_local, "vertices_obj", None)
+    if vertices_obj is None:
+        return object_pose_world.translation_world
+    vertices = np.asarray(vertices_obj, dtype=float)
+    if vertices.ndim != 2 or vertices.shape[0] == 0 or vertices.shape[1] != 3:
+        return object_pose_world.translation_world
+    center_obj = 0.5 * (vertices.min(axis=0) + vertices.max(axis=0))
+    return object_pose_world.transform_points_to_world(np.asarray([center_obj], dtype=float))[0]
+
+
+def _pregrasp_clearance_score(
+    pregrasp_position_world: np.ndarray,
+    *,
+    mesh_local,
+    object_pose_world: ObjectWorldPose,
+) -> tuple[float, float, float]:
+    floor_margin_m = float(pregrasp_position_world[2])
+    floor_score = _clamp01(floor_margin_m / max(DEFAULT_REACHABILITY_PROXY_FLOOR_CLEARANCE_M, 1.0e-9))
+    vertices_obj = getattr(mesh_local, "vertices_obj", None)
+    if vertices_obj is None:
+        return floor_score, 1.0e9, floor_margin_m
+    vertices = np.asarray(vertices_obj, dtype=float)
+    if vertices.ndim != 2 or vertices.shape[0] == 0 or vertices.shape[1] != 3:
+        return floor_score, 1.0e9, floor_margin_m
+    vertices_world = object_pose_world.transform_points_to_world(vertices)
+    bounds_min = vertices_world.min(axis=0)
+    bounds_max = vertices_world.max(axis=0)
+    outside = np.maximum(np.maximum(bounds_min - pregrasp_position_world, pregrasp_position_world - bounds_max), 0.0)
+    distance_m = float(np.linalg.norm(outside))
+    object_score = _clamp01(distance_m / max(DEFAULT_REACHABILITY_PROXY_OBJECT_CLEARANCE_M, 1.0e-9))
+    return floor_score * object_score, distance_m, floor_margin_m
+
+
+def _normalize_or_zero(vec: np.ndarray) -> np.ndarray:
+    array = np.asarray(vec, dtype=float)
+    norm = float(np.linalg.norm(array))
+    if norm < 1.0e-9:
+        return np.zeros_like(array)
+    return array / norm
+
+
+def _clamp01(value: float) -> float:
+    return min(1.0, max(0.0, float(value)))
+
+
+def _trapezoid_score(
+    value: float,
+    *,
+    zero_below: float,
+    full_from: float,
+    full_to: float,
+    zero_above: float,
+) -> float:
+    value = float(value)
+    if value <= zero_below or value >= zero_above:
+        return 0.0
+    if full_from <= value <= full_to:
+        return 1.0
+    if value < full_from:
+        return _clamp01((value - zero_below) / max(full_from - zero_below, 1.0e-9))
+    return _clamp01((zero_above - value) / max(zero_above - full_to, 1.0e-9))
 
 
 def _symmetry_part_key(target_mesh_path: str) -> tuple[str, str] | None:
@@ -1306,6 +1479,8 @@ def recheck_stage2_result(
         mesh_local=mesh_local,
         object_pose_world=pickup_pose_world,
         top_grasp_score_weight=planning.top_grasp_score_weight,
+        reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+        reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
     )
     rescored_by_id = {grasp.grasp_id: grasp for grasp in accepted}
     rescored_statuses = [
@@ -1346,6 +1521,8 @@ def recheck_stage2_result(
             "symmetry_pickup_parent_summaries": _symmetry_parent_summaries(accepted),
             "symmetry_next_orientation_options": next_orientation_options,
             "top_grasp_score_weight": planning.top_grasp_score_weight,
+            "reachability_proxy_score_weight": planning.reachability_proxy_score_weight,
+            "reachability_proxy_hand_offset_m": planning.reachability_proxy_hand_offset_m,
         }
     )
     accepted_bundle = SavedGraspBundle(
@@ -1399,6 +1576,8 @@ def write_stage2_artifacts(
             f"contact_offsets_z:{tuple(planning.contact_approach_offsets_m)}",
             f"floor_clearance: {planning.floor_clearance_margin_m:.6f} m",
             f"top_score_weight: {planning.top_grasp_score_weight:.3f}",
+            f"reach_score_wt:   {planning.reachability_proxy_score_weight:.3f}",
+            f"reach_hand_off:   {planning.reachability_proxy_hand_offset_m:.3f} m",
             f"pickup_pos_w:     {tuple(round(v, 6) for v in result.pickup_pose_world.position_world)}",
         ],
     )

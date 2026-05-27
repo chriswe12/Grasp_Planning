@@ -67,12 +67,14 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - `real` uses the same ROS2 intake path, writes the same stage artifacts, and can optionally execute on hardware when `real_execution.enabled: true`.
 - The generation benchmark is planning-only: `direct_success` and `fallback_success` do not imply MuJoCo, Isaac, MoveIt, or hardware execution success.
 - Planning knobs: `roll_angle_step_deg` expands a full 360 degree roll sweep; `floor_clearance_margin_m` and `top_grasp_score_weight` are stage-2 world-pose filters/scorers; `--skip-stage1-collision-checks` bypasses only stage-1 assembly collision filtering.
+- Object-local `contact_support` is pad-footprint based. If `score_grasps()` behavior changes, bump `GRASP_SCORING_ALGORITHM_VERSION` so stage-1 caches cannot reuse stale scores.
 - The MuJoCo path consumes the stage-2 bundle as the source of truth.
 - The Isaac path consumes the stage-2 bundle as the source of truth.
 - The real-robot path also consumes the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
 - The MuJoCo object mesh must be rebuilt in the saved bundle-local frame before execution.
 - MuJoCo can optionally use MoveIt for planning only via `mujoco_execution.controller: "moveit"`; MuJoCo still executes the planned joint waypoints and owns physics/viewer/contact evaluation.
 - MuJoCo regrasp fallback is geometry-filtered first, then MoveIt-ranked at execution time: do not choose staging poses only by static placement score when MoveIt trajectories are available.
+- Regrasp reachability scoring depends on world XY; final candidates must be scored per actual staging offset pose, not once at the base staging XY.
 - Regrasp fallback artifacts are split: `*_regrasp_plan.json/html` explain candidate resting poses and grasps; the MuJoCo attempt artifact records ranked `planned_candidates`, execution `attempts`, and trajectory diagnostics.
 - Do not add MoveIt planning to Isaac execution without an explicit request. The supported Isaac controllers are currently `admittance` and `planner`.
 - Isaac execution generates a collision-enabled bundle-local USD from the stage-2 bundle by default; only use a provided USD if it is already authored in the saved bundle-local frame.
