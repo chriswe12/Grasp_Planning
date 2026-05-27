@@ -35,6 +35,18 @@ python scripts/run_grasp_generation_benchmark.py --assembly plumbers_block --cle
 
 The default config is `configs/grasp_generation_benchmark.yaml`; outputs go to `artifacts/grasp_generation_benchmark/` with `results.json`, `summary.csv`, `summary.md`, `index.html`, per-part stage artifacts, stable-orientation metadata, and optional generation-only fallback plans. The benchmark requires the same collision backend as normal stage-1 filtering.
 
+## Grasp Execution Benchmark
+
+After running the generation benchmark, execute selected stage-2 feasible grasps in MuJoCo and/or Isaac with per-attempt artifacts and videos:
+
+```bash
+python scripts/run_grasp_execution_benchmark.py --assembly beam --part 0 --limit-orientations 1 --max-grasps-per-orientation 2
+python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 1
+python scripts/run_grasp_execution_benchmark.py --backend mujoco --record-video all --limit-attempts 10
+```
+
+The default config is `configs/grasp_execution_benchmark.yaml`; outputs go to `artifacts/grasp_execution_benchmark/` with resumable `attempts.jsonl`, `results.json`, `summary.csv`, `index.html`, per-attempt `attempt.json`, logs, and `attempt.mp4` when video recording is enabled. The benchmark consumes the generation benchmark's stage-2 bundles and runs direct stage-2 feasible grasps; orientations with no stage-2 feasible grasp are skipped rather than converted into regrasp attempts.
+
 ## ROS2 Workspace
 
 The repo now contains a dedicated ROS2 workspace for hardware-facing integration:

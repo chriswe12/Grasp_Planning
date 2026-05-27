@@ -149,6 +149,10 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         regrasp_transfer_top_grasp_score_weight=float(raw.get("regrasp_transfer_top_grasp_score_weight", 0.85)),
         reachability_proxy_score_weight=float(raw.get("reachability_proxy_score_weight", 0.0)),
         reachability_proxy_hand_offset_m=float(raw.get("reachability_proxy_hand_offset_m", 0.10)),
+        symmetry_pickup_enabled=bool(raw.get("symmetry_pickup_enabled", False)),
+        symmetry_asset_path=str(raw.get("symmetry_asset_path", "")),
+        symmetry_max_transforms=int(raw.get("symmetry_max_transforms", 0)),
+        symmetry_next_orientation_limit=int(raw.get("symmetry_next_orientation_limit", 24)),
         contact_lateral_offsets_m=_tuple_floats(raw.get("contact_lateral_offsets_m", []))
         or DEFAULT_CONTACT_LATERAL_OFFSETS_M,
         contact_approach_offsets_m=_tuple_floats(raw.get("contact_approach_offsets_m", []))

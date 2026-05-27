@@ -21,6 +21,7 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
 )
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate, saved_grasp_to_world_grasp
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+from grasp_planning.video import OpenCvVideoWriter
 
 from .scene_builder import MujocoObjectSceneConfig, write_temporary_scene_xml
 
@@ -103,6 +104,8 @@ class MujocoAttemptResult:
     orientation_error_rad: float | None = None
     generated_scene_xml: str | None = None
     trajectory_diagnostics: tuple[dict[str, object], ...] = ()
+    video_path: str | None = None
+    video_frame_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -125,9 +128,68 @@ class MujocoRegraspAttemptResult:
     target_lift_height_m: float
     generated_scene_xml: str | None = None
     trajectory_diagnostics: tuple[dict[str, object], ...] = ()
+    video_path: str | None = None
+    video_frame_count: int = 0
 
 
 MoveItJointTrajectories = Mapping[str, tuple[tuple[float, ...], ...]]
+
+
+@dataclass(frozen=True)
+class MujocoVideoConfig:
+    """Offscreen MuJoCo RGB video recording settings."""
+
+    output_path: str
+    fps: float = 30.0
+    width: int = 960
+    height: int = 540
+    camera_azimuth: float = 135.0
+    camera_elevation: float = -25.0
+    camera_distance: float = 1.45
+    camera_lookat: tuple[float, float, float] = (0.35, 0.0, 0.28)
+
+
+class _MujocoVideoRecorder:
+    def __init__(self, mujoco, model, cfg: MujocoVideoConfig) -> None:
+        self._mujoco = mujoco
+        if hasattr(model, "vis") and hasattr(model.vis, "global_"):
+            model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), int(cfg.width))
+            model.vis.global_.offheight = max(int(model.vis.global_.offheight), int(cfg.height))
+        self._renderer = mujoco.Renderer(model, height=int(cfg.height), width=int(cfg.width))
+        self._camera = mujoco.MjvCamera()
+        self._camera.azimuth = float(cfg.camera_azimuth)
+        self._camera.elevation = float(cfg.camera_elevation)
+        self._camera.distance = float(cfg.camera_distance)
+        self._camera.lookat[:] = np.asarray(cfg.camera_lookat, dtype=float)
+        self._writer = OpenCvVideoWriter(
+            cfg.output_path,
+            fps=float(cfg.fps),
+            width=int(cfg.width),
+            height=int(cfg.height),
+        )
+        self._frame_interval_s = 1.0 / float(cfg.fps)
+        self._next_frame_time_s = 0.0
+        self.output_path = str(cfg.output_path)
+
+    @property
+    def frame_count(self) -> int:
+        return int(self._writer.frame_count)
+
+    def capture(self, data, *, force: bool = False) -> None:
+        sim_time_s = float(data.time)
+        if not force and sim_time_s + 1.0e-9 < self._next_frame_time_s:
+            return
+        self._renderer.update_scene(data, camera=self._camera)
+        self._writer.append_rgb(self._renderer.render())
+        if force:
+            self._next_frame_time_s = max(self._next_frame_time_s, sim_time_s + self._frame_interval_s)
+            return
+        while self._next_frame_time_s <= sim_time_s + 1.0e-9:
+            self._next_frame_time_s += self._frame_interval_s
+
+    def close(self) -> None:
+        self._writer.close()
+        self._renderer.close()
 
 
 def load_robot_config(path: str | Path) -> MujocoRobotConfig:
@@ -209,6 +271,7 @@ class MujocoPickupRuntime:
         object_mesh_path: str | Path,
         object_pose_world: ObjectWorldPose,
         keep_generated_scene: bool,
+        video_cfg: MujocoVideoConfig | None = None,
     ) -> None:
         self._mujoco = _import_mujoco()
         self._robot_cfg = robot_cfg
@@ -238,6 +301,7 @@ class MujocoPickupRuntime:
         self._viewer_wall_start_s = 0.0
         self._viewer_sim_start_s = 0.0
         self._trajectory_diagnostics: list[dict[str, object]] = []
+        self._video_recorder = None if video_cfg is None else _MujocoVideoRecorder(self._mujoco, self._model, video_cfg)
         if robot_cfg.ee_site_name:
             self._site_id = self._mujoco.mj_name2id(self._model, self._mujoco.mjtObj.mjOBJ_SITE, robot_cfg.ee_site_name)
             if self._site_id < 0:
@@ -319,6 +383,9 @@ class MujocoPickupRuntime:
             raise RuntimeError(f"Could not resolve MuJoCo object body '{object_body_name}'.")
 
     def close(self) -> None:
+        if self._video_recorder is not None:
+            self._video_recorder.close()
+            self._video_recorder = None
         if not self._keep_generated_scene:
             try:
                 os.unlink(self._scene_xml_path)
@@ -336,6 +403,14 @@ class MujocoPickupRuntime:
     @property
     def data(self):
         return self._data
+
+    @property
+    def video_path(self) -> str | None:
+        return None if self._video_recorder is None else self._video_recorder.output_path
+
+    @property
+    def video_frame_count(self) -> int:
+        return 0 if self._video_recorder is None else self._video_recorder.frame_count
 
     def attach_viewer(self, viewer, *, realtime: bool = True) -> None:
         self._viewer = viewer
@@ -380,14 +455,21 @@ class MujocoPickupRuntime:
         except Exception:
             self.detach_viewer()
 
+    def _capture_video_frame(self, *, force: bool = False) -> None:
+        if self._video_recorder is None:
+            return
+        self._video_recorder.capture(self._data, force=force)
+
     def _forward(self) -> None:
         self._mujoco.mj_forward(self._model, self._data)
         self._sync_viewer(force=True)
+        self._capture_video_frame(force=self.video_frame_count == 0)
 
     def _step(self, steps: int) -> None:
         for _ in range(max(1, int(steps))):
             self._mujoco.mj_step(self._model, self._data)
             self._sync_viewer()
+            self._capture_video_frame()
 
     def _scaled_arm_steps(self, base_steps: int) -> int:
         speed_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
@@ -1438,6 +1520,7 @@ def run_world_grasp_in_mujoco(
     viewer_hold_seconds: float = 8.0,
     viewer_block_at_end: bool = False,
     moveit_joint_trajectories: MoveItJointTrajectories | None = None,
+    video_cfg: MujocoVideoConfig | None = None,
 ) -> MujocoAttemptResult:
     """Execute one world-frame grasp in MuJoCo and return a pickup result."""
 
@@ -1447,6 +1530,7 @@ def run_world_grasp_in_mujoco(
         object_mesh_path=object_mesh_path,
         object_pose_world=object_pose_world,
         keep_generated_scene=keep_generated_scene,
+        video_cfg=video_cfg,
     )
     try:
         if show_viewer:
@@ -1464,10 +1548,12 @@ def run_world_grasp_in_mujoco(
                 else:
                     result = runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
                 runtime.hold_viewer_open(seconds=None if viewer_block_at_end else viewer_hold_seconds)
-                return result
+                return replace(result, video_path=runtime.video_path, video_frame_count=runtime.video_frame_count)
         if moveit_joint_trajectories is None:
-            return runtime.run(world_grasp)
-        return runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
+            result = runtime.run(world_grasp)
+        else:
+            result = runtime.run_moveit_joint_trajectories(trajectories=moveit_joint_trajectories)
+        return replace(result, video_path=runtime.video_path, video_frame_count=runtime.video_frame_count)
     finally:
         runtime.close()
 
@@ -1493,6 +1579,7 @@ def run_regrasp_plan_in_mujoco(
     viewer_hold_seconds: float = 8.0,
     viewer_block_at_end: bool = False,
     moveit_joint_trajectories: MoveItJointTrajectories | None = None,
+    video_cfg: MujocoVideoConfig | None = None,
 ) -> MujocoRegraspAttemptResult:
     """Execute a transfer-place-final-pick fallback plan in one MuJoCo scene."""
 
@@ -1502,6 +1589,7 @@ def run_regrasp_plan_in_mujoco(
         object_mesh_path=object_mesh_path,
         object_pose_world=initial_object_pose_world,
         keep_generated_scene=keep_generated_scene,
+        video_cfg=video_cfg,
     )
     try:
         if show_viewer:
@@ -1527,17 +1615,19 @@ def run_regrasp_plan_in_mujoco(
                 else:
                     result = runtime.run_moveit_regrasp_joint_trajectories(trajectories=moveit_joint_trajectories)
                 runtime.hold_viewer_open(seconds=None if viewer_block_at_end else viewer_hold_seconds)
-                return result
+                return replace(result, video_path=runtime.video_path, video_frame_count=runtime.video_frame_count)
         if moveit_joint_trajectories is not None:
-            return runtime.run_moveit_regrasp_joint_trajectories(trajectories=moveit_joint_trajectories)
-        return runtime.run_regrasp(
-            transfer_initial_grasp=transfer_initial_grasp,
-            transfer_staging_grasp=transfer_staging_grasp,
-            final_grasp=final_grasp,
-            staging_object_pose_world=staging_object_pose_world,
-            final_grasp_candidate=final_grasp_candidate,
-            pregrasp_offset=pregrasp_offset,
-            gripper_width_clearance=gripper_width_clearance,
-        )
+            result = runtime.run_moveit_regrasp_joint_trajectories(trajectories=moveit_joint_trajectories)
+        else:
+            result = runtime.run_regrasp(
+                transfer_initial_grasp=transfer_initial_grasp,
+                transfer_staging_grasp=transfer_staging_grasp,
+                final_grasp=final_grasp,
+                staging_object_pose_world=staging_object_pose_world,
+                final_grasp_candidate=final_grasp_candidate,
+                pregrasp_offset=pregrasp_offset,
+                gripper_width_clearance=gripper_width_clearance,
+            )
+        return replace(result, video_path=runtime.video_path, video_frame_count=runtime.video_frame_count)
     finally:
         runtime.close()

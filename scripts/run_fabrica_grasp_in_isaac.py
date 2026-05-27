@@ -115,15 +115,39 @@ parser.add_argument(
     default=Path("artifacts/isaac_pick_attempt.json"),
     help="Optional JSON artifact for the selected attempt.",
 )
+parser.add_argument("--record-video", type=Path, default=None, help="Optional MP4/AVI path for Isaac RGB video.")
+parser.add_argument("--video-fps", type=float, default=30.0, help="Recorded video frame rate.")
+parser.add_argument("--video-width", type=int, default=960, help="Recorded video width in pixels.")
+parser.add_argument("--video-height", type=int, default=540, help="Recorded video height in pixels.")
+parser.add_argument(
+    "--video-camera-eye",
+    type=float,
+    nargs=3,
+    default=(1.6, -1.2, 1.0),
+    metavar=("X", "Y", "Z"),
+    help="Isaac recording camera eye position.",
+)
+parser.add_argument(
+    "--video-camera-target",
+    type=float,
+    nargs=3,
+    default=(0.35, 0.0, 0.3),
+    metavar=("X", "Y", "Z"),
+    help="Isaac recording camera look-at target.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+if args_cli.record_video is not None:
+    args_cli.enable_cameras = True
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils  # noqa: E402
 import omni.usd  # noqa: E402
+import torch  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
+from isaaclab.sensors.camera import Camera, CameraCfg  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
@@ -156,6 +180,7 @@ from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
 )
 from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
 from grasp_planning.scene_defaults import ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BASE_POSITION  # noqa: E402
+from grasp_planning.video import OpenCvVideoWriter  # noqa: E402
 
 
 def _parse_vec2(raw: str) -> tuple[float, float]:
@@ -414,6 +439,68 @@ def _mesh_collision_cfg():
     return schemas_cfg.ConvexDecompositionPropertiesCfg()
 
 
+class IsaacVideoRecorder:
+    def __init__(self, *, camera: Camera, sim, output_path: Path, fps: float, width: int, height: int) -> None:
+        self._camera = camera
+        self._sim = sim
+        self._writer = OpenCvVideoWriter(output_path, fps=fps, width=width, height=height)
+        self._capture_interval_s = 1.0 / float(fps)
+        self._next_capture_time_s = 0.0
+        self._elapsed_s = 0.0
+        self.output_path = str(output_path)
+
+    @property
+    def frame_count(self) -> int:
+        return int(self._writer.frame_count)
+
+    def set_view(self, *, eye: tuple[float, float, float], target: tuple[float, float, float]) -> None:
+        eye_tensor = torch.tensor([eye], dtype=torch.float32, device=self._sim.device)
+        target_tensor = torch.tensor([target], dtype=torch.float32, device=self._sim.device)
+        self._camera.set_world_poses_from_view(eye_tensor, target_tensor)
+
+    def capture(self, *, force: bool = False) -> None:
+        physics_dt = float(self._sim.get_physics_dt())
+        self._elapsed_s += physics_dt
+        if not force and self._elapsed_s + 1.0e-9 < self._next_capture_time_s:
+            return
+        self._camera.update(dt=physics_dt)
+        raw_rgb = self._camera.data.output.get("rgb")
+        if raw_rgb is None:
+            return
+        frame = raw_rgb[0]
+        if hasattr(frame, "detach"):
+            frame = frame.detach().cpu().numpy()
+        self._writer.append_rgb(np.asarray(frame))
+        if force:
+            self._next_capture_time_s = max(self._next_capture_time_s, self._elapsed_s + self._capture_interval_s)
+            return
+        while self._next_capture_time_s <= self._elapsed_s + 1.0e-9:
+            self._next_capture_time_s += self._capture_interval_s
+
+    def close(self) -> None:
+        self._writer.close()
+
+
+def _make_video_camera() -> Camera | None:
+    if args_cli.record_video is None:
+        return None
+    sim_utils.create_prim("/World/ExecutionBenchmarkVideo", "Xform")
+    camera_cfg = CameraCfg(
+        prim_path="/World/ExecutionBenchmarkVideo/CameraSensor",
+        update_period=0.0,
+        height=int(args_cli.video_height),
+        width=int(args_cli.video_width),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0,
+            focus_distance=400.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.05, 1.0e5),
+        ),
+    )
+    return Camera(cfg=camera_cfg)
+
+
 def resolve_part_usd_path(*, bundle, mesh_local) -> str:
     if args_cli.use_provided_part_usd:
         if not args_cli.part_usd:
@@ -466,7 +553,9 @@ def resolve_part_usd_path(*, bundle, mesh_local) -> str:
     return converted_path
 
 
-def build_scene(*, object_pose_world, part_usd_path: str) -> tuple[sim_utils.SimulationContext, InteractiveScene]:
+def build_scene(
+    *, object_pose_world, part_usd_path: str
+) -> tuple[sim_utils.SimulationContext, InteractiveScene, Camera | None]:
     print("[INFO]: Creating simulation context...", flush=True)
     sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
@@ -485,6 +574,7 @@ def build_scene(*, object_pose_world, part_usd_path: str) -> tuple[sim_utils.Sim
     )
     print("[INFO]: Creating interactive scene...", flush=True)
     scene = InteractiveScene(scene_cfg)
+    video_camera = _make_video_camera()
     print("[INFO]: Waiting for stage assets to finish loading...", flush=True)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
@@ -493,7 +583,7 @@ def build_scene(*, object_pose_world, part_usd_path: str) -> tuple[sim_utils.Sim
     print("[INFO]: Resetting scene buffers...", flush=True)
     scene.reset()
     print("[INFO]: Scene ready.", flush=True)
-    return sim, scene
+    return sim, scene, video_camera
 
 
 def _write_attempt_artifact(
@@ -504,6 +594,7 @@ def _write_attempt_artifact(
     statuses,
     selected_world_grasp,
     execution_result,
+    video_recorder=None,
 ) -> None:
     artifact = {
         "input_json": str(args_cli.input_json),
@@ -538,6 +629,14 @@ def _write_attempt_artifact(
             "message": execution_result.message,
         },
     }
+    if video_recorder is not None:
+        artifact["video"] = {
+            "path": video_recorder.output_path,
+            "frame_count": video_recorder.frame_count,
+            "fps": float(args_cli.video_fps),
+            "width": int(args_cli.video_width),
+            "height": int(args_cli.video_height),
+        }
     if args_cli.controller == "moveit":
         artifact["moveit"] = {
             "frame_id": args_cli.moveit_frame_id,
@@ -671,15 +770,38 @@ def run() -> None:
         flush=True,
     )
 
-    sim, scene = build_scene(object_pose_world=object_pose_world, part_usd_path=args_cli.resolved_part_usd)
+    sim, scene, video_camera = build_scene(
+        object_pose_world=object_pose_world, part_usd_path=args_cli.resolved_part_usd
+    )
     physics_dt = sim.get_physics_dt()
+    video_recorder = None
+    if video_camera is not None:
+        video_recorder = IsaacVideoRecorder(
+            camera=video_camera,
+            sim=sim,
+            output_path=args_cli.record_video,
+            fps=float(args_cli.video_fps),
+            width=int(args_cli.video_width),
+            height=int(args_cli.video_height),
+        )
+        video_recorder.set_view(
+            eye=tuple(float(value) for value in args_cli.video_camera_eye),
+            target=tuple(float(value) for value in args_cli.video_camera_target),
+        )
+        video_recorder.capture(force=True)
+
+    def _record_step() -> None:
+        if video_recorder is not None:
+            video_recorder.capture()
+
     print("[INFO]: Warming up simulation...", flush=True)
     for _ in range(max(1, int(0.1 / physics_dt))):
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
+        _record_step()
     print("[INFO]: Driving robot to start pose...", flush=True)
-    drive_robot_to_start_pose(sim, scene)
+    drive_robot_to_start_pose(sim, scene, step_callback=_record_step)
 
     robot = scene["robot"]
     part = scene["part"]
@@ -724,6 +846,7 @@ def run() -> None:
             open_gripper_width=fixed_gripper_width,
             closed_gripper_width=float(args_cli.close_width),
             pregrasp_only=bool(args_cli.pregrasp_only),
+            step_callback=_record_step,
         )
     else:
         execution_result = execute_pick_from_world_grasp(
@@ -736,7 +859,10 @@ def run() -> None:
             fixed_gripper_width=fixed_gripper_width,
             closed_gripper_width=float(args_cli.close_width),
             pregrasp_only=bool(args_cli.pregrasp_only),
+            step_callback=_record_step,
         )
+    if video_recorder is not None:
+        video_recorder.capture(force=True)
     _write_attempt_artifact(
         bundle=bundle,
         placement_spec=placement_spec,
@@ -744,7 +870,10 @@ def run() -> None:
         statuses=statuses,
         selected_world_grasp=selected_world_grasp,
         execution_result=execution_result,
+        video_recorder=video_recorder,
     )
+    if video_recorder is not None:
+        video_recorder.close()
 
     print(
         "[INFO]: Fabrica Isaac pickup attempt "

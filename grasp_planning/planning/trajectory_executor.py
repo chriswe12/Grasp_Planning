@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import torch
 
 from .fr3_motion_context import FR3MotionContext
@@ -18,12 +20,14 @@ class TrajectoryExecutor:
         max_steps_per_waypoint: int = 300,
         max_joint_speed_rad_s: float = 0.35,
         final_settle_steps: int = 60,
+        step_callback: Callable[[], None] | None = None,
     ) -> None:
         self._context = context
         self._waypoint_tolerance_rad = float(waypoint_tolerance_rad)
         self._max_steps_per_waypoint = int(max_steps_per_waypoint)
         self._max_joint_speed_rad_s = float(max_joint_speed_rad_s)
         self._final_settle_steps = int(final_settle_steps)
+        self._step_callback = step_callback
         if self._max_joint_speed_rad_s <= 0.0:
             raise ValueError("max_joint_speed_rad_s must be positive.")
         if self._final_settle_steps < 1:
@@ -50,6 +54,8 @@ class TrajectoryExecutor:
                 self._context.scene.write_data_to_sim()
                 self._context.sim.step()
                 self._context.scene.update(self._context.physics_dt)
+                if self._step_callback is not None:
+                    self._step_callback()
                 total_stream_steps += 1
                 if total_stream_steps == 1 or total_stream_steps % 60 == 0:
                     error = torch.max(torch.abs(self._context.get_arm_q() - waypoint))
@@ -70,6 +76,8 @@ class TrajectoryExecutor:
             self._context.scene.write_data_to_sim()
             self._context.sim.step()
             self._context.scene.update(self._context.physics_dt)
+            if self._step_callback is not None:
+                self._step_callback()
             error = torch.max(torch.abs(self._context.get_arm_q() - final_waypoint))
             last_error = float(error.item())
             if settle_step == 1 or settle_step == self._final_settle_steps:

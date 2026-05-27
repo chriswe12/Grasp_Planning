@@ -61,6 +61,7 @@ class SavedGraspCandidate:
     contact_patch_approach_offset_m: float = 0.0
     score: float | None = None
     score_components: dict[str, float] | None = None
+    metadata: dict[str, object] | None = None
 
     def to_object_frame_candidate(self) -> ObjectFrameGraspCandidate:
         return ObjectFrameGraspCandidate(
@@ -558,6 +559,7 @@ def save_grasp_bundle(bundle: SavedGraspBundle, output_path: str | Path) -> None
                 ],
                 "score": candidate.score,
                 "score_components": candidate.score_components,
+                "metadata": candidate.metadata or {},
             }
             for candidate in bundle.candidates
         ],
@@ -595,6 +597,7 @@ def load_grasp_bundle(path: str | Path) -> SavedGraspBundle:
                     if item.get("score_components") is None
                     else {str(k): float(v) for k, v in dict(item["score_components"]).items()}
                 ),
+                metadata=dict(item.get("metadata", {})) or None,
             )
         )
     return SavedGraspBundle(
@@ -694,6 +697,7 @@ def _candidate_with_contact_offset(
         contact_patch_approach_offset_m=float(approach_offset_m),
         score=candidate.score,
         score_components=None if candidate.score_components is None else dict(candidate.score_components),
+        metadata=None if candidate.metadata is None else dict(candidate.metadata),
     )
 
 
@@ -1017,6 +1021,7 @@ def score_grasps(
                 contact_patch_approach_offset_m=grasp.contact_patch_approach_offset_m,
                 score=components["score"],
                 score_components=components,
+                metadata=None if grasp.metadata is None else dict(grasp.metadata),
             )
         )
     return sorted(
@@ -1425,6 +1430,7 @@ def candidate_payload(
                 "roll_angle_rad": round(float(candidate.roll_angle_rad), 6),
                 "score": None if entry.grasp.score is None else round(float(entry.grasp.score), 6),
                 "score_components": entry.grasp.score_components,
+                "metadata": entry.grasp.metadata or {},
                 "contact_patch_lateral_offset_m": round(float(entry.grasp.contact_patch_lateral_offset_m), 6),
                 "contact_patch_approach_offset_m": round(float(entry.grasp.contact_patch_approach_offset_m), 6),
                 "closing_axis_obj": fmt_vec(closing_axis.tolist()),

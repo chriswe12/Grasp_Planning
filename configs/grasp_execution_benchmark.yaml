@@ -1,0 +1,58 @@
+generation_results: "artifacts/grasp_generation_benchmark/results.json"
+
+execution_benchmark:
+  output_dir: "artifacts/grasp_execution_benchmark"
+  backend: "mujoco"  # mujoco, isaac, both
+  resume: true
+  record_video: "all"  # all or none
+
+selection:
+  assemblies: []
+  parts: []
+  orientations: []
+  grasp_ids: []
+  limit_orientations:
+  max_grasps_per_orientation:
+  limit_attempts:
+
+mujoco:
+  python_executable: ""
+  robot_config: "configs/mujoco_fr3_with_hand.json"
+  simulation_config: "configs/mujoco_simulation.yaml"
+  controller: "native"
+  pregrasp_offset:
+  gripper_width_clearance:
+  contact_gap_m:
+  object_mass_kg:
+  object_scale:
+  lift_height_m:
+  success_height_margin_m:
+  keep_generated_scene: false
+  video:
+    fps: 30.0
+    width: 960
+    height: 540
+    camera_azimuth: 135.0
+    camera_elevation: -25.0
+    camera_distance: 1.45
+    camera_lookat: [0.35, 0.0, 0.28]
+
+isaac:
+  python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
+  controller: "planner"
+  headless: true
+  pregrasp_offset: 0.20
+  gripper_width_clearance: 0.01
+  contact_gap_m: 0.002
+  close_width: 0.0
+  tcp_to_grasp_offset: [0.0, 0.0, 0.0]
+  run_seconds: 0.0
+  part_usd: ""
+  use_provided_part_usd: false
+  fr3_usd: ""
+  video:
+    fps: 30.0
+    width: 960
+    height: 540
+    camera_eye: [1.6, -1.2, 1.0]
+    camera_target: [0.35, 0.0, 0.3]
