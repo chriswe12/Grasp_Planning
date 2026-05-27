@@ -20,6 +20,7 @@ class GoalIKSolver:
         fallback_orientation_tolerance_rad: float = 0.14,
         settle_steps_per_iter: int = 6,
         locked_joint_names: tuple[str, ...] = (),
+        max_joint_delta_rad: float = 0.08,
     ) -> None:
         self._context = context
         self._position_tolerance_m = float(position_tolerance_m)
@@ -27,6 +28,7 @@ class GoalIKSolver:
         self._fallback_position_tolerance_m = float(fallback_position_tolerance_m)
         self._fallback_orientation_tolerance_rad = float(fallback_orientation_tolerance_rad)
         self._settle_steps_per_iter = int(settle_steps_per_iter)
+        self._max_joint_delta_rad = float(max_joint_delta_rad)
         self._locked_joint_ids = tuple(
             index for index, name in enumerate(self._context.arm_joint_names) if name in locked_joint_names
         )
@@ -35,6 +37,7 @@ class GoalIKSolver:
         from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 
         q_start = self._context.get_arm_q()
+        q_hand_start = self._context.get_hand_q()
         lower, upper = self._context.get_joint_limits()
         cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
         ik_controller = DifferentialIKController(cfg=cfg, num_envs=1, device=self._context.device)
@@ -46,7 +49,13 @@ class GoalIKSolver:
         target_orientation_xyzw = torch.tensor([cmd.orientation_xyzw], dtype=torch.float32, device=self._context.device)
 
         for _ in range(max_iters):
+            q_current = self._context.get_arm_q()
             q_des = self._context.command_pose_via_differential_ik(ik_controller, cmd)
+            self._apply_locked_joints(q_des, q_start)
+            if self._context.joint_limits_are_usable(lower, upper):
+                q_des = torch.max(torch.min(q_des, upper), lower)
+                self._apply_locked_joints(q_des, q_start)
+            q_des = self._limit_joint_delta(q_current, q_des)
             self._apply_locked_joints(q_des, q_start)
             if self._context.joint_limits_are_usable(lower, upper):
                 q_des = torch.max(torch.min(q_des, upper), lower)
@@ -63,7 +72,7 @@ class GoalIKSolver:
                 goal_q = self._context.get_arm_q()
                 self._apply_locked_joints(goal_q, q_start)
                 if restore_start_state:
-                    self._context.hold_position(q_start, steps=8)
+                    self._context.reset_joint_state(q_start, q_hand=q_hand_start, steps=2)
                 print(
                     f"[INFO]: IK converged with position_error={pos_norm:.4f} orientation_error={rot_norm:.4f}",
                     flush=True,
@@ -75,7 +84,7 @@ class GoalIKSolver:
             and best_orientation_error <= self._fallback_orientation_tolerance_rad
         ):
             if restore_start_state:
-                self._context.hold_position(q_start, steps=8)
+                self._context.reset_joint_state(q_start, q_hand=q_hand_start, steps=2)
             self._apply_locked_joints(best_q, q_start)
             print(
                 "[WARN]: IK accepted approximate solution. "
@@ -85,7 +94,7 @@ class GoalIKSolver:
             return best_q
 
         if restore_start_state:
-            self._context.hold_position(q_start, steps=8)
+            self._context.reset_joint_state(q_start, q_hand=q_hand_start, steps=2)
         print(
             "[WARN]: IK did not converge. "
             f"best_position_error={best_position_error:.4f} best_orientation_error={best_orientation_error:.4f}",
@@ -96,3 +105,7 @@ class GoalIKSolver:
     def _apply_locked_joints(self, q: torch.Tensor, q_start: torch.Tensor) -> None:
         for joint_id in self._locked_joint_ids:
             q[:, joint_id] = q_start[:, joint_id]
+
+    def _limit_joint_delta(self, q_current: torch.Tensor, q_des: torch.Tensor) -> torch.Tensor:
+        max_delta = max(1.0e-6, float(self._max_joint_delta_rad))
+        return q_current + torch.clamp(q_des - q_current, min=-max_delta, max=max_delta)

@@ -185,6 +185,10 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
     controller = str(raw.get("controller", "native")).strip().lower()
     if controller not in {"native", "moveit"}:
         raise ValueError(f"Unsupported mujoco_execution.controller value '{controller}'.")
+    object_mass_kg = _optional_float(raw, "object_mass_kg")
+    object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
+    if object_mass_kg is not None and object_density_kg_m3 is not None:
+        raise ValueError("mujoco_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     regrasp_staging_xy_world = None
     if raw.get("regrasp_staging_xy_world") not in ("", None):
         regrasp_staging_xy_world = _tuple_floats(raw["regrasp_staging_xy_world"], expected_len=2)
@@ -199,7 +203,8 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
-        object_mass_kg=_optional_float(raw, "object_mass_kg"),
+        object_mass_kg=object_mass_kg,
+        object_density_kg_m3=object_density_kg_m3,
         object_scale=_optional_float(raw, "object_scale"),
         lift_height_m=_optional_float(raw, "lift_height_m"),
         success_height_margin_m=_optional_float(raw, "success_height_margin_m"),
@@ -271,6 +276,10 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     controller = str(raw.get("controller", "admittance")).strip().lower()
     if controller not in {"planner", "admittance", "moveit"}:
         raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'.")
+    object_mass_kg = _optional_float(raw, "object_mass_kg")
+    object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
+    if object_mass_kg is not None and object_density_kg_m3 is not None:
+        raise ValueError("isaac_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -284,6 +293,8 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         lift_height_m=float(raw.get("lift_height_m", 0.08)),
         success_height_margin_m=float(raw.get("success_height_margin_m", IsaacPipelineConfig.success_height_margin_m)),
         close_width=float(raw.get("close_width", 0.0)),
+        object_mass_kg=object_mass_kg,
+        object_density_kg_m3=object_density_kg_m3,
         tcp_to_grasp_offset=tcp_to_grasp_offset,
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
         pregrasp_only=bool(raw.get("pregrasp_only", False)),
@@ -300,6 +311,8 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
         moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
+        moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
+        moveit_grasp_settle_time_s=float(raw.get("moveit_grasp_settle_time_s", 0.0)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
@@ -654,6 +667,8 @@ def _run_mujoco_execution(
         command.extend(["--contact-gap-m", str(mujoco_execution.contact_gap_m)])
     if mujoco_execution.object_mass_kg is not None:
         command.extend(["--object-mass-kg", str(mujoco_execution.object_mass_kg)])
+    if mujoco_execution.object_density_kg_m3 is not None:
+        command.extend(["--object-density-kg-m3", str(mujoco_execution.object_density_kg_m3)])
     if mujoco_execution.object_scale is not None:
         command.extend(["--object-scale", str(mujoco_execution.object_scale)])
     if mujoco_execution.lift_height_m is not None:
@@ -800,6 +815,8 @@ def _run_isaac_execution(
         str(isaac_execution.close_width),
         "--success-height-margin-m",
         str(isaac_execution.success_height_margin_m),
+        "--lift-height-m",
+        str(isaac_execution.lift_height_m),
         "--run-seconds",
         str(isaac_execution.run_seconds),
     ]
@@ -815,6 +832,10 @@ def _run_isaac_execution(
         command.extend(["--gripper-width-clearance", str(isaac_execution.gripper_width_clearance)])
     if isaac_execution.contact_gap_m is not None:
         command.extend(["--detailed-finger-contact-gap-m", str(isaac_execution.contact_gap_m)])
+    if isaac_execution.object_mass_kg is not None:
+        command.extend(["--object-mass-kg", str(isaac_execution.object_mass_kg)])
+    if isaac_execution.object_density_kg_m3 is not None:
+        command.extend(["--object-density-kg-m3", str(isaac_execution.object_density_kg_m3)])
     if isaac_execution.tcp_to_grasp_offset is not None:
         command.extend(["--tcp-to-grasp-offset", *(str(value) for value in isaac_execution.tcp_to_grasp_offset)])
     if isaac_execution.pregrasp_only:
@@ -850,6 +871,10 @@ def _run_isaac_execution(
                 str(isaac_execution.moveit_acceleration_scale),
                 "--moveit-lift-height-m",
                 str(isaac_execution.lift_height_m),
+                "--moveit-execution-speed-rad-s",
+                str(isaac_execution.moveit_execution_speed_rad_s),
+                "--moveit-grasp-settle-time-s",
+                str(isaac_execution.moveit_grasp_settle_time_s),
             ]
         )
         if isaac_execution.moveit_allow_collisions:

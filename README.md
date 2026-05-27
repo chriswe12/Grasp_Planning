@@ -42,10 +42,11 @@ After running the generation benchmark, execute selected stage-2 feasible grasps
 ```bash
 python scripts/run_grasp_execution_benchmark.py --assembly beam --part 0 --limit-orientations 1 --max-grasps-per-orientation 2
 python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 1
+python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 9 --placement-xy-world 0.5,0.0 --no-resume
 python scripts/run_grasp_execution_benchmark.py --backend mujoco --record-video all --limit-attempts 10
 ```
 
-The default config is `configs/grasp_execution_benchmark.yaml`; outputs go to `artifacts/grasp_execution_benchmark/` with resumable `attempts.jsonl`, `results.json`, `summary.csv`, `index.html`, per-attempt `attempt.json`, logs, and `attempt.mp4` when video recording is enabled. The benchmark consumes the generation benchmark's stage-2 bundles and runs direct stage-2 feasible grasps; orientations with no stage-2 feasible grasp are skipped rather than converted into regrasp attempts.
+The default config is `configs/grasp_execution_benchmark.yaml`; outputs go to `artifacts/grasp_execution_benchmark/` with resumable `attempts.jsonl`, `results.json`, `summary.csv`, `index.html`, per-attempt `attempt.json`, logs, and browser-playable `attempt.webm` when video recording is enabled. The benchmark consumes the generation benchmark's stage-2 bundles and runs direct stage-2 feasible grasps in descending score order; orientations with no stage-2 feasible grasp are skipped rather than converted into regrasp attempts. By default, execution attempts keep each stage-2 bundle's saved stable orientation and Z height but shift object XY to the normal robot workspace at `[0.5, 0.0]`; pass `--placement-xy-world x,y` to choose another table location or `--use-bundle-placement` to use the generation bundle pose verbatim.
 
 ## ROS2 Workspace
 
@@ -234,42 +235,22 @@ This writes a mesh-only HTML view showing the saved bundle-local part, its
 area-weighted centroid, and the transformed execution/world pose when the input
 bundle contains `metadata.execution_world_pose`.
 
-Scoring debug views:
-
-```bash
-python3 scripts/write_grasp_score_comparison_html.py \
-  --input-json artifacts/pipeline_stage1_assembly_grasps.json \
-  --output-html artifacts/grasp_score_comparison.html
-
-python3 scripts/write_grasp_pose_score_sweep_html.py \
-  --input-json artifacts/pipeline_stage2_ground_feasible.json \
-  --config configs/grasp_pipeline_sim.yaml \
-  --output-html artifacts/grasp_pose_score_sweep.html
-```
-
-The comparison view shows the retired vertex-count support score beside the
-current pad-footprint support score. The pose sweep view rescales the same
-object-score pool across floor poses with the stage-2 top-down and reachability
-terms.
-
 Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
 
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
-- `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh, stage-1 planning settings, and grasp-scoring algorithm version. Cache hits still write the normal stage artifacts.
+- `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
-- object-local `contact_support` is pad-footprint based: each Franka pad is sampled as a small contact patch, and support drops when the patch is not backed by compatible mesh faces.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
-- `reachability_proxy_score_weight` adds a lightweight XY/radius/clearance proxy to world-pose scoring; `reachability_proxy_hand_offset_m` controls the backoff point used for that proxy. If top-down plus reachability weights exceed `1.0`, they are normalized and the remainder is the object-score weight.
-- `regrasp_transfer_top_grasp_score_weight` applies the same top-down score to the regrasp transfer pickup in the initial pose. Shipped configs pair `0.70` transfer top-down weight with `0.15` reachability weight, preserving a `0.15` object-score contribution.
+- `regrasp_transfer_top_grasp_score_weight` applies the same top-down score to the regrasp transfer pickup in the initial pose. It defaults higher than `top_grasp_score_weight` because the first pickup is more sensitive to wrist orientation than setting the object back down.
 - `skip_stage1_collision_checks: true` keeps all generated stage-1 grasps and skips offline assembly collision filtering. For a one-off run, pass `--skip-stage1-collision-checks`.
 
 Use `configs/mujoco_simulation.yaml` to tune:
 - grasp approach settings such as `pregrasp_offset_m` and `gripper_width_clearance_m`
 - scene contact settings such as object mass, friction, `solref`, `solimp`, margin, and gap
-- robot timing and speed such as `timestep_s`, `control_substeps`, `speed_scale`, IK and trajectory settings
+- robot timing and speed such as `timestep_s`, `control_substeps`, `speed_scale`, adaptive final-approach slowdown, IK, and trajectory settings
 - gripper actuation and settle behavior such as `open_ctrl`, `closed_ctrl`, and `close_steps`
 
 MuJoCo also has an optional one-placement regrasp fallback for the case where stage 1 finds assembly-feasible grasps but stage 2 rejects all of them because of the floor. Configure it in the `mujoco_execution` block:
@@ -283,7 +264,7 @@ MuJoCo also has an optional one-placement regrasp fallback for the case where st
 
 The fallback computes convex-hull support facets, checks homogeneous-COM stability for candidate resting poses, samples staging XY locations, searches for a final assembly-feasible grasp in each staging pose, and then searches raw stage-1 grasps for a transfer grasp that is floor-feasible in both the initial and staging poses. MuJoCo can execute this fallback either with native IK or with MoveIt-planned transfer/place/final-pick trajectories. With MoveIt, execution first plans and scores a capped set of placement/transfer/final-grasp combinations, ranks them by joint path length, joint jumps, and the static placement score, then executes the cheapest candidate in MuJoCo and falls back to the next cheapest if needed. During regrasp transport, the runner inserts higher lift/rotate/translate waypoints before descending to the staging placement; tune that with `robot.regrasp_transport_clearance_m` in `configs/mujoco_simulation.yaml`. The MuJoCo attempt artifact includes `planned_candidates`, `attempts`, and trajectory diagnostics for debugging path choice.
 
-For a planner-only regrasp visualization that uses a known different-surface case, run:
+For a planning-only regrasp visualization that uses a known different-surface case, run:
 
 ```bash
 ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_plumbers_regrasp.yaml --backend none --headless
@@ -314,7 +295,7 @@ Run MuJoCo sim with cuMotion-backed MoveIt planning:
 ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_cumotion.yaml --backend mujoco --headless
 ```
 
-For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned Franka gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. The default Isaac configs use `isaac_execution.controller: "moveit"` for direct pickups: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation. Legacy Isaac-side controllers remain available with `isaac_execution.controller: "admittance"` or `"planner"`.
+For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned Franka gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
 
 Run Isaac-backed sim locally:
 
@@ -340,8 +321,6 @@ Kept code is limited to the pipeline product:
 - `scripts/convert_stl_to_usd.py`
 - `scripts/build_mujoco_fr3_hand_models.py`
 - `scripts/run_grasp_generation_benchmark.py`
-- `scripts/write_grasp_score_comparison_html.py`
-- `scripts/write_grasp_pose_score_sweep_html.py`
 - `scripts/download_required_assets.sh`
 - `scripts/download_ros2_dependencies.sh`
 - `configs/grasp_generation_benchmark.yaml`

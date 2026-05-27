@@ -143,6 +143,7 @@ class MujocoPipelineConfig:
     gripper_width_clearance: float | None = None
     contact_gap_m: float | None = None
     object_mass_kg: float | None = None
+    object_density_kg_m3: float | None = None
     object_scale: float | None = None
     lift_height_m: float | None = None
     success_height_margin_m: float | None = None
@@ -212,6 +213,8 @@ class IsaacPipelineConfig:
     lift_height_m: float = 0.08
     success_height_margin_m: float = 0.05
     close_width: float = 0.0
+    object_mass_kg: float | None = None
+    object_density_kg_m3: float | None = None
     tcp_to_grasp_offset: tuple[float, float, float] | None = None
     attempt_artifact: str = "artifacts/isaac_pick_attempt.json"
     pregrasp_only: bool = False
@@ -228,6 +231,8 @@ class IsaacPipelineConfig:
     moveit_num_planning_attempts: int = 5
     moveit_velocity_scale: float = 0.05
     moveit_acceleration_scale: float = 0.05
+    moveit_execution_speed_rad_s: float = 0.35
+    moveit_grasp_settle_time_s: float = 0.0
     moveit_allow_collisions: bool = False
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,8 +26,15 @@ from grasp_planning.grasping.mesh_antipodal_grasp_generator import (
     TriangleMesh,
 )
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+from grasp_planning.mujoco.runner import _best_lift_height_m
+from grasp_planning.mujoco.scene_builder import MujocoObjectSceneConfig, build_scene_xml_text
 from grasp_planning.pipeline import GeometryConfig, PlanningConfig, generate_stage1_result
-from scripts import run_fabrica_grasp_in_mujoco, run_grasp_generation_benchmark, run_grasp_pipeline
+from scripts import (
+    run_fabrica_grasp_in_mujoco,
+    run_grasp_execution_benchmark,
+    run_grasp_generation_benchmark,
+    run_grasp_pipeline,
+)
 
 
 class RunGraspPipelineModeTests(unittest.TestCase):
@@ -48,6 +56,70 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(pythonpath_entries[0], str(run_grasp_pipeline.REPO_ROOT))
         self.assertIn("/tmp/existing_pythonpath", pythonpath_entries)
         self.assertEqual(env["TERM"], "xterm")
+
+    def test_execution_benchmark_attempt_dir_includes_placement(self) -> None:
+        base_spec = {
+            "assembly": "beam",
+            "part_id": "0",
+            "orientation_id": "orientation_003",
+            "backend": "mujoco",
+            "grasp_id": "g0001",
+            "placement_mode": "bundle_pose_shift_xy",
+            "placement_xy_world": [0.5, 0.0],
+        }
+        shifted_spec = dict(base_spec, placement_xy_world=[0.6, 0.0])
+
+        base_dir = run_grasp_execution_benchmark._attempt_dir(Path("/tmp/out"), base_spec)
+        shifted_dir = run_grasp_execution_benchmark._attempt_dir(Path("/tmp/out"), shifted_spec)
+
+        self.assertNotEqual(base_dir, shifted_dir)
+        self.assertIn("bundle_pose_shift_xy_x0.5_y0", str(base_dir))
+        self.assertIn("bundle_pose_shift_xy_x0.6_y0", str(shifted_dir))
+
+    def test_execution_benchmark_width_filter_runs_before_rank_limit(self) -> None:
+        row = {
+            "assembly": "beam",
+            "part_id": "0",
+            "target_mesh_path": "obj/fabrica/beam/0.obj",
+            "orientation_id": "orientation_003",
+            "status": "direct_success",
+            "stage2_json_path": "/tmp/stage2.json",
+            "stage2_ground_feasible_count": 2,
+        }
+        wide = SimpleNamespace(grasp_id="wide", score=2.0, jaw_width=0.076)
+        narrow = SimpleNamespace(grasp_id="narrow", score=1.0, jaw_width=0.02)
+
+        with mock.patch.object(
+            run_grasp_execution_benchmark,
+            "load_grasp_bundle",
+            return_value=SimpleNamespace(candidates=(wide, narrow)),
+        ):
+            specs = run_grasp_execution_benchmark._attempt_specs_for_row(
+                row=row,
+                backends=("isaac",),
+                grasp_ids=set(),
+                max_grasps_per_orientation=1,
+                placement_xy_world=(0.5, 0.0),
+                max_gripper_width_m=0.08,
+                gripper_width_clearance_m=0.01,
+            )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0]["grasp_id"], "narrow")
+
+    def test_execution_benchmark_missing_artifact_with_traceback_is_runner_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stderr_path = Path(tmpdir) / "stderr.log"
+            stderr_path.write_text("Traceback (most recent call last):\nRuntimeError: boom\n", encoding="utf-8")
+
+            summary = run_grasp_execution_benchmark._missing_artifact_summary(
+                returncode=0,
+                stderr_path=stderr_path,
+            )
+
+        self.assertFalse(summary["success"])
+        self.assertEqual(summary["status"], "runner_failed")
+        self.assertIn("traceback", summary["message"].lower())
 
     def test_run_mujoco_execution_uses_stage2_bundle(self) -> None:
         cfg = run_grasp_pipeline.MujocoPipelineConfig(
@@ -105,6 +177,24 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         command = subprocess_run.call_args.args[0]
         self.assertIn("--simulation-config", command)
         self.assertIn("configs/mujoco_simulation.yaml", command)
+
+    def test_run_mujoco_execution_passes_object_density_override(self) -> None:
+        cfg = run_grasp_pipeline.MujocoPipelineConfig(
+            enabled=True,
+            robot_config="configs/mujoco_fr3_with_hand.json",
+            object_density_kg_m3=1240.0,
+        )
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_mujoco_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertIn("--object-density-kg-m3", command)
+        self.assertIn("1240.0", command)
 
     def test_run_mujoco_execution_passes_moveit_controller_config(self) -> None:
         cfg = run_grasp_pipeline.MujocoPipelineConfig(
@@ -207,6 +297,20 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertNotIn("--part-usd", command)
         self.assertIn("--headless", command)
 
+    def test_run_isaac_execution_passes_object_density_override(self) -> None:
+        cfg = run_grasp_pipeline.IsaacPipelineConfig(enabled=True, object_density_kg_m3=1240.0)
+
+        with mock.patch.object(run_grasp_pipeline.subprocess, "run") as subprocess_run:
+            run_grasp_pipeline._run_isaac_execution(
+                cfg,
+                input_json=Path("artifacts/pipeline_stage2_ground_feasible.json"),
+                headless=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertIn("--object-density-kg-m3", command)
+        self.assertIn("1240.0", command)
+
     def test_isaac_execution_config_parses_moveit_controller_config(self) -> None:
         config = run_grasp_pipeline._isaac_execution_config(
             {
@@ -214,6 +318,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                     "controller": "moveit",
                     "lift_height_m": 0.09,
                     "success_height_margin_m": 0.04,
+                    "object_density_kg_m3": 1240.0,
                     "moveit_frame_id": "base",
                     "moveit_planning_group": "fr3_arm",
                     "moveit_pose_link": "fr3_hand_tcp",
@@ -225,6 +330,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                     "moveit_num_planning_attempts": 3,
                     "moveit_velocity_scale": 0.04,
                     "moveit_acceleration_scale": 0.03,
+                    "moveit_execution_speed_rad_s": 0.25,
+                    "moveit_grasp_settle_time_s": 0.2,
                     "moveit_allow_collisions": True,
                 }
             }
@@ -233,6 +340,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(config.controller, "moveit")
         self.assertAlmostEqual(config.lift_height_m, 0.09)
         self.assertAlmostEqual(config.success_height_margin_m, 0.04)
+        self.assertEqual(config.object_density_kg_m3, 1240.0)
         self.assertEqual(config.moveit_frame_id, "base")
         self.assertEqual(config.moveit_planning_group, "fr3_arm")
         self.assertEqual(config.moveit_pose_link, "fr3_hand_tcp")
@@ -244,6 +352,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(config.moveit_num_planning_attempts, 3)
         self.assertAlmostEqual(config.moveit_velocity_scale, 0.04)
         self.assertAlmostEqual(config.moveit_acceleration_scale, 0.03)
+        self.assertAlmostEqual(config.moveit_execution_speed_rad_s, 0.25)
+        self.assertAlmostEqual(config.moveit_grasp_settle_time_s, 0.2)
         self.assertTrue(config.moveit_allow_collisions)
 
     def test_run_isaac_execution_passes_moveit_controller_config(self) -> None:
@@ -254,6 +364,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             success_height_margin_m=0.04,
             moveit_pipeline_id="isaac_ros_cumotion",
             moveit_planner_id="RRTConnectkConfigDefault",
+            moveit_execution_speed_rad_s=0.25,
+            moveit_grasp_settle_time_s=0.2,
             moveit_allow_collisions=True,
         )
 
@@ -275,6 +387,10 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("RRTConnectkConfigDefault", command)
         self.assertIn("--moveit-lift-height-m", command)
         self.assertIn("0.09", command)
+        self.assertIn("--moveit-execution-speed-rad-s", command)
+        self.assertIn("0.25", command)
+        self.assertIn("--moveit-grasp-settle-time-s", command)
+        self.assertIn("0.2", command)
         self.assertIn("--success-height-margin-m", command)
         self.assertIn("0.04", command)
         self.assertIn("--moveit-allow-collisions", command)
@@ -1401,10 +1517,54 @@ class MujocoBundleExecutionPoseTests(unittest.TestCase):
         self.assertEqual(sim_cfg["gripper_width_clearance"], 0.01)
         self.assertEqual(sim_cfg["contact_gap_m"], 0.002)
         self.assertEqual(sim_cfg["robot_cfg_updates"]["control_substeps"], 8)
-        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["object_mass_kg"], 0.15)
+        self.assertNotIn("object_mass_kg", sim_cfg["execution_cfg_kwargs"])
+        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["object_density_kg_m3"], 1240.0)
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["object_friction"], (7.5, 0.16, 0.03))
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["arm_speed_scale"], 5.0)
+        self.assertTrue(sim_cfg["execution_cfg_kwargs"]["adaptive_speed_enabled"])
+        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["approach_speed_scale"], 1.0)
+        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["approach_slowdown_start_fraction"], 0.65)
+        self.assertEqual(sim_cfg["execution_cfg_kwargs"]["joint_target_tolerance_rad"], 0.02)
         self.assertEqual(sim_cfg["execution_cfg_kwargs"]["regrasp_transport_clearance_m"], 0.22)
+
+    def test_mujoco_scene_uses_density_instead_of_fixed_mass_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            robot_xml_path = tmp_path / "robot.xml"
+            object_mesh_path = tmp_path / "object.stl"
+            robot_xml_path.write_text("<mujoco><worldbody /></mujoco>", encoding="utf-8")
+            object_mesh_path.write_bytes(b"dummy")
+
+            xml_text = build_scene_xml_text(
+                robot_xml_path=robot_xml_path,
+                object_mesh_path=object_mesh_path,
+                object_pose_world=ObjectWorldPose(
+                    position_world=(0.4, 0.0, 0.1),
+                    orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+                ),
+                object_scale=1.0,
+                scene_cfg=MujocoObjectSceneConfig(object_density_kg_m3=1240.0),
+            )
+
+        root = ET.fromstring(xml_text)
+        geom = root.find(".//body[@name='target_object']/geom[@name='target_object_geom']")
+        self.assertIsNotNone(geom)
+        assert geom is not None
+        self.assertEqual(geom.get("density"), "1240")
+        self.assertIsNone(geom.get("mass"))
+
+    def test_mujoco_success_lift_height_uses_peak_during_lift(self) -> None:
+        lift_height_m = _best_lift_height_m(
+            initial_object_z_m=0.01,
+            fallback_object_z_m=0.012,
+            diagnostics=(
+                {"label": "grasp", "observed_object_center_max_z_m": 0.02},
+                {"label": "lift", "observed_object_center_max_z_m": 0.075},
+            ),
+            labels=("lift",),
+        )
+
+        self.assertAlmostEqual(lift_height_m, 0.065)
 
     def test_trajectory_waypoints_for_joints_reorders_moveit_points(self) -> None:
         point_a = SimpleNamespace(positions=(1.0, 2.0, 3.0))

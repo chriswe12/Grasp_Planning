@@ -71,7 +71,7 @@ class FR3PickController:
     }
     _ARM_JOINT_PATTERN = r"(?:panda|fr3)_joint[1-7]"
     _HAND_JOINT_PATTERN = r"(?:panda|fr3)_finger_joint[12]"
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
+    _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _MIN_TCP_Z_M = 0.005
     _LINE_LATERAL_GAIN = 8.0

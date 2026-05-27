@@ -27,7 +27,12 @@ class OpenCvVideoWriter:
             raise RuntimeError("OpenCV (`cv2`) is required for video recording.") from exc
         self._cv2 = cv2
         suffix = self.path.suffix.lower()
-        codec = "XVID" if suffix == ".avi" else "mp4v"
+        if suffix == ".webm":
+            codec = "VP80"
+        elif suffix == ".avi":
+            codec = "XVID"
+        else:
+            codec = "mp4v"
         fourcc = cv2.VideoWriter_fourcc(*codec)
         self._writer = cv2.VideoWriter(str(self.path), fourcc, self.fps, (self.width, self.height))
         if not self._writer.isOpened():

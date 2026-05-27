@@ -214,7 +214,4 @@ class CollisionChecker:
         return None
 
     def _restore(self, q_arm: torch.Tensor, q_hand: torch.Tensor) -> None:
-        self._context.command_arm(q_arm)
-        if self._context.hand_joint_ids.numel() > 0 and q_hand.numel() > 0:
-            self._context.robot.set_joint_position_target(q_hand, joint_ids=self._context.hand_joint_ids)
-        self._context.step_sim(steps=4)
+        self._context.reset_joint_state(q_arm, q_hand=q_hand, steps=2)

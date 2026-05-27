@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
 import torch
 
-from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext
 from grasp_planning.start_poses import DEFAULT_ARM_START_JOINT_POS, DEFAULT_HAND_OPEN_WIDTH
 
-from .admittance_controller import FR3AdmittanceController
-from .goal_ik import GoalIKSolver
-from .move_to_pose_controller import FR3MoveToPoseController
 from .trajectory_executor import TrajectoryExecutor
-from .types import JointTrajectory, PoseCommand
+from .types import JointTrajectory
 
 
 @dataclass(frozen=True)
@@ -25,6 +22,7 @@ class PickExecutionResult:
     message: str
     object_lift_height_m: float | None = None
     target_lift_height_m: float | None = None
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
 
 
 StepCallback = Callable[[], None]
@@ -62,126 +60,6 @@ def drive_robot_to_start_pose(sim, scene, *, step_callback: StepCallback | None 
         scene.update(physics_dt)
         if step_callback is not None:
             step_callback()
-
-
-def _build_controller(*, controller_type: str, robot, object_asset, scene, sim, fixed_gripper_width: float):
-    if controller_type == "admittance":
-        return FR3AdmittanceController(
-            robot=robot,
-            scene=scene,
-            sim=sim,
-            fixed_gripper_width=fixed_gripper_width,
-        )
-    return FR3MoveToPoseController(
-        robot=robot,
-        cube=object_asset,
-        scene=scene,
-        sim=sim,
-        fixed_gripper_width=fixed_gripper_width,
-    )
-
-
-def move_to_pregrasp(
-    *,
-    sim,
-    scene,
-    robot,
-    object_asset,
-    world_grasp: WorldFrameGraspCandidate,
-    controller_type: str,
-    fixed_gripper_width: float,
-) -> tuple[bool, str, tuple[float, float, float], tuple[float, float, float, float]]:
-    """Move the arm to the grasp pregrasp pose."""
-
-    context = FR3MotionContext(
-        robot=robot,
-        scene=scene,
-        sim=sim,
-        fixed_gripper_width=fixed_gripper_width,
-    )
-    if controller_type == "admittance":
-        controller = _build_controller(
-            controller_type=controller_type,
-            robot=robot,
-            object_asset=object_asset,
-            scene=scene,
-            sim=sim,
-            fixed_gripper_width=fixed_gripper_width,
-        )
-        result = controller.move_to_pose(
-            position_w=world_grasp.pregrasp_position_w,
-            orientation_xyzw=world_grasp.orientation_xyzw,
-        )
-        if not result.success:
-            return False, result.message, world_grasp.pregrasp_position_w, world_grasp.orientation_xyzw
-    else:
-        solver = GoalIKSolver(context, locked_joint_names=("panda_joint1", "fr3_joint1"))
-        goal_q = solver.solve(
-            PoseCommand(
-                position_w=world_grasp.pregrasp_position_w,
-                orientation_xyzw=world_grasp.orientation_xyzw,
-            ),
-            restore_start_state=False,
-        )
-        if goal_q is None:
-            return (
-                False,
-                "No IK solution found for the requested pregrasp pose.",
-                world_grasp.pregrasp_position_w,
-                world_grasp.orientation_xyzw,
-            )
-
-    tcp_position_w, tcp_quat_w = context.get_tcp_pose_w()
-    actual_tcp_position_w = tuple(float(v) for v in tcp_position_w[0].tolist())
-    actual_tcp_orientation_xyzw = (
-        float(tcp_quat_w[0, 1].item()),
-        float(tcp_quat_w[0, 2].item()),
-        float(tcp_quat_w[0, 3].item()),
-        float(tcp_quat_w[0, 0].item()),
-    )
-    return True, "ok", actual_tcp_position_w, actual_tcp_orientation_xyzw
-
-
-def _build_vertical_tcp_waypoints(
-    *,
-    start_tcp_position_w: tuple[float, float, float],
-    target_tcp_z: float,
-    num_waypoints: int,
-) -> list[tuple[float, float, float]]:
-    start_x, start_y, start_z = start_tcp_position_w
-    if num_waypoints <= 1:
-        return [(start_x, start_y, float(target_tcp_z))]
-    return [
-        (
-            start_x,
-            start_y,
-            float(start_z + (target_tcp_z - start_z) * (step_idx / num_waypoints)),
-        )
-        for step_idx in range(1, num_waypoints + 1)
-    ]
-
-
-def _execute_tcp_waypoint_sequence(
-    *,
-    controller,
-    tcp_positions_w: list[tuple[float, float, float]],
-    tcp_orientation_xyzw: tuple[float, float, float, float],
-) -> bool:
-    pose_sequence = []
-    for tcp_position_w in tcp_positions_w:
-        grasp_position_w, grasp_orientation_xyzw = FR3MotionContext.tcp_pose_to_grasp_pose(
-            tcp_position_w,
-            tcp_orientation_xyzw,
-        )
-        pose_sequence.append((grasp_position_w, grasp_orientation_xyzw))
-    if hasattr(controller, "move_through_poses"):
-        return bool(controller.move_through_poses(pose_sequence).success)
-
-    for grasp_position_w, grasp_orientation_xyzw in pose_sequence:
-        result = controller.move_to_pose(position_w=grasp_position_w, orientation_xyzw=grasp_orientation_xyzw)
-        if not result.success:
-            return False
-    return True
 
 
 def _command_gripper_width(
@@ -225,8 +103,16 @@ def _object_root_z(object_asset) -> float | None:
     except (AttributeError, IndexError, TypeError):
         return None
     if hasattr(value, "item"):
-        return float(value.item())
-    return float(value)
+        value = value.item()
+    z = float(value)
+    return z if math.isfinite(z) else None
+
+
+def _finite_float_or_none(value: float | None) -> float | None:
+    if value is None:
+        return None
+    parsed = float(value)
+    return parsed if math.isfinite(parsed) else None
 
 
 def _validate_object_lift(
@@ -234,21 +120,46 @@ def _validate_object_lift(
     object_asset,
     initial_object_z: float | None,
     success_height_margin_m: float,
+    observed_object_max_z: float | None = None,
+    extra_diagnostics: Mapping[str, object] | None = None,
 ) -> PickExecutionResult | None:
     if object_asset is None:
         return None
     final_object_z = _object_root_z(object_asset)
-    if initial_object_z is None or final_object_z is None:
+    observed_object_max_z_was_provided = observed_object_max_z is not None
+    initial_object_z = _finite_float_or_none(initial_object_z)
+    final_object_z = _finite_float_or_none(final_object_z)
+    observed_object_max_z = _finite_float_or_none(observed_object_max_z)
+    if (
+        initial_object_z is None
+        or final_object_z is None
+        or (observed_object_max_z_was_provided and observed_object_max_z is None)
+    ):
         return PickExecutionResult(
             False,
             "object_pose_unavailable",
-            "Could not read Isaac object pose to validate pickup lift.",
+            "Could not read a finite Isaac object pose to validate pickup lift.",
             target_lift_height_m=float(success_height_margin_m),
         )
 
-    object_lift_height_m = float(final_object_z - initial_object_z)
+    peak_object_z = final_object_z
+    if observed_object_max_z is not None:
+        peak_object_z = max(peak_object_z, observed_object_max_z)
+    object_lift_height_m = float(peak_object_z - initial_object_z)
+    final_object_lift_height_m = float(final_object_z - initial_object_z)
     target_lift_height_m = float(success_height_margin_m)
-    lift_message = f"Isaac pickup lifted object by {object_lift_height_m:.4f} m"
+    diagnostics: dict[str, object] = {
+        "initial_object_z_m": float(initial_object_z),
+        "final_object_z_m": float(final_object_z),
+        "peak_object_z_m": float(peak_object_z),
+        "final_object_lift_height_m": final_object_lift_height_m,
+    }
+    if extra_diagnostics:
+        diagnostics.update(dict(extra_diagnostics))
+    lift_message = (
+        f"Isaac pickup lifted object by {object_lift_height_m:.4f} m during lift "
+        f"(final after validation {final_object_lift_height_m:.4f} m)"
+    )
     if object_lift_height_m < target_lift_height_m:
         return PickExecutionResult(
             False,
@@ -256,6 +167,7 @@ def _validate_object_lift(
             f"{lift_message} (required {target_lift_height_m:.4f} m).",
             object_lift_height_m=object_lift_height_m,
             target_lift_height_m=target_lift_height_m,
+            diagnostics=diagnostics,
         )
     return PickExecutionResult(
         True,
@@ -263,6 +175,7 @@ def _validate_object_lift(
         f"{lift_message}.",
         object_lift_height_m=object_lift_height_m,
         target_lift_height_m=target_lift_height_m,
+        diagnostics=diagnostics,
     )
 
 
@@ -302,6 +215,39 @@ def _execute_moveit_waypoint_segment(
     return bool(ok), detail
 
 
+def _moveit_waypoint_tensor(
+    *,
+    context: FR3MotionContext,
+    moveit_joint_trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+    label: str,
+    index: int = -1,
+) -> torch.Tensor:
+    trajectory = _joint_trajectory_from_moveit_waypoints(
+        context=context,
+        waypoints=tuple(moveit_joint_trajectories.get(label, ())),
+        label=label,
+    )
+    return trajectory.waypoints[index].clone()
+
+
+def _hold_arm_waypoint(
+    *,
+    context: FR3MotionContext,
+    waypoint: torch.Tensor,
+    duration_s: float,
+    step_callback: StepCallback | None,
+) -> None:
+    steps = max(0, int(float(duration_s) / context.physics_dt))
+    for _ in range(steps):
+        context.command_arm(waypoint)
+        context.command_fixed_gripper()
+        context.scene.write_data_to_sim()
+        context.sim.step()
+        context.scene.update(context.physics_dt)
+        if step_callback is not None:
+            step_callback()
+
+
 def execute_pick_from_moveit_joint_trajectories(
     *,
     sim,
@@ -313,6 +259,8 @@ def execute_pick_from_moveit_joint_trajectories(
     closed_gripper_width: float,
     pregrasp_only: bool,
     success_height_margin_m: float = 0.05,
+    max_joint_speed_rad_s: float = 0.35,
+    grasp_settle_time_s: float = 0.0,
     step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
@@ -323,9 +271,39 @@ def execute_pick_from_moveit_joint_trajectories(
         sim=sim,
         fixed_gripper_width=float(open_gripper_width),
     )
-    executor_kwargs = {} if step_callback is None else {"step_callback": step_callback}
-    executor = TrajectoryExecutor(context, **executor_kwargs)
     initial_object_z = _object_root_z(object_asset)
+    observed_lift_object_max_z = None
+    capture_lift_object_z = False
+
+    def _capture_lift_object_z() -> None:
+        nonlocal observed_lift_object_max_z
+        object_z = _object_root_z(object_asset)
+        if object_z is None:
+            return
+        if observed_lift_object_max_z is None:
+            observed_lift_object_max_z = object_z
+        else:
+            observed_lift_object_max_z = max(float(observed_lift_object_max_z), float(object_z))
+
+    def _step_callback() -> None:
+        if capture_lift_object_z:
+            _capture_lift_object_z()
+        if step_callback is not None:
+            step_callback()
+
+    moveit_diagnostics = {
+        "open_gripper_width_m": float(open_gripper_width),
+        "closed_gripper_width_m": float(closed_gripper_width),
+        "nominal_max_open_gripper_width_m": float(DEFAULT_HAND_OPEN_WIDTH),
+        "open_gripper_width_exceeds_nominal_limit": float(open_gripper_width) > float(DEFAULT_HAND_OPEN_WIDTH) + 1.0e-6,
+        "max_joint_speed_rad_s": float(max_joint_speed_rad_s),
+        "grasp_settle_time_s": float(grasp_settle_time_s),
+    }
+    executor_kwargs = {
+        "max_joint_speed_rad_s": float(max_joint_speed_rad_s),
+        "step_callback": _step_callback,
+    }
+    executor = TrajectoryExecutor(context, **executor_kwargs)
 
     ok, detail = _execute_moveit_waypoint_segment(
         context=context,
@@ -334,9 +312,14 @@ def execute_pick_from_moveit_joint_trajectories(
         label="pregrasp",
     )
     if not ok:
-        return PickExecutionResult(False, "moveit_pregrasp_failed", f"MoveIt pregrasp execution failed: {detail}")
+        return PickExecutionResult(
+            False,
+            "moveit_pregrasp_failed",
+            f"MoveIt pregrasp execution failed: {detail}",
+            diagnostics=moveit_diagnostics,
+        )
     if pregrasp_only:
-        return PickExecutionResult(True, "ok", "MoveIt pregrasp trajectory executed.")
+        return PickExecutionResult(True, "ok", "MoveIt pregrasp trajectory executed.", diagnostics=moveit_diagnostics)
 
     ok, detail = _execute_moveit_waypoint_segment(
         context=context,
@@ -345,7 +328,24 @@ def execute_pick_from_moveit_joint_trajectories(
         label="grasp",
     )
     if not ok:
-        return PickExecutionResult(False, "moveit_grasp_failed", f"MoveIt grasp execution failed: {detail}")
+        return PickExecutionResult(
+            False,
+            "moveit_grasp_failed",
+            f"MoveIt grasp execution failed: {detail}",
+            diagnostics=moveit_diagnostics,
+        )
+    if grasp_settle_time_s > 0.0:
+        grasp_waypoint = _moveit_waypoint_tensor(
+            context=context,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            label="grasp",
+        )
+        _hold_arm_waypoint(
+            context=context,
+            waypoint=grasp_waypoint,
+            duration_s=float(grasp_settle_time_s),
+            step_callback=_step_callback,
+        )
 
     _command_gripper_width(
         sim=sim,
@@ -353,237 +353,33 @@ def execute_pick_from_moveit_joint_trajectories(
         robot=robot,
         width=float(closed_gripper_width),
         duration_s=1.2,
-        step_callback=step_callback,
+        step_callback=_step_callback,
     )
     context.fixed_gripper_width = float(closed_gripper_width)
-    ok, detail = _execute_moveit_waypoint_segment(
-        context=context,
-        executor=executor,
-        moveit_joint_trajectories=moveit_joint_trajectories,
-        label="lift",
-    )
+    capture_lift_object_z = True
+    try:
+        ok, detail = _execute_moveit_waypoint_segment(
+            context=context,
+            executor=executor,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            label="lift",
+        )
+    finally:
+        capture_lift_object_z = False
     if not ok:
-        return PickExecutionResult(False, "moveit_lift_failed", f"MoveIt lift execution failed: {detail}")
+        return PickExecutionResult(
+            False,
+            "moveit_lift_failed",
+            f"MoveIt lift execution failed: {detail}",
+            diagnostics=moveit_diagnostics,
+        )
     lift_result = _validate_object_lift(
         object_asset=object_asset,
         initial_object_z=initial_object_z,
         success_height_margin_m=success_height_margin_m,
+        observed_object_max_z=observed_lift_object_max_z,
+        extra_diagnostics=moveit_diagnostics,
     )
     if lift_result is not None:
         return lift_result
     return PickExecutionResult(True, "ok", "MoveIt direct-pick trajectories executed in Isaac.")
-
-
-def _servo_tcp_line(
-    *,
-    sim,
-    scene,
-    robot,
-    start_tcp_position_w: tuple[float, float, float],
-    target_tcp_position_w: tuple[float, float, float],
-    tcp_orientation_xyzw: tuple[float, float, float, float],
-    fixed_gripper_width: float,
-    duration_s: float,
-    max_joint_delta_rad: float = 0.015,
-    z_tolerance_m: float = 0.015,
-    max_extra_duration_s: float = 8.0,
-    lock_joint1: bool = True,
-    carried_object=None,
-    step_callback: StepCallback | None = None,
-) -> bool:
-    from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
-
-    context = FR3MotionContext(
-        robot=robot,
-        scene=scene,
-        sim=sim,
-        fixed_gripper_width=fixed_gripper_width,
-    )
-    ik_controller = DifferentialIKController(
-        cfg=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
-        num_envs=1,
-        device=context.device,
-    )
-    steps = max(1, int(float(duration_s) / context.physics_dt))
-    carried_offset_w = None
-    carried_quat_w = None
-    if carried_object is not None:
-        tcp_pos_w, _ = context.get_tcp_pose_w()
-        object_pose_w = carried_object.data.root_link_pose_w.clone()
-        carried_offset_w = object_pose_w[:, :3] - tcp_pos_w
-        carried_quat_w = object_pose_w[:, 3:7].clone()
-    max_steps = steps + max(0, int(float(max_extra_duration_s) / context.physics_dt))
-    for step_idx in range(1, max_steps + 1):
-        alpha = min(float(step_idx) / float(steps), 1.0)
-        smooth_alpha = alpha * alpha * (3.0 - 2.0 * alpha)
-        tcp_position_w = tuple(
-            float((1.0 - smooth_alpha) * start_tcp_position_w[i] + smooth_alpha * target_tcp_position_w[i])
-            for i in range(3)
-        )
-        grasp_position_w, grasp_orientation_xyzw = FR3MotionContext.tcp_pose_to_grasp_pose(
-            tcp_position_w,
-            tcp_orientation_xyzw,
-        )
-        q_before = context.get_arm_q()
-        q_des = context.command_pose_via_differential_ik(
-            ik_controller,
-            PoseCommand(position_w=grasp_position_w, orientation_xyzw=grasp_orientation_xyzw),
-        )
-        q_limited = q_before + torch.clamp(q_des - q_before, min=-max_joint_delta_rad, max=max_joint_delta_rad)
-        if lock_joint1 and q_limited.shape[1] > 0:
-            q_limited[:, 0] = q_before[:, 0]
-        context.command_arm(q_limited)
-        context.command_fixed_gripper()
-        scene.write_data_to_sim()
-        sim.step()
-        scene.update(context.physics_dt)
-        if step_callback is not None:
-            step_callback()
-        tcp_pos_w, _ = context.get_tcp_pose_w()
-        if carried_object is not None and carried_offset_w is not None and carried_quat_w is not None:
-            object_pose_w = torch.cat((tcp_pos_w + carried_offset_w, carried_quat_w), dim=1)
-            carried_object.write_root_pose_to_sim(object_pose_w)
-            zero_velocity = torch.zeros((1, 6), dtype=torch.float32, device=robot.device)
-            carried_object.write_root_velocity_to_sim(zero_velocity)
-        actual_tcp_z = float(tcp_pos_w[0, 2].item())
-        if alpha >= 1.0 and abs(actual_tcp_z - target_tcp_position_w[2]) <= z_tolerance_m:
-            return True
-    return False
-
-
-def execute_vertical_pick_sequence(
-    *,
-    sim,
-    scene,
-    robot,
-    object_asset,
-    start_tcp_position_w: tuple[float, float, float],
-    start_tcp_orientation_xyzw: tuple[float, float, float, float],
-    target_tcp_z: float,
-    target_tcp_orientation_xyzw: tuple[float, float, float, float],
-    open_gripper_width: float,
-    closed_gripper_width: float,
-    controller_type: str,
-    success_height_margin_m: float = 0.05,
-    step_callback: StepCallback | None = None,
-) -> PickExecutionResult:
-    """Execute a direct grasp move, close, and direct retreat sequence."""
-
-    initial_object_z = _object_root_z(object_asset)
-    target_tcp_position_w = (
-        float(start_tcp_position_w[0]),
-        float(start_tcp_position_w[1]),
-        float(target_tcp_z),
-    )
-    if not _servo_tcp_line(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        start_tcp_position_w=start_tcp_position_w,
-        target_tcp_position_w=target_tcp_position_w,
-        tcp_orientation_xyzw=target_tcp_orientation_xyzw,
-        fixed_gripper_width=open_gripper_width,
-        duration_s=3.0,
-        step_callback=step_callback,
-    ):
-        return PickExecutionResult(False, "approach_failed", "Servo grasp approach failed before gripper close.")
-
-    _command_gripper_width(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        width=closed_gripper_width,
-        duration_s=1.2,
-        step_callback=step_callback,
-    )
-
-    if not _servo_tcp_line(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        start_tcp_position_w=target_tcp_position_w,
-        target_tcp_position_w=start_tcp_position_w,
-        tcp_orientation_xyzw=target_tcp_orientation_xyzw,
-        fixed_gripper_width=closed_gripper_width,
-        duration_s=3.0,
-        step_callback=step_callback,
-    ):
-        return PickExecutionResult(False, "retreat_failed", "Vertical retreat failed after gripper close.")
-    lift_result = _validate_object_lift(
-        object_asset=object_asset,
-        initial_object_z=initial_object_z,
-        success_height_margin_m=success_height_margin_m,
-    )
-    if lift_result is not None:
-        return lift_result
-    return PickExecutionResult(True, "ok", "Pick sequence executed.")
-
-
-def execute_pick_from_world_grasp(
-    *,
-    sim,
-    scene,
-    robot,
-    object_asset,
-    world_grasp: WorldFrameGraspCandidate,
-    controller_type: str,
-    fixed_gripper_width: float,
-    closed_gripper_width: float,
-    pregrasp_only: bool,
-    success_height_margin_m: float = 0.05,
-    step_callback: StepCallback | None = None,
-) -> PickExecutionResult:
-    """Run pregrasp and optionally a simple vertical pick sequence."""
-
-    floor_clearance_m = 0.05
-    if world_grasp.pregrasp_position_w[2] <= floor_clearance_m:
-        return PickExecutionResult(
-            False,
-            "invalid_pregrasp",
-            (
-                "Requested pregrasp is too close to or below the floor: "
-                f"pregrasp_position_w={world_grasp.pregrasp_position_w} required_min_z={floor_clearance_m:.3f}"
-            ),
-        )
-
-    ok, message, actual_tcp_position_w, actual_tcp_orientation_xyzw = move_to_pregrasp(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        object_asset=object_asset,
-        world_grasp=world_grasp,
-        controller_type=controller_type,
-        fixed_gripper_width=fixed_gripper_width,
-    )
-    if not ok:
-        return PickExecutionResult(False, "pregrasp_failed", message)
-    if pregrasp_only:
-        return PickExecutionResult(True, "ok", "Pregrasp reached.")
-
-    grasp_tcp_position_w, grasp_tcp_orientation_xyzw = FR3MotionContext.grasp_pose_to_tcp_pose(
-        world_grasp.position_w,
-        world_grasp.orientation_xyzw,
-    )
-    min_tcp_z_m = 0.005
-    if grasp_tcp_position_w[2] <= min_tcp_z_m:
-        grasp_tcp_position_w = (
-            grasp_tcp_position_w[0],
-            grasp_tcp_position_w[1],
-            min_tcp_z_m,
-        )
-
-    return execute_vertical_pick_sequence(
-        sim=sim,
-        scene=scene,
-        robot=robot,
-        object_asset=object_asset,
-        start_tcp_position_w=actual_tcp_position_w,
-        start_tcp_orientation_xyzw=actual_tcp_orientation_xyzw,
-        target_tcp_z=grasp_tcp_position_w[2],
-        target_tcp_orientation_xyzw=actual_tcp_orientation_xyzw,
-        open_gripper_width=world_grasp.gripper_width / 2.0,
-        closed_gripper_width=closed_gripper_width,
-        controller_type=controller_type,
-        success_height_margin_m=success_height_margin_m,
-        step_callback=step_callback,
-    )
