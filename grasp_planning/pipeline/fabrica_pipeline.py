@@ -898,13 +898,15 @@ def _identity_symmetry_record() -> dict[str, object]:
     }
 
 
-def _clean_symmetry_record(record: dict[str, object]) -> dict[str, object] | None:
+def _clean_symmetry_record(record: dict[str, object], *, translation_scale: float = 1.0) -> dict[str, object] | None:
     try:
         matrix = np.asarray(record.get("matrix_obj"), dtype=float)
     except (TypeError, ValueError):
         return None
     if matrix.shape != (4, 4) or not np.all(np.isfinite(matrix)):
         return None
+    matrix = matrix.copy()
+    matrix[:3, 3] *= float(translation_scale)
     name = str(record.get("name") or "symmetry")
     return {
         "name": name,
@@ -920,6 +922,37 @@ def _is_identity_symmetry(record: dict[str, object]) -> bool:
     if str(record.get("type", "")) == "identity" or str(record.get("name", "")) == "identity":
         return True
     return bool(np.allclose(np.asarray(record["matrix_obj"], dtype=float), np.eye(4), atol=1.0e-9))
+
+
+def _positive_finite_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+    return number
+
+
+def _symmetry_asset_mesh_scale(payload: dict[str, object], part_payload: dict[str, object]) -> float | None:
+    return _positive_finite_float(part_payload.get("mesh_scale", payload.get("mesh_scale")))
+
+
+def _symmetry_matrix_in_source_frame(bundle: SavedGraspBundle, record: dict[str, object]) -> np.ndarray:
+    matrix_obj = np.asarray(record["matrix_obj"], dtype=float)
+    source_frame_pose = _source_frame_pose_from_bundle(bundle)
+    rotation_obj_from_source = source_frame_pose.rotation_world_from_object
+    translation_obj_from_source = source_frame_pose.translation_world
+
+    obj_from_source = np.eye(4, dtype=float)
+    obj_from_source[:3, :3] = rotation_obj_from_source
+    obj_from_source[:3, 3] = translation_obj_from_source
+
+    source_from_obj = np.eye(4, dtype=float)
+    source_from_obj[:3, :3] = rotation_obj_from_source.T
+    source_from_obj[:3, 3] = -(rotation_obj_from_source.T @ translation_obj_from_source)
+
+    return source_from_obj @ matrix_obj @ obj_from_source
 
 
 def _symmetry_records_for_bundle(
@@ -958,8 +991,31 @@ def _symmetry_records_for_bundle(
         metadata["symmetry_pickup_load_status"] = "missing_part"
         return (), metadata
 
+    bundle_mesh_scale = _positive_finite_float(bundle.mesh_scale)
+    if bundle_mesh_scale is None:
+        metadata["symmetry_pickup_load_status"] = "invalid_bundle_mesh_scale"
+        metadata["symmetry_pickup_bundle_mesh_scale"] = float(bundle.mesh_scale)
+        return (), metadata
+
+    asset_mesh_scale = _symmetry_asset_mesh_scale(payload, part_payload)
+    if asset_mesh_scale is None:
+        if not math.isclose(bundle_mesh_scale, 1.0, rel_tol=1.0e-12, abs_tol=1.0e-12):
+            metadata.update(
+                {
+                    "symmetry_pickup_load_status": "missing_mesh_scale",
+                    "symmetry_pickup_bundle_mesh_scale": bundle_mesh_scale,
+                }
+            )
+            return (), metadata
+        asset_mesh_scale = 1.0
+    translation_scale = bundle_mesh_scale / asset_mesh_scale
+
     cleaned = [
-        record for item in raw_records if isinstance(item, dict) for record in [_clean_symmetry_record(item)] if record
+        record
+        for item in raw_records
+        if isinstance(item, dict)
+        for record in [_clean_symmetry_record(item, translation_scale=translation_scale)]
+        if record
     ]
     if not cleaned:
         metadata["symmetry_pickup_load_status"] = "no_valid_records"
@@ -977,6 +1033,9 @@ def _symmetry_records_for_bundle(
             "symmetry_pickup_available_transform_count": len(cleaned),
             "symmetry_pickup_transform_count": len(nonidentity_records),
             "symmetry_pickup_transform_names": [str(record["name"]) for record in nonidentity_records],
+            "symmetry_pickup_asset_mesh_scale": asset_mesh_scale,
+            "symmetry_pickup_bundle_mesh_scale": bundle_mesh_scale,
+            "symmetry_pickup_translation_scale": translation_scale,
         }
     )
     return records, metadata
@@ -1021,8 +1080,9 @@ def _candidate_with_identity_symmetry(
 def _candidate_transformed_by_symmetry(
     candidate: SavedGraspCandidate,
     record: dict[str, object],
+    bundle: SavedGraspBundle,
 ) -> SavedGraspCandidate:
-    matrix = np.asarray(record["matrix_obj"], dtype=float)
+    matrix = _symmetry_matrix_in_source_frame(bundle, record)
     rotation = matrix[:3, :3]
     translation = matrix[:3, 3]
 
@@ -1098,7 +1158,7 @@ def _symmetry_pickup_candidates(
     for candidate in bundle.candidates:
         for expanded_candidate in (
             _candidate_with_identity_symmetry(candidate, identity),
-            *(_candidate_transformed_by_symmetry(candidate, record) for record in transforms),
+            *(_candidate_transformed_by_symmetry(candidate, record, bundle) for record in transforms),
         ):
             key = _grasp_geometry_key(expanded_candidate)
             if key in seen:
@@ -1144,8 +1204,7 @@ def _symmetry_parent_summaries(candidates: list[SavedGraspCandidate]) -> list[di
     return sorted(normalized, key=lambda item: (-int(item["feasible_variant_count"]), str(item["parent_grasp_id"])))
 
 
-def _object_pose_after_symmetry(base_pose: ObjectWorldPose, record: dict[str, object]) -> ObjectWorldPose:
-    matrix = np.asarray(record["matrix_obj"], dtype=float)
+def _object_pose_after_symmetry(base_pose: ObjectWorldPose, matrix: np.ndarray) -> ObjectWorldPose:
     rotation = base_pose.rotation_world_from_object @ matrix[:3, :3]
     translation = base_pose.rotation_world_from_object @ matrix[:3, 3] + base_pose.translation_world
     return ObjectWorldPose(
@@ -1166,6 +1225,7 @@ def _point_to_world(point_obj: tuple[float, float, float], pose: ObjectWorldPose
 def _symmetry_next_orientation_options(
     accepted: list[SavedGraspCandidate],
     *,
+    bundle: SavedGraspBundle,
     pickup_pose_world: ObjectWorldPose,
     final_pose_world: ObjectWorldPose,
     symmetry_records: tuple[dict[str, object], ...],
@@ -1180,7 +1240,10 @@ def _symmetry_next_orientation_options(
         pickup_grasp_position = _point_to_world(grasp.grasp_position_obj, pickup_pose_world)
         pickup_metadata = dict(grasp.metadata or {})
         for record in symmetry_records:
-            final_pose = _object_pose_after_symmetry(final_pose_world, record)
+            final_pose = _object_pose_after_symmetry(
+                final_pose_world,
+                _symmetry_matrix_in_source_frame(bundle, record),
+            )
             final_grasp_rotation = final_pose.rotation_world_from_object @ grasp_rotation_obj
             wrist_rotation_rad = _rotation_angle_rad(final_grasp_rotation @ pickup_grasp_rotation.T)
             final_grasp_position = _point_to_world(grasp.grasp_position_obj, final_pose)
@@ -1256,6 +1319,7 @@ def recheck_stage2_result(
     final_pose_world = _source_frame_pose_from_bundle(bundle)
     next_orientation_options = _symmetry_next_orientation_options(
         accepted,
+        bundle=bundle,
         pickup_pose_world=pickup_pose_world,
         final_pose_world=final_pose_world,
         symmetry_records=symmetry_records,
