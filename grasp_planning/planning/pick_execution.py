@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 
 import torch
 
@@ -25,7 +25,10 @@ class PickExecutionResult:
     message: str
 
 
-def drive_robot_to_start_pose(sim, scene) -> None:
+StepCallback = Callable[[], None]
+
+
+def drive_robot_to_start_pose(sim, scene, *, step_callback: StepCallback | None = None) -> None:
     """Actively settle the FR3 into a safe home pose before planning."""
 
     robot = scene["robot"]
@@ -55,6 +58,8 @@ def drive_robot_to_start_pose(sim, scene) -> None:
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
+        if step_callback is not None:
+            step_callback()
 
 
 def _build_controller(*, controller_type: str, robot, object_asset, scene, sim, fixed_gripper_width: float):
@@ -184,6 +189,7 @@ def _command_gripper_width(
     robot,
     width: float,
     duration_s: float,
+    step_callback: StepCallback | None = None,
 ) -> None:
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
     hand_joint_names = tuple(
@@ -205,6 +211,8 @@ def _command_gripper_width(
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
+        if step_callback is not None:
+            step_callback()
 
 
 def _joint_trajectory_from_moveit_waypoints(
@@ -252,6 +260,7 @@ def execute_pick_from_moveit_joint_trajectories(
     open_gripper_width: float,
     closed_gripper_width: float,
     pregrasp_only: bool,
+    step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
 
@@ -261,7 +270,8 @@ def execute_pick_from_moveit_joint_trajectories(
         sim=sim,
         fixed_gripper_width=float(open_gripper_width),
     )
-    executor = TrajectoryExecutor(context)
+    executor_kwargs = {} if step_callback is None else {"step_callback": step_callback}
+    executor = TrajectoryExecutor(context, **executor_kwargs)
 
     ok, detail = _execute_moveit_waypoint_segment(
         context=context,
@@ -289,6 +299,7 @@ def execute_pick_from_moveit_joint_trajectories(
         robot=robot,
         width=float(closed_gripper_width),
         duration_s=1.2,
+        step_callback=step_callback,
     )
     context.fixed_gripper_width = float(closed_gripper_width)
     ok, detail = _execute_moveit_waypoint_segment(
@@ -317,6 +328,7 @@ def _servo_tcp_line(
     max_extra_duration_s: float = 8.0,
     lock_joint1: bool = True,
     carried_object=None,
+    step_callback: StepCallback | None = None,
 ) -> bool:
     from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 
@@ -364,6 +376,8 @@ def _servo_tcp_line(
         scene.write_data_to_sim()
         sim.step()
         scene.update(context.physics_dt)
+        if step_callback is not None:
+            step_callback()
         tcp_pos_w, _ = context.get_tcp_pose_w()
         if carried_object is not None and carried_offset_w is not None and carried_quat_w is not None:
             object_pose_w = torch.cat((tcp_pos_w + carried_offset_w, carried_quat_w), dim=1)
@@ -389,6 +403,7 @@ def execute_vertical_pick_sequence(
     open_gripper_width: float,
     closed_gripper_width: float,
     controller_type: str,
+    step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute a direct grasp move, close, and direct retreat sequence."""
 
@@ -406,6 +421,7 @@ def execute_vertical_pick_sequence(
         tcp_orientation_xyzw=target_tcp_orientation_xyzw,
         fixed_gripper_width=open_gripper_width,
         duration_s=3.0,
+        step_callback=step_callback,
     ):
         return PickExecutionResult(False, "approach_failed", "Servo grasp approach failed before gripper close.")
 
@@ -415,6 +431,7 @@ def execute_vertical_pick_sequence(
         robot=robot,
         width=closed_gripper_width,
         duration_s=1.2,
+        step_callback=step_callback,
     )
 
     if not _servo_tcp_line(
@@ -426,6 +443,7 @@ def execute_vertical_pick_sequence(
         tcp_orientation_xyzw=target_tcp_orientation_xyzw,
         fixed_gripper_width=closed_gripper_width,
         duration_s=3.0,
+        step_callback=step_callback,
     ):
         return PickExecutionResult(False, "retreat_failed", "Vertical retreat failed after gripper close.")
     return PickExecutionResult(True, "ok", "Pick sequence executed.")
@@ -442,6 +460,7 @@ def execute_pick_from_world_grasp(
     fixed_gripper_width: float,
     closed_gripper_width: float,
     pregrasp_only: bool,
+    step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Run pregrasp and optionally a simple vertical pick sequence."""
 
@@ -494,4 +513,5 @@ def execute_pick_from_world_grasp(
         open_gripper_width=world_grasp.gripper_width / 2.0,
         closed_gripper_width=closed_gripper_width,
         controller_type=controller_type,
+        step_callback=step_callback,
     )

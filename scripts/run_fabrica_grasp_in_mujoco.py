@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
@@ -30,6 +31,7 @@ from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.mujoco import (
     MujocoExecutionConfig,
     MujocoRegraspAttemptResult,
+    MujocoVideoConfig,
     build_bundle_local_mesh,
     load_robot_config,
     run_regrasp_plan_in_mujoco,
@@ -291,6 +293,8 @@ def _attempt_result_payload(*, selected_grasp, result) -> dict[str, object]:
             "position_error_m": result.position_error_m,
             "orientation_error_rad": result.orientation_error_rad,
             "generated_scene_xml": result.generated_scene_xml,
+            "video_path": getattr(result, "video_path", None),
+            "video_frame_count": getattr(result, "video_frame_count", 0),
         },
     }
 
@@ -845,6 +849,27 @@ def main() -> None:
         action="store_true",
         help="Keep the generated MuJoCo scene XML for inspection.",
     )
+    parser.add_argument("--record-video", type=Path, default=None, help="Optional MP4/AVI path for offscreen video.")
+    parser.add_argument("--video-fps", type=float, default=30.0, help="Recorded video frame rate.")
+    parser.add_argument("--video-width", type=int, default=960, help="Recorded video width in pixels.")
+    parser.add_argument("--video-height", type=int, default=540, help="Recorded video height in pixels.")
+    parser.add_argument("--video-camera-azimuth", type=float, default=135.0, help="MuJoCo free-camera azimuth.")
+    parser.add_argument("--video-camera-elevation", type=float, default=-25.0, help="MuJoCo free-camera elevation.")
+    parser.add_argument("--video-camera-distance", type=float, default=1.45, help="MuJoCo free-camera distance.")
+    parser.add_argument(
+        "--video-camera-lookat",
+        type=float,
+        nargs=3,
+        default=(0.35, 0.0, 0.28),
+        metavar=("X", "Y", "Z"),
+        help="MuJoCo free-camera lookat point.",
+    )
+    parser.add_argument(
+        "--video-mujoco-gl",
+        type=str,
+        default="egl",
+        help="MUJOCO_GL value used for offscreen recording when MUJOCO_GL is unset.",
+    )
     parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
     parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
     parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
@@ -876,6 +901,22 @@ def main() -> None:
         help="Maximum final grasps considered per placement option during MoveIt regrasp selection.",
     )
     args_cli = parser.parse_args()
+    video_cfg = (
+        None
+        if args_cli.record_video is None
+        else MujocoVideoConfig(
+            output_path=str(args_cli.record_video),
+            fps=float(args_cli.video_fps),
+            width=int(args_cli.video_width),
+            height=int(args_cli.video_height),
+            camera_azimuth=float(args_cli.video_camera_azimuth),
+            camera_elevation=float(args_cli.video_camera_elevation),
+            camera_distance=float(args_cli.video_camera_distance),
+            camera_lookat=tuple(float(value) for value in args_cli.video_camera_lookat),
+        )
+    )
+    if video_cfg is not None and not os.environ.get("MUJOCO_GL"):
+        os.environ["MUJOCO_GL"] = str(args_cli.video_mujoco_gl)
     simulation_defaults = _load_simulation_defaults(args_cli.simulation_config)
     pregrasp_offset = (
         float(args_cli.pregrasp_offset)
@@ -1185,6 +1226,7 @@ def main() -> None:
                         viewer_realtime=not args_cli.viewer_no_realtime,
                         viewer_hold_seconds=args_cli.viewer_hold_seconds,
                         viewer_block_at_end=args_cli.viewer_block_at_end,
+                        video_cfg=video_cfg,
                     )
                     attempts.append(
                         {
@@ -1406,6 +1448,7 @@ def main() -> None:
                             viewer_realtime=not args_cli.viewer_no_realtime,
                             viewer_hold_seconds=args_cli.viewer_hold_seconds,
                             viewer_block_at_end=args_cli.viewer_block_at_end,
+                            video_cfg=video_cfg,
                         )
                         attempts.append(
                             {
@@ -1558,6 +1601,7 @@ def main() -> None:
                 viewer_realtime=not args_cli.viewer_no_realtime,
                 viewer_hold_seconds=args_cli.viewer_hold_seconds,
                 viewer_block_at_end=args_cli.viewer_block_at_end,
+                video_cfg=video_cfg,
             )
             attempt_payload = _attempt_result_payload(selected_grasp=selected_world_grasp, result=result)
             attempt_payload["attempt_index"] = attempt_index
