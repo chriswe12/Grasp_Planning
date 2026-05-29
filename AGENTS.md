@@ -76,7 +76,7 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - MuJoCo regrasp fallback is geometry-filtered first, then MoveIt-ranked at execution time: do not choose staging poses only by static placement score when MoveIt trajectories are available.
 - Regrasp reachability scoring depends on world XY; final candidates must be scored per actual staging offset pose, not once at the base staging XY.
 - Regrasp fallback artifacts are split: `*_regrasp_plan.json/html` explain candidate resting poses and grasps; the MuJoCo attempt artifact records ranked `planned_candidates`, execution `attempts`, and trajectory diagnostics.
-- Do not add MoveIt planning to Isaac execution without an explicit request. The supported Isaac controllers are currently `admittance` and `planner`.
+- Isaac execution uses MoveIt-planned joint waypoints; do not reintroduce local Isaac-side direct controllers without an explicit request.
 - Isaac execution generates a collision-enabled bundle-local USD from the stage-2 bundle by default; only use a provided USD if it is already authored in the saved bundle-local frame.
 - The vendored Franka hand collision mesh lives at `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`.
 - MuJoCo Menagerie `franka_fr3` is arm-only; use `scripts/build_mujoco_fr3_hand_models.py` to generate the local FR3+Panda-hand XML under `.cache/generated_mujoco_models/`.

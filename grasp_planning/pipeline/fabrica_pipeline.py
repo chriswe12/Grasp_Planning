@@ -205,7 +205,7 @@ class IsaacPipelineConfig:
     python_executable: str = ""
     part_usd: str = ""
     fr3_usd: str = ""
-    controller: str = "admittance"
+    controller: str = "moveit"
     grasp_id: str = ""
     pregrasp_offset: float | None = None
     gripper_width_clearance: float | None = None

@@ -107,6 +107,48 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0]["grasp_id"], "narrow")
 
+    def test_execution_benchmark_orientation_limit_counts_only_rows_with_attempts(self) -> None:
+        rows = [
+            {
+                "assembly": "beam",
+                "part_id": "0",
+                "orientation_id": "orientation_001",
+                "stage2_json_path": "/tmp/wide.json",
+            },
+            {
+                "assembly": "beam",
+                "part_id": "0",
+                "orientation_id": "orientation_002",
+                "stage2_json_path": "/tmp/narrow.json",
+            },
+        ]
+        wide = SimpleNamespace(grasp_id="wide", score=2.0, jaw_width=0.076)
+        narrow = SimpleNamespace(grasp_id="narrow", score=1.0, jaw_width=0.02)
+
+        with mock.patch.object(
+            run_grasp_execution_benchmark,
+            "load_grasp_bundle",
+            side_effect=[
+                SimpleNamespace(candidates=(wide,)),
+                SimpleNamespace(candidates=(narrow,)),
+            ],
+        ):
+            specs = run_grasp_execution_benchmark._attempt_specs_for_rows(
+                rows=rows,
+                backends=("isaac",),
+                grasp_ids=set(),
+                max_grasps_per_orientation=1,
+                placement_xy_world=(0.5, 0.0),
+                max_gripper_width_m=0.08,
+                gripper_width_clearance_m=0.01,
+                limit_orientations=1,
+                limit_attempts=None,
+            )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0]["orientation_id"], "orientation_002")
+        self.assertEqual(specs[0]["grasp_id"], "narrow")
+
     def test_execution_benchmark_missing_artifact_with_traceback_is_runner_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             stderr_path = Path(tmpdir) / "stderr.log"
@@ -120,6 +162,206 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertFalse(summary["success"])
         self.assertEqual(summary["status"], "runner_failed")
         self.assertIn("traceback", summary["message"].lower())
+
+    def test_execution_benchmark_mujoco_command_passes_lift_height(self) -> None:
+        command = run_grasp_execution_benchmark._mujoco_command(
+            cfg={"lift_height_m": 0.12},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
+
+        self.assertIn("--lift-height-m", command)
+        self.assertIn("0.12", command)
+
+    def test_execution_benchmark_isaac_command_passes_success_height_margin(self) -> None:
+        command = run_grasp_execution_benchmark._isaac_command(
+            cfg={"success_height_margin_m": 0.12},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
+
+        self.assertIn("--success-height-margin-m", command)
+        self.assertIn("0.12", command)
+
+    def test_execution_benchmark_isaac_command_passes_pregrasp_only(self) -> None:
+        command = run_grasp_execution_benchmark._isaac_command(
+            cfg={"pregrasp_only": True},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
+
+        self.assertIn("--pregrasp-only", command)
+
+    def test_execution_benchmark_isaac_summary_reads_object_lift_height(self) -> None:
+        summary = run_grasp_execution_benchmark._execution_summary(
+            "isaac",
+            {
+                "execution": {
+                    "success": True,
+                    "status": "ok",
+                    "message": "lifted",
+                    "object_lift_height_m": 0.07,
+                    "target_lift_height_m": 0.05,
+                }
+            },
+        )
+
+        self.assertTrue(summary["success"])
+        self.assertEqual(summary["status"], "ok")
+        self.assertAlmostEqual(summary["lift_height_m"], 0.07)
+        self.assertAlmostEqual(summary["target_lift_height_m"], 0.05)
+
+    def test_execution_benchmark_isaac_preplan_failure_writes_attempt_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "out"
+            stage2_json = Path(tmpdir) / "stage2.json"
+            stage2_json.write_text("{}", encoding="utf-8")
+            spec = {
+                "assembly": "beam",
+                "part_id": "0",
+                "orientation_id": "orientation_003",
+                "backend": "isaac",
+                "grasp_id": "g0001",
+                "grasp_rank": 1,
+                "stage2_json": str(stage2_json),
+                "source_stage2_json": str(stage2_json),
+                "placement_mode": "bundle_pose",
+                "placement_xy_world": None,
+            }
+
+            with mock.patch.object(
+                run_grasp_execution_benchmark,
+                "_preplan_isaac_moveit",
+                side_effect=RuntimeError("no MoveIt plan"),
+            ):
+                record = run_grasp_execution_benchmark._run_attempt(
+                    spec=spec,
+                    output_dir=output_dir,
+                    payload={"isaac": {"controller": "moveit"}},
+                    record_video=False,
+                )
+
+            artifact_path = Path(str(record["attempt_artifact"]))
+            artifact = run_grasp_execution_benchmark._load_json_if_present(artifact_path)
+
+            self.assertTrue(artifact_path.is_file())
+            self.assertIsNotNone(artifact)
+            assert artifact is not None
+            self.assertEqual(record["status"], "moveit_preplan_failed")
+            self.assertEqual(artifact["execution"]["status"], "moveit_preplan_failed")
+            self.assertFalse(artifact["execution"]["success"])
+
+    def test_execution_benchmark_isaac_relocated_bundles_use_unique_stems(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "out"
+            stage2_json = Path(tmpdir) / "stage2.json"
+            stage2_json.write_text(
+                (
+                    '{"metadata":{"execution_world_pose":{"position_world":[0.4,0.0,0.02],'
+                    '"orientation_xyzw_world":[0.0,0.0,0.0,1.0]}}}'
+                ),
+                encoding="utf-8",
+            )
+            base_spec = {
+                "assembly": "beam",
+                "part_id": "0",
+                "orientation_id": "orientation_003",
+                "backend": "isaac",
+                "grasp_id": "g0001",
+                "grasp_rank": 1,
+                "stage2_json": str(stage2_json),
+                "source_stage2_json": str(stage2_json),
+                "placement_mode": "bundle_pose_shift_xy",
+                "placement_xy_world": [0.5, 0.0],
+            }
+            other_spec = dict(base_spec, part_id="1", grasp_id="g0002")
+
+            with (
+                mock.patch.object(run_grasp_execution_benchmark, "_preplan_isaac_moveit"),
+                mock.patch.object(
+                    run_grasp_execution_benchmark.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0),
+                ),
+            ):
+                first = run_grasp_execution_benchmark._run_attempt(
+                    spec=base_spec,
+                    output_dir=output_dir,
+                    payload={"isaac": {"controller": "moveit"}},
+                    record_video=False,
+                )
+                second = run_grasp_execution_benchmark._run_attempt(
+                    spec=other_spec,
+                    output_dir=output_dir,
+                    payload={"isaac": {"controller": "moveit"}},
+                    record_video=False,
+                )
+
+            first_stage2 = Path(str(first["execution_stage2_json"]))
+            second_stage2 = Path(str(second["execution_stage2_json"]))
+            self.assertTrue(first_stage2.is_file())
+            self.assertTrue(second_stage2.is_file())
+            self.assertNotEqual(first_stage2.name, second_stage2.name)
+            self.assertNotEqual(first_stage2.stem, "stage2_execution_pose")
+            self.assertTrue(first_stage2.stem.startswith("stage2_execution_pose_"))
+
+    def test_execution_benchmark_isaac_preplan_interrupts_propagate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "out"
+            stage2_json = Path(tmpdir) / "stage2.json"
+            stage2_json.write_text("{}", encoding="utf-8")
+            spec = {
+                "assembly": "beam",
+                "part_id": "0",
+                "orientation_id": "orientation_003",
+                "backend": "isaac",
+                "grasp_id": "g0001",
+                "grasp_rank": 1,
+                "stage2_json": str(stage2_json),
+                "source_stage2_json": str(stage2_json),
+                "placement_mode": "bundle_pose",
+                "placement_xy_world": None,
+            }
+
+            for exc in (KeyboardInterrupt(), SystemExit(2)):
+                with self.subTest(exc=type(exc).__name__):
+                    with mock.patch.object(run_grasp_execution_benchmark, "_preplan_isaac_moveit", side_effect=exc):
+                        with self.assertRaises(type(exc)):
+                            run_grasp_execution_benchmark._run_attempt(
+                                spec=spec,
+                                output_dir=output_dir,
+                                payload={"isaac": {"controller": "moveit"}},
+                                record_video=False,
+                            )
+
+    def test_execution_benchmark_overview_matrix_rows_mark_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            overview = output_dir / "overview.html"
+            run_grasp_execution_benchmark._write_overview_html(
+                overview,
+                output_dir=output_dir,
+                records=[
+                    {
+                        "assembly": "beam",
+                        "part_id": "0",
+                        "orientation_id": "orientation_003",
+                        "backend": "isaac",
+                        "grasp_id": "g0001",
+                        "grasp_rank": 1,
+                        "status": "ok",
+                        "success": True,
+                        "attempt_artifact": str(output_dir / "attempt.json"),
+                    }
+                ],
+            )
+            document = overview.read_text(encoding="utf-8")
+
+        self.assertIn('data-orientation="orientation_003"', document)
+        self.assertIn('data-success="true"', document)
 
     def test_run_mujoco_execution_uses_stage2_bundle(self) -> None:
         cfg = run_grasp_pipeline.MujocoPipelineConfig(

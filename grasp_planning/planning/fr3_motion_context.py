@@ -89,7 +89,7 @@ def tcp_pose_to_grasp_pose(
     grasp_to_tcp_quat_wxyz: tuple[float, float, float, float],
     tcp_to_grasp_center_offset: tuple[float, float, float],
 ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    """Convert a TCP-frame pose into the grasp-frame pose consumed by the planner."""
+    """Convert a TCP-frame pose into the grasp-frame pose consumed by execution."""
 
     tcp_quat_wxyz = (
         float(orientation_xyzw[3]),
