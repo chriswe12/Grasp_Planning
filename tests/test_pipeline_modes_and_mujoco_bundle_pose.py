@@ -337,6 +337,35 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                                 record_video=False,
                             )
 
+    def test_execution_benchmark_resume_reports_only_current_attempt_keys(self) -> None:
+        current_spec = {
+            "assembly": "beam",
+            "part_id": "0",
+            "orientation_id": "orientation_003",
+            "backend": "mujoco",
+            "grasp_id": "g0001",
+            "placement_mode": "bundle_pose",
+            "placement_xy_world": None,
+            "stage2_json": "/tmp/current_stage2.json",
+        }
+        stale_spec = dict(current_spec, part_id="1", grasp_id="g0002", stage2_json="/tmp/stale_stage2.json")
+        current_key = run_grasp_execution_benchmark._attempt_key(current_spec)
+        stale_key = run_grasp_execution_benchmark._attempt_key(stale_spec)
+        records = [
+            {"attempt_key": stale_key, "status": "ok", "success": True},
+            {"attempt_key": current_key, "status": "object_lift_failed", "success": False},
+            {"attempt_key": current_key, "status": "ok", "success": True},
+        ]
+
+        resumed = run_grasp_execution_benchmark._records_for_attempt_keys(records, [current_key])
+        final_records = run_grasp_execution_benchmark._latest_records_for_attempt_keys(resumed, [current_key])
+
+        self.assertEqual([record["attempt_key"] for record in resumed], [current_key, current_key])
+        self.assertEqual(len(final_records), 1)
+        self.assertEqual(final_records[0]["attempt_key"], current_key)
+        self.assertEqual(final_records[0]["status"], "ok")
+        self.assertNotIn(stale_key, {record["attempt_key"] for record in final_records})
+
     def test_execution_benchmark_overview_matrix_rows_mark_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
