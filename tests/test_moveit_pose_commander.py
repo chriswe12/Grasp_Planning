@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from argparse import Namespace
+from unittest import mock
 
 import numpy as np
 
@@ -184,7 +185,8 @@ def test_validate_requested_pipeline_accepts_available_pipeline() -> None:
         ["move_group", "isaac_ros_cumotion"]
     )
 
-    commander._validate_requested_pipeline()
+    with _patch_query_planner_interfaces(_FakeQueryPlannerInterfaces):
+        commander._validate_requested_pipeline()
 
 
 def test_validate_requested_pipeline_reports_available_pipeline_ids() -> None:
@@ -193,13 +195,41 @@ def test_validate_requested_pipeline_reports_available_pipeline_ids() -> None:
     commander._planner_query_client = _FakePlannerQueryClient()
     commander._wait_for_future = lambda future, *, timeout_s, label: _FakePlannerQueryResponse(["move_group"])
 
-    try:
-        commander._validate_requested_pipeline()
-    except RuntimeError as exc:
-        assert "isaac_ros_cumotion" in str(exc)
-        assert "move_group" in str(exc)
-    else:  # pragma: no cover - defensive assertion
-        raise AssertionError("Expected unavailable pipeline validation to raise.")
+    with _patch_query_planner_interfaces(_FakeQueryPlannerInterfaces):
+        try:
+            commander._validate_requested_pipeline()
+        except RuntimeError as exc:
+            assert "isaac_ros_cumotion" in str(exc)
+            assert "move_group" in str(exc)
+        else:  # pragma: no cover - defensive assertion
+            raise AssertionError("Expected unavailable pipeline validation to raise.")
+
+
+def test_validate_requested_pipeline_requires_query_service_type() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(pipeline_id="isaac_ros_cumotion")
+    commander._planner_query_client = _FakePlannerQueryClient()
+    commander._wait_for_future = lambda future, *, timeout_s, label: _FakePlannerQueryResponse(["move_group"])
+
+    with _patch_query_planner_interfaces(None):
+        try:
+            commander._validate_requested_pipeline()
+        except RuntimeError as exc:
+            assert "planner-query service type is unavailable" in str(exc)
+        else:  # pragma: no cover - defensive assertion
+            raise AssertionError("Expected missing planner-query service type to raise.")
+
+
+class _FakeQueryPlannerInterfaces:
+    class Request:
+        pass
+
+
+def _patch_query_planner_interfaces(value):
+    return mock.patch.dict(
+        MoveItPoseCommander._planner_query_request.__globals__,
+        {"QueryPlannerInterfaces": value},
+    )
 
 
 class _FakePlannerQueryClient:

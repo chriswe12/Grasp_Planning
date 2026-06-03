@@ -192,7 +192,7 @@ class MoveItPoseCommander(Node):
     def _validate_requested_pipeline(self) -> None:
         requested = str(self.config.pipeline_id)
         response = self._wait_for_future(
-            self._planner_query_client.call_async(QueryPlannerInterfaces.Request()),
+            self._planner_query_client.call_async(self._planner_query_request()),
             timeout_s=self.config.wait_for_moveit_timeout_s,
             label="planner-interface query",
         )
@@ -208,6 +208,14 @@ class MoveItPoseCommander(Node):
             f"Requested MoveIt planning pipeline '{requested}' is unavailable. "
             f"Available planning pipeline ids: {detail}."
         )
+
+    def _planner_query_request(self):
+        if QueryPlannerInterfaces is None:
+            raise RuntimeError(
+                "MoveIt planner-query service type is unavailable. "
+                "Source the ROS2 / MoveIt workspace before validating planning pipelines."
+            )
+        return QueryPlannerInterfaces.Request()
 
     def move_to_pose(self, target: PoseTarget, *, label: str, execute: bool) -> tuple[bool, str]:
         self.get_logger().info(
