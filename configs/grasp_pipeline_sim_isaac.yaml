@@ -59,7 +59,10 @@ isaac_execution:
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   lift_height_m: 0.08
+  success_height_margin_m: 0.05
   close_width: 0.0
+  object_mass_kg:
+  object_density_kg_m3: 1240.0
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
   attempt_artifact: "artifacts/sim_isaac_pick_attempt.json"
   pregrasp_only: false
@@ -68,6 +71,7 @@ isaac_execution:
   moveit_frame_id: "base"
   moveit_planning_group: "fr3_arm"
   moveit_pose_link: "fr3_hand_tcp"
+  moveit_pipeline_id: ""
   moveit_planner_id: ""
   moveit_wait_for_moveit_timeout_s: 15.0
   moveit_ik_timeout_s: 2.0
@@ -75,6 +79,8 @@ isaac_execution:
   moveit_num_planning_attempts: 5
   moveit_velocity_scale: 0.05
   moveit_acceleration_scale: 0.05
+  moveit_execution_speed_rad_s: 0.35
+  moveit_grasp_settle_time_s: 0.25
   moveit_allow_collisions: false
 
 ros2:

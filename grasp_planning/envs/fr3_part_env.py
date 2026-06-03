@@ -16,6 +16,8 @@ from .fr3_cube_env import (
     DEFAULT_ROBOT_CFG,
 )
 
+DEFAULT_PART_DENSITY_KG_M3 = 1240.0
+
 
 @configclass
 class FR3PartSceneCfg(InteractiveSceneCfg):
@@ -39,15 +41,22 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
-                max_depenetration_velocity=0.05,
-                solver_position_iteration_count=64,
-                solver_velocity_iteration_count=64,
+                max_depenetration_velocity=5.0,
+                linear_damping=0.0,
+                angular_damping=0.0,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=3666.0,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=192,
+                solver_velocity_iteration_count=1,
+                max_contact_impulse=1e32,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=0,
+                enabled_self_collisions=False,
+                solver_position_iteration_count=192,
+                solver_velocity_iteration_count=1,
             ),
+            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=DEFAULT_ROBOT_CFG.base_pos,
@@ -70,11 +79,11 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
                 velocity_limit_sim=2.61,
             ),
             "panda_hand": ImplicitActuatorCfg(
-                joint_names_expr=["panda_finger_joint.*"],
-                stiffness=500.0,
-                damping=50.0,
-                effort_limit_sim=50.0,
-                velocity_limit_sim=0.2,
+                joint_names_expr=["panda_finger_joint[1-2]"],
+                stiffness=7500.0,
+                damping=173.0,
+                effort_limit_sim=40.0,
+                velocity_limit_sim=0.04,
             ),
         },
     )
@@ -87,7 +96,7 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
             ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.15),
+            mass_props=sim_utils.MassPropertiesCfg(density=DEFAULT_PART_DENSITY_KG_M3),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
@@ -100,10 +109,19 @@ def make_fr3_part_scene_cfg(
     part_usd_path: str,
     part_position: tuple[float, float, float],
     part_orientation_xyzw: tuple[float, float, float, float],
+    part_mass_kg: float | None = None,
+    part_density_kg_m3: float | None = DEFAULT_PART_DENSITY_KG_M3,
     robot_base_position: tuple[float, float, float] = DEFAULT_ROBOT_CFG.base_pos,
     robot_base_orientation_xyzw: tuple[float, float, float, float] = DEFAULT_ROBOT_CFG.base_rot,
 ) -> FR3PartSceneCfg:
     """Build a configured scene for a single Franka Panda and rigid part."""
+
+    if part_mass_kg is not None and part_density_kg_m3 is not None:
+        raise ValueError("part_mass_kg and part_density_kg_m3 are mutually exclusive.")
+    if part_mass_kg is not None and part_mass_kg <= 0.0:
+        raise ValueError("part_mass_kg must be > 0 when set.")
+    if part_density_kg_m3 is not None and part_density_kg_m3 <= 0.0:
+        raise ValueError("part_density_kg_m3 must be > 0 when set.")
 
     def _resolve_path(asset_path: str) -> str:
         if "://" in asset_path:
@@ -118,6 +136,10 @@ def make_fr3_part_scene_cfg(
     scene_cfg.robot.init_state.pos = robot_base_position
     scene_cfg.robot.init_state.rot = robot_base_orientation_xyzw
     scene_cfg.part.spawn.usd_path = _resolve_path(part_usd_path)
+    if part_mass_kg is not None:
+        scene_cfg.part.spawn.mass_props = sim_utils.MassPropertiesCfg(mass=part_mass_kg)
+    elif part_density_kg_m3 is not None:
+        scene_cfg.part.spawn.mass_props = sim_utils.MassPropertiesCfg(density=part_density_kg_m3)
     scene_cfg.part.init_state.pos = part_position
     # Isaac Lab initial-state quaternions are wxyz, while pipeline world poses are xyzw.
     x, y, z, w = part_orientation_xyzw

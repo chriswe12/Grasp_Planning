@@ -129,6 +129,10 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
     defaults["robot_cfg_updates"] = robot_cfg_updates
 
     execution_cfg_kwargs: dict[str, object] = {}
+    if "mass_kg" in object_raw and "density_kg_m3" in object_raw:
+        raise ValueError("Configure either scene.object.mass_kg or scene.object.density_kg_m3, not both.")
+    if "density_kg_m3" in object_raw:
+        execution_cfg_kwargs["object_density_kg_m3"] = float(object_raw["density_kg_m3"])
     if "mass_kg" in object_raw:
         execution_cfg_kwargs["object_mass_kg"] = float(object_raw["mass_kg"])
     if "scale" in object_raw:
@@ -173,6 +177,14 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
         execution_cfg_kwargs["waypoint_settle_steps"] = int(robot_raw["waypoint_settle_steps"])
     if "speed_scale" in robot_raw:
         execution_cfg_kwargs["arm_speed_scale"] = float(robot_raw["speed_scale"])
+    if "adaptive_speed_enabled" in robot_raw:
+        execution_cfg_kwargs["adaptive_speed_enabled"] = bool(robot_raw["adaptive_speed_enabled"])
+    if "approach_speed_scale" in robot_raw:
+        execution_cfg_kwargs["approach_speed_scale"] = float(robot_raw["approach_speed_scale"])
+    if "approach_slowdown_start_fraction" in robot_raw:
+        execution_cfg_kwargs["approach_slowdown_start_fraction"] = float(robot_raw["approach_slowdown_start_fraction"])
+    if "joint_target_tolerance_rad" in robot_raw:
+        execution_cfg_kwargs["joint_target_tolerance_rad"] = float(robot_raw["joint_target_tolerance_rad"])
     if "lift_height_m" in robot_raw:
         execution_cfg_kwargs["lift_height_m"] = float(robot_raw["lift_height_m"])
     if "regrasp_transport_clearance_m" in robot_raw:
@@ -293,6 +305,7 @@ def _attempt_result_payload(*, selected_grasp, result) -> dict[str, object]:
             "position_error_m": result.position_error_m,
             "orientation_error_rad": result.orientation_error_rad,
             "generated_scene_xml": result.generated_scene_xml,
+            "trajectory_diagnostics": list(getattr(result, "trajectory_diagnostics", ())),
             "video_path": getattr(result, "video_path", None),
             "video_frame_count": getattr(result, "video_frame_count", 0),
         },
@@ -457,6 +470,7 @@ def _moveit_config_from_args(args_cli, *, joint_names: tuple[str, ...]) -> MoveI
         planning_group=str(args_cli.moveit_planning_group),
         pose_link=str(args_cli.moveit_pose_link),
         joint_names=joint_names,
+        pipeline_id=str(args_cli.moveit_pipeline_id),
         planner_id=str(args_cli.moveit_planner_id),
         wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
         ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
@@ -811,6 +825,12 @@ def main() -> None:
         help="Optional detailed Franka finger contact gap used during the ground recheck.",
     )
     parser.add_argument("--object-mass-kg", type=float, default=None, help="Optional target object mass in kg.")
+    parser.add_argument(
+        "--object-density-kg-m3",
+        type=float,
+        default=None,
+        help="Optional target object density in kg/m^3; mutually exclusive with --object-mass-kg.",
+    )
     parser.add_argument("--object-scale", type=float, default=None, help="Optional uniform object mesh scale.")
     parser.add_argument("--lift-height-m", type=float, default=None, help="Optional vertical lift height after grasp.")
     parser.add_argument(
@@ -873,6 +893,7 @@ def main() -> None:
     parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
     parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
     parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+    parser.add_argument("--moveit-pipeline-id", type=str, default="", help="Optional MoveIt planning pipeline id.")
     parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
     parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
     parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
@@ -901,6 +922,8 @@ def main() -> None:
         help="Maximum final grasps considered per placement option during MoveIt regrasp selection.",
     )
     args_cli = parser.parse_args()
+    if args_cli.object_mass_kg is not None and args_cli.object_density_kg_m3 is not None:
+        parser.error("--object-mass-kg and --object-density-kg-m3 are mutually exclusive.")
     video_cfg = (
         None
         if args_cli.record_video is None
@@ -944,6 +967,10 @@ def main() -> None:
     execution_cfg_kwargs = dict(simulation_defaults["execution_cfg_kwargs"])
     if args_cli.object_mass_kg is not None:
         execution_cfg_kwargs["object_mass_kg"] = float(args_cli.object_mass_kg)
+        execution_cfg_kwargs["object_density_kg_m3"] = None
+    if args_cli.object_density_kg_m3 is not None:
+        execution_cfg_kwargs["object_density_kg_m3"] = float(args_cli.object_density_kg_m3)
+        execution_cfg_kwargs.pop("object_mass_kg", None)
     if args_cli.object_scale is not None:
         execution_cfg_kwargs["object_scale"] = float(args_cli.object_scale)
     if args_cli.lift_height_m is not None:

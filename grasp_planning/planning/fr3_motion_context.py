@@ -89,7 +89,7 @@ def tcp_pose_to_grasp_pose(
     grasp_to_tcp_quat_wxyz: tuple[float, float, float, float],
     tcp_to_grasp_center_offset: tuple[float, float, float],
 ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    """Convert a TCP-frame pose into the grasp-frame pose consumed by the planner."""
+    """Convert a TCP-frame pose into the grasp-frame pose consumed by execution."""
 
     tcp_quat_wxyz = (
         float(orientation_xyzw[3]),
@@ -143,6 +143,7 @@ class FR3MotionContext:
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
+        r"panda_fingertip_centered",
         r".*tcp.*",
         r"panda_hand",
         r".*hand.*",
@@ -154,7 +155,7 @@ class FR3MotionContext:
     }
     _ARM_JOINT_PATTERN = r"(?:panda|fr3)_joint[1-7]"
     _HAND_JOINT_PATTERN = r"(?:panda|fr3)_finger_joint[12]"
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
+    _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _EE_POSITION_CORRECTION_GAIN = 2.0
     _EE_POSITION_CORRECTION_DAMPING = 0.05
@@ -271,6 +272,29 @@ class FR3MotionContext:
 
     def command_arm(self, q: torch.Tensor) -> None:
         self.robot.set_joint_position_target(q, joint_ids=self.arm_joint_ids)
+
+    def reset_joint_state(
+        self,
+        q_arm: torch.Tensor,
+        *,
+        q_hand: torch.Tensor | None = None,
+        steps: int = 2,
+    ) -> None:
+        """Hard-reset simulated joint state and controller targets after internal IK search."""
+
+        q_arm = q_arm.clone().to(dtype=torch.float32, device=self.device)
+        arm_vel = torch.zeros_like(q_arm)
+        self.robot.write_joint_state_to_sim(q_arm, arm_vel, joint_ids=self.arm_joint_ids)
+        self.robot.set_joint_position_target(q_arm, joint_ids=self.arm_joint_ids)
+        if q_hand is not None and self.hand_joint_ids.numel() > 0 and q_hand.numel() > 0:
+            q_hand = q_hand.clone().to(dtype=torch.float32, device=self.device)
+            hand_vel = torch.zeros_like(q_hand)
+            self.robot.write_joint_state_to_sim(q_hand, hand_vel, joint_ids=self.hand_joint_ids)
+            self.robot.set_joint_position_target(q_hand, joint_ids=self.hand_joint_ids)
+        self.scene.write_data_to_sim()
+        for _ in range(max(1, int(steps))):
+            self.sim.step()
+            self.scene.update(self.physics_dt)
 
     def command_fixed_gripper(self) -> None:
         if self.hand_joint_ids.numel() == 0:

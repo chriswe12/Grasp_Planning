@@ -185,6 +185,10 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
     controller = str(raw.get("controller", "native")).strip().lower()
     if controller not in {"native", "moveit"}:
         raise ValueError(f"Unsupported mujoco_execution.controller value '{controller}'.")
+    object_mass_kg = _optional_float(raw, "object_mass_kg")
+    object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
+    if object_mass_kg is not None and object_density_kg_m3 is not None:
+        raise ValueError("mujoco_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     regrasp_staging_xy_world = None
     if raw.get("regrasp_staging_xy_world") not in ("", None):
         regrasp_staging_xy_world = _tuple_floats(raw["regrasp_staging_xy_world"], expected_len=2)
@@ -199,7 +203,8 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
-        object_mass_kg=_optional_float(raw, "object_mass_kg"),
+        object_mass_kg=object_mass_kg,
+        object_density_kg_m3=object_density_kg_m3,
         object_scale=_optional_float(raw, "object_scale"),
         lift_height_m=_optional_float(raw, "lift_height_m"),
         success_height_margin_m=_optional_float(raw, "success_height_margin_m"),
@@ -214,6 +219,7 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
         moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
         moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_pipeline_id=str(raw.get("moveit_pipeline_id", "")),
         moveit_planner_id=str(raw.get("moveit_planner_id", "")),
         moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
         moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
@@ -267,9 +273,13 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     tcp_to_grasp_offset = None
     if raw.get("tcp_to_grasp_offset") not in ("", None):
         tcp_to_grasp_offset = _tuple_floats(raw["tcp_to_grasp_offset"], expected_len=3)
-    controller = str(raw.get("controller", "admittance")).strip().lower()
-    if controller not in {"planner", "admittance", "moveit"}:
-        raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'.")
+    controller = str(raw.get("controller", "moveit")).strip().lower()
+    if controller != "moveit":
+        raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'. Only 'moveit' is supported.")
+    object_mass_kg = _optional_float(raw, "object_mass_kg")
+    object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
+    if object_mass_kg is not None and object_density_kg_m3 is not None:
+        raise ValueError("isaac_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -281,7 +291,10 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
         lift_height_m=float(raw.get("lift_height_m", 0.08)),
+        success_height_margin_m=float(raw.get("success_height_margin_m", IsaacPipelineConfig.success_height_margin_m)),
         close_width=float(raw.get("close_width", 0.0)),
+        object_mass_kg=object_mass_kg,
+        object_density_kg_m3=object_density_kg_m3,
         tcp_to_grasp_offset=tcp_to_grasp_offset,
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/isaac_pick_attempt.json")),
         pregrasp_only=bool(raw.get("pregrasp_only", False)),
@@ -290,6 +303,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
         moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
         moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_pipeline_id=str(raw.get("moveit_pipeline_id", "")),
         moveit_planner_id=str(raw.get("moveit_planner_id", "")),
         moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
         moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
@@ -297,6 +311,8 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
         moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
+        moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
+        moveit_grasp_settle_time_s=float(raw.get("moveit_grasp_settle_time_s", 0.0)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
@@ -487,6 +503,7 @@ def _moveit_config_from_isaac_execution(isaac_execution: IsaacPipelineConfig) ->
         planning_group=str(isaac_execution.moveit_planning_group),
         pose_link=str(isaac_execution.moveit_pose_link),
         joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+        pipeline_id=str(isaac_execution.moveit_pipeline_id),
         planner_id=str(isaac_execution.moveit_planner_id),
         wait_for_moveit_timeout_s=float(isaac_execution.moveit_wait_for_moveit_timeout_s),
         ik_timeout_s=float(isaac_execution.moveit_ik_timeout_s),
@@ -534,7 +551,7 @@ def _plan_isaac_moveit_joint_trajectories(
             rclpy.init()
             initialized_here = True
         moveit_config = _moveit_config_from_isaac_execution(isaac_execution)
-        commander = MoveItPoseCommander(moveit_config, node_name="isaac_pipeline_moveit_planner")
+        commander = MoveItPoseCommander(moveit_config, node_name="isaac_pipeline_moveit")
         commander.wait_for_moveit(require_execute=False)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
         current_start = DEFAULT_ARM_START_JOINT_VALUES
@@ -572,7 +589,7 @@ def _maybe_write_isaac_moveit_plan(
     stage2,
     isaac_execution: IsaacPipelineConfig,
 ) -> tuple[Path, str] | None:
-    if not isaac_execution.enabled or isaac_execution.controller != "moveit":
+    if not isaac_execution.enabled:
         return None
     selected_grasp, world_grasp = _select_isaac_moveit_grasp(stage2, isaac_execution)
     output_path = _isaac_moveit_plan_artifact_path(isaac_execution)
@@ -598,6 +615,7 @@ def _maybe_write_isaac_moveit_plan(
                     "frame_id": isaac_execution.moveit_frame_id,
                     "planning_group": isaac_execution.moveit_planning_group,
                     "pose_link": isaac_execution.moveit_pose_link,
+                    "pipeline_id": isaac_execution.moveit_pipeline_id,
                     "planner_id": isaac_execution.moveit_planner_id,
                     "lift_height_m": isaac_execution.lift_height_m,
                     "allow_collisions": bool(isaac_execution.moveit_allow_collisions),
@@ -649,6 +667,8 @@ def _run_mujoco_execution(
         command.extend(["--contact-gap-m", str(mujoco_execution.contact_gap_m)])
     if mujoco_execution.object_mass_kg is not None:
         command.extend(["--object-mass-kg", str(mujoco_execution.object_mass_kg)])
+    if mujoco_execution.object_density_kg_m3 is not None:
+        command.extend(["--object-density-kg-m3", str(mujoco_execution.object_density_kg_m3)])
     if mujoco_execution.object_scale is not None:
         command.extend(["--object-scale", str(mujoco_execution.object_scale)])
     if mujoco_execution.lift_height_m is not None:
@@ -678,6 +698,8 @@ def _run_mujoco_execution(
                 mujoco_execution.moveit_planning_group,
                 "--moveit-pose-link",
                 mujoco_execution.moveit_pose_link,
+                "--moveit-pipeline-id",
+                mujoco_execution.moveit_pipeline_id,
                 "--moveit-planner-id",
                 mujoco_execution.moveit_planner_id,
                 "--moveit-wait-for-moveit-timeout-s",
@@ -791,6 +813,8 @@ def _run_isaac_execution(
         isaac_execution.attempt_artifact,
         "--close-width",
         str(isaac_execution.close_width),
+        "--success-height-margin-m",
+        str(isaac_execution.success_height_margin_m),
         "--run-seconds",
         str(isaac_execution.run_seconds),
     ]
@@ -806,43 +830,52 @@ def _run_isaac_execution(
         command.extend(["--gripper-width-clearance", str(isaac_execution.gripper_width_clearance)])
     if isaac_execution.contact_gap_m is not None:
         command.extend(["--detailed-finger-contact-gap-m", str(isaac_execution.contact_gap_m)])
+    if isaac_execution.object_mass_kg is not None:
+        command.extend(["--object-mass-kg", str(isaac_execution.object_mass_kg)])
+    if isaac_execution.object_density_kg_m3 is not None:
+        command.extend(["--object-density-kg-m3", str(isaac_execution.object_density_kg_m3)])
     if isaac_execution.tcp_to_grasp_offset is not None:
         command.extend(["--tcp-to-grasp-offset", *(str(value) for value in isaac_execution.tcp_to_grasp_offset)])
     if isaac_execution.pregrasp_only:
         command.append("--pregrasp-only")
     if headless or isaac_execution.headless:
         command.append("--headless")
-    if isaac_execution.controller == "moveit":
-        if moveit_plan_json is not None:
-            command.extend(["--moveit-plan-json", str(moveit_plan_json)])
-        command.extend(
-            [
-                "--moveit-frame-id",
-                isaac_execution.moveit_frame_id,
-                "--moveit-planning-group",
-                isaac_execution.moveit_planning_group,
-                "--moveit-pose-link",
-                isaac_execution.moveit_pose_link,
-                "--moveit-planner-id",
-                isaac_execution.moveit_planner_id,
-                "--moveit-wait-for-moveit-timeout-s",
-                str(isaac_execution.moveit_wait_for_moveit_timeout_s),
-                "--moveit-ik-timeout-s",
-                str(isaac_execution.moveit_ik_timeout_s),
-                "--moveit-planning-time-s",
-                str(isaac_execution.moveit_planning_time_s),
-                "--moveit-num-planning-attempts",
-                str(isaac_execution.moveit_num_planning_attempts),
-                "--moveit-velocity-scale",
-                str(isaac_execution.moveit_velocity_scale),
-                "--moveit-acceleration-scale",
-                str(isaac_execution.moveit_acceleration_scale),
-                "--moveit-lift-height-m",
-                str(isaac_execution.lift_height_m),
-            ]
-        )
-        if isaac_execution.moveit_allow_collisions:
-            command.append("--moveit-allow-collisions")
+    if moveit_plan_json is not None:
+        command.extend(["--moveit-plan-json", str(moveit_plan_json)])
+    command.extend(
+        [
+            "--moveit-frame-id",
+            isaac_execution.moveit_frame_id,
+            "--moveit-planning-group",
+            isaac_execution.moveit_planning_group,
+            "--moveit-pose-link",
+            isaac_execution.moveit_pose_link,
+            "--moveit-pipeline-id",
+            isaac_execution.moveit_pipeline_id,
+            "--moveit-planner-id",
+            isaac_execution.moveit_planner_id,
+            "--moveit-wait-for-moveit-timeout-s",
+            str(isaac_execution.moveit_wait_for_moveit_timeout_s),
+            "--moveit-ik-timeout-s",
+            str(isaac_execution.moveit_ik_timeout_s),
+            "--moveit-planning-time-s",
+            str(isaac_execution.moveit_planning_time_s),
+            "--moveit-num-planning-attempts",
+            str(isaac_execution.moveit_num_planning_attempts),
+            "--moveit-velocity-scale",
+            str(isaac_execution.moveit_velocity_scale),
+            "--moveit-acceleration-scale",
+            str(isaac_execution.moveit_acceleration_scale),
+            "--moveit-lift-height-m",
+            str(isaac_execution.lift_height_m),
+            "--moveit-execution-speed-rad-s",
+            str(isaac_execution.moveit_execution_speed_rad_s),
+            "--moveit-grasp-settle-time-s",
+            str(isaac_execution.moveit_grasp_settle_time_s),
+        ]
+    )
+    if isaac_execution.moveit_allow_collisions:
+        command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting Isaac execution.", flush=True)
     subprocess.run(command, check=True, cwd=REPO_ROOT, env=_subprocess_env())
 

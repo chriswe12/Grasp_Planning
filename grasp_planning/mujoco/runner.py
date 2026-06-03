@@ -72,8 +72,13 @@ class MujocoExecutionConfig:
     trajectory_waypoints: int = 25
     waypoint_settle_steps: int = 45
     arm_speed_scale: float = 1.0
+    adaptive_speed_enabled: bool = True
+    approach_speed_scale: float = 1.0
+    approach_slowdown_start_fraction: float = 0.65
+    joint_target_tolerance_rad: float = 0.02
     success_height_margin_m: float = 0.05
     object_mass_kg: float = 0.15
+    object_density_kg_m3: float | None = None
     object_scale: float = 1.0
     object_friction: tuple[float, float, float] = (2.2, 0.08, 0.01)
     object_condim: int = 6
@@ -133,6 +138,42 @@ class MujocoRegraspAttemptResult:
 
 
 MoveItJointTrajectories = Mapping[str, tuple[tuple[float, ...], ...]]
+
+
+def _max_observed_object_center_z_m(
+    diagnostics: tuple[dict[str, object], ...] | list[dict[str, object]],
+    *,
+    labels: tuple[str, ...],
+) -> float | None:
+    label_set = {str(label) for label in labels}
+    values: list[float] = []
+    for diagnostic in diagnostics:
+        if str(diagnostic.get("label", "")) not in label_set:
+            continue
+        raw_value = diagnostic.get("observed_object_center_max_z_m")
+        if raw_value is None:
+            continue
+        value = float(raw_value)
+        if np.isfinite(value):
+            values.append(value)
+    if not values:
+        return None
+    return float(max(values))
+
+
+def _best_lift_height_m(
+    *,
+    initial_object_z_m: float,
+    fallback_object_z_m: float,
+    diagnostics: tuple[dict[str, object], ...] | list[dict[str, object]],
+    labels: tuple[str, ...],
+) -> float:
+    peak_object_z_m = _max_observed_object_center_z_m(diagnostics, labels=labels)
+    if peak_object_z_m is None:
+        peak_object_z_m = float(fallback_object_z_m)
+    else:
+        peak_object_z_m = max(float(peak_object_z_m), float(fallback_object_z_m))
+    return float(peak_object_z_m - float(initial_object_z_m))
 
 
 @dataclass(frozen=True)
@@ -284,6 +325,7 @@ class MujocoPickupRuntime:
             object_scale=execution_cfg.object_scale,
             scene_cfg=MujocoObjectSceneConfig(
                 object_mass_kg=execution_cfg.object_mass_kg,
+                object_density_kg_m3=execution_cfg.object_density_kg_m3,
                 object_friction=execution_cfg.object_friction,
                 object_condim=execution_cfg.object_condim,
                 object_solref=execution_cfg.object_solref,
@@ -471,9 +513,25 @@ class MujocoPickupRuntime:
             self._sync_viewer()
             self._capture_video_frame()
 
-    def _scaled_arm_steps(self, base_steps: int) -> int:
-        speed_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
+    def _scaled_arm_steps(self, base_steps: int, *, speed_scale: float | None = None) -> int:
+        if speed_scale is None:
+            speed_scale = float(self._execution_cfg.arm_speed_scale)
+        speed_scale = max(1.0e-6, float(speed_scale))
         return max(1, int(np.ceil(float(base_steps) / speed_scale)))
+
+    def _adaptive_arm_speed_scale(self, alpha: float) -> float:
+        fast_scale = max(1.0e-6, float(self._execution_cfg.arm_speed_scale))
+        if not bool(self._execution_cfg.adaptive_speed_enabled):
+            return fast_scale
+        approach_scale = max(1.0e-6, float(self._execution_cfg.approach_speed_scale))
+        if fast_scale <= approach_scale:
+            return fast_scale
+        slowdown_start = float(np.clip(self._execution_cfg.approach_slowdown_start_fraction, 0.0, 0.999))
+        if alpha <= slowdown_start:
+            return fast_scale
+        blend = (float(alpha) - slowdown_start) / (1.0 - slowdown_start)
+        smooth_blend = blend * blend * (3.0 - 2.0 * blend)
+        return (1.0 - smooth_blend) * fast_scale + smooth_blend * approach_scale
 
     def get_arm_qpos(self) -> np.ndarray:
         return np.asarray(self._data.qpos[self._arm_qpos_indices], dtype=float).copy()
@@ -676,18 +734,72 @@ class MujocoPickupRuntime:
         rot_norm = _rotation_error_rad(current_quat_xyzw, target_orientation_xyzw)
         return None, pos_norm, rot_norm
 
-    def execute_joint_target(self, q_goal: np.ndarray, *, gripper_ctrl: tuple[float, ...]) -> bool:
+    def execute_joint_target(
+        self,
+        q_goal: np.ndarray,
+        *,
+        gripper_ctrl: tuple[float, ...],
+        label: str = "joint_target",
+    ) -> bool:
         q_start = self.get_arm_qpos()
         num_waypoints = max(2, int(self._execution_cfg.trajectory_waypoints))
+        min_speed_scale = float("inf")
+        max_speed_scale = float("-inf")
+        min_settle_steps = 0
+        max_settle_steps = 0
+        total_settle_steps = 0
+        observed_tcp_min_z = float("inf")
+        observed_tcp_max_z = float("-inf")
+        observed_object_center_min_z = float("inf")
+        observed_object_center_max_z = float("-inf")
         for step_idx in range(1, num_waypoints + 1):
             alpha = float(step_idx) / float(num_waypoints)
             q_target = (1.0 - alpha) * q_start + alpha * q_goal
-            for _ in range(self._scaled_arm_steps(self._execution_cfg.waypoint_settle_steps)):
+            speed_scale = self._adaptive_arm_speed_scale(alpha)
+            settle_steps = self._scaled_arm_steps(self._execution_cfg.waypoint_settle_steps, speed_scale=speed_scale)
+            min_speed_scale = min(min_speed_scale, speed_scale)
+            max_speed_scale = max(max_speed_scale, speed_scale)
+            min_settle_steps = settle_steps if step_idx == 1 else min(min_settle_steps, settle_steps)
+            max_settle_steps = max(max_settle_steps, settle_steps)
+            total_settle_steps += settle_steps
+            for _ in range(settle_steps):
                 self._set_arm_ctrl(q_target)
                 self._set_gripper_ctrl(gripper_ctrl)
                 self._step(self._robot_cfg.control_substeps)
+                tcp_position, _ = self._site_pose_from_data(self._data)
+                object_position = self.object_position_world()
+                observed_tcp_min_z = min(observed_tcp_min_z, float(tcp_position[2]))
+                observed_tcp_max_z = max(observed_tcp_max_z, float(tcp_position[2]))
+                observed_object_center_min_z = min(observed_object_center_min_z, float(object_position[2]))
+                observed_object_center_max_z = max(observed_object_center_max_z, float(object_position[2]))
         final_error = float(np.max(np.abs(self.get_arm_qpos() - q_goal)))
-        return final_error <= 0.02
+        tolerance = float(self._execution_cfg.joint_target_tolerance_rad)
+        success = final_error <= tolerance
+        diagnostic: dict[str, object] = {
+            "label": str(label),
+            "kind": "native_joint_target",
+            "success": bool(success),
+            "final_joint_error_rad": final_error,
+            "joint_target_tolerance_rad": tolerance,
+            "waypoint_count": int(num_waypoints),
+            "base_waypoint_settle_steps": int(self._execution_cfg.waypoint_settle_steps),
+            "total_settle_steps": int(total_settle_steps),
+            "min_settle_steps_per_waypoint": int(min_settle_steps),
+            "max_settle_steps_per_waypoint": int(max_settle_steps),
+            "adaptive_speed_enabled": bool(self._execution_cfg.adaptive_speed_enabled),
+            "arm_speed_scale": float(self._execution_cfg.arm_speed_scale),
+            "approach_speed_scale": float(self._execution_cfg.approach_speed_scale),
+            "approach_slowdown_start_fraction": float(self._execution_cfg.approach_slowdown_start_fraction),
+            "min_effective_speed_scale": float(min_speed_scale),
+            "max_effective_speed_scale": float(max_speed_scale),
+        }
+        if np.isfinite(observed_tcp_min_z):
+            diagnostic["observed_tcp_min_z_m"] = float(observed_tcp_min_z)
+            diagnostic["observed_tcp_max_z_m"] = float(observed_tcp_max_z)
+            diagnostic["observed_object_center_min_z_m"] = float(observed_object_center_min_z)
+            diagnostic["observed_object_center_max_z_m"] = float(observed_object_center_max_z)
+        self._trajectory_diagnostics.append(diagnostic)
+        return bool(success)
 
     def reach_world_grasp_pose(
         self,
@@ -703,7 +815,7 @@ class MujocoPickupRuntime:
         )
         if q_goal is None:
             return False, position_error_m, orientation_error_rad
-        reached = self.execute_joint_target(q_goal, gripper_ctrl=gripper_ctrl)
+        reached = self.execute_joint_target(q_goal, gripper_ctrl=gripper_ctrl, label="world_grasp_pose")
         return bool(reached), position_error_m, orientation_error_rad
 
     def execute_joint_waypoints(
@@ -823,7 +935,7 @@ class MujocoPickupRuntime:
             gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
         )
         if pregrasp_q is None or not self.execute_joint_target(
-            pregrasp_q, gripper_ctrl=self._robot_cfg.open_gripper_ctrl
+            pregrasp_q, gripper_ctrl=self._robot_cfg.open_gripper_ctrl, label="pregrasp"
         ):
             return MujocoAttemptResult(
                 success=False,
@@ -841,6 +953,7 @@ class MujocoPickupRuntime:
                 position_error_m=pregrasp_pos_err,
                 orientation_error_rad=pregrasp_rot_err,
                 generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+                trajectory_diagnostics=tuple(self._trajectory_diagnostics),
             )
 
         grasp_q, grasp_pos_err, grasp_rot_err = self.solve_ik(
@@ -848,7 +961,9 @@ class MujocoPickupRuntime:
             world_grasp.orientation_xyzw,
             gripper_ctrl=self._robot_cfg.open_gripper_ctrl,
         )
-        if grasp_q is None or not self.execute_joint_target(grasp_q, gripper_ctrl=self._robot_cfg.open_gripper_ctrl):
+        if grasp_q is None or not self.execute_joint_target(
+            grasp_q, gripper_ctrl=self._robot_cfg.open_gripper_ctrl, label="grasp"
+        ):
             return MujocoAttemptResult(
                 success=False,
                 status="grasp_failed",
@@ -865,6 +980,7 @@ class MujocoPickupRuntime:
                 position_error_m=grasp_pos_err,
                 orientation_error_rad=grasp_rot_err,
                 generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+                trajectory_diagnostics=tuple(self._trajectory_diagnostics),
             )
 
         self.close_gripper()
@@ -879,18 +995,29 @@ class MujocoPickupRuntime:
             gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
         )
         if lift_q is not None:
-            self.execute_joint_target(lift_q, gripper_ctrl=self._robot_cfg.closed_gripper_ctrl)
+            self.execute_joint_target(lift_q, gripper_ctrl=self._robot_cfg.closed_gripper_ctrl, label="lift")
+        immediate_lift_object_position_world = self.object_position_world()
         self.hold_closed()
 
         final_object_position_world = self.object_position_world()
-        lift_height_m = float(final_object_position_world[2] - initial_object_position_world[2])
+        final_lift_height_m = float(final_object_position_world[2] - initial_object_position_world[2])
+        lift_height_m = _best_lift_height_m(
+            initial_object_z_m=float(initial_object_position_world[2]),
+            fallback_object_z_m=float(immediate_lift_object_position_world[2]),
+            diagnostics=self._trajectory_diagnostics,
+            labels=("lift",),
+        )
         target_lift_height_m = float(self._execution_cfg.success_height_margin_m)
         success = lift_height_m >= target_lift_height_m
         status = "ok" if success else "lift_failed"
         message = (
-            f"Object lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+            f"Object lifted by {lift_height_m:.4f} m during lift "
+            f"(final after hold {final_lift_height_m:.4f} m, required {target_lift_height_m:.4f} m)."
             if success
-            else f"Object only lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+            else (
+                f"Object only lifted by {lift_height_m:.4f} m during lift "
+                f"(final after hold {final_lift_height_m:.4f} m, required {target_lift_height_m:.4f} m)."
+            )
         )
         return MujocoAttemptResult(
             success=success,
@@ -905,6 +1032,7 @@ class MujocoPickupRuntime:
             position_error_m=lift_pos_err if lift_q is None else None,
             orientation_error_rad=lift_rot_err if lift_q is None else None,
             generated_scene_xml=self.generated_scene_xml_path if self._keep_generated_scene else None,
+            trajectory_diagnostics=tuple(self._trajectory_diagnostics),
         )
 
     def run_regrasp(
@@ -1475,21 +1603,34 @@ class MujocoPickupRuntime:
             gripper_ctrl=self._robot_cfg.closed_gripper_ctrl,
             label="lift",
         )
+        immediate_lift_object_position_world = self.object_position_world()
         self.hold_closed()
 
         final_object_position_world = self.object_position_world()
-        lift_height_m = float(final_object_position_world[2] - initial_object_position_world[2])
+        final_lift_height_m = float(final_object_position_world[2] - initial_object_position_world[2])
+        lift_height_m = _best_lift_height_m(
+            initial_object_z_m=float(initial_object_position_world[2]),
+            fallback_object_z_m=float(immediate_lift_object_position_world[2]),
+            diagnostics=self._trajectory_diagnostics,
+            labels=("lift",),
+        )
         target_lift_height_m = float(self._execution_cfg.success_height_margin_m)
         success = bool(lift_reached and lift_height_m >= target_lift_height_m)
         if success:
             status = "ok"
-            message = f"Object lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+            message = (
+                f"Object lifted by {lift_height_m:.4f} m during lift "
+                f"(final after hold {final_lift_height_m:.4f} m, required {target_lift_height_m:.4f} m)."
+            )
         elif not lift_reached:
             status = "moveit_lift_failed"
             message = "Failed to execute the MoveIt lift trajectory in MuJoCo."
         else:
             status = "lift_failed"
-            message = f"Object only lifted by {lift_height_m:.4f} m (required {target_lift_height_m:.4f} m)."
+            message = (
+                f"Object only lifted by {lift_height_m:.4f} m during lift "
+                f"(final after hold {final_lift_height_m:.4f} m, required {target_lift_height_m:.4f} m)."
+            )
         return MujocoAttemptResult(
             success=success,
             status=status,

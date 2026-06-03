@@ -28,6 +28,7 @@ class MujocoObjectSceneConfig:
     object_geom_name: str = "target_object_geom"
     ground_geom_name: str = "ground"
     object_mass_kg: float = 0.15
+    object_density_kg_m3: float | None = None
     object_friction: tuple[float, float, float] = (2.2, 0.08, 0.01)
     ground_friction: tuple[float, float, float] = (1.5, 0.04, 0.002)
     object_condim: int = 6
@@ -82,6 +83,10 @@ def build_scene_xml_text(
         raise FileNotFoundError(f"Object mesh not found at '{object_mesh}'.")
     if object_scale <= 0.0:
         raise ValueError("object_scale must be > 0.")
+    if scene_cfg.object_density_kg_m3 is not None and scene_cfg.object_density_kg_m3 <= 0.0:
+        raise ValueError("object_density_kg_m3 must be > 0 when set.")
+    if scene_cfg.object_density_kg_m3 is None and scene_cfg.object_mass_kg <= 0.0:
+        raise ValueError("object_mass_kg must be > 0 when density is not set.")
 
     root = ET.parse(robot_xml).getroot()
     if root.tag != "mujoco":
@@ -177,23 +182,23 @@ def build_scene_xml_text(
         },
     )
     ET.SubElement(object_body, "freejoint", {"name": f"{scene_cfg.object_body_name}_freejoint"})
-    ET.SubElement(
-        object_body,
-        "geom",
-        {
-            "name": scene_cfg.object_geom_name,
-            "type": "mesh",
-            "mesh": mesh_name,
-            "mass": f"{scene_cfg.object_mass_kg:.9g}",
-            "friction": _format_vec(scene_cfg.object_friction),
-            "condim": str(int(scene_cfg.object_condim)),
-            "solref": _format_vec(scene_cfg.object_solref),
-            "solimp": _format_vec(scene_cfg.object_solimp),
-            "margin": f"{scene_cfg.object_margin:.9g}",
-            "gap": f"{scene_cfg.object_gap:.9g}",
-            "rgba": "0.86 0.34 0.26 1",
-        },
-    )
+    object_geom_attrs = {
+        "name": scene_cfg.object_geom_name,
+        "type": "mesh",
+        "mesh": mesh_name,
+        "friction": _format_vec(scene_cfg.object_friction),
+        "condim": str(int(scene_cfg.object_condim)),
+        "solref": _format_vec(scene_cfg.object_solref),
+        "solimp": _format_vec(scene_cfg.object_solimp),
+        "margin": f"{scene_cfg.object_margin:.9g}",
+        "gap": f"{scene_cfg.object_gap:.9g}",
+        "rgba": "0.86 0.34 0.26 1",
+    }
+    if scene_cfg.object_density_kg_m3 is not None:
+        object_geom_attrs["density"] = f"{scene_cfg.object_density_kg_m3:.9g}"
+    else:
+        object_geom_attrs["mass"] = f"{scene_cfg.object_mass_kg:.9g}"
+    ET.SubElement(object_body, "geom", object_geom_attrs)
 
     return ET.tostring(root, encoding="unicode")
 

@@ -6,6 +6,12 @@ execution_benchmark:
   resume: true
   record_video: "all"  # all or none
 
+placement:
+  # Execution benchmark bundles keep their saved stable orientation and Z height,
+  # but are shifted to this robot-workspace XY before MuJoCo/Isaac execution.
+  # Set to null, or pass --use-bundle-placement, to use the generation bundle pose verbatim.
+  xy_world: [0.5, 0.0]
+
 selection:
   assemblies: []
   parts: []
@@ -13,21 +19,36 @@ selection:
   grasp_ids: []
   limit_orientations:
   max_grasps_per_orientation:
+  max_gripper_width_m: 0.08
   limit_attempts:
 
 mujoco:
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
-  controller: "native"
+  controller: "moveit"
   pregrasp_offset:
   gripper_width_clearance:
   contact_gap_m:
   object_mass_kg:
+  object_density_kg_m3: 1240.0
   object_scale:
   lift_height_m:
   success_height_margin_m:
   keep_generated_scene: false
+  moveit_frame_id: "base"
+  moveit_planning_group: "fr3_arm"
+  moveit_pose_link: "fr3_hand_tcp"
+  moveit_pipeline_id: "isaac_ros_cumotion"
+  moveit_planner_id: "cuMotion"
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_execute_timeout_s: 120.0
+  moveit_allow_collisions: false
   video:
     fps: 30.0
     width: 960
@@ -39,17 +60,34 @@ mujoco:
 
 isaac:
   python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
-  controller: "planner"
+  controller: "moveit"
   headless: true
-  pregrasp_offset: 0.20
+  pregrasp_offset: 0.05
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   close_width: 0.0
+  object_mass_kg:
+  object_density_kg_m3: 1240.0
+  lift_height_m: 0.12
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
   run_seconds: 0.0
   part_usd: ""
   use_provided_part_usd: false
   fr3_usd: ""
+  moveit_frame_id: "base"
+  moveit_planning_group: "fr3_arm"
+  moveit_pose_link: "fr3_hand_tcp"
+  moveit_pipeline_id: "isaac_ros_cumotion"
+  moveit_planner_id: "cuMotion"
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_execution_speed_rad_s: 0.35
+  moveit_grasp_settle_time_s: 0.25
+  moveit_allow_collisions: false
   video:
     fps: 30.0
     width: 960
