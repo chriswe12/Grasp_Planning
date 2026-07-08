@@ -30,6 +30,32 @@ def test_world_grasp_pose_targets_builds_pregrasp_grasp_and_lift() -> None:
     assert targets["lift"].position_xyz == (0.4, 0.1, 0.28)
 
 
+def test_world_grasp_pose_targets_can_mirror_target_axes() -> None:
+    targets = world_grasp_pose_targets(
+        _world_grasp(),
+        frame_id="lbr_link_0",
+        lift_height_m=0.08,
+        position_signs=(1.0, -1.0, 1.0),
+    )
+
+    assert targets["pregrasp"].position_xyz == (0.4, -0.1, 0.1)
+    assert targets["grasp"].position_xyz == (0.4, -0.1, 0.2)
+    assert targets["lift"].position_xyz == (0.4, -0.1, 0.28)
+
+
+def test_world_grasp_pose_targets_apply_tcp_to_grasp_offset() -> None:
+    targets = world_grasp_pose_targets(
+        _world_grasp(),
+        frame_id="base",
+        lift_height_m=0.08,
+        tcp_to_grasp_offset=(0.0, 0.0, 0.035),
+    )
+
+    assert targets["pregrasp"].position_xyz == (0.4, 0.1, 0.065)
+    assert targets["grasp"].position_xyz == (0.4, 0.1, 0.165)
+    assert targets["lift"].position_xyz == (0.4, 0.1, 0.24500000000000002)
+
+
 def test_pose_target_from_world_preserves_pose_and_frame() -> None:
     target = pose_target_from_world(
         position_xyz=(0.2, -0.1, 0.3),

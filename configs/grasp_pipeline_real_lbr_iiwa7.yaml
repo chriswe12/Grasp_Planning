@@ -1,0 +1,105 @@
+geometry:
+  target_mesh_path: "obj/fabrica/plumbers_block/0.obj"
+  mesh_scale: 0.01
+  assembly_glob: "obj/fabrica/plumbers_block/*.obj"
+
+planning:
+  stage1_cache_enabled: true
+  stage1_cache_dir: "artifacts/stage1_cache"
+  num_surface_samples: 256
+  min_jaw_width: 0.002
+  max_jaw_width: 0.09
+  antipodal_cosine_threshold: 0.984807753012208
+  roll_angle_step_deg: 15.0
+  max_pair_checks: 40960
+  detailed_finger_contact_gap_m: 0.002
+  gripper_collision_model: "kuka_y_gripper"
+  floor_clearance_margin_m: 0.01
+  top_grasp_score_weight: 0.35
+  regrasp_transfer_top_grasp_score_weight: 0.70
+  reachability_proxy_score_weight: 0.15
+  reachability_proxy_hand_offset_m: 0.10
+  contact_lateral_offsets_m: [-0.002916666666666667, 0.0, 0.002916666666666667]
+  contact_approach_offsets_m: [-0.0030833333333333333, 0.0, 0.0030833333333333333]
+  rng_seed: 0
+
+artifacts:
+  stage1_json: "artifacts/real_lbr_pipeline_stage1_assembly_grasps.json"
+  stage1_html: "artifacts/real_lbr_pipeline_stage1_assembly_grasps.html"
+  stage2_json: "artifacts/real_lbr_pipeline_stage2_ground_feasible.json"
+  stage2_html: "artifacts/real_lbr_pipeline_stage2_ground_feasible.html"
+  part_frame_html: "artifacts/real_lbr_pipeline_part_frame_debug.html"
+
+mujoco_execution:
+  enabled: false
+  python_executable: ""
+  robot_config: ""
+  simulation_config: ""
+  controller: "native"
+  grasp_id: ""
+  attempt_artifact: "artifacts/real_lbr_mujoco_pick_attempt.json"
+  viewer: false
+
+ros2:
+  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
+  object_id: "pb_pipe"
+  frame_id: "world"
+  timeout_s: 10.0
+
+real_execution:
+  enabled: true
+  grasp_id: ""
+  attempt_artifact: "artifacts/real_lbr_robot_pick_attempt.json"
+  planning_group: "arm"
+  pose_link: "gripper_tcp"
+  moveit_namespace: "/lbr"
+  joint_names:
+    - "lbr_A1"
+    - "lbr_A2"
+    - "lbr_A3"
+    - "lbr_A4"
+    - "lbr_A5"
+    - "lbr_A6"
+    - "lbr_A7"
+  frame_id: "lbr_link_0"
+  wait_for_moveit_timeout_s: 15.0
+  ik_timeout_s: 2.0
+  planning_time_s: 5.0
+  num_planning_attempts: 5
+  velocity_scale: 0.05
+  acceleration_scale: 0.05
+  execute_timeout_s: 120.0
+  post_execute_sleep_s: 0.5
+  pregrasp_offset_m: 0.10
+  gripper_width_clearance_m: 0.01
+  lift_height_m: 0.08
+  require_confirmation: true
+  stop_after: "pregrasp"
+  allow_collisions: false
+  planning_scene_obstacles:
+    - id: "floor"
+      type: "box"
+      frame_id: "lbr_link_0"
+      size_m: [2.0, 2.0, 0.02]
+      xyz: [0.0, 0.0, -0.01]
+      rpy: [0.0, 0.0, 0.0]
+    - id: "rear_wall"
+      type: "box"
+      frame_id: "lbr_link_0"
+      size_m: [2.0, 0.04, 1.5]
+      xyz: [0.0, -0.75, 0.75]
+      rpy: [0.0, 0.0, 0.0]
+  gripper_enabled: false
+  gripper_client: "gripper_command"
+  gripper_command_action: "/gripper_controller/gripper_cmd"
+  gripper_command_position_mode: "kuka_y_finger_joint"
+  gripper_command_max_effort: 30.0
+  gripper_grasp_action: ""
+  gripper_move_action: ""
+  gripper_open_width: 0.08
+  gripper_grasp_speed: 0.03
+  gripper_grasp_force: 30.0
+  gripper_epsilon_inner: 0.002
+  gripper_epsilon_outer: 0.08
+  gripper_timeout_s: 10.0
+  grasp_settle_time_s: 0.5

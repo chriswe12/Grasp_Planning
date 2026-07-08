@@ -98,10 +98,35 @@ parser.add_argument(
     default=0.002,
     help="Detailed Franka finger contact gap used during the ground recheck.",
 )
+parser.add_argument(
+    "--gripper-collision-model",
+    type=str,
+    default="",
+    help="Gripper collision model for the pickup-pose ground recheck. Defaults to bundle metadata or franka_hand.",
+)
 parser.add_argument("--pregrasp-only", action="store_true", help="Stop after reaching pregrasp.")
 parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
+parser.add_argument(
+    "--moveit-target-position-signs",
+    type=str,
+    default="1,1,1",
+    help="Comma-separated x,y,z signs applied to world grasp positions before MoveIt planning.",
+)
 parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
 parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+parser.add_argument("--moveit-namespace", type=str, default="", help="Optional MoveIt namespace.")
+parser.add_argument(
+    "--moveit-joint-names",
+    type=str,
+    default="",
+    help="Optional comma-separated arm joint names. Defaults to fr3_joint1..fr3_joint7.",
+)
+parser.add_argument(
+    "--moveit-start-joint-positions",
+    type=str,
+    default="",
+    help="Optional comma-separated MoveIt start joint positions for direct planning.",
+)
 parser.add_argument("--moveit-pipeline-id", type=str, default="", help="Optional MoveIt planning pipeline id.")
 parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
 parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
@@ -188,6 +213,7 @@ from isaaclab.scene import InteractiveScene  # noqa: E402
 from isaaclab.sensors.camera import Camera, CameraCfg  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
+from isaaclab.sim.utils import bind_physics_material  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
 
 from grasp_planning import (  # noqa: E402
@@ -201,7 +227,11 @@ from grasp_planning import (  # noqa: E402
     select_first_feasible_grasp,
 )
 from grasp_planning.controllers.fr3_pick_controller import FR3PickController  # noqa: E402
-from grasp_planning.envs import DEFAULT_PART_DENSITY_KG_M3, make_fr3_part_scene_cfg  # noqa: E402
+from grasp_planning.envs import (  # noqa: E402
+    DEFAULT_PART_DENSITY_KG_M3,
+    ISAAC_MIN_CONTACT_OFFSET_M,
+    make_fr3_part_scene_cfg,
+)
 from grasp_planning.envs.franka_collisions import expose_franka_mesh_collisions  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import load_stl_mesh  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
@@ -218,6 +248,12 @@ from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
 )
 from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
 from grasp_planning.scene_defaults import ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BASE_POSITION  # noqa: E402
+from grasp_planning.start_poses import (  # noqa: E402
+    DEFAULT_HAND_OPEN_WIDTH,
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    kuka_isaac_to_moveit_joint_positions,
+    kuka_moveit_to_isaac_joint_positions,
+)
 from grasp_planning.video import OpenCvVideoWriter  # noqa: E402
 
 
@@ -245,6 +281,30 @@ def _object_mass_properties_cfg():
     return sim_utils.MassPropertiesCfg(density=float(density_kg_m3))
 
 
+def _bind_high_friction_contact_material(stage, *, root_paths: tuple[str, ...]) -> int:
+    material_path = "/World/Looks/high_friction_contact_material"
+    material_cfg = sim_utils.RigidBodyMaterialCfg(
+        static_friction=3.0,
+        dynamic_friction=2.5,
+        restitution=0.0,
+        friction_combine_mode="max",
+        restitution_combine_mode="min",
+    )
+    material_cfg.func(material_path, material_cfg)
+    bound_count = 0
+    for root_path in root_paths:
+        prim = stage.GetPrimAtPath(root_path)
+        if not prim.IsValid():
+            print(f"[WARN]: Cannot bind contact material; prim does not exist: {root_path}", flush=True)
+            continue
+        try:
+            bind_physics_material(root_path, material_path, stage=stage, stronger_than_descendants=True)
+            bound_count += 1
+        except ValueError as exc:
+            print(f"[WARN]: Cannot bind contact material to {root_path}: {exc}", flush=True)
+    return bound_count
+
+
 def _parse_vec2(raw: str) -> tuple[float, float]:
     values = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
     if len(values) != 2:
@@ -266,6 +326,74 @@ def _parse_str_tuple(raw: str) -> tuple[str, ...]:
     return values
 
 
+def _moveit_joint_names_from_args() -> tuple[str, ...]:
+    if not str(args_cli.moveit_joint_names).strip():
+        return MoveItPoseCommanderConfig().joint_names
+    return _parse_str_tuple(str(args_cli.moveit_joint_names))
+
+
+def _using_kuka_lbr_moveit_joints() -> bool:
+    joint_names = _moveit_joint_names_from_args()
+    return len(joint_names) == 7 and all(name == f"lbr_A{index}" for index, name in enumerate(joint_names, start=1))
+
+
+def _moveit_target_position_signs_from_args() -> tuple[float, float, float]:
+    signs = _parse_float_tuple(str(args_cli.moveit_target_position_signs))
+    if len(signs) != 3:
+        raise ValueError(
+            "--moveit-target-position-signs must contain exactly 3 comma-separated values "
+            f"for x,y,z, got {len(signs)}."
+        )
+    return (float(signs[0]), float(signs[1]), float(signs[2]))
+
+
+def _moveit_waypoint_to_isaac(waypoint: tuple[float, ...]) -> tuple[float, ...]:
+    if _using_kuka_lbr_moveit_joints():
+        return kuka_moveit_to_isaac_joint_positions(waypoint)
+    return tuple(float(value) for value in waypoint)
+
+
+def _isaac_waypoint_to_moveit(waypoint: tuple[float, ...]) -> tuple[float, ...]:
+    if _using_kuka_lbr_moveit_joints():
+        return kuka_isaac_to_moveit_joint_positions(waypoint)
+    return tuple(float(value) for value in waypoint)
+
+
+def _moveit_start_joint_positions_from_args() -> tuple[float, ...] | None:
+    if not str(args_cli.moveit_start_joint_positions).strip():
+        return None
+    positions = _parse_float_tuple(str(args_cli.moveit_start_joint_positions))
+    joint_names = _moveit_joint_names_from_args()
+    if len(positions) != len(joint_names):
+        raise ValueError(
+            "--moveit-start-joint-positions must match the configured MoveIt joint-name count "
+            f"({len(joint_names)})."
+        )
+    return positions
+
+
+def _approach_open_gripper_width(selected_world_grasp=None) -> float:
+    del selected_world_grasp
+    if _using_kuka_lbr_moveit_joints():
+        return float(KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
+    return float(DEFAULT_HAND_OPEN_WIDTH)
+
+
+def _effective_close_gripper_width(selected_grasp) -> float:
+    requested_close_width = float(args_cli.close_width)
+    if requested_close_width > 0.0 or not _using_kuka_lbr_moveit_joints():
+        return requested_close_width
+    jaw_width = float(getattr(selected_grasp, "jaw_width", 0.0))
+    if not np.isfinite(jaw_width) or jaw_width <= 0.0:
+        return requested_close_width
+    return min(0.001, jaw_width)
+
+
+def _is_generated_kuka_y_gripper_usd(path: str | Path) -> bool:
+    resolved = str(path).replace("\\", "/")
+    return "kuka_iiwa7_y_gripper" in resolved
+
+
 def resolve_fr3_usd_path() -> str:
     if args_cli.fr3_usd:
         return args_cli.fr3_usd
@@ -281,10 +409,19 @@ def configure_grasp_tcp_calibration() -> None:
     FR3PickController._TCP_TO_GRASP_CENTER_OFFSET = tcp_to_grasp_offset
 
 
+def _gripper_collision_model_from_args_or_bundle(bundle) -> str:
+    if str(args_cli.gripper_collision_model).strip():
+        return str(args_cli.gripper_collision_model)
+    metadata = dict(getattr(bundle, "metadata", {}) or {})
+    return str(metadata.get("gripper_collision_model", "franka_hand"))
+
+
 def _moveit_config_from_args() -> MoveItPoseCommanderConfig:
     return MoveItPoseCommanderConfig(
         planning_group=str(args_cli.moveit_planning_group),
         pose_link=str(args_cli.moveit_pose_link),
+        joint_names=_moveit_joint_names_from_args(),
+        moveit_namespace=str(args_cli.moveit_namespace),
         pipeline_id=str(args_cli.moveit_pipeline_id),
         planner_id=str(args_cli.moveit_planner_id),
         wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
@@ -350,7 +487,7 @@ def _plan_moveit_target_sequence(
                 raise RuntimeError(f"MoveIt failed to plan {label}: {message}")
             waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=moveit_config.joint_names)
             print(f"[INFO]: MoveIt plan for {label} returned {len(waypoints)} waypoints.", flush=True)
-            planned[label] = waypoints
+            planned[label] = tuple(_moveit_waypoint_to_isaac(waypoint) for waypoint in waypoints)
             current_start = waypoints[-1]
         return planned
     finally:
@@ -370,6 +507,8 @@ def _plan_moveit_joint_trajectories(
         world_grasp,
         frame_id=str(args_cli.moveit_frame_id),
         lift_height_m=float(args_cli.moveit_lift_height_m),
+        position_signs=_moveit_target_position_signs_from_args(),
+        tcp_to_grasp_offset=tuple(float(value) for value in args_cli.tcp_to_grasp_offset),
     )
     print("[INFO]: Built MoveIt pose targets for Isaac attempt.", flush=True)
     labels = ("pregrasp",) if args_cli.pregrasp_only else ("pregrasp", "grasp", "lift")
@@ -413,7 +552,7 @@ def _load_moveit_plan_json(path: Path) -> tuple[dict[str, object], dict[str, tup
         for raw_waypoint in raw_waypoints:
             if not isinstance(raw_waypoint, list | tuple):
                 raise ValueError(f"MoveIt plan trajectory '{label}' contains a non-list waypoint.")
-            waypoints.append(tuple(float(value) for value in raw_waypoint))
+            waypoints.append(_moveit_waypoint_to_isaac(tuple(float(value) for value in raw_waypoint)))
         trajectories[str(label)] = tuple(waypoints)
     return payload, trajectories
 
@@ -598,7 +737,7 @@ def resolve_part_usd_path(*, bundle, mesh_local) -> str:
         ),
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
-            contact_offset=0.005,
+            contact_offset=ISAAC_MIN_CONTACT_OFFSET_M,
             rest_offset=0.0,
         ),
         mesh_collision_props=_mesh_collision_cfg(),
@@ -661,26 +800,43 @@ def build_scene(
     print("[INFO]: Waiting for stage assets to finish loading...", flush=True)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
-    enabled_collision_count, _enabled_collision_paths = expose_franka_mesh_collisions(
-        mesh_path_patterns=(
-            r"(?:panda|fr3)_hand",
-            r"(?:panda|fr3)_leftfinger",
-            r"(?:panda|fr3)_rightfinger",
-            r"finger",
-            r"gripper",
-        )
-    )
-    if enabled_collision_count > 0:
+    if _is_generated_kuka_y_gripper_usd(fr3_usd_path):
         print(
-            f"[INFO]: Enabled Isaac collision on {enabled_collision_count} Franka gripper mesh prims.",
+            "[INFO]: Skipping Franka visual mesh collision exposure for generated KUKA/Y-gripper USD; "
+            "using authored collision hulls.",
             flush=True,
         )
     else:
-        print(
-            "[WARN]: No Franka gripper mesh prims were found while enabling Isaac robot collisions; "
-            "gripper-object contacts may be missing.",
-            flush=True,
+        enabled_collision_count, _enabled_collision_paths = expose_franka_mesh_collisions(
+            mesh_path_patterns=(
+                r"(?:panda|fr3)_hand",
+                r"(?:panda|fr3)_leftfinger",
+                r"(?:panda|fr3)_rightfinger",
+                r"finger",
+                r"gripper",
+            )
         )
+        if enabled_collision_count > 0:
+            print(
+                f"[INFO]: Enabled Isaac collision on {enabled_collision_count} Franka gripper mesh prims.",
+                flush=True,
+            )
+        else:
+            print(
+                "[WARN]: No Franka gripper mesh prims were found while enabling Isaac robot collisions; "
+                "gripper-object contacts may be missing.",
+                flush=True,
+            )
+    stage = omni.usd.get_context().get_stage()
+    bound_contact_material_count = _bind_high_friction_contact_material(
+        stage,
+        root_paths=("/World/envs/env_0/Robot", "/World/envs/env_0/Part"),
+    )
+    print(
+        "[INFO]: Bound high-friction Isaac contact material "
+        f"to {bound_contact_material_count} robot/part collision subtrees.",
+        flush=True,
+    )
     print("[INFO]: Resetting simulator...", flush=True)
     sim.reset()
     print("[INFO]: Resetting scene buffers...", flush=True)
@@ -751,8 +907,12 @@ def _write_attempt_artifact(
         }
     artifact["moveit"] = {
         "frame_id": args_cli.moveit_frame_id,
+        "target_position_signs": list(_moveit_target_position_signs_from_args()),
+        "tcp_to_grasp_offset": [float(value) for value in args_cli.tcp_to_grasp_offset],
         "planning_group": args_cli.moveit_planning_group,
         "pose_link": args_cli.moveit_pose_link,
+        "namespace": args_cli.moveit_namespace,
+        "joint_names": list(_moveit_joint_names_from_args()),
         "pipeline_id": args_cli.moveit_pipeline_id,
         "planner_id": args_cli.moveit_planner_id,
         "lift_height_m": args_cli.moveit_lift_height_m,
@@ -774,6 +934,13 @@ def _candidate_world_grasp(grasp, object_pose_world):
 
 
 def _select_executable_grasp(feasible_grasps, statuses, object_pose_world):
+    candidates = _ordered_executable_grasp_candidates(feasible_grasps, statuses, object_pose_world)
+    if not candidates:
+        return None, None
+    return candidates[0]
+
+
+def _ordered_executable_grasp_candidates(feasible_grasps, statuses, object_pose_world):
     min_pregrasp_z = 0.05
     if args_cli.grasp_id:
         selected = next((grasp for grasp in feasible_grasps if grasp.grasp_id == args_cli.grasp_id), None)
@@ -792,23 +959,26 @@ def _select_executable_grasp(feasible_grasps, statuses, object_pose_world):
                 ),
                 world_grasp=world_grasp,
             )
-        return selected, world_grasp
+        return [(selected, world_grasp)]
 
     ordered = sorted(
         feasible_grasps, key=lambda grasp: float("-inf") if grasp.score is None else grasp.score, reverse=True
     )
+    candidates = []
     for grasp in ordered:
         world_grasp = _candidate_world_grasp(grasp, object_pose_world)
         if world_grasp.pregrasp_position_w[2] > min_pregrasp_z:
-            return grasp, world_grasp
+            candidates.append((grasp, world_grasp))
+    if candidates:
+        return candidates
 
     fallback = select_first_feasible_grasp(statuses)
     if fallback is None:
-        return None, None
+        return []
     world_fallback = _candidate_world_grasp(fallback, object_pose_world)
     if world_fallback.pregrasp_position_w[2] <= min_pregrasp_z:
-        return None, None
-    return fallback, world_fallback
+        return []
+    return [(fallback, world_fallback)]
 
 
 def run() -> None:
@@ -830,10 +1000,12 @@ def run() -> None:
     )
 
     print("[INFO]: Rechecking saved grasps against the selected pickup pose...", flush=True)
+    gripper_collision_model = _gripper_collision_model_from_args_or_bundle(bundle)
     statuses = evaluate_saved_grasps_against_pickup_pose(
         bundle.candidates,
         object_pose_world=object_pose_world,
         contact_gap_m=args_cli.detailed_finger_contact_gap_m,
+        gripper_collision_model=gripper_collision_model,
     )
     rescored_feasible = score_grasps(accepted_grasps(statuses), mesh_local=mesh_local)
     rescored_by_id = {grasp.grasp_id: grasp for grasp in rescored_feasible}
@@ -847,7 +1019,7 @@ def run() -> None:
     ]
     feasible_grasps = accepted_grasps(statuses)
     try:
-        selected_grasp, selected_world_grasp = _select_executable_grasp(feasible_grasps, statuses, object_pose_world)
+        executable_candidates = _ordered_executable_grasp_candidates(feasible_grasps, statuses, object_pose_world)
     except GraspSelectionFailure as exc:
         result = SimpleNamespace(success=False, status=exc.status, message=str(exc))
         _write_attempt_artifact(
@@ -863,7 +1035,7 @@ def run() -> None:
         f"[INFO]: Ground recheck complete. feasible={len(feasible_grasps)} / saved={len(bundle.candidates)}",
         flush=True,
     )
-    if selected_grasp is None:
+    if not executable_candidates:
         result = SimpleNamespace(
             success=False,
             status="no_feasible_grasp",
@@ -878,8 +1050,9 @@ def run() -> None:
             execution_result=result,
         )
         raise RuntimeError(result.message)
+    selected_grasp, selected_world_grasp = executable_candidates[0]
     print(
-        "[INFO]: Selected grasp "
+        "[INFO]: Initial grasp candidate "
         f"id={selected_grasp.grasp_id} grasp_w={selected_world_grasp.position_w} "
         f"pregrasp_w={selected_world_grasp.pregrasp_position_w} "
         f"orientation_xyzw={selected_world_grasp.orientation_xyzw} "
@@ -911,6 +1084,7 @@ def run() -> None:
         if video_recorder is not None:
             video_recorder.capture()
 
+    approach_open_gripper_width = _approach_open_gripper_width(selected_world_grasp)
     print("[INFO]: Warming up simulation...", flush=True)
     for _ in range(max(1, int(0.1 / physics_dt))):
         scene.write_data_to_sim()
@@ -918,7 +1092,12 @@ def run() -> None:
         scene.update(physics_dt)
         _record_step()
     print("[INFO]: Driving robot to start pose...", flush=True)
-    drive_robot_to_start_pose(sim, scene, step_callback=_record_step)
+    drive_robot_to_start_pose(
+        sim,
+        scene,
+        hand_open_width=approach_open_gripper_width,
+        step_callback=_record_step,
+    )
 
     robot = scene["robot"]
     part = scene["part"]
@@ -930,7 +1109,6 @@ def run() -> None:
         f"{float(part_pose_w[5]):.6f}, {float(part_pose_w[6]):.6f})",
         flush=True,
     )
-    fixed_gripper_width = selected_world_grasp.gripper_width / 2.0
     print("[INFO]: Executing pick attempt...", flush=True)
     if args_cli.moveit_plan_json is not None:
         print(f"[INFO]: Loading precomputed MoveIt plan from {args_cli.moveit_plan_json}.", flush=True)
@@ -942,17 +1120,62 @@ def run() -> None:
                 f"'{planned_grasp_id}' does not match selected Isaac grasp '{selected_grasp.grasp_id}'."
             )
     else:
-        start_joint_positions = _current_isaac_arm_joint_positions(
-            sim=sim,
-            scene=scene,
-            robot=robot,
-            fixed_gripper_width=fixed_gripper_width,
-        )
-        print("[INFO]: Planning Isaac attempt with MoveIt.", flush=True)
-        moveit_joint_trajectories = _plan_moveit_joint_trajectories(
-            world_grasp=selected_world_grasp,
-            start_joint_positions=start_joint_positions,
-        )
+        start_joint_positions = _moveit_start_joint_positions_from_args()
+        if start_joint_positions is None:
+            start_joint_positions = _current_isaac_arm_joint_positions(
+                sim=sim,
+                scene=scene,
+                robot=robot,
+                fixed_gripper_width=approach_open_gripper_width,
+            )
+            start_joint_positions = _isaac_waypoint_to_moveit(start_joint_positions)
+        moveit_joint_trajectories = None
+        planning_errors: list[str] = []
+        for candidate_grasp, candidate_world_grasp in executable_candidates:
+            print(
+                f"[INFO]: Planning Isaac attempt with MoveIt for grasp {candidate_grasp.grasp_id}.",
+                flush=True,
+            )
+            try:
+                moveit_joint_trajectories = _plan_moveit_joint_trajectories(
+                    world_grasp=candidate_world_grasp,
+                    start_joint_positions=start_joint_positions,
+                )
+            except RuntimeError as exc:
+                planning_errors.append(f"{candidate_grasp.grasp_id}: {exc}")
+                print(f"[WARN]: MoveIt rejected grasp {candidate_grasp.grasp_id}: {exc}", flush=True)
+                continue
+            selected_grasp = candidate_grasp
+            selected_world_grasp = candidate_world_grasp
+            print(f"[INFO]: Selected MoveIt-planned grasp {selected_grasp.grasp_id}.", flush=True)
+            break
+        if moveit_joint_trajectories is None:
+            tried = ", ".join(planning_errors[:8])
+            if len(planning_errors) > 8:
+                tried += f", ... ({len(planning_errors)} total)"
+            result = SimpleNamespace(
+                success=False,
+                status="moveit_planning_failed",
+                message=f"MoveIt could not plan any ground-feasible Isaac grasp. Tried: {tried}",
+            )
+            _write_attempt_artifact(
+                bundle=bundle,
+                placement_spec=placement_spec,
+                object_pose_world=object_pose_world,
+                statuses=statuses,
+                selected_world_grasp=selected_world_grasp,
+                execution_result=result,
+            )
+            raise RuntimeError(result.message)
+    effective_close_width = _effective_close_gripper_width(selected_grasp)
+    print(
+        "[INFO]: Isaac gripper command sequence "
+        f"approach_open_width={approach_open_gripper_width:.4f} "
+        f"candidate_grasp_width={selected_world_grasp.gripper_width:.4f} "
+        f"requested_close_width={float(args_cli.close_width):.4f} "
+        f"effective_close_width={effective_close_width:.4f}.",
+        flush=True,
+    )
     _print_moveit_joint_trajectory_summary(moveit_joint_trajectories)
     execution_result = execute_pick_from_moveit_joint_trajectories(
         sim=sim,
@@ -960,8 +1183,8 @@ def run() -> None:
         robot=robot,
         object_asset=part,
         moveit_joint_trajectories=moveit_joint_trajectories,
-        open_gripper_width=fixed_gripper_width,
-        closed_gripper_width=float(args_cli.close_width),
+        open_gripper_width=approach_open_gripper_width,
+        closed_gripper_width=effective_close_width,
         pregrasp_only=bool(args_cli.pregrasp_only),
         success_height_margin_m=float(args_cli.success_height_margin_m),
         max_joint_speed_rad_s=float(args_cli.moveit_execution_speed_rad_s),

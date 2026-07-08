@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.pipeline import RealExecutionConfig
@@ -27,6 +28,25 @@ class _FakeGripper:
     def close(self, *, width: float) -> tuple[bool, str]:
         self.calls.append(("close", width))
         return True, "close ok"
+
+
+class _FakeGripperCommandClient:
+    def __init__(
+        self,
+        node,
+        *,
+        action_name: str,
+        timeout_s: float,
+        max_effort: float,
+        position_mode: str,
+        grasp_settle_time_s: float,
+    ) -> None:
+        self.node = node
+        self.action_name = action_name
+        self.timeout_s = timeout_s
+        self.max_effort = max_effort
+        self.position_mode = position_mode
+        self.grasp_settle_time_s = grasp_settle_time_s
 
 
 def _world_grasp() -> WorldFrameGraspCandidate:
@@ -86,3 +106,35 @@ def test_execute_selected_world_grasp_runs_full_sequence_with_gripper() -> None:
     assert commander.calls == [("pregrasp", "base"), ("grasp", "base"), ("lift", "base")]
     assert gripper.calls == [("open", 0.08), ("close", 0.02)]
     assert [step["name"] for step in steps] == ["open_gripper", "pregrasp", "grasp", "close_gripper", "lift"]
+
+
+def test_make_gripper_client_can_select_generic_gripper_command_client() -> None:
+    commander = _FakeCommander()
+    config = RealExecutionConfig(
+        gripper_client="control_msgs",
+        gripper_command_action="/hand/gripper_cmd",
+        gripper_command_position_mode="kuka_y_gripper",
+        gripper_command_max_effort=12.5,
+        gripper_timeout_s=3.0,
+        grasp_settle_time_s=0.2,
+    )
+
+    with mock.patch.object(real_grasp_executor, "GripperCommandClient", _FakeGripperCommandClient):
+        gripper = real_grasp_executor._make_gripper_client(commander=commander, config=config)
+
+    assert isinstance(gripper, _FakeGripperCommandClient)
+    assert gripper.node is commander
+    assert gripper.action_name == "/hand/gripper_cmd"
+    assert gripper.timeout_s == 3.0
+    assert gripper.max_effort == 12.5
+    assert gripper.position_mode == "kuka_y_gripper"
+    assert gripper.grasp_settle_time_s == 0.2
+
+
+def test_normalize_gripper_client_rejects_unsupported_client() -> None:
+    try:
+        real_grasp_executor._normalize_gripper_client("unsupported")
+    except ValueError as exc:
+        assert "Unsupported real_execution.gripper_client" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported gripper client to fail.")

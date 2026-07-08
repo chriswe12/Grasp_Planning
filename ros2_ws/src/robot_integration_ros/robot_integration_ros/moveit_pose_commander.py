@@ -5,27 +5,33 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Mapping, Sequence
 
 try:
     import rclpy
-    from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import Pose, PoseStamped
     from moveit_msgs.action import ExecuteTrajectory
-    from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes
-    from moveit_msgs.srv import GetMotionPlan, GetPositionFK, GetPositionIK, QueryPlannerInterfaces
+    from moveit_msgs.msg import CollisionObject, Constraints, JointConstraint, MoveItErrorCodes, PlanningScene
+    from moveit_msgs.srv import ApplyPlanningScene, GetMotionPlan, GetPositionFK, GetPositionIK, QueryPlannerInterfaces
     from rclpy.action import ActionClient
     from rclpy.node import Node
+    from shape_msgs.msg import SolidPrimitive
 except Exception:  # pragma: no cover - optional dependency path
     rclpy = None
+    Pose = None
     PoseStamped = None
+    ApplyPlanningScene = None
+    CollisionObject = None
     ExecuteTrajectory = None
     Constraints = None
     JointConstraint = None
     MoveItErrorCodes = None
+    PlanningScene = None
     GetMotionPlan = None
     GetPositionFK = None
     GetPositionIK = None
     QueryPlannerInterfaces = None
+    SolidPrimitive = None
     ActionClient = None
     Node = object
 
@@ -60,6 +66,38 @@ def quaternion_from_rpy(roll: float, pitch: float, yaw: float) -> tuple[float, f
             cr * cp * cy + sr * sp * sy,
         )
     )
+
+
+def _normalize_ros_namespace(namespace: str) -> str:
+    value = str(namespace).strip()
+    if value in {"", "/"}:
+        return ""
+    return "/" + "/".join(part for part in value.split("/") if part)
+
+
+def _normalize_ros_name(name: str) -> str:
+    value = str(name).strip()
+    if not value:
+        raise ValueError("ROS service/action name must not be empty.")
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return "/" + "/".join(part for part in value.split("/") if part)
+
+
+def _ros_name_with_namespace(name: str, *, namespace: str) -> str:
+    ros_name = _normalize_ros_name(name)
+    ros_namespace = _normalize_ros_namespace(namespace)
+    if not ros_namespace:
+        return ros_name
+    if ros_name == ros_namespace or ros_name.startswith(f"{ros_namespace}/"):
+        return ros_name
+    return f"{ros_namespace}{ros_name}"
+
+
+def _tuple3_floats(raw: object, *, field_name: str) -> tuple[float, float, float]:
+    if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+        raise ValueError(f"{field_name} must contain exactly three numeric values.")
+    return tuple(float(value) for value in raw)
 
 
 @dataclass(frozen=True)
@@ -115,10 +153,12 @@ class MoveItPoseCommanderConfig:
     planning_group: str = "fr3_arm"
     pose_link: str = "fr3_hand_tcp"
     joint_names: tuple[str, ...] = field(default_factory=lambda: tuple(f"fr3_joint{i}" for i in range(1, 8)))
+    moveit_namespace: str = ""
     ik_service_name: str = "/compute_ik"
     planning_service_name: str = "/plan_kinematic_path"
     query_planner_interface_service_name: str = "/query_planner_interface"
     fk_service_name: str = "/compute_fk"
+    apply_planning_scene_service_name: str = "/apply_planning_scene"
     execute_action_name: str = "/execute_trajectory"
     pipeline_id: str = ""
     planner_id: str = ""
@@ -133,6 +173,24 @@ class MoveItPoseCommanderConfig:
     post_execute_sleep_s: float = 0.5
     avoid_collisions: bool = True
 
+    def __post_init__(self) -> None:
+        namespace = _normalize_ros_namespace(self.moveit_namespace)
+        object.__setattr__(self, "moveit_namespace", namespace)
+        object.__setattr__(self, "joint_names", tuple(str(name) for name in self.joint_names))
+        for field_name in (
+            "ik_service_name",
+            "planning_service_name",
+            "query_planner_interface_service_name",
+            "fk_service_name",
+            "apply_planning_scene_service_name",
+            "execute_action_name",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _ros_name_with_namespace(str(getattr(self, field_name)), namespace=namespace),
+            )
+
 
 class MoveItPoseCommander(Node):
     """Small synchronous MoveIt client for terminal-driven pose goals."""
@@ -145,6 +203,7 @@ class MoveItPoseCommander(Node):
             or GetMotionPlan is None
             or GetPositionFK is None
             or QueryPlannerInterfaces is None
+            or ApplyPlanningScene is None
             or ExecuteTrajectory is None
         ):
             raise RuntimeError(
@@ -160,6 +219,10 @@ class MoveItPoseCommander(Node):
             config.query_planner_interface_service_name,
         )
         self._fk_client = self.create_client(GetPositionFK, config.fk_service_name)
+        self._apply_planning_scene_client = self.create_client(
+            ApplyPlanningScene,
+            config.apply_planning_scene_service_name,
+        )
         self._execute_client = ActionClient(self, ExecuteTrajectory, config.execute_action_name)
         self._active_goal_handle = None
 
@@ -188,6 +251,91 @@ class MoveItPoseCommander(Node):
         if self.config.pipeline_id:
             self._validate_requested_pipeline()
         self.get_logger().info("MoveIt connection ready.")
+
+    def apply_planning_scene_obstacles(
+        self,
+        obstacles: Sequence[Mapping[str, object]],
+        *,
+        default_frame_id: str,
+    ) -> tuple[bool, str]:
+        if not obstacles:
+            return True, "No planning-scene obstacles configured."
+        if (
+            Pose is None
+            or CollisionObject is None
+            or PlanningScene is None
+            or ApplyPlanningScene is None
+            or SolidPrimitive is None
+        ):
+            return False, "MoveIt planning-scene message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return False, f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable."
+
+        try:
+            collision_objects = [
+                self._collision_object_from_obstacle_spec(obstacle, default_frame_id=default_frame_id)
+                for obstacle in obstacles
+            ]
+        except Exception as exc:
+            return False, f"Invalid planning-scene obstacle config: {exc}"
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.world.collision_objects = collision_objects
+
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="planning-scene apply",
+            )
+        except Exception as exc:
+            return False, f"Planning-scene apply failed: {exc}"
+        if response is None:
+            return False, "Planning-scene apply response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the planning-scene update."
+        return True, f"Applied {len(collision_objects)} planning-scene obstacle(s)."
+
+    def _collision_object_from_obstacle_spec(self, obstacle: Mapping[str, object], *, default_frame_id: str):
+        obstacle_id = str(obstacle.get("id", "")).strip()
+        if not obstacle_id:
+            raise ValueError("Each planning-scene obstacle requires a non-empty id.")
+        obstacle_type = str(obstacle.get("type", "box")).strip().lower()
+        if obstacle_type != "box":
+            raise ValueError(f"Unsupported obstacle type '{obstacle_type}'. Only 'box' is currently supported.")
+
+        size_m = _tuple3_floats(obstacle.get("size_m", ()), field_name=f"{obstacle_id}.size_m")
+        if any(value <= 0.0 for value in size_m):
+            raise ValueError(f"{obstacle_id}.size_m values must be positive.")
+        xyz = _tuple3_floats(obstacle.get("xyz", (0.0, 0.0, 0.0)), field_name=f"{obstacle_id}.xyz")
+        quaternion_raw = obstacle.get("quaternion_xyzw")
+        if quaternion_raw is None:
+            rpy = _tuple3_floats(obstacle.get("rpy", (0.0, 0.0, 0.0)), field_name=f"{obstacle_id}.rpy")
+            qx, qy, qz, qw = quaternion_from_rpy(*rpy)
+        else:
+            qx, qy, qz, qw = normalize_quaternion_xyzw(tuple(float(value) for value in quaternion_raw))  # type: ignore[arg-type]
+
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = xyz
+        pose.orientation.x = qx
+        pose.orientation.y = qy
+        pose.orientation.z = qz
+        pose.orientation.w = qw
+
+        primitive = SolidPrimitive()
+        primitive.type = SolidPrimitive.BOX
+        primitive.dimensions = list(size_m)
+
+        collision_object = CollisionObject()
+        collision_object.header.frame_id = str(obstacle.get("frame_id", default_frame_id) or default_frame_id)
+        collision_object.id = obstacle_id
+        collision_object.primitives.append(primitive)
+        collision_object.primitive_poses.append(pose)
+        collision_object.operation = CollisionObject.ADD
+        return collision_object
 
     def _validate_requested_pipeline(self) -> None:
         requested = str(self.config.pipeline_id)

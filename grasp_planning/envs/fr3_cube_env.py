@@ -13,6 +13,7 @@ from isaaclab.utils import configclass
 from grasp_planning.start_poses import (
     DEFAULT_ARM_START_JOINT_POS,
     DEFAULT_HAND_START_JOINT_POS,
+    DEFAULT_KUKA_ARM_START_JOINT_POS,
 )
 from grasp_planning.start_poses import DEFAULT_HAND_OPEN_WIDTH as _DEFAULT_HAND_OPEN_WIDTH
 
@@ -41,6 +42,7 @@ class DefaultCubeCfg:
 
 DEFAULT_ROBOT_CFG = DefaultRobotCfg()
 DEFAULT_CUBE_CFG = DefaultCubeCfg()
+ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
 
 
 @configclass
@@ -87,7 +89,10 @@ class FR3CubeSceneCfg(InteractiveSceneCfg):
                 max_depenetration_velocity=5.0,
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=DEFAULT_CUBE_CFG.mass),
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+            collision_props=sim_utils.CollisionPropertiesCfg(
+                contact_offset=ISAAC_MIN_CONTACT_OFFSET_M,
+                rest_offset=0.0,
+            ),
             physics_material=sim_utils.RigidBodyMaterialCfg(
                 static_friction=3.0,
                 dynamic_friction=2.5,
@@ -119,25 +124,25 @@ class FR3CubeSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=DEFAULT_ROBOT_CFG.base_pos,
             rot=DEFAULT_ROBOT_CFG.base_rot,
-            joint_pos={**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
+            joint_pos={**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_KUKA_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
         ),
         actuators={
             "panda_shoulder": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[1-4]"],
+                joint_names_expr=["panda_joint[1-4]", "joint[1-4]"],
                 stiffness=400.0,
                 damping=80.0,
                 effort_limit_sim=87.0,
                 velocity_limit_sim=2.175,
             ),
             "panda_forearm": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[5-7]"],
+                joint_names_expr=["panda_joint[5-7]", "joint[5-7]"],
                 stiffness=400.0,
                 damping=80.0,
                 effort_limit_sim=12.0,
                 velocity_limit_sim=2.61,
             ),
             "panda_hand": ImplicitActuatorCfg(
-                joint_names_expr=["panda_finger_joint.*"],
+                joint_names_expr=["panda_finger_joint.*", "(left|right)_finger_joint"],
                 stiffness=1500.0,
                 damping=120.0,
                 effort_limit_sim=120.0,
@@ -169,6 +174,21 @@ def make_fr3_cube_scene_cfg(
 
     scene_cfg = FR3CubeSceneCfg()
     scene_cfg.robot.spawn.usd_path = asset_path_str
+    if any(token in asset_path_str.lower() for token in ("kuka", "iiwa", "lbr")):
+        scene_cfg.robot.actuators["panda_hand"] = ImplicitActuatorCfg(
+            joint_names_expr=["left_finger_joint"],
+            stiffness=1500.0,
+            damping=120.0,
+            effort_limit_sim=120.0,
+            velocity_limit_sim=0.08,
+        )
+        scene_cfg.robot.actuators["kuka_hand_passive"] = ImplicitActuatorCfg(
+            joint_names_expr=["right_finger_joint"],
+            stiffness=0.0,
+            damping=0.0,
+            effort_limit_sim=1.0,
+            velocity_limit_sim=0.08,
+        )
     scene_cfg.robot.init_state.pos = robot_base_position
     scene_cfg.robot.init_state.rot = robot_base_orientation_xyzw
     scene_cfg.robot_base_marker.init_state.pos = (

@@ -6,6 +6,8 @@ import re
 
 import torch
 
+from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripper_command_joint_name
+
 from .types import PoseCommand
 
 
@@ -140,6 +142,7 @@ class FR3MotionContext:
     """Isaac-specific articulation accessors shared by motion components."""
 
     _EE_PATTERNS = (
+        r"gripper_tcp",
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
@@ -153,8 +156,8 @@ class FR3MotionContext:
     _EE_TO_TCP_OFFSETS = {
         "panda_hand": (0.0, 0.0, 0.107),
     }
-    _ARM_JOINT_PATTERN = r"(?:panda|fr3)_joint[1-7]"
-    _HAND_JOINT_PATTERN = r"(?:panda|fr3)_finger_joint[12]"
+    _ARM_JOINT_PATTERN = r"(?:(?:panda|fr3)_joint[1-7]|joint[1-7])"
+    _HAND_JOINT_PATTERN = r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint)"
     _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _EE_POSITION_CORRECTION_GAIN = 2.0
@@ -171,6 +174,10 @@ class FR3MotionContext:
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
         self.arm_joint_names, self.arm_joint_ids = self._resolve_joint_ids(self._ARM_JOINT_PATTERN)
         self.hand_joint_names, self.hand_joint_ids = self._resolve_joint_ids(self._HAND_JOINT_PATTERN)
+        self.hand_command_joint_names, self.hand_command_joint_ids = self._command_joint_subset(
+            self.hand_joint_names,
+            self.hand_joint_ids,
+        )
 
     @property
     def device(self) -> str:
@@ -297,15 +304,17 @@ class FR3MotionContext:
             self.scene.update(self.physics_dt)
 
     def command_fixed_gripper(self) -> None:
-        if self.hand_joint_ids.numel() == 0:
+        if self.hand_command_joint_ids.numel() == 0:
             return
         targets = torch.full(
-            (1, int(self.hand_joint_ids.numel())),
-            self.fixed_gripper_width,
+            (1, int(self.hand_command_joint_ids.numel())),
+            0.0,
             dtype=torch.float32,
             device=self.device,
         )
-        self.robot.set_joint_position_target(targets, joint_ids=self.hand_joint_ids)
+        for index, name in enumerate(self.hand_command_joint_names):
+            targets[0, index] = gripper_joint_target_from_width(name, self.fixed_gripper_width)
+        self.robot.set_joint_position_target(targets, joint_ids=self.hand_command_joint_ids)
 
     def step_sim(self, steps: int = 1) -> None:
         for _ in range(max(1, int(steps))):
@@ -450,3 +459,14 @@ class FR3MotionContext:
         if not ids:
             raise RuntimeError(f"Could not resolve joints matching '{joint_pattern}' on the articulation.")
         return matched_names, torch.tensor(ids, dtype=torch.long, device=self.device)
+
+    def _command_joint_subset(
+        self,
+        joint_names: tuple[str, ...],
+        joint_ids: torch.Tensor,
+    ) -> tuple[tuple[str, ...], torch.Tensor]:
+        command_indices = [index for index, name in enumerate(joint_names) if is_gripper_command_joint_name(name)]
+        if not command_indices:
+            return (), torch.empty(0, dtype=torch.long, device=self.device)
+        indices = torch.tensor(command_indices, dtype=torch.long, device=self.device)
+        return tuple(joint_names[index] for index in command_indices), joint_ids[indices]

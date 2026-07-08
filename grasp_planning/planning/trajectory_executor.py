@@ -33,14 +33,30 @@ class TrajectoryExecutor:
         if self._final_settle_steps < 1:
             raise ValueError("final_settle_steps must be at least 1.")
 
+    def _max_error_detail(self, actual: torch.Tensor, command: torch.Tensor, target: torch.Tensor) -> str:
+        target_error = torch.abs(actual - target)
+        command_error = torch.abs(actual - command)
+        flat_target_error = target_error.reshape(-1)
+        max_index = int(torch.argmax(flat_target_error).item())
+        joint_names = tuple(getattr(self._context, "arm_joint_names", ()))
+        joint_name = joint_names[max_index] if max_index < len(joint_names) else f"joint[{max_index}]"
+        actual_value = float(actual.reshape(-1)[max_index].item())
+        command_value = float(command.reshape(-1)[max_index].item())
+        target_value = float(target.reshape(-1)[max_index].item())
+        command_error_value = float(command_error.reshape(-1)[max_index].item())
+        return (
+            f"max_joint={joint_name} actual={actual_value:.4f} "
+            f"command={command_value:.4f} target={target_value:.4f} "
+            f"command_error={command_error_value:.4f}"
+        )
+
     def execute(self, trajectory: JointTrajectory) -> tuple[bool, str]:
         if not trajectory.waypoints:
             return True, "ok"
 
-        q_ref = self._context.get_arm_q()
         total_stream_steps = 0
         for waypoint_index, waypoint in enumerate(trajectory.waypoints, start=1):
-            start_ref = q_ref.clone()
+            start_ref = self._context.get_arm_q()
             max_delta = float(torch.max(torch.abs(waypoint - start_ref)).item())
             max_delta_per_step = self._max_joint_speed_rad_s * max(float(trajectory.dt), 1.0e-6)
             segment_steps = max(1, int(torch.ceil(torch.tensor(max_delta / max_delta_per_step)).item()))
@@ -58,16 +74,16 @@ class TrajectoryExecutor:
                     self._step_callback()
                 total_stream_steps += 1
                 if total_stream_steps == 1 or total_stream_steps % 60 == 0:
-                    error = torch.max(torch.abs(self._context.get_arm_q() - waypoint))
+                    actual = self._context.get_arm_q()
+                    error = torch.max(torch.abs(actual - waypoint))
                     print(
                         "[INFO]: Executor streaming "
                         f"waypoint={waypoint_index}/{len(trajectory.waypoints)} "
                         f"step={total_stream_steps} segment_progress={alpha:.2f} "
-                        f"target_error={float(error.item()):.4f}",
+                        f"target_error={float(error.item()):.4f} "
+                        f"{self._max_error_detail(actual, q_cmd, waypoint)}",
                         flush=True,
                     )
-            q_ref = waypoint.clone()
-
         final_waypoint = trajectory.waypoints[-1]
         last_error = None
         for settle_step in range(1, self._final_settle_steps + 1):
@@ -78,12 +94,14 @@ class TrajectoryExecutor:
             self._context.scene.update(self._context.physics_dt)
             if self._step_callback is not None:
                 self._step_callback()
-            error = torch.max(torch.abs(self._context.get_arm_q() - final_waypoint))
+            actual = self._context.get_arm_q()
+            error = torch.max(torch.abs(actual - final_waypoint))
             last_error = float(error.item())
             if settle_step == 1 or settle_step == self._final_settle_steps:
                 print(
                     "[INFO]: Executor final settle "
-                    f"step={settle_step}/{self._final_settle_steps} max_joint_error={last_error:.4f}",
+                    f"step={settle_step}/{self._final_settle_steps} max_joint_error={last_error:.4f} "
+                    f"{self._max_error_detail(actual, final_waypoint, final_waypoint)}",
                     flush=True,
                 )
             if last_error <= self._waypoint_tolerance_rad:

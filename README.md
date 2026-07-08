@@ -186,6 +186,13 @@ Override `FP_DEBUG_MSGS_REMOTE` and `FP_DEBUG_MSGS_REF` if you need to bootstrap
 The pipeline expects the vendored Franka hand collision mesh at:
 - `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`
 
+The KUKA iiwa7 Y-gripper configs use the local gripper meshes and generated robot USD/URDF:
+- `assets/urdf/kuka_iiwa7_y_gripper/meshes/{hand.STL,left_finger.STL,right_finger.STL}`
+- `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`
+- `assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda`
+
+For `gripper_collision_model: kuka_y_gripper`, saved bundles identify `robot_model: kuka_iiwa7`, `gripper_model: kuka_y_gripper`, and `tcp_link: gripper_tcp`.
+
 ### Copying Local State To A New Worktree
 
 Tracked assets are checked out by Git, but the MuJoCo cache, pinned ROS2 source dependency, and `colcon` build/install/log directories are ignored local state. After creating a new worktree, copy those directories from this worktree with:
@@ -241,6 +248,7 @@ Real hardware execution config:
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
 - `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
+- `stage1_pose_upright_axis_enabled` adds a live-pose-derived world-upright roll sample during stage 1. Stage-1 caching stores the pose-independent base grasps and augments cache hits with only the missing per-run upright roll variants, so real/PITL pose jitter does not force a full regeneration.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
@@ -296,6 +304,8 @@ Run MuJoCo sim with cuMotion-backed MoveIt planning:
 ```
 
 For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned Franka gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
+
+For the KUKA iiwa7 Y-gripper path, use `configs/grasp_pipeline_sim_isaac.yaml`, `configs/grasp_pipeline_gazebo_lbr_iiwa7.yaml`, or `configs/grasp_pipeline_real_lbr_iiwa7.yaml`. These configs use `gripper_collision_model: kuka_y_gripper`; the grasp-generation benchmark config uses the same gripper model and a 3x3 contact-offset grid with max lateral offset `0.002916666666666667 m` and max approach offset `0.0030833333333333333 m`.
 
 Run Isaac-backed sim locally:
 

@@ -789,9 +789,9 @@ def _html_document(data_json: str) -> str:
             <span><i class="swatch" style="background: var(--ground)"></i>Ground plane</span>
             <span><i class="swatch" style="background: var(--accepted)"></i>Accepted</span>
             <span><i class="swatch" style="background: var(--rejected)"></i>Rejected</span>
-            <span><i class="swatch" style="background: var(--franka)"></i>Franka finger boxes</span>
-            <span><i class="swatch" style="background: var(--hand)"></i>Franka hand mesh</span>
-            <span><i class="swatch" style="background: #0f766e"></i>5x5 contact grid</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
+            <span><i class="swatch" style="background: #0f766e"></i>3x3 contact grid</span>
             <span><i class="swatch" style="background: var(--delta-up)"></i>New score higher</span>
             <span><i class="swatch" style="background: var(--delta-down)"></i>New score lower</span>
           </div>
@@ -1300,7 +1300,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contact-gap-m",
         type=float,
-        help="Finger contact gap used for the displayed Franka hand geometry; defaults to config planning value or 0.002.",
+        help="Finger contact gap used for displayed gripper geometry; defaults to config planning value or 0.002.",
     )
     parser.add_argument(
         "--sort-by",

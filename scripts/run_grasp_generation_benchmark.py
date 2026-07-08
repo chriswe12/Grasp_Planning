@@ -27,9 +27,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.grasping.collision import (  # noqa: E402
     BoxCollisionPrimitive,
-    FrankaHandFingerCollisionModel,
+    GRIPPER_COLLISION_MODEL_KUKA_Y,
     GraspCollisionEvaluator,
     MeshCollisionPrimitive,
+    make_gripper_collision_model,
     trimesh_fcl_backend_available,
 )
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
@@ -85,6 +86,25 @@ ALL_GRASP_OVERVIEW_MAX_OBSTACLE_EDGES = 5000
 ALL_GRASP_OVERVIEW_MARKER_LENGTH_M = 0.025
 HANDOVER_PAIR_HTML_LIMIT = 100
 HANDOVER_PAIR_ACCEPTED_HTML_LIMIT = 30
+
+
+def _benchmark_robot_metadata(planning: PlanningConfig) -> dict[str, object]:
+    metadata = {
+        "gripper_model": planning.gripper_collision_model,
+        "contact_lateral_offsets_m": list(planning.contact_lateral_offsets_m),
+        "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
+    }
+    if planning.gripper_collision_model == GRIPPER_COLLISION_MODEL_KUKA_Y:
+        metadata.update(
+            {
+                "robot_model": "kuka_iiwa7",
+                "tcp_link": "gripper_tcp",
+                "tcp_offset_m": [0.0, 0.0, 0.1455],
+            }
+        )
+    else:
+        metadata.update({"robot_model": "franka_fr3", "tcp_link": "fr3_hand_tcp"})
+    return metadata
 
 
 @dataclass(frozen=True)
@@ -585,9 +605,15 @@ def _assembly_obstacle_parts(
     target: TargetSpec,
     mesh_scale: float,
     contact_gap_m: float,
+    gripper_collision_model: str,
 ) -> list[AssemblyObstaclePart]:
     target_resolved = resolve_mesh_path(target.target_mesh_path)
-    evaluator = GraspCollisionEvaluator(FrankaHandFingerCollisionModel(contact_gap_m=contact_gap_m))
+    evaluator = GraspCollisionEvaluator(
+        make_gripper_collision_model(
+            gripper_collision_model,
+            contact_gap_m=contact_gap_m,
+        )
+    )
     parts: list[AssemblyObstaclePart] = []
     if target.assembly_obstacle_paths is None:
         obstacle_paths = sorted(REPO_ROOT.joinpath("assets").glob(target.assembly_glob))
@@ -621,10 +647,12 @@ def _candidate_collides_with_scene(
     contact_gap_m: float,
     lateral_offset_m: float,
     approach_offset_m: float,
+    gripper_collision_model: str,
 ) -> bool:
     candidate_obj = candidate.to_object_frame_candidate()
     grasp_rotmat = quat_to_rotmat_xyzw(candidate_obj.grasp_orientation_xyzw_obj)
-    collision_model = FrankaHandFingerCollisionModel(
+    collision_model = make_gripper_collision_model(
+        gripper_collision_model,
         contact_gap_m=contact_gap_m,
         contact_patch_lateral_offset_m=lateral_offset_m,
         contact_patch_approach_offset_m=approach_offset_m,
@@ -633,6 +661,7 @@ def _candidate_collides_with_scene(
         grasp_rotmat=grasp_rotmat,
         contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
         contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+        grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
     ):
         primitive_world = transform_primitive_to_world(primitive_obj, object_pose_world)
         if isinstance(primitive_world, BoxCollisionPrimitive) and scene.intersects_box(primitive_world):
@@ -650,6 +679,7 @@ def _colliding_obstacle_parts(
     contact_gap_m: float,
     lateral_offset_m: float,
     approach_offset_m: float,
+    gripper_collision_model: str,
 ) -> list[str]:
     return [
         part.part_id
@@ -661,6 +691,7 @@ def _colliding_obstacle_parts(
             contact_gap_m=contact_gap_m,
             lateral_offset_m=lateral_offset_m,
             approach_offset_m=approach_offset_m,
+            gripper_collision_model=gripper_collision_model,
         )
     ]
 
@@ -690,6 +721,7 @@ def _stage1_assembly_failure_statuses(
         target=target,
         mesh_scale=mesh_scale,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        gripper_collision_model=planning.gripper_collision_model,
     )
     statuses: list[CandidateStatus] = []
     seen_contact_keys: set[tuple[object, ...]] = set()
@@ -701,6 +733,7 @@ def _stage1_assembly_failure_statuses(
             contact_gap_m=planning.detailed_finger_contact_gap_m,
             lateral_offset_m=float(candidate.contact_patch_lateral_offset_m),
             approach_offset_m=float(candidate.contact_patch_approach_offset_m),
+            gripper_collision_model=planning.gripper_collision_model,
         )
         if collisions:
             shown = ", ".join(collisions[:4])
@@ -1066,8 +1099,8 @@ def _write_index_html(
           <div class="legend">
             <span><i class="swatch" style="background: var(--mesh)"></i>Target mesh</span>
             <span><i class="swatch" style="background: var(--floor)"></i>Ground</span>
-            <span><i class="swatch" style="background: var(--franka)"></i>Finger boxes</span>
-            <span><i class="swatch" style="background: var(--hand)"></i>Hand mesh</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
             <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A</span>
             <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B</span>
           </div>
@@ -1264,10 +1297,46 @@ def _write_index_html(
       });
     }
     function drawHand(grasp, projectionBounds) {
-      grasp.franka_hand_faces.forEach((face) => {
-        line(grasp.franka_hand_vertices_obj[face[0]], grasp.franka_hand_vertices_obj[face[1]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
-        line(grasp.franka_hand_vertices_obj[face[1]], grasp.franka_hand_vertices_obj[face[2]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
-        line(grasp.franka_hand_vertices_obj[face[2]], grasp.franka_hand_vertices_obj[face[0]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
+      const vertices = grasp.franka_hand_vertices_obj || [];
+      const faces = grasp.franka_hand_faces || [];
+      const edgeMap = new Map();
+      const faceRecords = faces.map((face) => {
+        const points = face.map((index) => vertices[index]);
+        const rotated = points.map((p) => rotate(p, projectionBounds.center));
+        const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+        const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+        const normal = [
+          edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+          edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+          edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+        ];
+        const depth = rotated.reduce((sum, p) => sum + p[2], 0) / rotated.length;
+        return { face, points, normal, depth };
+      });
+      faceRecords.filter((record) => record.normal[2] > 0).sort((a, b) => a.depth - b.depth).forEach((record) => {
+        polygon(record.points, { fill: "#8f5a12", fillOpacity: 0.04, stroke: "none" }, projectionBounds);
+      });
+      faceRecords.forEach((record) => {
+        [[0, 1], [1, 2], [2, 0]].forEach(([a, b]) => {
+          const start = record.face[a], end = record.face[b];
+          const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+          const entry = edgeMap.get(key) || { start, end, normals: [] };
+          entry.normals.push(record.normal);
+          edgeMap.set(key, entry);
+        });
+      });
+      edgeMap.forEach((entry) => {
+        let draw = entry.normals.length === 1;
+        if (!draw && entry.normals.length >= 2) {
+          const [a, b] = entry.normals;
+          const lenA = Math.hypot(a[0], a[1], a[2]) || 1;
+          const lenB = Math.hypot(b[0], b[1], b[2]) || 1;
+          const dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (lenA * lenB);
+          draw = (a[2] >= 0 && b[2] < 0) || (a[2] < 0 && b[2] >= 0) || dot < 0.82;
+        }
+        if (draw) {
+          line(vertices[entry.start], vertices[entry.end], { stroke: "#8f5a12", width: 1.05, opacity: 0.72 }, projectionBounds);
+        }
       });
     }
     function drawGrasp(grasp, projectionBounds) {
@@ -1508,6 +1577,7 @@ def _part_orientation_frame(
             [CandidateStatus(grasp=stage2.accepted[0], status="accepted", reason="best_direct_grasp")],
             contact_gap_m=planning.detailed_finger_contact_gap_m,
             object_pose_world=orientation.object_pose_world,
+            gripper_collision_model=planning.gripper_collision_model,
         )[0]
     return {
         "target": {
@@ -1751,6 +1821,7 @@ def _raw_pickup_statuses_for_pose(
         stage1.raw_candidates,
         object_pose_world=object_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        gripper_collision_model=planning.gripper_collision_model,
         floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
         contact_approach_offsets_m=planning.contact_approach_offsets_m,
@@ -2375,10 +2446,12 @@ def _handover_pair_payload(pair: HandoverGraspPair, *, planning: PlanningConfig)
     transfer_payload = candidate_payload(
         [CandidateStatus(grasp=pair.transfer_grasp, status=pair.status, reason=pair.reason)],
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        gripper_collision_model=planning.gripper_collision_model,
     )[0]
     final_payload = candidate_payload(
         [CandidateStatus(grasp=pair.final_grasp, status=pair.status, reason=pair.reason)],
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        gripper_collision_model=planning.gripper_collision_model,
     )[0]
     return {
         "status": pair.status,
@@ -2575,10 +2648,42 @@ def _write_handover_grasp_pairs_html(
       [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(([a, b]) => line(corners[a], corners[b], color, 1.3, alpha));
     }
     function drawHand(grasp, color, alpha) {
-      grasp.franka_hand_faces.forEach((face) => {
-        line(grasp.franka_hand_vertices_obj[face[0]], grasp.franka_hand_vertices_obj[face[1]], color, 0.75, alpha * 0.45);
-        line(grasp.franka_hand_vertices_obj[face[1]], grasp.franka_hand_vertices_obj[face[2]], color, 0.75, alpha * 0.45);
-        line(grasp.franka_hand_vertices_obj[face[2]], grasp.franka_hand_vertices_obj[face[0]], color, 0.75, alpha * 0.45);
+      const vertices = grasp.franka_hand_vertices_obj || [];
+      const faces = grasp.franka_hand_faces || [];
+      const edgeMap = new Map();
+      const faceRecords = faces.map((face) => {
+        const points = face.map((index) => vertices[index]);
+        const rotated = points.map(rotate);
+        const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+        const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+        const normal = [
+          edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+          edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+          edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+        ];
+        return { face, normal };
+      });
+      faceRecords.forEach((record) => {
+        [[0, 1], [1, 2], [2, 0]].forEach(([a, b]) => {
+          const start = record.face[a], end = record.face[b];
+          const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+          const entry = edgeMap.get(key) || { start, end, normals: [] };
+          entry.normals.push(record.normal);
+          edgeMap.set(key, entry);
+        });
+      });
+      edgeMap.forEach((entry) => {
+        let draw = entry.normals.length === 1;
+        if (!draw && entry.normals.length >= 2) {
+          const [a, b] = entry.normals;
+          const lenA = Math.hypot(a[0], a[1], a[2]) || 1;
+          const lenB = Math.hypot(b[0], b[1], b[2]) || 1;
+          const dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (lenA * lenB);
+          draw = (a[2] >= 0 && b[2] < 0) || (a[2] < 0 && b[2] >= 0) || dot < 0.82;
+        }
+        if (draw) {
+          line(vertices[entry.start], vertices[entry.end], color, 0.95, alpha * 0.78);
+        }
       });
       grasp.franka_left_boxes.forEach((box) => drawBox(box.corners, color, alpha));
       grasp.franka_right_boxes.forEach((box) => drawBox(box.corners, color, alpha));
@@ -2792,6 +2897,7 @@ def _write_failed_grasps_html(
         display_object_pose_world=display_pose,
         max_mesh_edges=8000,
         max_obstacle_edges=8000,
+        gripper_collision_model=planning.gripper_collision_model,
     )
     return len(candidate_statuses), constraint_counts
 
@@ -2911,8 +3017,8 @@ def _write_part_orientations_html(
           <div class="legend">
             <span><i class="swatch" style="background: var(--mesh)"></i>Target mesh</span>
             <span><i class="swatch" style="background: var(--floor)"></i>Ground</span>
-            <span><i class="swatch" style="background: var(--franka)"></i>Finger boxes</span>
-            <span><i class="swatch" style="background: var(--hand)"></i>Hand mesh</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
             <span><i class="swatch" style="background: var(--contact-a)"></i>Contact A</span>
             <span><i class="swatch" style="background: var(--contact-b)"></i>Contact B</span>
           </div>
@@ -3038,10 +3144,46 @@ def _write_part_orientations_html(
       });
     }
     function drawHand(grasp, projectionBounds) {
-      grasp.franka_hand_faces.forEach((face) => {
-        line(grasp.franka_hand_vertices_obj[face[0]], grasp.franka_hand_vertices_obj[face[1]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
-        line(grasp.franka_hand_vertices_obj[face[1]], grasp.franka_hand_vertices_obj[face[2]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
-        line(grasp.franka_hand_vertices_obj[face[2]], grasp.franka_hand_vertices_obj[face[0]], { stroke: "#8f5a12", width: 0.9, opacity: 0.28 }, projectionBounds);
+      const vertices = grasp.franka_hand_vertices_obj || [];
+      const faces = grasp.franka_hand_faces || [];
+      const edgeMap = new Map();
+      const faceRecords = faces.map((face) => {
+        const points = face.map((index) => vertices[index]);
+        const rotated = points.map((p) => rotate(p, projectionBounds.center));
+        const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+        const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+        const normal = [
+          edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+          edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+          edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+        ];
+        const depth = rotated.reduce((sum, p) => sum + p[2], 0) / rotated.length;
+        return { face, points, normal, depth };
+      });
+      faceRecords.filter((record) => record.normal[2] > 0).sort((a, b) => a.depth - b.depth).forEach((record) => {
+        polygon(record.points, { fill: "#8f5a12", fillOpacity: 0.04, stroke: "none" }, projectionBounds);
+      });
+      faceRecords.forEach((record) => {
+        [[0, 1], [1, 2], [2, 0]].forEach(([a, b]) => {
+          const start = record.face[a], end = record.face[b];
+          const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+          const entry = edgeMap.get(key) || { start, end, normals: [] };
+          entry.normals.push(record.normal);
+          edgeMap.set(key, entry);
+        });
+      });
+      edgeMap.forEach((entry) => {
+        let draw = entry.normals.length === 1;
+        if (!draw && entry.normals.length >= 2) {
+          const [a, b] = entry.normals;
+          const lenA = Math.hypot(a[0], a[1], a[2]) || 1;
+          const lenB = Math.hypot(b[0], b[1], b[2]) || 1;
+          const dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (lenA * lenB);
+          draw = (a[2] >= 0 && b[2] < 0) || (a[2] < 0 && b[2] >= 0) || dot < 0.82;
+        }
+        if (draw) {
+          line(vertices[entry.start], vertices[entry.end], { stroke: "#8f5a12", width: 1.05, opacity: 0.72 }, projectionBounds);
+        }
       });
     }
     function drawGrasp(grasp, projectionBounds) {
@@ -3285,6 +3427,9 @@ def _apply_cli_overrides(payload: dict[str, object], args: argparse.Namespace, o
         planning["stage1_cache_enabled"] = False
     if args.skip_stage1_collision_checks:
         planning["skip_stage1_collision_checks"] = True
+    gripper_collision_model = getattr(args, "gripper_collision_model", "")
+    if gripper_collision_model:
+        planning["gripper_collision_model"] = str(gripper_collision_model)
     if args.symmetry_pickup_enabled is not None:
         planning["symmetry_pickup_enabled"] = bool(args.symmetry_pickup_enabled)
     if args.symmetry_asset_path:
@@ -3759,6 +3904,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Bypass only stage-1 assembly collision filtering.",
     )
+    parser.add_argument(
+        "--gripper-collision-model",
+        default="",
+        help="Override planning.gripper_collision_model for this benchmark run.",
+    )
     symmetry_group = parser.add_mutually_exclusive_group()
     symmetry_group.add_argument(
         "--symmetry-pickup",
@@ -3893,6 +4043,7 @@ def main() -> None:
         "schema_version": 1,
         "provenance": provenance,
         "config": payload,
+        "robot": _benchmark_robot_metadata(planning),
         "parts": part_records,
         "orientations": rows,
         "summary": {

@@ -473,6 +473,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             robot_config="configs/mujoco_fr3_with_hand.json",
             controller="moveit",
             moveit_frame_id="base",
+            moveit_namespace="/lbr",
             moveit_pipeline_id="isaac_ros_cumotion",
             moveit_planner_id="RRTConnectkConfigDefault",
             moveit_allow_collisions=True,
@@ -493,6 +494,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("moveit", command)
         self.assertIn("--moveit-frame-id", command)
         self.assertIn("base", command)
+        self.assertIn("--moveit-namespace", command)
+        self.assertIn("/lbr", command)
         self.assertIn("--moveit-pipeline-id", command)
         self.assertIn("isaac_ros_cumotion", command)
         self.assertIn("--moveit-planner-id", command)
@@ -591,8 +594,20 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                     "success_height_margin_m": 0.04,
                     "object_density_kg_m3": 1240.0,
                     "moveit_frame_id": "base",
+                    "moveit_target_position_signs": [1.0, -1.0, 1.0],
                     "moveit_planning_group": "fr3_arm",
                     "moveit_pose_link": "fr3_hand_tcp",
+                    "moveit_namespace": "/lbr",
+                    "moveit_joint_names": [
+                        "lbr_A1",
+                        "lbr_A2",
+                        "lbr_A3",
+                        "lbr_A4",
+                        "lbr_A5",
+                        "lbr_A6",
+                        "lbr_A7",
+                    ],
+                    "moveit_start_joint_positions": [0.0, 0.5, 0.0, -1.2, 0.0, 1.0, 0.0],
                     "moveit_pipeline_id": "isaac_ros_cumotion",
                     "moveit_planner_id": "RRTConnectkConfigDefault",
                     "moveit_wait_for_moveit_timeout_s": 12.0,
@@ -613,8 +628,15 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertAlmostEqual(config.success_height_margin_m, 0.04)
         self.assertEqual(config.object_density_kg_m3, 1240.0)
         self.assertEqual(config.moveit_frame_id, "base")
+        self.assertEqual(config.moveit_target_position_signs, (1.0, -1.0, 1.0))
         self.assertEqual(config.moveit_planning_group, "fr3_arm")
         self.assertEqual(config.moveit_pose_link, "fr3_hand_tcp")
+        self.assertEqual(config.moveit_namespace, "/lbr")
+        self.assertEqual(
+            config.moveit_joint_names,
+            ("lbr_A1", "lbr_A2", "lbr_A3", "lbr_A4", "lbr_A5", "lbr_A6", "lbr_A7"),
+        )
+        self.assertEqual(config.moveit_start_joint_positions, (0.0, 0.5, 0.0, -1.2, 0.0, 1.0, 0.0))
         self.assertEqual(config.moveit_pipeline_id, "isaac_ros_cumotion")
         self.assertEqual(config.moveit_planner_id, "RRTConnectkConfigDefault")
         self.assertAlmostEqual(config.moveit_wait_for_moveit_timeout_s, 12.0)
@@ -634,6 +656,10 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             lift_height_m=0.09,
             success_height_margin_m=0.04,
             moveit_pipeline_id="isaac_ros_cumotion",
+            moveit_namespace="/lbr",
+            moveit_target_position_signs=(1.0, -1.0, 1.0),
+            moveit_joint_names=("lbr_A1", "lbr_A2", "lbr_A3", "lbr_A4", "lbr_A5", "lbr_A6", "lbr_A7"),
+            moveit_start_joint_positions=(0.0, 0.5, 0.0, -1.2, 0.0, 1.0, 0.0),
             moveit_planner_id="RRTConnectkConfigDefault",
             moveit_execution_speed_rad_s=0.25,
             moveit_grasp_settle_time_s=0.2,
@@ -654,6 +680,14 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertIn("base", command)
         self.assertIn("--moveit-pipeline-id", command)
         self.assertIn("isaac_ros_cumotion", command)
+        self.assertIn("--moveit-namespace", command)
+        self.assertIn("/lbr", command)
+        self.assertIn("--moveit-target-position-signs", command)
+        self.assertIn("1.0,-1.0,1.0", command)
+        self.assertIn("--moveit-joint-names", command)
+        self.assertIn("lbr_A1,lbr_A2,lbr_A3,lbr_A4,lbr_A5,lbr_A6,lbr_A7", command)
+        self.assertIn("--moveit-start-joint-positions", command)
+        self.assertIn("0.0,0.5,0.0,-1.2,0.0,1.0,0.0", command)
         self.assertIn("--moveit-planner-id", command)
         self.assertIn("RRTConnectkConfigDefault", command)
         self.assertIn("--moveit-lift-height-m", command)
@@ -782,6 +816,11 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
         self.assertAlmostEqual(config.floor_clearance_margin_m, 0.012)
 
+    def test_planning_config_parses_gripper_collision_model(self) -> None:
+        config = run_grasp_pipeline._planning_config({"planning": {"gripper_collision_model": "lbr_iiwa7_y_gripper"}})
+
+        self.assertEqual(config.gripper_collision_model, "kuka_y_gripper")
+
     def test_planning_config_parses_skip_stage1_collision_checks(self) -> None:
         config = run_grasp_pipeline._planning_config({"planning": {"skip_stage1_collision_checks": True}})
 
@@ -839,10 +878,36 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         config = run_grasp_pipeline._planning_config({"planning": {"roll_angle_step_deg": 90.0}})
 
         self.assertEqual(config.roll_angles_rad, (0.0, 0.5 * np.pi, np.pi, 1.5 * np.pi))
+        self.assertTrue(config.stage1_pose_upright_axis_enabled)
 
     def test_planning_config_roll_angle_step_rejects_invalid_values(self) -> None:
         with self.assertRaises(ValueError):
             run_grasp_pipeline._planning_config({"planning": {"roll_angle_step_deg": 0.0}})
+
+    def test_planning_config_allows_pose_upright_axis_override_for_roll_sweep(self) -> None:
+        config = run_grasp_pipeline._planning_config(
+            {"planning": {"roll_angle_step_deg": 90.0, "stage1_pose_upright_axis_enabled": True}}
+        )
+
+        self.assertTrue(config.stage1_pose_upright_axis_enabled)
+
+    def test_world_upright_axis_can_be_disabled_for_stage1(self) -> None:
+        geometry = GeometryConfig(target_mesh_path="obj/fabrica/beam/2.obj", mesh_scale=0.01)
+        object_pose_world = ObjectWorldPose(
+            position_world=(0.4, -0.1, 0.2),
+            orientation_xyzw_world=(0.0, 0.0, 0.70710678, 0.70710678),
+        )
+        planning = run_grasp_pipeline._planning_config(
+            {"planning": {"roll_angle_step_deg": 90.0, "stage1_pose_upright_axis_enabled": False}}
+        )
+
+        axes = run_grasp_pipeline._world_upright_axis_for_stage1(
+            geometry,
+            planning=planning,
+            object_pose_world=object_pose_world,
+        )
+
+        self.assertEqual(axes, ())
 
 
 def _saved_candidate(grasp_id: str, orientation_xyzw: tuple[float, float, float, float]) -> SavedGraspCandidate:
@@ -1204,6 +1269,99 @@ class Stage1CollisionSkipTests(unittest.TestCase):
         self.assertEqual(len(second.raw_candidates), 1)
         self.assertEqual(len(second.bundle.candidates), 1)
         self.assertEqual(second.surface_samples, (surface_sample,))
+
+    def test_generate_stage1_reuses_base_cache_and_adds_pose_upright_rolls(self) -> None:
+        mesh = TriangleMesh(
+            vertices_obj=np.array(
+                [[0.0, 0.0, 0.0], [0.04, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]],
+                dtype=float,
+            ),
+            faces=np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.int64),
+        )
+        raw_candidate = ObjectFrameGraspCandidate(
+            grasp_position_obj=(0.01, 0.01, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(0.0, 0.01, 0.0),
+            contact_point_b_obj=(0.02, 0.01, 0.0),
+            contact_normal_a_obj=(1.0, 0.0, 0.0),
+            contact_normal_b_obj=(-1.0, 0.0, 0.0),
+            jaw_width=0.02,
+            roll_angle_rad=0.0,
+        )
+        upright_candidate = replace(raw_candidate, roll_angle_rad=0.25 * np.pi)
+        surface_sample = SurfaceSample(
+            point_obj=(0.01, 0.02, 0.0),
+            normal_obj=(0.0, 0.0, 1.0),
+            face_index=0,
+        )
+
+        class FakeGenerator:
+            collision_backend_name = "unit-test"
+            generate_calls = 0
+            augment_calls = 0
+
+            def __init__(self, config: object) -> None:
+                self.config = config
+                self.last_surface_samples = (surface_sample,)
+
+            def generate(self, mesh_local: object) -> list[ObjectFrameGraspCandidate]:
+                FakeGenerator.generate_calls += 1
+                if FakeGenerator.generate_calls > 1:
+                    raise AssertionError("base generator should not run on cache hit")
+                return [raw_candidate]
+
+            def generate_additional_upright_roll_candidates(
+                self,
+                mesh_local: object,
+                candidates: object,
+            ) -> list[ObjectFrameGraspCandidate]:
+                FakeGenerator.augment_calls += 1
+                self.augmented_candidates = tuple(candidates)
+                return [upright_candidate]
+
+        def fake_score_grasps(
+            grasps: list[SavedGraspCandidate],
+            *,
+            mesh_local: object,
+        ) -> list[SavedGraspCandidate]:
+            return [
+                replace(grasp, score=float(index), score_components={"score": float(index)})
+                for index, grasp in enumerate(grasps, start=1)
+            ]
+
+        geometry = GeometryConfig(
+            target_mesh_path="obj/fabrica/beam/2.obj",
+            mesh_scale=0.01,
+            assembly_glob="obj/fabrica/beam/*.obj",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            planning = PlanningConfig(
+                skip_stage1_collision_checks=True,
+                stage1_cache_enabled=True,
+                stage1_cache_dir=temp_dir,
+            )
+            with (
+                mock.patch("grasp_planning.pipeline.fabrica_pipeline.load_asset_mesh", return_value=mesh),
+                mock.patch("grasp_planning.pipeline.fabrica_pipeline.AntipodalMeshGraspGenerator", FakeGenerator),
+                mock.patch("grasp_planning.pipeline.fabrica_pipeline.score_grasps", side_effect=fake_score_grasps),
+            ):
+                first = generate_stage1_result(geometry=geometry, planning=planning)
+                second = generate_stage1_result(
+                    geometry=geometry,
+                    planning=planning,
+                    upright_approach_axes_obj=((1.0, 0.0, 0.0),),
+                )
+
+        self.assertFalse(first.bundle.metadata["stage1_cache_hit"])
+        self.assertTrue(second.bundle.metadata["stage1_cache_hit"])
+        self.assertEqual(FakeGenerator.generate_calls, 1)
+        self.assertEqual(FakeGenerator.augment_calls, 1)
+        self.assertEqual(first.bundle.metadata["stage1_cache_path"], second.bundle.metadata["stage1_cache_path"])
+        self.assertTrue(second.bundle.metadata["stage1_cache_augmented"])
+        self.assertEqual(second.bundle.metadata["stage1_cache_augmented_raw_candidate_count"], 1)
+        self.assertEqual(second.raw_candidate_count, 2)
+        self.assertEqual(len(second.raw_candidates), 2)
+        self.assertEqual(len(second.bundle.candidates), 2)
 
 
 class MujocoRegraspFallbackPlanningTests(unittest.TestCase):

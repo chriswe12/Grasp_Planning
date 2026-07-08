@@ -85,6 +85,7 @@ class FingerBoxGripperCollisionModel:
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
+        grasp_center: np.ndarray | None = None,
     ) -> tuple[BoxCollisionPrimitive, ...]:
         box_a, box_b = finger_boxes_from_grasp(
             grasp_rotmat=grasp_rotmat,
@@ -134,6 +135,7 @@ class FingerBoxWithHandMeshCollisionModel:
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
+        grasp_center: np.ndarray | None = None,
     ) -> tuple[CollisionPrimitive, ...]:
         box_model = FingerBoxGripperCollisionModel(
             finger_extent_lateral=self.finger_extent_lateral,
@@ -146,6 +148,7 @@ class FingerBoxWithHandMeshCollisionModel:
                 grasp_rotmat=grasp_rotmat,
                 contact_point_a=contact_point_a,
                 contact_point_b=contact_point_b,
+                grasp_center=grasp_center,
             )
         )
         hand_origin = 0.5 * (np.asarray(contact_point_a, dtype=float) + np.asarray(contact_point_b, dtype=float)) - (
@@ -251,6 +254,17 @@ _FRANKA_HAND_MESH_PATH = (
     / "hand.stl"
 )
 _FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
+_KUKA_Y_GRIPPER_MESH_DIR = (
+    Path(__file__).resolve().parents[2] / "assets" / "urdf" / "kuka_iiwa7_y_gripper" / "meshes"
+)
+_KUKA_Y_GRIPPER_MESH_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+_KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
+_KUKA_Y_GRIPPER_MESH_NAMES = {
+    "base": "hand.STL",
+    "left_finger": "left_finger.STL",
+    "right_finger": "right_finger.STL",
+}
+_KUKA_Y_FINGERTIP_REFERENCE_MIN_Z_M = 0.08
 
 
 def _load_franka_hand_mesh() -> tuple[np.ndarray, np.ndarray]:
@@ -264,6 +278,82 @@ def _load_franka_hand_mesh() -> tuple[np.ndarray, np.ndarray]:
     mesh = trimesh.load(_FRANKA_HAND_MESH_PATH, force="mesh")
     _FRANKA_HAND_MESH_CACHE = (np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces, dtype=np.int64))
     return _FRANKA_HAND_MESH_CACHE
+
+
+def _load_kuka_y_gripper_mesh(key: str) -> tuple[np.ndarray, np.ndarray]:
+    cached = _KUKA_Y_GRIPPER_MESH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if trimesh is None:
+        raise RuntimeError("trimesh is required to load the KUKA Y-gripper collision meshes.")
+    mesh_name = _KUKA_Y_GRIPPER_MESH_NAMES[key]
+    mesh_path = _KUKA_Y_GRIPPER_MESH_DIR / mesh_name
+    if not mesh_path.is_file():
+        raise FileNotFoundError(f"KUKA Y-gripper collision mesh not found at '{mesh_path}'.")
+    mesh = trimesh.load(mesh_path, force="mesh")
+    if key == "base":
+        vertices, faces = _convex_hull_mesh(mesh)
+    else:
+        vertices, faces = _component_convex_hull_mesh(mesh, min_area_fraction=0.05, min_z_extent_m=0.02)
+    _KUKA_Y_GRIPPER_MESH_CACHE[key] = (vertices, faces)
+    return vertices, faces
+
+
+def _convex_hull_mesh(mesh) -> tuple[np.ndarray, np.ndarray]:
+    hull = mesh.convex_hull
+    return np.asarray(hull.vertices, dtype=float) * 0.001, np.asarray(hull.faces, dtype=np.int64)
+
+
+def _component_convex_hull_mesh(
+    mesh,
+    *,
+    min_area_fraction: float,
+    min_z_extent_m: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    components = mesh.split(only_watertight=False)
+    total_area = max(float(mesh.area), 1.0e-12)
+    kept = []
+    for component in components:
+        bounds_m = np.asarray(component.bounds, dtype=float) * 0.001
+        z_extent_m = float(bounds_m[1, 2] - bounds_m[0, 2])
+        if float(component.area) / total_area >= float(min_area_fraction) and z_extent_m >= float(min_z_extent_m):
+            kept.append(component)
+    if not kept:
+        kept = [component for component in components if float(component.area) / total_area >= float(min_area_fraction)]
+    if not kept:
+        kept = [mesh]
+    vertices_out: list[np.ndarray] = []
+    faces_out: list[np.ndarray] = []
+    for component in kept:
+        hull = component.convex_hull
+        offset = sum(len(vertices) for vertices in vertices_out)
+        vertices_out.append(np.asarray(hull.vertices, dtype=float) * 0.001)
+        faces_out.append(np.asarray(hull.faces, dtype=np.int64) + offset)
+    return np.vstack(vertices_out), np.vstack(faces_out)
+
+
+def _place_kuka_y_left_finger_for_grasp(vertices_local: np.ndarray, half_opening_m: float) -> np.ndarray:
+    shifted = np.asarray(vertices_local, dtype=float).copy()
+    fingertip_vertices = _kuka_y_fingertip_reference_vertices(shifted)
+    inner_y = float(np.max(fingertip_vertices[:, 1]))
+    shifted[:, 1] += -float(half_opening_m) - inner_y
+    return shifted
+
+
+def _place_kuka_y_right_finger_for_grasp(vertices_local: np.ndarray, half_opening_m: float) -> np.ndarray:
+    shifted = np.asarray(vertices_local, dtype=float).copy()
+    fingertip_vertices = _kuka_y_fingertip_reference_vertices(shifted)
+    inner_y = float(np.min(fingertip_vertices[:, 1]))
+    shifted[:, 1] += float(half_opening_m) - inner_y
+    return shifted
+
+
+def _kuka_y_fingertip_reference_vertices(vertices_local: np.ndarray) -> np.ndarray:
+    vertices = np.asarray(vertices_local, dtype=float)
+    high_z = vertices[:, 2] >= _KUKA_Y_FINGERTIP_REFERENCE_MIN_Z_M
+    if np.any(high_z):
+        return vertices[high_z]
+    return vertices
 
 
 @dataclass(frozen=True)
@@ -290,6 +380,7 @@ class FrankaHandFingerCollisionModel:
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
+        grasp_center: np.ndarray | None = None,
     ) -> tuple[CollisionPrimitive, ...]:
         left_rotmat = np.asarray(grasp_rotmat, dtype=float)
         right_rotmat = left_rotmat @ _rpy_to_rotmat(0.0, 0.0, np.pi)
@@ -347,6 +438,184 @@ class FrankaHandFingerCollisionModel:
                     )
                 )
         return tuple(primitives)
+
+
+@dataclass(frozen=True)
+class KukaYGripperCollisionModel:
+    """Collision model using the generated KUKA/Y-gripper STL meshes."""
+
+    base_vertices_local: np.ndarray | None = None
+    base_faces: np.ndarray | None = None
+    left_finger_vertices_local: np.ndarray | None = None
+    left_finger_faces: np.ndarray | None = None
+    right_finger_vertices_local: np.ndarray | None = None
+    right_finger_faces: np.ndarray | None = None
+    contact_gap_m: float = 0.002
+    contact_patch_lateral_offset_m: float = 0.0
+    contact_patch_approach_offset_m: float = 0.0
+    tcp_to_grasp_center_m: tuple[float, float, float] = tuple(float(v) for v in _KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M)
+
+    def __post_init__(self) -> None:
+        for vertices_field, faces_field in (
+            ("base_vertices_local", "base_faces"),
+            ("left_finger_vertices_local", "left_finger_faces"),
+            ("right_finger_vertices_local", "right_finger_faces"),
+        ):
+            vertices = getattr(self, vertices_field)
+            faces = getattr(self, faces_field)
+            if vertices is not None and faces is not None:
+                object.__setattr__(self, vertices_field, np.asarray(vertices, dtype=float))
+                object.__setattr__(self, faces_field, np.asarray(faces, dtype=np.int64))
+        object.__setattr__(self, "contact_gap_m", float(self.contact_gap_m))
+        object.__setattr__(self, "contact_patch_lateral_offset_m", float(self.contact_patch_lateral_offset_m))
+        object.__setattr__(self, "contact_patch_approach_offset_m", float(self.contact_patch_approach_offset_m))
+        tcp = np.asarray(self.tcp_to_grasp_center_m, dtype=float)
+        if tcp.shape != (3,):
+            raise ValueError("tcp_to_grasp_center_m must contain exactly three values.")
+        object.__setattr__(self, "tcp_to_grasp_center_m", tuple(float(v) for v in tcp))
+
+    def primitives_for_grasp(
+        self,
+        *,
+        grasp_rotmat: np.ndarray,
+        contact_point_a: np.ndarray,
+        contact_point_b: np.ndarray,
+        grasp_center: np.ndarray | None = None,
+    ) -> tuple[MeshCollisionPrimitive, ...]:
+        rotmat = np.asarray(grasp_rotmat, dtype=float)
+        contact_a = np.asarray(contact_point_a, dtype=float)
+        contact_b = np.asarray(contact_point_b, dtype=float)
+        jaw_width = float(np.linalg.norm(contact_b - contact_a))
+        half_opening_m = 0.5 * jaw_width + float(self.contact_gap_m)
+        if grasp_center is None:
+            tcp_center_obj = (
+                0.5 * (contact_a + contact_b)
+                - rotmat[:, 0] * float(self.contact_patch_lateral_offset_m)
+                - rotmat[:, 2] * float(self.contact_patch_approach_offset_m)
+            )
+        else:
+            tcp_center_obj = np.asarray(grasp_center, dtype=float)
+        base_origin_obj = tcp_center_obj - rotmat @ np.asarray(self.tcp_to_grasp_center_m, dtype=float)
+
+        base_vertices, base_faces = self._mesh("base")
+        left_vertices, left_faces = self._mesh("left_finger")
+        right_vertices, right_faces = self._mesh("right_finger")
+        left_shifted = _place_kuka_y_left_finger_for_grasp(left_vertices, half_opening_m)
+        right_shifted = _place_kuka_y_right_finger_for_grasp(right_vertices, half_opening_m)
+        return (
+            self._mesh_to_object(
+                name="kuka_y_gripper_base",
+                vertices_local=base_vertices,
+                faces=base_faces,
+                origin_obj=base_origin_obj,
+                rotmat=rotmat,
+            ),
+            self._mesh_to_object(
+                name="kuka_y_left_finger",
+                vertices_local=left_shifted,
+                faces=left_faces,
+                origin_obj=base_origin_obj,
+                rotmat=rotmat,
+            ),
+            self._mesh_to_object(
+                name="kuka_y_right_finger",
+                vertices_local=right_shifted,
+                faces=right_faces,
+                origin_obj=base_origin_obj,
+                rotmat=rotmat,
+            ),
+        )
+
+    def _mesh(self, key: str) -> tuple[np.ndarray, np.ndarray]:
+        if key == "base" and self.base_vertices_local is not None and self.base_faces is not None:
+            return self.base_vertices_local, self.base_faces
+        if (
+            key == "left_finger"
+            and self.left_finger_vertices_local is not None
+            and self.left_finger_faces is not None
+        ):
+            return self.left_finger_vertices_local, self.left_finger_faces
+        if (
+            key == "right_finger"
+            and self.right_finger_vertices_local is not None
+            and self.right_finger_faces is not None
+        ):
+            return self.right_finger_vertices_local, self.right_finger_faces
+        return _load_kuka_y_gripper_mesh(key)
+
+    @staticmethod
+    def _mesh_to_object(
+        *,
+        name: str,
+        vertices_local: np.ndarray,
+        faces: np.ndarray,
+        origin_obj: np.ndarray,
+        rotmat: np.ndarray,
+    ) -> MeshCollisionPrimitive:
+        vertices = np.asarray(vertices_local, dtype=float)
+        return MeshCollisionPrimitive(
+            name=name,
+            vertices_obj=np.asarray(origin_obj, dtype=float)[None, :] + vertices @ np.asarray(rotmat, dtype=float).T,
+            faces=np.asarray(faces, dtype=np.int64),
+        )
+
+
+GripperCollisionModel = (
+    FingerBoxGripperCollisionModel
+    | FingerBoxWithHandMeshCollisionModel
+    | FrankaHandFingerCollisionModel
+    | KukaYGripperCollisionModel
+)
+
+GRIPPER_COLLISION_MODEL_FRANKA = "franka_hand"
+GRIPPER_COLLISION_MODEL_KUKA_Y = "kuka_y_gripper"
+SUPPORTED_GRIPPER_COLLISION_MODELS = (GRIPPER_COLLISION_MODEL_FRANKA, GRIPPER_COLLISION_MODEL_KUKA_Y)
+
+
+def normalize_gripper_collision_model_name(name: str) -> str:
+    normalized = str(name or GRIPPER_COLLISION_MODEL_FRANKA).strip().lower().replace("-", "_")
+    aliases = {
+        "franka": GRIPPER_COLLISION_MODEL_FRANKA,
+        "franka_hand": GRIPPER_COLLISION_MODEL_FRANKA,
+        "panda": GRIPPER_COLLISION_MODEL_FRANKA,
+        "panda_hand": GRIPPER_COLLISION_MODEL_FRANKA,
+        "kuka": GRIPPER_COLLISION_MODEL_KUKA_Y,
+        "lbr": GRIPPER_COLLISION_MODEL_KUKA_Y,
+        "lbr_iiwa7": GRIPPER_COLLISION_MODEL_KUKA_Y,
+        "kuka_iiwa7_y_gripper": GRIPPER_COLLISION_MODEL_KUKA_Y,
+        "lbr_iiwa7_y_gripper": GRIPPER_COLLISION_MODEL_KUKA_Y,
+        "kuka_y_gripper": GRIPPER_COLLISION_MODEL_KUKA_Y,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            "Unsupported gripper collision model "
+            f"'{name}'. Expected one of: {', '.join(SUPPORTED_GRIPPER_COLLISION_MODELS)}."
+        ) from exc
+
+
+def make_gripper_collision_model(
+    name: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    *,
+    contact_gap_m: float = 0.002,
+    contact_patch_lateral_offset_m: float = 0.0,
+    contact_patch_approach_offset_m: float = 0.0,
+) -> GripperCollisionModel:
+    normalized = normalize_gripper_collision_model_name(name)
+    if normalized == GRIPPER_COLLISION_MODEL_FRANKA:
+        return FrankaHandFingerCollisionModel(
+            contact_gap_m=contact_gap_m,
+            contact_patch_lateral_offset_m=contact_patch_lateral_offset_m,
+            contact_patch_approach_offset_m=contact_patch_approach_offset_m,
+        )
+    if normalized == GRIPPER_COLLISION_MODEL_KUKA_Y:
+        return KukaYGripperCollisionModel(
+            contact_gap_m=contact_gap_m,
+            contact_patch_lateral_offset_m=contact_patch_lateral_offset_m,
+            contact_patch_approach_offset_m=contact_patch_approach_offset_m,
+        )
+    raise AssertionError(f"Unhandled gripper collision model '{normalized}'.")
 
 
 class MeshCollisionScene(Protocol):
@@ -414,9 +683,7 @@ class GraspCollisionEvaluator:
 
     def __init__(
         self,
-        collision_model: FingerBoxGripperCollisionModel
-        | FingerBoxWithHandMeshCollisionModel
-        | FrankaHandFingerCollisionModel,
+        collision_model: GripperCollisionModel,
         backend: MeshCollisionBackend | None = None,
     ) -> None:
         self._collision_model = collision_model
@@ -436,11 +703,13 @@ class GraspCollisionEvaluator:
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
+        grasp_center: np.ndarray | None = None,
     ) -> bool:
         for primitive in self._collision_model.primitives_for_grasp(
             grasp_rotmat=grasp_rotmat,
             contact_point_a=contact_point_a,
             contact_point_b=contact_point_b,
+            grasp_center=grasp_center,
         ):
             if isinstance(primitive, BoxCollisionPrimitive) and scene.intersects_box(primitive):
                 return False

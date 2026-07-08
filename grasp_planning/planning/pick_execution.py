@@ -9,7 +9,15 @@ from typing import Callable, Mapping
 import torch
 
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext
-from grasp_planning.start_poses import DEFAULT_ARM_START_JOINT_POS, DEFAULT_HAND_OPEN_WIDTH
+from grasp_planning.start_poses import (
+    DEFAULT_ARM_START_JOINT_POS,
+    DEFAULT_HAND_OPEN_WIDTH,
+    DEFAULT_KUKA_ARM_START_JOINT_POS,
+    gripper_max_open_width,
+    gripper_joint_target_from_width,
+    is_gripper_command_joint_name,
+    is_gripper_joint_name,
+)
 
 from .trajectory_executor import TrajectoryExecutor
 from .types import JointTrajectory
@@ -28,20 +36,26 @@ class PickExecutionResult:
 StepCallback = Callable[[], None]
 
 
-def drive_robot_to_start_pose(sim, scene, *, step_callback: StepCallback | None = None) -> None:
+def drive_robot_to_start_pose(
+    sim,
+    scene,
+    *,
+    hand_open_width: float | None = None,
+    step_callback: StepCallback | None = None,
+) -> None:
     """Actively settle the FR3 into a safe home pose before planning."""
 
     robot = scene["robot"]
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
-    arm_joint_names = tuple(DEFAULT_ARM_START_JOINT_POS.keys())
+    arm_start_positions = {**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_KUKA_ARM_START_JOINT_POS}
+    arm_joint_names = tuple(name for name in arm_start_positions if name in joint_name_to_idx)
     arm_joint_ids = [joint_name_to_idx[name] for name in arm_joint_names]
     arm_targets = torch.tensor(
-        [[DEFAULT_ARM_START_JOINT_POS[name] for name in arm_joint_names]], dtype=torch.float32, device=robot.device
+        [[arm_start_positions[name] for name in arm_joint_names]], dtype=torch.float32, device=robot.device
     )
     hand_joint_names = tuple(
-        name for name in robot.joint_names if name.startswith(("panda_finger_joint", "fr3_finger_joint"))
+        name for name in robot.joint_names if is_gripper_command_joint_name(name)
     )
-    hand_target = float(DEFAULT_HAND_OPEN_WIDTH)
     physics_dt = sim.get_physics_dt()
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
 
@@ -50,10 +64,13 @@ def drive_robot_to_start_pose(sim, scene, *, step_callback: StepCallback | None 
         if hand_joint_names:
             hand_targets = torch.full(
                 (1, len(hand_joint_ids)),
-                hand_target,
+                0.0,
                 dtype=torch.float32,
                 device=robot.device,
             )
+            for index, name in enumerate(hand_joint_names):
+                hand_target = gripper_max_open_width(name) if hand_open_width is None else float(hand_open_width)
+                hand_targets[0, index] = gripper_joint_target_from_width(name, hand_target)
             robot.set_joint_position_target(hand_targets, joint_ids=hand_joint_ids)
         scene.write_data_to_sim()
         sim.step()
@@ -69,30 +86,135 @@ def _command_gripper_width(
     robot,
     width: float,
     duration_s: float,
+    max_duration_s: float | None = None,
+    hold_context: FR3MotionContext | None = None,
+    hold_arm_waypoint: torch.Tensor | None = None,
+    position_tolerance: float = 0.001,
+    contact_position_tolerance: float = 0.003,
+    stall_delta_tolerance: float = 1.0e-5,
+    min_contact_motion_m: float = 0.001,
+    settle_duration_s: float = 0.25,
+    force_joint_state: bool = False,
     step_callback: StepCallback | None = None,
-) -> None:
+) -> dict[str, object]:
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
     hand_joint_names = tuple(
-        name for name in robot.joint_names if name.startswith(("panda_finger_joint", "fr3_finger_joint"))
+        name for name in robot.joint_names if is_gripper_command_joint_name(name)
     )
     if not hand_joint_names:
-        return
+        return {"gripper_close_status": "no_hand_joints", "gripper_close_steps": 0}
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
     physics_dt = sim.get_physics_dt()
-    steps = max(1, int(duration_s / physics_dt))
+    min_steps = max(1, int(duration_s / physics_dt))
+    max_steps = max(1, int((duration_s if max_duration_s is None else max_duration_s) / physics_dt))
+    max_steps = max(max_steps, min_steps)
+    settle_steps_required = max(1, int(settle_duration_s / physics_dt))
     hand_targets = torch.full(
         (1, len(hand_joint_ids)),
-        float(width),
+        0.0,
         dtype=torch.float32,
         device=robot.device,
     )
-    for _ in range(steps):
+    for index, name in enumerate(hand_joint_names):
+        hand_targets[0, index] = gripper_joint_target_from_width(name, width)
+    last_hand_q = None
+    stable_steps = 0
+    close_status = "duration_elapsed"
+    final_error = None
+    final_delta = None
+    max_motion_since_start = 0.0
+    steps_run = 0
+    saw_hand_state = False
+    initial_hand_q = _hand_joint_positions(robot=robot, hand_joint_ids=hand_joint_ids)
+    final_hand_q = initial_hand_q.clone() if initial_hand_q is not None else None
+    for step_idx in range(1, max_steps + 1):
+        if hold_context is not None and hold_arm_waypoint is not None:
+            hold_context.command_arm(hold_arm_waypoint)
         robot.set_joint_position_target(hand_targets, joint_ids=hand_joint_ids)
+        if force_joint_state and initial_hand_q is not None and hasattr(robot, "write_joint_state_to_sim"):
+            alpha = min(1.0, float(step_idx) / float(min_steps))
+            hand_q_cmd = ((1.0 - alpha) * initial_hand_q + alpha * hand_targets).clone()
+            hand_qd_cmd = torch.zeros_like(hand_q_cmd)
+            robot.write_joint_state_to_sim(hand_q_cmd, hand_qd_cmd, joint_ids=hand_joint_ids)
         scene.write_data_to_sim()
         sim.step()
         scene.update(physics_dt)
         if step_callback is not None:
             step_callback()
+        steps_run = step_idx
+        hand_q = _hand_joint_positions(robot=robot, hand_joint_ids=hand_joint_ids)
+        if hand_q is None:
+            continue
+        final_hand_q = hand_q.clone()
+        saw_hand_state = True
+        final_error = float(torch.max(torch.abs(hand_q - hand_targets)).item())
+        if initial_hand_q is None:
+            initial_hand_q = hand_q.clone()
+        max_motion_since_start = max(
+            max_motion_since_start,
+            float(torch.max(torch.abs(hand_q - initial_hand_q)).item()),
+        )
+        if last_hand_q is not None:
+            final_delta = float(torch.max(torch.abs(hand_q - last_hand_q)).item())
+        target_reached = final_error <= float(position_tolerance)
+        contact_stalled = (
+            final_delta is not None
+            and final_delta <= float(stall_delta_tolerance)
+            and max_motion_since_start >= float(min_contact_motion_m)
+        )
+        if step_idx >= min_steps and (target_reached or contact_stalled):
+            stable_steps += 1
+            close_status = "target_reached" if target_reached else "contact_stalled"
+        else:
+            stable_steps = 0
+        last_hand_q = hand_q
+        if stable_steps >= settle_steps_required:
+            break
+    else:
+        if (
+            saw_hand_state
+            and final_delta is not None
+            and final_delta <= float(stall_delta_tolerance)
+            and max_motion_since_start >= float(min_contact_motion_m)
+        ):
+            close_status = "contact_stalled"
+        else:
+            close_status = "max_duration_elapsed" if saw_hand_state else "max_duration_elapsed_no_hand_state"
+    diagnostics: dict[str, object] = {
+        "gripper_close_status": close_status,
+        "gripper_close_steps": int(steps_run),
+        "gripper_close_duration_s": float(steps_run * physics_dt),
+        "gripper_close_target_width_m": float(width),
+        "gripper_close_joint_names": list(hand_joint_names),
+        "gripper_close_target_joint_positions": [float(value) for value in hand_targets[0].tolist()],
+        "gripper_close_saw_hand_state": bool(saw_hand_state),
+        "gripper_close_max_motion_since_start_m": float(max_motion_since_start),
+        "gripper_close_forced_joint_state": bool(force_joint_state),
+        "gripper_close_position_tolerance_m": float(position_tolerance),
+        "gripper_close_contact_position_tolerance_m": float(contact_position_tolerance),
+        "gripper_close_stall_delta_tolerance_m": float(stall_delta_tolerance),
+        "gripper_close_min_contact_motion_m": float(min_contact_motion_m),
+    }
+    if initial_hand_q is not None:
+        diagnostics["gripper_close_initial_joint_positions"] = [float(value) for value in initial_hand_q[0].tolist()]
+    if final_hand_q is not None:
+        diagnostics["gripper_close_final_joint_positions"] = [float(value) for value in final_hand_q[0].tolist()]
+    if final_error is not None:
+        diagnostics["gripper_close_final_max_position_error"] = final_error
+    if final_delta is not None:
+        diagnostics["gripper_close_final_max_step_delta"] = final_delta
+    return diagnostics
+
+
+def _hand_joint_positions(*, robot, hand_joint_ids: list[int]) -> torch.Tensor | None:
+    data = getattr(robot, "data", None)
+    joint_pos = getattr(data, "joint_pos", None)
+    if joint_pos is None:
+        return None
+    try:
+        return joint_pos[:, hand_joint_ids].clone().to(dtype=torch.float32)
+    except (IndexError, TypeError, AttributeError):
+        return None
 
 
 def _object_root_z(object_asset) -> float | None:
@@ -113,6 +235,13 @@ def _finite_float_or_none(value: float | None) -> float | None:
         return None
     parsed = float(value)
     return parsed if math.isfinite(parsed) else None
+
+
+def _nominal_max_open_gripper_width(hand_joint_names: tuple[str, ...]) -> float:
+    gripper_joint_names = tuple(name for name in hand_joint_names if is_gripper_joint_name(name))
+    if not gripper_joint_names:
+        return float(DEFAULT_HAND_OPEN_WIDTH)
+    return max(float(gripper_max_open_width(name)) for name in gripper_joint_names)
 
 
 def _validate_object_lift(
@@ -248,6 +377,42 @@ def _hold_arm_waypoint(
             step_callback()
 
 
+def _hold_arm_waypoint_until_settled(
+    *,
+    context: FR3MotionContext,
+    waypoint: torch.Tensor,
+    duration_s: float,
+    tolerance_rad: float,
+    step_callback: StepCallback | None,
+) -> dict[str, object]:
+    if not hasattr(context, "command_arm") or not hasattr(context, "command_fixed_gripper"):
+        return {"grasp_preclose_hold_supported": False}
+    steps = max(1, int(float(duration_s) / context.physics_dt))
+    last_error = None
+    settled = False
+    for step in range(1, steps + 1):
+        context.command_arm(waypoint)
+        context.command_fixed_gripper()
+        context.scene.write_data_to_sim()
+        context.sim.step()
+        context.scene.update(context.physics_dt)
+        if step_callback is not None:
+            step_callback()
+        if hasattr(context, "get_arm_q"):
+            error = torch.max(torch.abs(context.get_arm_q() - waypoint))
+            last_error = float(error.item())
+            if last_error <= float(tolerance_rad):
+                settled = True
+                break
+    return {
+        "grasp_preclose_hold_supported": True,
+        "grasp_preclose_hold_steps": int(step),
+        "grasp_preclose_hold_duration_s": float(step * context.physics_dt),
+        "grasp_preclose_hold_settled": bool(settled),
+        "grasp_preclose_hold_final_error_rad": None if last_error is None else float(last_error),
+    }
+
+
 def execute_pick_from_moveit_joint_trajectories(
     *,
     sim,
@@ -271,6 +436,13 @@ def execute_pick_from_moveit_joint_trajectories(
         sim=sim,
         fixed_gripper_width=float(open_gripper_width),
     )
+    print(
+        "[INFO]: Isaac motion context "
+        f"fixed_base={getattr(robot, 'is_fixed_base', None)} "
+        f"arm_joints={list(getattr(context, 'arm_joint_names', ()))} "
+        f"hand_joints={list(getattr(context, 'hand_joint_names', ()))}",
+        flush=True,
+    )
     initial_object_z = _object_root_z(object_asset)
     observed_lift_object_max_z = None
     capture_lift_object_z = False
@@ -291,11 +463,12 @@ def execute_pick_from_moveit_joint_trajectories(
         if step_callback is not None:
             step_callback()
 
+    nominal_max_open_width = _nominal_max_open_gripper_width(tuple(getattr(context, "hand_joint_names", ())))
     moveit_diagnostics = {
         "open_gripper_width_m": float(open_gripper_width),
         "closed_gripper_width_m": float(closed_gripper_width),
-        "nominal_max_open_gripper_width_m": float(DEFAULT_HAND_OPEN_WIDTH),
-        "open_gripper_width_exceeds_nominal_limit": float(open_gripper_width) > float(DEFAULT_HAND_OPEN_WIDTH) + 1.0e-6,
+        "nominal_max_open_gripper_width_m": float(nominal_max_open_width),
+        "open_gripper_width_exceeds_nominal_limit": float(open_gripper_width) > nominal_max_open_width + 1.0e-6,
         "max_joint_speed_rad_s": float(max_joint_speed_rad_s),
         "grasp_settle_time_s": float(grasp_settle_time_s),
     }
@@ -304,6 +477,29 @@ def execute_pick_from_moveit_joint_trajectories(
         "step_callback": _step_callback,
     }
     executor = TrajectoryExecutor(context, **executor_kwargs)
+    if hasattr(context, "get_arm_q") and hasattr(context, "reset_joint_state"):
+        first_pregrasp_waypoint = _moveit_waypoint_tensor(
+            context=context,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            label="pregrasp",
+            index=0,
+        )
+        current_q = context.get_arm_q()
+        initial_start_error = float(torch.max(torch.abs(current_q - first_pregrasp_waypoint)).item())
+        print(
+            "[INFO]: Aligning Isaac arm state to MoveIt first waypoint "
+            f"initial_max_joint_error={initial_start_error:.4f}.",
+            flush=True,
+        )
+        context.reset_joint_state(first_pregrasp_waypoint, steps=5)
+        reset_start_error = float(torch.max(torch.abs(context.get_arm_q() - first_pregrasp_waypoint)).item())
+        print(
+            "[INFO]: Isaac arm state after reset "
+            f"max_joint_error={reset_start_error:.4f}.",
+            flush=True,
+        )
+        moveit_diagnostics["initial_start_error_rad"] = initial_start_error
+        moveit_diagnostics["reset_start_error_rad"] = reset_start_error
 
     ok, detail = _execute_moveit_waypoint_segment(
         context=context,
@@ -327,34 +523,69 @@ def execute_pick_from_moveit_joint_trajectories(
         moveit_joint_trajectories=moveit_joint_trajectories,
         label="grasp",
     )
+    moveit_diagnostics["grasp_waypoint_settled"] = bool(ok)
     if not ok:
-        return PickExecutionResult(
-            False,
-            "moveit_grasp_failed",
-            f"MoveIt grasp execution failed: {detail}",
-            diagnostics=moveit_diagnostics,
+        moveit_diagnostics["grasp_waypoint_settle_detail"] = str(detail)
+        print(
+            "[WARN]: MoveIt grasp waypoint did not fully settle before close; "
+            f"continuing with gripper close at current pose: {detail}",
+            flush=True,
         )
-    if grasp_settle_time_s > 0.0:
-        grasp_waypoint = _moveit_waypoint_tensor(
-            context=context,
-            moveit_joint_trajectories=moveit_joint_trajectories,
-            label="grasp",
-        )
-        _hold_arm_waypoint(
+    grasp_waypoint = _moveit_waypoint_tensor(
+        context=context,
+        moveit_joint_trajectories=moveit_joint_trajectories,
+        label="grasp",
+    )
+    preclose_hold_s = float(grasp_settle_time_s)
+    if not ok:
+        preclose_hold_s = max(preclose_hold_s, 2.0)
+    if preclose_hold_s > 0.0:
+        preclose_hold_diagnostics = _hold_arm_waypoint_until_settled(
             context=context,
             waypoint=grasp_waypoint,
-            duration_s=float(grasp_settle_time_s),
+            duration_s=preclose_hold_s,
+            tolerance_rad=0.025,
             step_callback=_step_callback,
         )
+        moveit_diagnostics.update(preclose_hold_diagnostics)
+        print(
+            "[INFO]: Isaac grasp pre-close hold complete "
+            f"settled={preclose_hold_diagnostics.get('grasp_preclose_hold_settled', 'n/a')} "
+            f"duration_s={float(preclose_hold_diagnostics.get('grasp_preclose_hold_duration_s', 0.0)):.3f} "
+            f"final_error={preclose_hold_diagnostics.get('grasp_preclose_hold_final_error_rad', 'n/a')}.",
+            flush=True,
+        )
 
-    _command_gripper_width(
+    gripper_close_diagnostics = _command_gripper_width(
         sim=sim,
         scene=scene,
         robot=robot,
         width=float(closed_gripper_width),
         duration_s=1.2,
+        max_duration_s=8.0,
+        hold_context=context,
+        hold_arm_waypoint=grasp_waypoint,
+        min_contact_motion_m=max(0.001, min(0.003, 0.125 * abs(float(open_gripper_width) - float(closed_gripper_width)))),
+        force_joint_state=False,
         step_callback=_step_callback,
     )
+    if isinstance(gripper_close_diagnostics, Mapping):
+        moveit_diagnostics.update(dict(gripper_close_diagnostics))
+    print(
+        "[INFO]: Isaac gripper close complete "
+        f"status={moveit_diagnostics.get('gripper_close_status', 'unknown')} "
+        f"duration_s={float(moveit_diagnostics.get('gripper_close_duration_s', 0.0)):.3f} "
+        f"final_error={moveit_diagnostics.get('gripper_close_final_max_position_error', 'n/a')}.",
+        flush=True,
+    )
+    close_status = str(moveit_diagnostics.get("gripper_close_status", "unknown"))
+    if close_status not in {"target_reached", "contact_stalled", "no_hand_joints"}:
+        return PickExecutionResult(
+            False,
+            "gripper_close_failed",
+            f"Isaac gripper did not reach the closed target before lift: status={close_status}.",
+            diagnostics=moveit_diagnostics,
+        )
     context.fixed_gripper_width = float(closed_gripper_width)
     capture_lift_object_z = True
     try:
@@ -382,4 +613,9 @@ def execute_pick_from_moveit_joint_trajectories(
     )
     if lift_result is not None:
         return lift_result
-    return PickExecutionResult(True, "ok", "MoveIt direct-pick trajectories executed in Isaac.")
+    return PickExecutionResult(
+        True,
+        "ok",
+        "MoveIt direct-pick trajectories executed in Isaac.",
+        diagnostics=moveit_diagnostics,
+    )

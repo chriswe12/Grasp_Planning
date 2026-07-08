@@ -158,6 +158,8 @@ def test_commander_config_from_args_uses_slow_defaults() -> None:
     args = Namespace(
         planning_group="fr3_arm",
         pose_link="fr3_hand_tcp",
+        moveit_namespace="",
+        joint_names="",
         planner_id="",
         wait_for_moveit_timeout_s=15.0,
         ik_timeout_s=2.0,
@@ -175,6 +177,55 @@ def test_commander_config_from_args_uses_slow_defaults() -> None:
     assert config.pipeline_id == ""
     assert math.isclose(config.velocity_scale, 0.05)
     assert math.isclose(config.acceleration_scale, 0.05)
+
+
+def test_moveit_pose_commander_config_prefixes_default_endpoints_with_namespace() -> None:
+    config = MoveItPoseCommanderConfig(moveit_namespace="lbr")
+
+    assert config.moveit_namespace == "/lbr"
+    assert config.ik_service_name == "/lbr/compute_ik"
+    assert config.planning_service_name == "/lbr/plan_kinematic_path"
+    assert config.query_planner_interface_service_name == "/lbr/query_planner_interface"
+    assert config.fk_service_name == "/lbr/compute_fk"
+    assert config.apply_planning_scene_service_name == "/lbr/apply_planning_scene"
+    assert config.execute_action_name == "/lbr/execute_trajectory"
+
+
+def test_moveit_pose_commander_config_does_not_double_prefix_namespaced_endpoints() -> None:
+    config = MoveItPoseCommanderConfig(
+        moveit_namespace="/lbr",
+        ik_service_name="/lbr/compute_ik",
+        execute_action_name="lbr/execute_trajectory",
+    )
+
+    assert config.ik_service_name == "/lbr/compute_ik"
+    assert config.execute_action_name == "/lbr/execute_trajectory"
+
+
+def test_commander_config_from_args_accepts_lbr_moveit_settings() -> None:
+    args = Namespace(
+        planning_group="arm",
+        pose_link="lbr_link_ee",
+        moveit_namespace="/lbr",
+        joint_names="lbr_A1,lbr_A2,lbr_A3,lbr_A4,lbr_A5,lbr_A6,lbr_A7",
+        planner_id="",
+        wait_for_moveit_timeout_s=15.0,
+        ik_timeout_s=2.0,
+        planning_time_s=5.0,
+        num_planning_attempts=5,
+        velocity_scale=0.05,
+        acceleration_scale=0.05,
+        execute_timeout_s=120.0,
+        post_execute_sleep_s=0.5,
+        allow_collisions=False,
+    )
+
+    config = commander_config_from_args(args)
+
+    assert config.planning_group == "arm"
+    assert config.pose_link == "lbr_link_ee"
+    assert config.joint_names == ("lbr_A1", "lbr_A2", "lbr_A3", "lbr_A4", "lbr_A5", "lbr_A6", "lbr_A7")
+    assert config.ik_service_name == "/lbr/compute_ik"
 
 
 def test_validate_requested_pipeline_accepts_available_pipeline() -> None:

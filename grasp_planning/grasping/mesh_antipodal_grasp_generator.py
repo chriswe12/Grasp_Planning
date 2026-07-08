@@ -11,7 +11,12 @@ from typing import Iterable
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .collision import FrankaHandFingerCollisionModel, GraspCollisionEvaluator
+from .collision import (
+    GRIPPER_COLLISION_MODEL_FRANKA,
+    GraspCollisionEvaluator,
+    make_gripper_collision_model,
+    normalize_gripper_collision_model_name,
+)
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -74,6 +79,28 @@ def _periodic_angle_distance(a: float, b: float) -> float:
 
 def _wrapped_angle(angle_rad: float) -> float:
     return float(angle_rad % (2.0 * math.pi))
+
+
+def _base_grasp_rotmat_from_closing_axis(closing_axis: np.ndarray) -> np.ndarray:
+    gripper_y = _normalize(closing_axis)
+    reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
+    if abs(float(np.dot(gripper_y, reference_axis))) > 0.95:
+        reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+    gripper_x = reference_axis - float(np.dot(reference_axis, gripper_y)) * gripper_y
+    gripper_x = _normalize(gripper_x)
+    gripper_z = _normalize(np.cross(gripper_x, gripper_y))
+    gripper_x = _normalize(np.cross(gripper_y, gripper_z))
+    return np.column_stack((gripper_x, gripper_y, gripper_z))
+
+
+def _contact_pair_key(candidate: "ObjectFrameGraspCandidate") -> tuple[float, ...]:
+    return (
+        *np.round(np.asarray(candidate.contact_point_a_obj, dtype=float), 9).tolist(),
+        *np.round(np.asarray(candidate.contact_point_b_obj, dtype=float), 9).tolist(),
+        *np.round(np.asarray(candidate.contact_normal_a_obj, dtype=float), 9).tolist(),
+        *np.round(np.asarray(candidate.contact_normal_b_obj, dtype=float), 9).tolist(),
+        round(float(candidate.jaw_width), 9),
+    )
 
 
 def _triangle_points_from_barycentric(vertices: np.ndarray, barycentric_uv: np.ndarray) -> np.ndarray:
@@ -149,7 +176,15 @@ class AntipodalGraspGeneratorConfig:
     upright_approach_axes_obj: tuple[tuple[float, float, float], ...] = ()
     max_pair_checks: int = 4096
     detailed_finger_contact_gap_m: float = 0.002
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA
     rng_seed: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "gripper_collision_model",
+            normalize_gripper_collision_model_name(self.gripper_collision_model),
+        )
 
 
 class AntipodalMeshGraspGenerator:
@@ -159,7 +194,10 @@ class AntipodalMeshGraspGenerator:
         self._config = config or AntipodalGraspGeneratorConfig()
         self._last_surface_samples: tuple[SurfaceSample, ...] = ()
         self._collision_evaluator = GraspCollisionEvaluator(
-            FrankaHandFingerCollisionModel(contact_gap_m=self._config.detailed_finger_contact_gap_m)
+            make_gripper_collision_model(
+                self._config.gripper_collision_model,
+                contact_gap_m=self._config.detailed_finger_contact_gap_m,
+            )
         )
 
     @property
@@ -201,6 +239,7 @@ class AntipodalMeshGraspGenerator:
                     grasp_rotmat=grasp_rotmat,
                     contact_point_a=point_a,
                     contact_point_b=point_b,
+                    grasp_center=grasp_center,
                 ):
                     continue
                 grasp_quat = _rotmat_to_quat_xyzw(grasp_rotmat)
@@ -226,6 +265,60 @@ class AntipodalMeshGraspGenerator:
                 candidates.append(candidate)
 
         return candidates
+
+    def generate_additional_upright_roll_candidates(
+        self,
+        mesh: TriangleMesh,
+        candidates: Iterable[ObjectFrameGraspCandidate],
+    ) -> list[ObjectFrameGraspCandidate]:
+        """Add only missing pose-upright roll variants for existing contact pairs."""
+        if not self._config.upright_approach_axes_obj:
+            return []
+        collision_scene = self._collision_evaluator.build_scene(mesh)
+        grouped: dict[tuple[float, ...], tuple[ObjectFrameGraspCandidate, list[float]]] = {}
+        for candidate in candidates:
+            key = _contact_pair_key(candidate)
+            existing = grouped.get(key)
+            if existing is None:
+                grouped[key] = (candidate, [float(candidate.roll_angle_rad)])
+            else:
+                existing[1].append(float(candidate.roll_angle_rad))
+
+        additional: list[ObjectFrameGraspCandidate] = []
+        for base_candidate, existing_roll_angles in grouped.values():
+            point_a = np.asarray(base_candidate.contact_point_a_obj, dtype=float)
+            point_b = np.asarray(base_candidate.contact_point_b_obj, dtype=float)
+            closing_axis = _normalize(point_b - point_a)
+            base_rotmat = self._base_grasp_rotmat(closing_axis)
+            for roll_angle_rad in self._additional_upright_roll_angles_for_pair(
+                base_rotmat,
+                closing_axis,
+                existing_roll_angles=existing_roll_angles,
+            ):
+                roll_rotmat = _axis_angle_to_rotmat(closing_axis, float(roll_angle_rad))
+                grasp_rotmat = roll_rotmat @ base_rotmat
+                if not self._passes_grasp_collision_check(
+                    collision_scene=collision_scene,
+                    grasp_rotmat=grasp_rotmat,
+                    contact_point_a=point_a,
+                    contact_point_b=point_b,
+                    grasp_center=np.asarray(base_candidate.grasp_position_obj, dtype=float),
+                ):
+                    continue
+                additional.append(
+                    ObjectFrameGraspCandidate(
+                        grasp_position_obj=base_candidate.grasp_position_obj,
+                        grasp_orientation_xyzw_obj=_rotmat_to_quat_xyzw(grasp_rotmat),
+                        contact_point_a_obj=base_candidate.contact_point_a_obj,
+                        contact_point_b_obj=base_candidate.contact_point_b_obj,
+                        contact_normal_a_obj=base_candidate.contact_normal_a_obj,
+                        contact_normal_b_obj=base_candidate.contact_normal_b_obj,
+                        jaw_width=base_candidate.jaw_width,
+                        roll_angle_rad=float(roll_angle_rad),
+                    )
+                )
+                existing_roll_angles.append(float(roll_angle_rad))
+        return additional
 
     def sample_surface(self, mesh: TriangleMesh, *, num_samples: int) -> list[SurfaceSample]:
         if num_samples <= 0:
@@ -317,15 +410,7 @@ class AntipodalMeshGraspGenerator:
         - column 1 / local y: closing axis
         - column 2 / local z: approach axis
         """
-        gripper_y = _normalize(closing_axis)
-        reference_axis = np.array([0.0, 0.0, 1.0], dtype=float)
-        if abs(float(np.dot(gripper_y, reference_axis))) > 0.95:
-            reference_axis = np.array([1.0, 0.0, 0.0], dtype=float)
-        gripper_x = reference_axis - float(np.dot(reference_axis, gripper_y)) * gripper_y
-        gripper_x = _normalize(gripper_x)
-        gripper_z = _normalize(np.cross(gripper_x, gripper_y))
-        gripper_x = _normalize(np.cross(gripper_y, gripper_z))
-        return np.column_stack((gripper_x, gripper_y, gripper_z))
+        return _base_grasp_rotmat_from_closing_axis(closing_axis)
 
     def _roll_angles_for_pair(self, base_rotmat: np.ndarray, closing_axis: np.ndarray) -> tuple[float, ...]:
         angles: list[float] = []
@@ -346,6 +431,31 @@ class AntipodalMeshGraspGenerator:
             _append(math.atan2(float(np.dot(reference, base_x)), float(np.dot(reference, base_z))))
         return tuple(angles)
 
+    def _additional_upright_roll_angles_for_pair(
+        self,
+        base_rotmat: np.ndarray,
+        closing_axis: np.ndarray,
+        *,
+        existing_roll_angles: Iterable[float],
+    ) -> tuple[float, ...]:
+        known = [_wrapped_angle(float(angle)) for angle in existing_roll_angles]
+        additional: list[float] = []
+
+        def _append_if_new(angle_rad: float) -> None:
+            wrapped = _wrapped_angle(float(angle_rad))
+            if all(_periodic_angle_distance(wrapped, existing) > 1.0e-6 for existing in known):
+                known.append(wrapped)
+                additional.append(wrapped)
+
+        for target_approach_axis in self._config.upright_approach_axes_obj:
+            reference = _normalize(np.asarray(target_approach_axis, dtype=float))
+            if float(np.linalg.norm(reference - np.dot(reference, closing_axis) * closing_axis)) < 1.0e-8:
+                continue
+            base_x = np.asarray(base_rotmat[:, 0], dtype=float)
+            base_z = np.asarray(base_rotmat[:, 2], dtype=float)
+            _append_if_new(math.atan2(float(np.dot(reference, base_x)), float(np.dot(reference, base_z))))
+        return tuple(additional)
+
     def _passes_grasp_collision_check(
         self,
         *,
@@ -353,12 +463,14 @@ class AntipodalMeshGraspGenerator:
         grasp_rotmat: np.ndarray,
         contact_point_a: np.ndarray,
         contact_point_b: np.ndarray,
+        grasp_center: np.ndarray,
     ) -> bool:
         return self._collision_evaluator.is_grasp_collision_free(
             scene=collision_scene,
             grasp_rotmat=grasp_rotmat,
             contact_point_a=contact_point_a,
             contact_point_b=contact_point_b,
+            grasp_center=grasp_center,
         )
 
 
