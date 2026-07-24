@@ -49,7 +49,7 @@ from grasp_planning.pipeline.regrasp_fallback import (  # noqa: E402
 )
 from grasp_planning.ros2 import (  # noqa: E402
     execute_real_grasp_from_bundle,
-    wait_for_debug_frame_pose_message,
+    wait_for_debug_pose_item_message,
 )
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommander,
@@ -63,7 +63,7 @@ from grasp_planning.start_poses import (  # noqa: E402
 )
 from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # noqa: E402
 
-DEBUG_FRAME_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugFrame"
+DEBUG_POSE_ITEM_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugPoseItem"
 BACKEND_CHOICES = ("config", "mujoco", "isaac", "both", "none")
 
 
@@ -73,6 +73,17 @@ def _tuple_floats(values: object, *, expected_len: int | None = None) -> tuple[f
     result = tuple(float(value) for value in values)
     if expected_len is not None and len(result) != expected_len:
         raise ValueError(f"Expected {expected_len} values, got {len(result)}.")
+    return result
+
+
+def _tuple_strings(values: object) -> tuple[str, ...]:
+    if values in ("", None):
+        return ()
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"Expected a list/tuple of strings, got {values!r}.")
+    result = tuple(str(value) for value in values)
+    if any(not value for value in result):
+        raise ValueError("String lists must not contain empty values.")
     return result
 
 
@@ -92,6 +103,10 @@ def _roll_angles_from_planning(raw: dict[str, object]) -> tuple[float, ...]:
         count = max(1, int(math.ceil(360.0 / step_deg)))
         return tuple(float(math.radians(index * step_deg)) for index in range(count) if index * step_deg < 360.0)
     return _tuple_floats(raw.get("roll_angles_rad", [0.0]))
+
+
+def _stage1_pose_upright_axis_default(raw: dict[str, object]) -> bool:
+    return True
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
@@ -143,8 +158,12 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         roll_angles_rad=_roll_angles_from_planning(raw),
         max_pair_checks=int(raw.get("max_pair_checks", 40960)),
         detailed_finger_contact_gap_m=float(raw.get("detailed_finger_contact_gap_m", 0.002)),
+        gripper_collision_model=str(raw.get("gripper_collision_model", "franka_hand")),
         floor_clearance_margin_m=float(raw.get("floor_clearance_margin_m", 0.0)),
         skip_stage1_collision_checks=bool(raw.get("skip_stage1_collision_checks", False)),
+        stage1_pose_upright_axis_enabled=bool(
+            raw.get("stage1_pose_upright_axis_enabled", _stage1_pose_upright_axis_default(raw))
+        ),
         top_grasp_score_weight=float(raw.get("top_grasp_score_weight", 0.35)),
         regrasp_transfer_top_grasp_score_weight=float(raw.get("regrasp_transfer_top_grasp_score_weight", 0.85)),
         reachability_proxy_score_weight=float(raw.get("reachability_proxy_score_weight", 0.0)),
@@ -219,6 +238,7 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
         moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
         moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_namespace=str(raw.get("moveit_namespace", "")),
         moveit_pipeline_id=str(raw.get("moveit_pipeline_id", "")),
         moveit_planner_id=str(raw.get("moveit_planner_id", "")),
         moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
@@ -273,6 +293,17 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     tcp_to_grasp_offset = None
     if raw.get("tcp_to_grasp_offset") not in ("", None):
         tcp_to_grasp_offset = _tuple_floats(raw["tcp_to_grasp_offset"], expected_len=3)
+    moveit_joint_names = _tuple_strings(raw.get("moveit_joint_names", ()))
+    if raw.get("moveit_start_joint_positions") in ("", None):
+        moveit_start_joint_positions = ()
+    else:
+        moveit_start_joint_positions = _tuple_floats(raw["moveit_start_joint_positions"])
+    expected_joint_names = moveit_joint_names or DEFAULT_MOVEIT_ARM_JOINT_NAMES
+    if moveit_start_joint_positions and len(moveit_start_joint_positions) != len(expected_joint_names):
+        raise ValueError(
+            "isaac_execution.moveit_start_joint_positions must match the configured MoveIt joint-name count "
+            f"({len(expected_joint_names)})."
+        )
     controller = str(raw.get("controller", "moveit")).strip().lower()
     if controller != "moveit":
         raise ValueError(f"Unsupported isaac_execution.controller value '{controller}'. Only 'moveit' is supported.")
@@ -280,6 +311,11 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
     if object_mass_kg is not None and object_density_kg_m3 is not None:
         raise ValueError("isaac_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
+    grasp_rank = int(raw.get("grasp_rank", IsaacPipelineConfig.grasp_rank))
+    if grasp_rank < 1:
+        raise ValueError("isaac_execution.grasp_rank must be >= 1.")
+    if str(raw.get("grasp_id", "")) and grasp_rank != IsaacPipelineConfig.grasp_rank:
+        raise ValueError("isaac_execution.grasp_id and grasp_rank are mutually exclusive.")
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -287,6 +323,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         fr3_usd=str(raw.get("fr3_usd", "")),
         controller=controller,
         grasp_id=str(raw.get("grasp_id", "")),
+        grasp_rank=grasp_rank,
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
@@ -301,8 +338,15 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         run_seconds=float(raw.get("run_seconds", 0.0)),
         headless=bool(raw.get("headless", False)),
         moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
+        moveit_target_position_signs=_tuple_floats(
+            raw.get("moveit_target_position_signs", IsaacPipelineConfig.moveit_target_position_signs),
+            expected_len=3,
+        ),
         moveit_planning_group=str(raw.get("moveit_planning_group", "fr3_arm")),
         moveit_pose_link=str(raw.get("moveit_pose_link", "fr3_hand_tcp")),
+        moveit_namespace=str(raw.get("moveit_namespace", "")),
+        moveit_joint_names=moveit_joint_names,
+        moveit_start_joint_positions=moveit_start_joint_positions,
         moveit_pipeline_id=str(raw.get("moveit_pipeline_id", "")),
         moveit_planner_id=str(raw.get("moveit_planner_id", "")),
         moveit_wait_for_moveit_timeout_s=float(raw.get("moveit_wait_for_moveit_timeout_s", 15.0)),
@@ -313,17 +357,30 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
         moveit_grasp_settle_time_s=float(raw.get("moveit_grasp_settle_time_s", 0.0)),
+        gripper_close_duration_s=float(
+            raw.get("gripper_close_duration_s", IsaacPipelineConfig.gripper_close_duration_s)
+        ),
+        gripper_close_max_duration_s=float(
+            raw.get("gripper_close_max_duration_s", IsaacPipelineConfig.gripper_close_max_duration_s)
+        ),
+        postclose_hold_s=float(raw.get("postclose_hold_s", IsaacPipelineConfig.postclose_hold_s)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
 
 def _ros2_config(payload: dict[str, object]) -> Ros2Config:
     raw = dict(payload.get("ros2", {}))
+    raw_part_id = raw.get("part_id")
     return Ros2Config(
-        debug_frame_topic="" if raw.get("debug_frame_topic") in ("", None) else str(raw["debug_frame_topic"]),
+        pose_base_topic="" if raw.get("pose_base_topic") in ("", None) else str(raw["pose_base_topic"]),
         frame_id=str(raw.get("frame_id", "world")),
         timeout_s=float(raw.get("timeout_s", 10.0)),
-        object_id=str(raw.get("object_id", "")),
+        assembly_name=str(raw.get("assembly_name", "")),
+        part_id=None if raw_part_id in ("", None) else int(raw_part_id),
+        position_offset_m=_tuple_floats(
+            raw.get("position_offset_m", Ros2Config.position_offset_m),
+            expected_len=3,
+        ),
     )
 
 
@@ -338,9 +395,12 @@ def _minus_z_axis_in_object_frame(object_pose_world: ObjectWorldPose) -> tuple[f
 def _world_upright_axis_for_stage1(
     geometry: GeometryConfig,
     *,
+    planning: PlanningConfig,
     object_pose_world: ObjectWorldPose | None = None,
     pickup_pose: PickupPoseConfig | None = None,
 ) -> tuple[tuple[float, float, float], ...]:
+    if not planning.stage1_pose_upright_axis_enabled:
+        return ()
     if object_pose_world is None and pickup_pose is None:
         return ()
     if object_pose_world is None:
@@ -375,12 +435,21 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
     stop_after = str(raw.get("stop_after", "pregrasp")).strip().lower()
     if stop_after not in {"pregrasp", "grasp", "lift", "full"}:
         raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
+    planning_scene_obstacles_raw = raw.get("planning_scene_obstacles", ())
+    if planning_scene_obstacles_raw is None:
+        planning_scene_obstacles: tuple[dict[str, object], ...] = ()
+    elif isinstance(planning_scene_obstacles_raw, list | tuple):
+        planning_scene_obstacles = tuple(dict(obstacle) for obstacle in planning_scene_obstacles_raw)
+    else:
+        raise ValueError("real_execution.planning_scene_obstacles must be a list of obstacle mappings.")
     return RealExecutionConfig(
         enabled=bool(raw.get("enabled", False)),
         grasp_id=str(raw.get("grasp_id", "")),
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/real_robot_pick_attempt.json")),
         planning_group=str(raw.get("planning_group", "fr3_arm")),
         pose_link=str(raw.get("pose_link", "fr3_hand_tcp")),
+        moveit_namespace=str(raw.get("moveit_namespace", "")),
+        joint_names=_tuple_strings(raw.get("joint_names", ())),
         frame_id=str(raw.get("frame_id", "base")),
         wait_for_moveit_timeout_s=float(raw.get("wait_for_moveit_timeout_s", 15.0)),
         ik_timeout_s=float(raw.get("ik_timeout_s", 2.0)),
@@ -396,9 +465,17 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         require_confirmation=bool(raw.get("require_confirmation", True)),
         stop_after=stop_after,
         allow_collisions=bool(raw.get("allow_collisions", False)),
+        planning_scene_obstacles=planning_scene_obstacles,
         gripper_enabled=bool(raw.get("gripper_enabled", False)),
+        gripper_client=str(raw.get("gripper_client", "franka")),
         gripper_grasp_action=str(raw.get("gripper_grasp_action", "/fr3_gripper/grasp")),
         gripper_move_action=str(raw.get("gripper_move_action", "/fr3_gripper/move")),
+        gripper_command_action=str(raw.get("gripper_command_action", "/gripper_controller/gripper_cmd")),
+        gripper_command_position_mode=str(raw.get("gripper_command_position_mode", "width")),
+        gripper_command_max_effort=float(raw.get("gripper_command_max_effort", raw.get("gripper_grasp_force", 30.0))),
+        gripper_trigger_open_service=str(raw.get("gripper_trigger_open_service", "/gripper_controller/open")),
+        gripper_trigger_close_service=str(raw.get("gripper_trigger_close_service", "/gripper_controller/close")),
+        gripper_trigger_stop_service=str(raw.get("gripper_trigger_stop_service", "/gripper_controller/stop")),
         gripper_open_width=float(raw.get("gripper_open_width", 0.08)),
         gripper_grasp_speed=float(raw.get("gripper_grasp_speed", 0.03)),
         gripper_grasp_force=float(raw.get("gripper_grasp_force", 30.0)),
@@ -409,27 +486,44 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
     )
 
 
-def _format_topic(topic_template: str, *, object_id: str) -> str:
-    if "{object_id}" in topic_template:
-        if not object_id:
-            raise ValueError(f"object_id is required to resolve ROS topic template '{topic_template}'.")
-        return topic_template.format(object_id=object_id)
-    return topic_template
+def _format_topic(topic_template: str, *, assembly_name: str, part_id: int) -> str:
+    return topic_template.replace("{assembly_name}", assembly_name).replace("{part_id}", str(part_id))
 
 
 def _resolve_object_pose_world(ros2: Ros2Config) -> ObjectWorldPose:
-    if not ros2.debug_frame_topic:
-        raise ValueError("ros2.debug_frame_topic must be non-empty for pitl and real modes.")
-    if not ros2.object_id:
-        raise ValueError("ros2.object_id must be non-empty for pitl and real modes.")
+    if not ros2.pose_base_topic:
+        raise ValueError("ros2.pose_base_topic must be non-empty for pitl and real modes.")
+    if not ros2.assembly_name:
+        raise ValueError("ros2.assembly_name must be non-empty for pitl and real modes.")
+    if ros2.part_id is None or ros2.part_id < 0:
+        raise ValueError("ros2.part_id must be a non-negative integer for pitl and real modes.")
 
-    debug_frame_topic = _format_topic(ros2.debug_frame_topic, object_id=ros2.object_id)
-    print("[PIPELINE] Waiting for object pose on DebugFrame topic.", flush=True)
-    return wait_for_debug_frame_pose_message(
-        topic_name=debug_frame_topic,
-        message_type=DEBUG_FRAME_MESSAGE_TYPE,
-        object_id=ros2.object_id,
+    pose_base_topic = _format_topic(
+        ros2.pose_base_topic,
+        assembly_name=ros2.assembly_name,
+        part_id=ros2.part_id,
+    )
+    print("[PIPELINE] Waiting for object pose on fused DebugPoseItem topic.", flush=True)
+    perceived_pose = wait_for_debug_pose_item_message(
+        topic_name=pose_base_topic,
+        message_type=DEBUG_POSE_ITEM_MESSAGE_TYPE,
+        assembly_name=ros2.assembly_name,
+        part_id=ros2.part_id,
         timeout_s=ros2.timeout_s,
+    )
+    corrected_position = tuple(
+        float(position) + float(offset)
+        for position, offset in zip(perceived_pose.position_world, ros2.position_offset_m, strict=True)
+    )
+    if any(abs(float(offset)) > 1.0e-12 for offset in ros2.position_offset_m):
+        print(
+            "[PIPELINE] Applied ROS2 world-position offset "
+            f"{list(ros2.position_offset_m)} m: {list(perceived_pose.position_world)} -> {list(corrected_position)}.",
+            flush=True,
+        )
+    return ObjectWorldPose(
+        position_world=corrected_position,
+        orientation_xyzw_world=perceived_pose.orientation_xyzw_world,
     )
 
 
@@ -472,7 +566,7 @@ def _isaac_gripper_width_clearance(isaac_execution: IsaacPipelineConfig) -> floa
     return 0.01 if isaac_execution.gripper_width_clearance is None else float(isaac_execution.gripper_width_clearance)
 
 
-def _select_isaac_moveit_grasp(stage2, isaac_execution: IsaacPipelineConfig):
+def _ordered_isaac_moveit_grasp_candidates(stage2, isaac_execution: IsaacPipelineConfig):
     min_pregrasp_z = 0.05
     if not stage2.accepted:
         raise RuntimeError("Isaac MoveIt execution requested, but stage 2 has no feasible grasps.")
@@ -486,6 +580,14 @@ def _select_isaac_moveit_grasp(stage2, isaac_execution: IsaacPipelineConfig):
             key=lambda grasp: float("-inf") if grasp.score is None else float(grasp.score),
             reverse=True,
         )
+        grasp_index = int(isaac_execution.grasp_rank) - 1
+        if grasp_index >= len(ordered):
+            raise RuntimeError(
+                f"Requested Isaac grasp rank {isaac_execution.grasp_rank}, "
+                f"but stage 2 has only {len(ordered)} feasible grasps."
+            )
+        ordered = [ordered[grasp_index]]
+    candidates = []
     for grasp in ordered:
         world_grasp = saved_grasp_to_world_grasp(
             grasp,
@@ -494,15 +596,22 @@ def _select_isaac_moveit_grasp(stage2, isaac_execution: IsaacPipelineConfig):
             gripper_width_clearance=_isaac_gripper_width_clearance(isaac_execution),
         )
         if world_grasp.pregrasp_position_w[2] > min_pregrasp_z:
-            return grasp, world_grasp
+            candidates.append((grasp, world_grasp))
+    if candidates:
+        return candidates
     raise RuntimeError("Isaac MoveIt execution requested, but no selected stage-2 grasp has a safe pregrasp height.")
+
+
+def _select_isaac_moveit_grasp(stage2, isaac_execution: IsaacPipelineConfig):
+    return _ordered_isaac_moveit_grasp_candidates(stage2, isaac_execution)[0]
 
 
 def _moveit_config_from_isaac_execution(isaac_execution: IsaacPipelineConfig) -> MoveItPoseCommanderConfig:
     return MoveItPoseCommanderConfig(
         planning_group=str(isaac_execution.moveit_planning_group),
         pose_link=str(isaac_execution.moveit_pose_link),
-        joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+        joint_names=_isaac_moveit_joint_names(isaac_execution),
+        moveit_namespace=str(isaac_execution.moveit_namespace),
         pipeline_id=str(isaac_execution.moveit_pipeline_id),
         planner_id=str(isaac_execution.moveit_planner_id),
         wait_for_moveit_timeout_s=float(isaac_execution.moveit_wait_for_moveit_timeout_s),
@@ -515,6 +624,25 @@ def _moveit_config_from_isaac_execution(isaac_execution: IsaacPipelineConfig) ->
         post_execute_sleep_s=0.0,
         avoid_collisions=not bool(isaac_execution.moveit_allow_collisions),
     )
+
+
+def _isaac_moveit_joint_names(isaac_execution: IsaacPipelineConfig) -> tuple[str, ...]:
+    return tuple(isaac_execution.moveit_joint_names) or DEFAULT_MOVEIT_ARM_JOINT_NAMES
+
+
+def _isaac_moveit_start_joint_positions(isaac_execution: IsaacPipelineConfig) -> tuple[float, ...]:
+    joint_names = _isaac_moveit_joint_names(isaac_execution)
+    if isaac_execution.moveit_start_joint_positions:
+        start_positions = tuple(float(value) for value in isaac_execution.moveit_start_joint_positions)
+    elif isaac_execution.moveit_joint_names:
+        start_positions = tuple(0.0 for _ in joint_names)
+    else:
+        start_positions = DEFAULT_ARM_START_JOINT_VALUES
+    if len(start_positions) != len(joint_names):
+        raise ValueError(
+            f"Isaac MoveIt start-joint positions must match the MoveIt joint-name count ({len(joint_names)})."
+        )
+    return start_positions
 
 
 def _trajectory_waypoints_for_joints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
@@ -542,6 +670,8 @@ def _plan_isaac_moveit_joint_trajectories(
         world_grasp,
         frame_id=str(isaac_execution.moveit_frame_id),
         lift_height_m=float(isaac_execution.lift_height_m),
+        position_signs=isaac_execution.moveit_target_position_signs,
+        tcp_to_grasp_offset=isaac_execution.tcp_to_grasp_offset or (0.0, 0.0, 0.0),
     )
     labels = ("pregrasp",) if isaac_execution.pregrasp_only else ("pregrasp", "grasp", "lift")
     initialized_here = False
@@ -554,11 +684,19 @@ def _plan_isaac_moveit_joint_trajectories(
         commander = MoveItPoseCommander(moveit_config, node_name="isaac_pipeline_moveit")
         commander.wait_for_moveit(require_execute=False)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
-        current_start = DEFAULT_ARM_START_JOINT_VALUES
+        current_start = _isaac_moveit_start_joint_positions(isaac_execution)
+        joint_names = _isaac_moveit_joint_names(isaac_execution)
         for label in labels:
-            print(f"[PIPELINE] Planning Isaac {label} trajectory with MoveIt.", flush=True)
+            target = targets[label]
+            print(
+                f"[PIPELINE] Planning Isaac {label} trajectory with MoveIt: "
+                f"frame={target.frame_id} xyz=({target.x:.4f}, {target.y:.4f}, {target.z:.4f}) "
+                f"quat=({target.qx:.5f}, {target.qy:.5f}, {target.qz:.5f}, {target.qw:.5f}) "
+                f"avoid_collisions={not bool(isaac_execution.moveit_allow_collisions)}.",
+                flush=True,
+            )
             trajectory, message = commander.plan_to_pose(
-                targets[label],
+                target,
                 label=f"isaac_{label}",
                 start_joint_positions=current_start,
             )
@@ -566,7 +704,7 @@ def _plan_isaac_moveit_joint_trajectories(
                 raise RuntimeError(f"MoveIt failed to plan Isaac {label}: {message}")
             waypoints = _trajectory_waypoints_for_joints(
                 trajectory,
-                joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+                joint_names=joint_names,
             )
             print(f"[PIPELINE] MoveIt planned Isaac {label}: waypoints={len(waypoints)}.", flush=True)
             planned[label] = waypoints
@@ -591,30 +729,65 @@ def _maybe_write_isaac_moveit_plan(
 ) -> tuple[Path, str] | None:
     if not isaac_execution.enabled:
         return None
-    selected_grasp, world_grasp = _select_isaac_moveit_grasp(stage2, isaac_execution)
+    if not isaac_execution.moveit_start_joint_positions:
+        raise RuntimeError(
+            "Isaac MoveIt execution needs isaac_execution.moveit_start_joint_positions so the ROS-side "
+            "preplanner can produce a plan before launching Isaac."
+        )
     output_path = _isaac_moveit_plan_artifact_path(isaac_execution)
+    candidates = _ordered_isaac_moveit_grasp_candidates(stage2, isaac_execution)
     print(
-        f"[PIPELINE] Planning Isaac execution with MoveIt before launching Isaac (selected={selected_grasp.grasp_id}).",
+        f"[PIPELINE] Planning Isaac execution with MoveIt before launching Isaac (candidate_count={len(candidates)}).",
         flush=True,
     )
-    trajectories = _plan_isaac_moveit_joint_trajectories(
-        isaac_execution=isaac_execution,
-        world_grasp=world_grasp,
-    )
+    planning_errors: list[str] = []
+    selected_grasp = None
+    selected_world_grasp = None
+    trajectories = None
+    for grasp, world_grasp in candidates:
+        print(f"[PIPELINE] Trying Isaac MoveIt candidate {grasp.grasp_id}.", flush=True)
+        try:
+            trajectories = _plan_isaac_moveit_joint_trajectories(
+                isaac_execution=isaac_execution,
+                world_grasp=world_grasp,
+            )
+        except RuntimeError as exc:
+            planning_errors.append(f"{grasp.grasp_id}: {exc}")
+            print(f"[PIPELINE] MoveIt rejected Isaac candidate {grasp.grasp_id}: {exc}", flush=True)
+            continue
+        selected_grasp = grasp
+        selected_world_grasp = world_grasp
+        print(f"[PIPELINE] Selected Isaac MoveIt candidate {selected_grasp.grasp_id}.", flush=True)
+        break
+    if selected_grasp is None or selected_world_grasp is None or trajectories is None:
+        tried = ", ".join(planning_errors[:8])
+        if len(planning_errors) > 8:
+            tried += f", ... ({len(planning_errors)} total)"
+        raise RuntimeError(f"MoveIt could not plan any stage-2 Isaac grasp before launch. Tried: {tried}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(
             {
                 "selected_grasp_id": selected_grasp.grasp_id,
-                "joint_names": list(DEFAULT_MOVEIT_ARM_JOINT_NAMES),
-                "start_joint_positions": list(DEFAULT_ARM_START_JOINT_VALUES),
+                "selected_world_grasp": {
+                    "position_w": list(selected_world_grasp.position_w),
+                    "orientation_xyzw": list(selected_world_grasp.orientation_xyzw),
+                    "pregrasp_position_w": list(selected_world_grasp.pregrasp_position_w),
+                    "jaw_width": selected_world_grasp.jaw_width,
+                    "gripper_width": selected_world_grasp.gripper_width,
+                },
+                "joint_names": list(_isaac_moveit_joint_names(isaac_execution)),
+                "start_joint_positions": list(_isaac_moveit_start_joint_positions(isaac_execution)),
                 "trajectories": {
                     label: [list(waypoint) for waypoint in waypoints] for label, waypoints in trajectories.items()
                 },
                 "moveit": {
                     "frame_id": isaac_execution.moveit_frame_id,
+                    "target_position_signs": list(isaac_execution.moveit_target_position_signs),
+                    "tcp_to_grasp_offset": list(isaac_execution.tcp_to_grasp_offset or (0.0, 0.0, 0.0)),
                     "planning_group": isaac_execution.moveit_planning_group,
                     "pose_link": isaac_execution.moveit_pose_link,
+                    "namespace": isaac_execution.moveit_namespace,
                     "pipeline_id": isaac_execution.moveit_pipeline_id,
                     "planner_id": isaac_execution.moveit_planner_id,
                     "lift_height_m": isaac_execution.lift_height_m,
@@ -698,6 +871,8 @@ def _run_mujoco_execution(
                 mujoco_execution.moveit_planning_group,
                 "--moveit-pose-link",
                 mujoco_execution.moveit_pose_link,
+                "--moveit-namespace",
+                mujoco_execution.moveit_namespace,
                 "--moveit-pipeline-id",
                 mujoco_execution.moveit_pipeline_id,
                 "--moveit-planner-id",
@@ -846,10 +1021,16 @@ def _run_isaac_execution(
         [
             "--moveit-frame-id",
             isaac_execution.moveit_frame_id,
+            "--moveit-target-position-signs",
+            ",".join(str(value) for value in isaac_execution.moveit_target_position_signs),
             "--moveit-planning-group",
             isaac_execution.moveit_planning_group,
             "--moveit-pose-link",
             isaac_execution.moveit_pose_link,
+            "--moveit-namespace",
+            isaac_execution.moveit_namespace,
+            "--moveit-joint-names",
+            ",".join(_isaac_moveit_joint_names(isaac_execution)),
             "--moveit-pipeline-id",
             isaac_execution.moveit_pipeline_id,
             "--moveit-planner-id",
@@ -872,8 +1053,21 @@ def _run_isaac_execution(
             str(isaac_execution.moveit_execution_speed_rad_s),
             "--moveit-grasp-settle-time-s",
             str(isaac_execution.moveit_grasp_settle_time_s),
+            "--gripper-close-duration-s",
+            str(isaac_execution.gripper_close_duration_s),
+            "--gripper-close-max-duration-s",
+            str(isaac_execution.gripper_close_max_duration_s),
+            "--postclose-hold-s",
+            str(isaac_execution.postclose_hold_s),
         ]
     )
+    if isaac_execution.moveit_start_joint_positions:
+        command.extend(
+            [
+                "--moveit-start-joint-positions",
+                ",".join(str(value) for value in _isaac_moveit_start_joint_positions(isaac_execution)),
+            ]
+        )
     if isaac_execution.moveit_allow_collisions:
         command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting Isaac execution.", flush=True)
@@ -957,6 +1151,7 @@ def run_sim(payload: dict[str, object], *, headless: bool, backend: str = "confi
     execution_world_pose = None if pickup_pose is not None else _execution_pose_config(payload).to_object_pose_world()
     upright_approach_axes = _world_upright_axis_for_stage1(
         geometry,
+        planning=planning,
         object_pose_world=execution_world_pose,
         pickup_pose=pickup_pose,
     )
@@ -1037,7 +1232,11 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     object_pose_world = _resolve_object_pose_world(ros2)
-    upright_approach_axes = _world_upright_axis_for_stage1(geometry, object_pose_world=object_pose_world)
+    upright_approach_axes = _world_upright_axis_for_stage1(
+        geometry,
+        planning=planning,
+        object_pose_world=object_pose_world,
+    )
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
     stage1 = generate_stage1_result(
         geometry=geometry,
@@ -1108,7 +1307,11 @@ def run_real(payload: dict[str, object]) -> None:
 
     print("[PIPELINE] Starting repo-local ROS2 planning nodes.", flush=True)
     object_pose_world = _resolve_object_pose_world(ros2)
-    upright_approach_axes = _world_upright_axis_for_stage1(geometry, object_pose_world=object_pose_world)
+    upright_approach_axes = _world_upright_axis_for_stage1(
+        geometry,
+        planning=planning,
+        object_pose_world=object_pose_world,
+    )
     print("[PIPELINE] Generating and filtering grasps.", flush=True)
     stage1 = generate_stage1_result(
         geometry=geometry,
@@ -1158,6 +1361,8 @@ def run_real(payload: dict[str, object]) -> None:
         print(f"[PIPELINE] Wrote real execution artifact to {result.attempt_artifact_path}", flush=True)
         if not result.success:
             raise RuntimeError(result.message)
+    else:
+        print("[PIPELINE] real_execution.enabled=false; wrote planning artifacts only.", flush=True)
 
 
 def main() -> None:
@@ -1190,8 +1395,16 @@ def main() -> None:
         action="store_true",
         help="Force MuJoCo regrasp fallback planning even when direct stage 2 has feasible grasps.",
     )
+    parser.add_argument(
+        "--isaac-grasp-rank",
+        type=int,
+        default=None,
+        help="Override isaac_execution.grasp_id and execute the nth stage-2 Isaac grasp by descending score.",
+    )
     args = parser.parse_args()
     mode = _normalize_mode(args.mode)
+    if args.isaac_grasp_rank is not None and args.isaac_grasp_rank < 1:
+        parser.error("--isaac-grasp-rank must be >= 1.")
 
     if args.config is None:
         default_names = {
@@ -1212,6 +1425,11 @@ def main() -> None:
         mujoco_payload = dict(payload.get("mujoco_execution", {}))
         mujoco_payload["force_regrasp_fallback"] = True
         payload["mujoco_execution"] = mujoco_payload
+    if args.isaac_grasp_rank is not None:
+        isaac_payload = dict(payload.get("isaac_execution", {}))
+        isaac_payload["grasp_id"] = ""
+        isaac_payload["grasp_rank"] = int(args.isaac_grasp_rank)
+        payload["isaac_execution"] = isaac_payload
     if mode == "sim":
         run_sim(payload, headless=bool(args.headless), backend=args.backend)
         return

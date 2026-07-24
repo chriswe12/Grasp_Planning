@@ -12,6 +12,11 @@ from pathlib import Path
 import numpy as np
 
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator
+from grasp_planning.grasping.collision import (
+    GRIPPER_COLLISION_MODEL_FRANKA,
+    GRIPPER_COLLISION_MODEL_KUKA_Y,
+    normalize_gripper_collision_model_name,
+)
 from grasp_planning.grasping.fabrica_grasp_debug import (
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
@@ -73,8 +78,10 @@ class PlanningConfig:
     roll_angles_rad: tuple[float, ...] = (0.0,)
     max_pair_checks: int = 40960
     detailed_finger_contact_gap_m: float = 0.002
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA
     floor_clearance_margin_m: float = 0.0
     skip_stage1_collision_checks: bool = False
+    stage1_pose_upright_axis_enabled: bool = True
     top_grasp_score_weight: float = 0.35
     regrasp_transfer_top_grasp_score_weight: float = 0.85
     reachability_proxy_score_weight: float = DEFAULT_REACHABILITY_PROXY_SCORE_WEIGHT
@@ -86,6 +93,13 @@ class PlanningConfig:
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "gripper_collision_model",
+            normalize_gripper_collision_model_name(self.gripper_collision_model),
+        )
 
     def to_generator_config(
         self,
@@ -101,8 +115,24 @@ class PlanningConfig:
             upright_approach_axes_obj=upright_approach_axes_obj,
             max_pair_checks=self.max_pair_checks,
             detailed_finger_contact_gap_m=self.detailed_finger_contact_gap_m,
+            gripper_collision_model=self.gripper_collision_model,
             rng_seed=self.rng_seed,
         )
+
+
+def _robot_metadata_for_planning(planning: PlanningConfig) -> dict[str, object]:
+    if planning.gripper_collision_model == GRIPPER_COLLISION_MODEL_KUKA_Y:
+        return {
+            "robot_model": "kuka_iiwa7",
+            "gripper_model": GRIPPER_COLLISION_MODEL_KUKA_Y,
+            "tcp_link": "gripper_tcp",
+            "tcp_offset_m": [0.0, 0.0, 0.1505],
+        }
+    return {
+        "robot_model": "franka_fr3",
+        "gripper_model": planning.gripper_collision_model,
+        "tcp_link": "fr3_hand_tcp",
+    }
 
 
 @dataclass(frozen=True)
@@ -158,6 +188,7 @@ class MujocoPipelineConfig:
     moveit_frame_id: str = "base"
     moveit_planning_group: str = "fr3_arm"
     moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_namespace: str = ""
     moveit_pipeline_id: str = ""
     moveit_planner_id: str = ""
     moveit_wait_for_moveit_timeout_s: float = 15.0
@@ -207,6 +238,7 @@ class IsaacPipelineConfig:
     fr3_usd: str = ""
     controller: str = "moveit"
     grasp_id: str = ""
+    grasp_rank: int = 1
     pregrasp_offset: float | None = None
     gripper_width_clearance: float | None = None
     contact_gap_m: float | None = None
@@ -221,8 +253,12 @@ class IsaacPipelineConfig:
     run_seconds: float = 0.0
     headless: bool = False
     moveit_frame_id: str = "base"
+    moveit_target_position_signs: tuple[float, float, float] = (1.0, 1.0, 1.0)
     moveit_planning_group: str = "fr3_arm"
     moveit_pose_link: str = "fr3_hand_tcp"
+    moveit_namespace: str = ""
+    moveit_joint_names: tuple[str, ...] = ()
+    moveit_start_joint_positions: tuple[float, ...] = ()
     moveit_pipeline_id: str = ""
     moveit_planner_id: str = ""
     moveit_wait_for_moveit_timeout_s: float = 15.0
@@ -233,15 +269,20 @@ class IsaacPipelineConfig:
     moveit_acceleration_scale: float = 0.05
     moveit_execution_speed_rad_s: float = 0.35
     moveit_grasp_settle_time_s: float = 0.0
+    gripper_close_duration_s: float = 1.5
+    gripper_close_max_duration_s: float = 10.0
+    postclose_hold_s: float = 1.0
     moveit_allow_collisions: bool = False
 
 
 @dataclass(frozen=True)
 class Ros2Config:
-    debug_frame_topic: str = ""
+    pose_base_topic: str = ""
     frame_id: str = "world"
     timeout_s: float = 10.0
-    object_id: str = ""
+    assembly_name: str = ""
+    part_id: int | None = None
+    position_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -251,6 +292,8 @@ class RealExecutionConfig:
     attempt_artifact: str = "artifacts/real_robot_pick_attempt.json"
     planning_group: str = "fr3_arm"
     pose_link: str = "fr3_hand_tcp"
+    moveit_namespace: str = ""
+    joint_names: tuple[str, ...] = ()
     frame_id: str = "base"
     wait_for_moveit_timeout_s: float = 15.0
     ik_timeout_s: float = 2.0
@@ -266,9 +309,17 @@ class RealExecutionConfig:
     require_confirmation: bool = True
     stop_after: str = "pregrasp"
     allow_collisions: bool = False
+    planning_scene_obstacles: tuple[dict[str, object], ...] = ()
     gripper_enabled: bool = False
+    gripper_client: str = "franka"
     gripper_grasp_action: str = "/fr3_gripper/grasp"
     gripper_move_action: str = "/fr3_gripper/move"
+    gripper_command_action: str = "/gripper_controller/gripper_cmd"
+    gripper_command_position_mode: str = "width"
+    gripper_command_max_effort: float = 30.0
+    gripper_trigger_open_service: str = "/gripper_controller/open"
+    gripper_trigger_close_service: str = "/gripper_controller/close"
+    gripper_trigger_stop_service: str = "/gripper_controller/stop"
     gripper_open_width: float = 0.08
     gripper_grasp_speed: float = 0.03
     gripper_grasp_force: float = 30.0
@@ -359,7 +410,34 @@ def _stage1_upright_approach_axes(
     )
 
 
-_STAGE1_CACHE_SCHEMA_VERSION = 3
+def _axes_difference(
+    axes: tuple[tuple[float, float, float], ...],
+    base_axes: tuple[tuple[float, float, float], ...],
+    *,
+    tolerance: float = 1.0e-8,
+) -> tuple[tuple[float, float, float], ...]:
+    extras: list[tuple[float, float, float]] = []
+    base_arrays = [np.asarray(axis, dtype=float) for axis in base_axes]
+    for axis in axes:
+        axis_array = np.asarray(axis, dtype=float)
+        if all(float(np.linalg.norm(axis_array - base_axis)) > tolerance for base_axis in base_arrays):
+            extras.append(axis)
+    return tuple(extras)
+
+
+def _candidate_score_sort_key(candidate: SavedGraspCandidate) -> tuple[float, str]:
+    return (float("-inf") if candidate.score is None else float(candidate.score), candidate.grasp_id)
+
+
+def _sorted_scored_candidates(candidates: tuple[SavedGraspCandidate, ...] | list[SavedGraspCandidate]):
+    return tuple(sorted(candidates, key=_candidate_score_sort_key, reverse=True))
+
+
+def _axes_metadata_payload(axes: tuple[tuple[float, float, float], ...]) -> list[list[float]]:
+    return [[float(value) for value in axis] for axis in axes]
+
+
+_STAGE1_CACHE_SCHEMA_VERSION = 13
 
 
 def _path_cache_record(path: str | Path) -> dict[str, object]:
@@ -478,6 +556,7 @@ def _stage1_cache_key_payload(
             "roll_angles_rad": [float(v) for v in planning.roll_angles_rad],
             "max_pair_checks": int(planning.max_pair_checks),
             "detailed_finger_contact_gap_m": float(planning.detailed_finger_contact_gap_m),
+            "gripper_collision_model": planning.gripper_collision_model,
             "skip_stage1_collision_checks": bool(planning.skip_stage1_collision_checks),
             "contact_lateral_offsets_m": [float(v) for v in planning.contact_lateral_offsets_m],
             "contact_approach_offsets_m": [float(v) for v in planning.contact_approach_offsets_m],
@@ -660,6 +739,71 @@ def _write_stage1_cache(
     cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _augment_stage1_result_with_extra_upright_axes(
+    result: Stage1Result,
+    *,
+    planning: PlanningConfig,
+    all_upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
+    base_upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
+    extra_upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
+) -> Stage1Result:
+    if not extra_upright_approach_axes_obj:
+        return result
+
+    extra_object_candidates = AntipodalMeshGraspGenerator(
+        planning.to_generator_config(upright_approach_axes_obj=extra_upright_approach_axes_obj)
+    ).generate_additional_upright_roll_candidates(
+        result.target_mesh_local,
+        (candidate.to_object_frame_candidate() for candidate in result.raw_candidates),
+    )
+    extra_raw_candidates = [
+        serialize_saved_candidate(f"g{result.raw_candidate_count + index:04d}", candidate)
+        for index, candidate in enumerate(extra_object_candidates, start=1)
+    ]
+    scored_extra_raw = (
+        score_grasps(extra_raw_candidates, mesh_local=result.target_mesh_local) if extra_raw_candidates else []
+    )
+    if not extra_raw_candidates:
+        kept_extra_candidates = []
+    elif planning.skip_stage1_collision_checks:
+        kept_extra_candidates = list(scored_extra_raw)
+    else:
+        kept_extra_candidates = filter_grasps_against_assembly(
+            extra_raw_candidates,
+            object_pose_world=result.target_pose_in_obj_world,
+            obstacle_mesh_world=result.obstacle_mesh_world,
+            contact_gap_m=planning.detailed_finger_contact_gap_m,
+            gripper_collision_model=planning.gripper_collision_model,
+            contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
+            contact_approach_offsets_m=planning.contact_approach_offsets_m,
+        )
+        kept_extra_candidates = score_grasps(kept_extra_candidates, mesh_local=result.target_mesh_local)
+
+    merged_raw_candidates = _sorted_scored_candidates([*result.raw_candidates, *scored_extra_raw])
+    merged_kept_candidates = _sorted_scored_candidates([*result.bundle.candidates, *kept_extra_candidates])
+    raw_candidate_count = result.raw_candidate_count + len(scored_extra_raw)
+    metadata = dict(result.bundle.metadata)
+    metadata.update(
+        {
+            "upright_approach_axes_obj": _axes_metadata_payload(all_upright_approach_axes_obj),
+            "stage1_cache_base_upright_approach_axes_obj": _axes_metadata_payload(base_upright_approach_axes_obj),
+            "stage1_cache_pose_upright_axes_obj": _axes_metadata_payload(extra_upright_approach_axes_obj),
+            "stage1_cache_augmented": True,
+            "stage1_cache_augmented_raw_candidate_count": len(scored_extra_raw),
+            "stage1_cache_augmented_assembly_feasible_count": len(kept_extra_candidates),
+            "raw_candidate_count": raw_candidate_count,
+            "assembly_feasible_count": len(merged_kept_candidates),
+            "scored_feasible_count": len(merged_kept_candidates),
+        }
+    )
+    return replace(
+        result,
+        bundle=replace(result.bundle, candidates=merged_kept_candidates, metadata=metadata),
+        raw_candidate_count=raw_candidate_count,
+        raw_candidates=merged_raw_candidates,
+    )
+
+
 def generate_stage1_result(
     *,
     geometry: GeometryConfig,
@@ -673,9 +817,17 @@ def generate_stage1_result(
     else:
         target_pose_in_obj_world = source_frame_pose_obj_world
         target_mesh_local = _mesh_in_source_frame(target_mesh_obj_world, target_pose_in_obj_world)
+    base_upright_approach_axes_obj = _stage1_upright_approach_axes(
+        source_frame_pose_obj_world=target_pose_in_obj_world,
+        extra_axes_obj=(),
+    )
     all_upright_approach_axes_obj = _stage1_upright_approach_axes(
         source_frame_pose_obj_world=target_pose_in_obj_world,
         extra_axes_obj=upright_approach_axes_obj,
+    )
+    extra_upright_approach_axes_obj = _axes_difference(
+        all_upright_approach_axes_obj,
+        base_upright_approach_axes_obj,
     )
 
     cache_path = None
@@ -686,7 +838,7 @@ def generate_stage1_result(
             geometry=geometry,
             planning=planning,
             source_frame_pose_obj_world=source_frame_pose_obj_world,
-            upright_approach_axes_obj=all_upright_approach_axes_obj,
+            upright_approach_axes_obj=base_upright_approach_axes_obj,
         )
         if cache_path.exists():
             obstacle_mesh_world = None
@@ -709,10 +861,16 @@ def generate_stage1_result(
             except (KeyError, TypeError, ValueError):
                 cached = None
             if cached is not None:
-                return cached
+                return _augment_stage1_result_with_extra_upright_axes(
+                    cached,
+                    planning=planning,
+                    all_upright_approach_axes_obj=all_upright_approach_axes_obj,
+                    base_upright_approach_axes_obj=base_upright_approach_axes_obj,
+                    extra_upright_approach_axes_obj=extra_upright_approach_axes_obj,
+                )
 
     generator = AntipodalMeshGraspGenerator(
-        planning.to_generator_config(upright_approach_axes_obj=all_upright_approach_axes_obj)
+        planning.to_generator_config(upright_approach_axes_obj=base_upright_approach_axes_obj)
     )
     raw_candidates = generator.generate(target_mesh_local)
     surface_samples = tuple(getattr(generator, "last_surface_samples", ()))
@@ -738,6 +896,7 @@ def generate_stage1_result(
             object_pose_world=target_pose_in_obj_world,
             obstacle_mesh_world=obstacle_mesh_world,
             contact_gap_m=planning.detailed_finger_contact_gap_m,
+            gripper_collision_model=planning.gripper_collision_model,
             contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
             contact_approach_offsets_m=planning.contact_approach_offsets_m,
         )
@@ -750,6 +909,7 @@ def generate_stage1_result(
         source_frame_orientation_xyzw_obj_world=target_pose_in_obj_world.orientation_xyzw_world,
         candidates=tuple(kept_candidates),
         metadata={
+            **_robot_metadata_for_planning(planning),
             "assembly_glob": geometry.assembly_glob,
             "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
             "assembly_obstacle_sweep_vector_m": (
@@ -760,6 +920,7 @@ def generate_stage1_result(
             "assembly_obstacle_sweep_distance_m": _assembly_obstacle_sweep_distance_m(geometry),
             "assembly_obstacle_metadata": geometry.assembly_obstacle_metadata or {},
             "collision_backend": generator.collision_backend_name,
+            "gripper_collision_model": planning.gripper_collision_model,
             "stage1_collision_checks_skipped": planning.skip_stage1_collision_checks,
             "stage1_cache_enabled": planning.stage1_cache_enabled,
             "stage1_cache_hit": False,
@@ -774,7 +935,12 @@ def generate_stage1_result(
             "assembly_obstacle_paths": list(obstacle_paths),
             "contact_lateral_offsets_m": list(planning.contact_lateral_offsets_m),
             "contact_approach_offsets_m": list(planning.contact_approach_offsets_m),
-            "upright_approach_axes_obj": [[float(value) for value in axis] for axis in all_upright_approach_axes_obj],
+            "upright_approach_axes_obj": _axes_metadata_payload(base_upright_approach_axes_obj),
+            "stage1_cache_base_upright_approach_axes_obj": _axes_metadata_payload(base_upright_approach_axes_obj),
+            "stage1_cache_pose_upright_axes_obj": [],
+            "stage1_cache_augmented": False,
+            "stage1_cache_augmented_raw_candidate_count": 0,
+            "stage1_cache_augmented_assembly_feasible_count": 0,
         },
     )
     result = Stage1Result(
@@ -794,7 +960,13 @@ def generate_stage1_result(
             cache_key_payload=cache_key_payload,
             result=result,
         )
-    return result
+    return _augment_stage1_result_with_extra_upright_axes(
+        result,
+        planning=planning,
+        all_upright_approach_axes_obj=all_upright_approach_axes_obj,
+        base_upright_approach_axes_obj=base_upright_approach_axes_obj,
+        extra_upright_approach_axes_obj=extra_upright_approach_axes_obj,
+    )
 
 
 def write_stage1_artifacts(
@@ -815,6 +987,7 @@ def write_stage1_artifacts(
         f"precedence_plan:  {obstacle_metadata.get('precedence_plan_path', 'none')}",
         f"assembled_before: {obstacle_metadata.get('already_assembled_part_ids', [])}",
         f"collision_backend:{result.collision_backend_name}",
+        f"gripper_model:   {planning.gripper_collision_model}",
         f"stage1_collision:{'skipped' if planning.skip_stage1_collision_checks else 'enabled'}",
         f"raw_candidates:   {result.raw_candidate_count}",
         f"assembly_feasible:{len(result.bundle.candidates)}",
@@ -838,6 +1011,7 @@ def write_stage1_artifacts(
         contact_gap_m=planning.detailed_finger_contact_gap_m,
         obstacle_mesh_local=obstacle_mesh_local,
         metadata_lines=metadata_lines,
+        gripper_collision_model=planning.gripper_collision_model,
     )
 
 
@@ -1478,6 +1652,7 @@ def recheck_stage2_result(
         pickup_candidates,
         object_pose_world=pickup_pose_world,
         contact_gap_m=planning.detailed_finger_contact_gap_m,
+        gripper_collision_model=planning.gripper_collision_model,
         floor_clearance_margin_m=planning.floor_clearance_margin_m,
         contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
         contact_approach_offsets_m=planning.contact_approach_offsets_m,
@@ -1525,6 +1700,8 @@ def recheck_stage2_result(
             "ground_original_input_count": len(bundle.candidates),
             "ground_input_count": len(pickup_candidates),
             "ground_feasible_count": len(accepted),
+            "gripper_collision_model": planning.gripper_collision_model,
+            **_robot_metadata_for_planning(planning),
             "symmetry_pickup_feasible_count": len(accepted),
             "symmetry_pickup_parent_summaries": _symmetry_parent_summaries(accepted),
             "symmetry_next_orientation_options": next_orientation_options,
@@ -1588,4 +1765,5 @@ def write_stage2_artifacts(
             f"reach_hand_off:   {planning.reachability_proxy_hand_offset_m:.3f} m",
             f"pickup_pos_w:     {tuple(round(v, 6) for v in result.pickup_pose_world.position_world)}",
         ],
+        gripper_collision_model=planning.gripper_collision_model,
     )

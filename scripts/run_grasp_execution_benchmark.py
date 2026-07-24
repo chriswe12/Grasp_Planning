@@ -398,6 +398,71 @@ def _optional_float_or_none(value: object) -> float | None:
     return float(value)
 
 
+def _optional_string_tuple(value: object, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    if value in ("", None):
+        return default
+    if isinstance(value, str):
+        values: object = [part.strip() for part in value.split(",") if part.strip()]
+    else:
+        values = value
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"Expected a string list or comma-separated string, got {value!r}.")
+    parsed = tuple(str(item) for item in values)
+    if not parsed:
+        return default
+    if any(not item for item in parsed):
+        raise ValueError(f"String lists must not contain empty values: {value!r}.")
+    return parsed
+
+
+def _optional_float_tuple(value: object, default: tuple[float, ...] = ()) -> tuple[float, ...]:
+    if value in ("", None):
+        return default
+    if isinstance(value, str):
+        values: object = [part.strip() for part in value.split(",") if part.strip()]
+    else:
+        values = value
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"Expected a float list or comma-separated string, got {value!r}.")
+    return tuple(float(item) for item in values)
+
+
+def _moveit_joint_names_from_cfg(cfg: dict[str, object]) -> tuple[str, ...]:
+    return _optional_string_tuple(cfg.get("moveit_joint_names"), DEFAULT_MOVEIT_ARM_JOINT_NAMES)
+
+
+def _moveit_start_joint_positions_from_cfg(cfg: dict[str, object]) -> tuple[float, ...]:
+    joint_names = _moveit_joint_names_from_cfg(cfg)
+    if cfg.get("moveit_start_joint_positions") in ("", None):
+        if cfg.get("moveit_joint_names") in ("", None):
+            start_positions = DEFAULT_ARM_START_JOINT_VALUES
+        else:
+            start_positions = tuple(0.0 for _ in joint_names)
+    else:
+        start_positions = _optional_float_tuple(cfg.get("moveit_start_joint_positions"))
+    if len(start_positions) != len(joint_names):
+        raise ValueError(
+            f"moveit_start_joint_positions must match the configured MoveIt joint-name count ({len(joint_names)})."
+        )
+    return start_positions
+
+
+def _moveit_target_position_signs_from_cfg(cfg: dict[str, object]) -> tuple[float, float, float]:
+    signs = _optional_float_tuple(cfg.get("moveit_target_position_signs"), (1.0, 1.0, 1.0))
+    if len(signs) != 3:
+        raise ValueError(f"moveit_target_position_signs must contain exactly 3 values, got {len(signs)}.")
+    return (float(signs[0]), float(signs[1]), float(signs[2]))
+
+
+def _tcp_to_grasp_offset_from_cfg(cfg: dict[str, object]) -> tuple[float, float, float]:
+    values = cfg.get("tcp_to_grasp_offset", (0.0, 0.0, 0.0))
+    if values in ("", None):
+        return (0.0, 0.0, 0.0)
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        raise ValueError("isaac.tcp_to_grasp_offset must contain exactly 3 values.")
+    return tuple(float(value) for value in values)
+
+
 def _configured_gripper_width_clearance_m(payload: dict[str, object], backends: tuple[str, ...]) -> float:
     values: list[float] = []
     for backend in backends:
@@ -429,7 +494,8 @@ def _moveit_config_from_benchmark_cfg(cfg: dict[str, object]) -> MoveItPoseComma
     return MoveItPoseCommanderConfig(
         planning_group=str(cfg.get("moveit_planning_group", "fr3_arm")),
         pose_link=str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
-        joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES,
+        joint_names=_moveit_joint_names_from_cfg(cfg),
+        moveit_namespace=str(cfg.get("moveit_namespace", "")),
         pipeline_id=str(cfg.get("moveit_pipeline_id", "")),
         planner_id=str(cfg.get("moveit_planner_id", "")),
         wait_for_moveit_timeout_s=_optional_float(cfg.get("moveit_wait_for_moveit_timeout_s"), 15.0),
@@ -490,6 +556,8 @@ def _preplan_isaac_moveit(
         world_grasp,
         frame_id=str(cfg.get("moveit_frame_id", "base")),
         lift_height_m=_optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
+        position_signs=_moveit_target_position_signs_from_cfg(cfg),
+        tcp_to_grasp_offset=_tcp_to_grasp_offset_from_cfg(cfg),
     )
     labels = ("pregrasp",) if bool(cfg.get("pregrasp_only", False)) else ("pregrasp", "grasp", "lift")
     initialized_here = False
@@ -501,7 +569,8 @@ def _preplan_isaac_moveit(
         commander = MoveItPoseCommander(_moveit_config_from_benchmark_cfg(cfg), node_name="isaac_benchmark_moveit")
         commander.wait_for_moveit(require_execute=False)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
-        current_start = DEFAULT_ARM_START_JOINT_VALUES
+        current_start = _moveit_start_joint_positions_from_cfg(cfg)
+        joint_names = _moveit_joint_names_from_cfg(cfg)
         for label in labels:
             print(f"[EXEC-BENCH] preplan Isaac {label} with MoveIt/cuMotion", flush=True)
             trajectory, message = commander.plan_to_pose(
@@ -511,7 +580,7 @@ def _preplan_isaac_moveit(
             )
             if trajectory is None:
                 raise RuntimeError(f"MoveIt failed to preplan Isaac {label}: {message}")
-            waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=DEFAULT_MOVEIT_ARM_JOINT_NAMES)
+            waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=joint_names)
             planned[label] = waypoints
             current_start = waypoints[-1]
     finally:
@@ -524,13 +593,16 @@ def _preplan_isaac_moveit(
         plan_path,
         {
             "selected_grasp_id": selected.grasp_id,
-            "joint_names": list(DEFAULT_MOVEIT_ARM_JOINT_NAMES),
-            "start_joint_positions": list(DEFAULT_ARM_START_JOINT_VALUES),
+            "joint_names": list(_moveit_joint_names_from_cfg(cfg)),
+            "start_joint_positions": list(_moveit_start_joint_positions_from_cfg(cfg)),
             "trajectories": {label: [list(waypoint) for waypoint in waypoints] for label, waypoints in planned.items()},
             "moveit": {
                 "frame_id": str(cfg.get("moveit_frame_id", "base")),
+                "target_position_signs": list(_moveit_target_position_signs_from_cfg(cfg)),
+                "tcp_to_grasp_offset": list(_tcp_to_grasp_offset_from_cfg(cfg)),
                 "planning_group": str(cfg.get("moveit_planning_group", "fr3_arm")),
                 "pose_link": str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
+                "namespace": str(cfg.get("moveit_namespace", "")),
                 "pipeline_id": str(cfg.get("moveit_pipeline_id", "")),
                 "planner_id": str(cfg.get("moveit_planner_id", "")),
                 "lift_height_m": _optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
@@ -583,6 +655,8 @@ def _mujoco_command(
                 str(cfg.get("moveit_planning_group", "fr3_arm")),
                 "--moveit-pose-link",
                 str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
+                "--moveit-namespace",
+                str(cfg.get("moveit_namespace", "")),
                 "--moveit-pipeline-id",
                 str(cfg.get("moveit_pipeline_id", "")),
                 "--moveit-planner-id",
@@ -673,17 +747,24 @@ def _isaac_command(
     _append_optional(command, "--object-mass-kg", cfg.get("object_mass_kg"))
     _append_optional(command, "--object-density-kg-m3", cfg.get("object_density_kg_m3"))
     _append_optional(command, "--success-height-margin-m", cfg.get("success_height_margin_m"))
-    tcp_offset = cfg.get("tcp_to_grasp_offset")
-    if tcp_offset not in ("", None):
-        command.extend(["--tcp-to-grasp-offset", *(str(value) for value in tcp_offset)])
+    if cfg.get("tcp_to_grasp_offset") not in ("", None):
+        command.extend(["--tcp-to-grasp-offset", *(str(value) for value in _tcp_to_grasp_offset_from_cfg(cfg))])
     command.extend(
         [
             "--moveit-frame-id",
             str(cfg.get("moveit_frame_id", "base")),
+            "--moveit-target-position-signs",
+            ",".join(str(value) for value in _moveit_target_position_signs_from_cfg(cfg)),
             "--moveit-planning-group",
             str(cfg.get("moveit_planning_group", "fr3_arm")),
             "--moveit-pose-link",
             str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
+            "--moveit-namespace",
+            str(cfg.get("moveit_namespace", "")),
+            "--moveit-joint-names",
+            ",".join(_moveit_joint_names_from_cfg(cfg)),
+            "--moveit-start-joint-positions",
+            ",".join(str(value) for value in _moveit_start_joint_positions_from_cfg(cfg)),
             "--moveit-pipeline-id",
             str(cfg.get("moveit_pipeline_id", "")),
             "--moveit-planner-id",
@@ -706,6 +787,12 @@ def _isaac_command(
             str(cfg.get("moveit_execution_speed_rad_s", 0.35)),
             "--moveit-grasp-settle-time-s",
             str(cfg.get("moveit_grasp_settle_time_s", 0.0)),
+            "--gripper-close-duration-s",
+            str(cfg.get("gripper_close_duration_s", 1.5)),
+            "--gripper-close-max-duration-s",
+            str(cfg.get("gripper_close_max_duration_s", 10.0)),
+            "--postclose-hold-s",
+            str(cfg.get("postclose_hold_s", 1.0)),
         ]
     )
     if bool(cfg.get("moveit_allow_collisions", False)):
@@ -868,6 +955,8 @@ def _write_isaac_preplan_failure_artifact(
                 "frame_id": str(cfg.get("moveit_frame_id", "base")),
                 "planning_group": str(cfg.get("moveit_planning_group", "fr3_arm")),
                 "pose_link": str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
+                "namespace": str(cfg.get("moveit_namespace", "")),
+                "joint_names": list(_moveit_joint_names_from_cfg(cfg)),
                 "pipeline_id": str(cfg.get("moveit_pipeline_id", "")),
                 "planner_id": str(cfg.get("moveit_planner_id", "")),
                 "lift_height_m": _optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),

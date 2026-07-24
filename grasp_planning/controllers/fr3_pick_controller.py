@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from grasp_planning.planning.fr3_motion_context import grasp_pose_to_tcp_pose, tcp_pose_to_grasp_pose
+from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripper_command_joint_name
 
 if TYPE_CHECKING:
     from grasp_planning.grasping import GraspCandidate
@@ -56,6 +57,7 @@ class FR3PickController:
     """Execute a grasp using differential IK and simple gripper commands."""
 
     _EE_PATTERNS = (
+        r"gripper_tcp",
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
@@ -69,8 +71,8 @@ class FR3PickController:
     _EE_TO_TCP_OFFSETS = {
         "panda_hand": (0.0, 0.0, 0.107),
     }
-    _ARM_JOINT_PATTERN = r"(?:panda|fr3)_joint[1-7]"
-    _HAND_JOINT_PATTERN = r"(?:panda|fr3)_finger_joint[12]"
+    _ARM_JOINT_PATTERN = r"(?:(?:panda|fr3)_joint[1-7]|joint[1-7])"
+    _HAND_JOINT_PATTERN = r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint)"
     _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _MIN_TCP_Z_M = 0.005
@@ -104,6 +106,10 @@ class FR3PickController:
         self._ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self._ee_body_idx)
         self._arm_joint_names, self._arm_joint_ids = self._resolve_joint_ids(self._ARM_JOINT_PATTERN)
         self._hand_joint_names, self._hand_joint_ids = self._resolve_joint_ids(self._HAND_JOINT_PATTERN)
+        self._hand_command_joint_names, self._hand_command_joint_ids = self._command_joint_subset(
+            self._hand_joint_names,
+            self._hand_joint_ids,
+        )
         self._ik_controller = self._build_ik_controller()
         self._phase_start_pos_w, self._phase_start_quat_w = self._current_grasp_pose_w()
         self._phase_start_tcp_pos_w, self._phase_start_tcp_quat_w = self._current_tcp_pose_w()
@@ -219,7 +225,7 @@ class FR3PickController:
         )
 
     def _apply_gripper_command(self) -> None:
-        if self._hand_joint_ids.numel() == 0:
+        if self._hand_command_joint_ids.numel() == 0:
             return
 
         if self._phase in {"pregrasp", "approach"}:
@@ -228,12 +234,14 @@ class FR3PickController:
             joint_target = self._close_width
 
         hand_targets = torch.full(
-            (1, int(self._hand_joint_ids.numel())),
-            float(joint_target),
+            (1, int(self._hand_command_joint_ids.numel())),
+            0.0,
             device=self._device,
             dtype=torch.float32,
         )
-        self._robot.set_joint_position_target(hand_targets, joint_ids=self._hand_joint_ids)
+        for index, name in enumerate(self._hand_command_joint_names):
+            hand_targets[0, index] = gripper_joint_target_from_width(name, joint_target)
+        self._robot.set_joint_position_target(hand_targets, joint_ids=self._hand_command_joint_ids)
 
     def _track_pose(
         self,
@@ -619,6 +627,17 @@ class FR3PickController:
         if not ids:
             raise RuntimeError(f"Could not resolve joints matching '{joint_pattern}' on the articulation.")
         return matched_names, torch.tensor(ids, dtype=torch.long, device=self._device)
+
+    def _command_joint_subset(
+        self,
+        joint_names: tuple[str, ...],
+        joint_ids: torch.Tensor,
+    ) -> tuple[tuple[str, ...], torch.Tensor]:
+        command_indices = [index for index, name in enumerate(joint_names) if is_gripper_command_joint_name(name)]
+        if not command_indices:
+            return (), torch.empty(0, dtype=torch.long, device=self._device)
+        indices = torch.tensor(command_indices, dtype=torch.long, device=self._device)
+        return tuple(joint_names[index] for index in command_indices), joint_ids[indices]
 
     @property
     def _device(self) -> str:

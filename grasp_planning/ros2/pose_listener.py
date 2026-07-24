@@ -1,4 +1,4 @@
-"""ROS2 helpers to wait for DebugFrame-based object poses."""
+"""ROS2 helpers to wait for fused DebugPoseItem object poses."""
 
 from __future__ import annotations
 
@@ -20,55 +20,58 @@ except Exception:  # pragma: no cover - optional dependency path
     ReliabilityPolicy = None
 
 try:
-    from fp_debug_msgs.msg import DebugFrame
+    from fp_debug_msgs.msg import DebugPoseItem
 except Exception:  # pragma: no cover - optional dependency path
-    DebugFrame = None
+    DebugPoseItem = None
 
 
 @dataclass(frozen=True)
-class DebugFrameTopicConfig:
+class DebugPoseItemTopicConfig:
     topic_name: str
     message_type: str
-    object_id: str
+    assembly_name: str
+    part_id: int
     timeout_s: float
 
 
 def _pose_to_object_world_pose(pose_msg: Any) -> ObjectWorldPose:
+    # DebugPoseItem uses PoseStamped. Accept a bare Pose as well so this helper
+    # remains useful with simple test doubles and other pose-producing callers.
+    pose = getattr(pose_msg, "pose", pose_msg)
     return ObjectWorldPose(
         position_world=(
-            float(pose_msg.position.x),
-            float(pose_msg.position.y),
-            float(pose_msg.position.z),
+            float(pose.position.x),
+            float(pose.position.y),
+            float(pose.position.z),
         ),
         orientation_xyzw_world=(
-            float(pose_msg.orientation.x),
-            float(pose_msg.orientation.y),
-            float(pose_msg.orientation.z),
-            float(pose_msg.orientation.w),
+            float(pose.orientation.x),
+            float(pose.orientation.y),
+            float(pose.orientation.z),
+            float(pose.orientation.w),
         ),
     )
 
 
-def extract_execution_pose_from_debug_frame(debug_frame_msg: Any, *, object_id: str) -> ObjectWorldPose | None:
-    """Select the highest-score pose_base entry for the requested object."""
+def extract_execution_pose_from_debug_pose_item(
+    pose_item_msg: Any,
+    *,
+    assembly_name: str,
+    part_id: int,
+) -> ObjectWorldPose | None:
+    """Return pose_base when one fused pose item matches the requested Fabrica part."""
 
-    best_pose: ObjectWorldPose | None = None
-    best_score = float("-inf")
-    for item in tuple(getattr(debug_frame_msg, "pose_items", ())):
-        if str(getattr(item, "object_id", "")) != str(object_id):
-            continue
-        pose_base = getattr(item, "pose_base", None)
-        if pose_base is None:
-            continue
-        try:
-            pose = _pose_to_object_world_pose(pose_base)
-        except Exception:
-            continue
-        score = float(getattr(item, "score", 0.0))
-        if best_pose is None or score > best_score:
-            best_pose = pose
-            best_score = score
-    return best_pose
+    if str(getattr(pose_item_msg, "assembly_name", "")) != str(assembly_name):
+        return None
+    if int(getattr(pose_item_msg, "part_id", -1)) != int(part_id):
+        return None
+    pose_base = getattr(pose_item_msg, "pose_base", None)
+    if pose_base is None:
+        return None
+    try:
+        return _pose_to_object_world_pose(pose_base)
+    except Exception:
+        return None
 
 
 def _subscription_qos(depth: int = 10):
@@ -81,21 +84,26 @@ def _subscription_qos(depth: int = 10):
     )
 
 
-class _DebugFramePoseListener(Node):
-    def __init__(self, config: DebugFrameTopicConfig) -> None:
-        super().__init__("grasp_planning_debug_frame_listener")
-        self._object_id = str(config.object_id)
+class _DebugPoseItemListener(Node):
+    def __init__(self, config: DebugPoseItemTopicConfig) -> None:
+        super().__init__("grasp_planning_debug_pose_item_listener")
+        self._assembly_name = str(config.assembly_name)
+        self._part_id = int(config.part_id)
         self._latest_pose: ObjectWorldPose | None = None
-        if str(config.message_type) != "fp_debug_msgs/msg/DebugFrame":
-            raise ValueError(f"Unsupported debug frame message type '{config.message_type}'.")
-        self.create_subscription(DebugFrame, config.topic_name, self._on_debug_frame, _subscription_qos())
+        if str(config.message_type) != "fp_debug_msgs/msg/DebugPoseItem":
+            raise ValueError(f"Unsupported fused pose message type '{config.message_type}'.")
+        self.create_subscription(DebugPoseItem, config.topic_name, self._on_debug_pose_item, _subscription_qos())
 
     @property
     def latest_pose(self) -> ObjectWorldPose | None:
         return self._latest_pose
 
-    def _on_debug_frame(self, msg: DebugFrame) -> None:
-        pose = extract_execution_pose_from_debug_frame(msg, object_id=self._object_id)
+    def _on_debug_pose_item(self, msg: DebugPoseItem) -> None:
+        pose = extract_execution_pose_from_debug_pose_item(
+            msg,
+            assembly_name=self._assembly_name,
+            part_id=self._part_id,
+        )
         if pose is not None:
             self._latest_pose = pose
 
@@ -103,48 +111,51 @@ class _DebugFramePoseListener(Node):
         self.get_logger().info(text)
 
 
-def wait_for_debug_frame_pose_message(
+def wait_for_debug_pose_item_message(
     *,
     topic_name: str,
     message_type: str,
-    object_id: str,
+    assembly_name: str,
+    part_id: int,
     timeout_s: float,
 ) -> ObjectWorldPose:
-    if rclpy is None or DebugFrame is None:
+    if rclpy is None or DebugPoseItem is None:
         raise RuntimeError(
-            "ROS2 dependencies are unavailable. Source ROS2 and the repo overlay before using DebugFrame "
+            "ROS2 dependencies are unavailable. Source ROS2 and the repo overlay before using DebugPoseItem "
             "subscribers. For example: source /opt/ros/<distro>/setup.bash; "
             "cd ros2_ws && colcon build --packages-select fp_debug_msgs --symlink-install; "
             "source install/setup.bash."
         )
-    if not str(object_id):
-        raise ValueError("object_id must be non-empty when subscribing to fp_debug_msgs/msg/DebugFrame.")
+    if not str(assembly_name):
+        raise ValueError("assembly_name must be non-empty when subscribing to fp_debug_msgs/msg/DebugPoseItem.")
+    if int(part_id) < 0:
+        raise ValueError("part_id must be non-negative when subscribing to fp_debug_msgs/msg/DebugPoseItem.")
 
     initialized_here = False
     if not rclpy.ok():
         rclpy.init()
         initialized_here = True
 
-    node = _DebugFramePoseListener(
-        DebugFrameTopicConfig(
+    node = _DebugPoseItemListener(
+        DebugPoseItemTopicConfig(
             topic_name=topic_name,
             message_type=message_type,
-            object_id=str(object_id),
+            assembly_name=str(assembly_name),
+            part_id=int(part_id),
             timeout_s=float(timeout_s),
         )
     )
     try:
         deadline = time.monotonic() + float(timeout_s)
-        node.publish_status(
-            f"Waiting for object pose on '{topic_name}' ({message_type}) for object_id='{object_id}'..."
-        )
+        part_key = f"{assembly_name}/{part_id}"
+        node.publish_status(f"Waiting for object pose on '{topic_name}' ({message_type}) for '{part_key}'...")
         while time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
             if node.latest_pose is not None:
                 node.publish_status("Received object pose.")
                 return node.latest_pose
         raise TimeoutError(
-            f"Timed out after {timeout_s:.1f}s waiting for object pose on '{topic_name}' for object_id='{object_id}'."
+            f"Timed out after {timeout_s:.1f}s waiting for object pose on '{topic_name}' for '{part_key}'."
         )
     finally:
         node.destroy_node()

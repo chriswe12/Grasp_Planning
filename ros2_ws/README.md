@@ -3,10 +3,10 @@
 This workspace contains the hardware-facing ROS2 package for this repo.
 
 Current package:
-- `robot_integration_ros`: MoveIt-based FR3 end-effector motion entrypoint for real-robot testing
+- `robot_integration_ros`: MoveIt-based FR3/KUKA execution helpers and the aligned iiwa7 MoveIt description
 
 Pinned external source dependency:
-- `fp_debug_msgs`: DebugFrame ROS2 interface package imported via `ros2_ws/dependencies.repos`
+- `fp_debug_msgs`: shared ROS2 interface package imported via `ros2_ws/dependencies.repos`
 
 ## Build
 
@@ -24,7 +24,7 @@ Then source ROS2 and your robot / MoveIt workspace and build this overlay:
 source /opt/ros/<distro>/setup.bash
 source /path/to/your/fr3_moveit_ws/install/setup.bash
 
-cd /media/pdz/Elements1/perception_bag_test/ros2_ws
+cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7/ros2_ws
 colcon build --packages-select fp_debug_msgs robot_integration_ros --symlink-install
 source install/setup.bash
 ```
@@ -32,6 +32,20 @@ source install/setup.bash
 ## Run
 
 Use normal ROS2 discovery unless you deliberately need an isolated domain. The repo launcher defaults to `ROS_DOMAIN_ID=0` and clears localhost-only discovery settings.
+
+For KUKA iiwa7 mock planning, launch the repo-local hardware-canonical description shared with Isaac:
+
+```bash
+./start_lbr_moveit.sh
+```
+
+For the physical KUKA, after starting the FRI client and completing the hardware safety checks:
+
+```bash
+./start_lbr_moveit.sh --mode hardware
+```
+
+Both modes use the same `gripper_tcp`, arm geometry, and joint origins as `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`. The overlay only maps the link/joint names onto the LBR ROS2 controller interface and adds `ros2_control`.
 
 Terminal 1: launch the FR3 MoveIt stack
 
@@ -74,8 +88,9 @@ ros2 run robot_integration_ros move_real_robot_ee --x 0.35 --y 0.00 --z 0.40 --k
 
 Notes:
 - The package expects the FR3 MoveIt stack to already be running and exposing `/compute_ik`, `/plan_kinematic_path`, and `/execute_trajectory`.
-- `pitl` and `real` pipeline modes expect `fp_debug_msgs` to be built and sourced from this overlay, and they read a single `fp_debug_msgs/msg/DebugFrame` topic plus `object_id`.
-- The planning local frame is defined from the OBJ by subtracting the arithmetic mean of its vertices, and `pose_item.pose_base` is interpreted as the world pose of that local frame.
+- `pitl` and `real` pipeline modes expect `fp_debug_msgs` to be built and sourced from this overlay. They read `fp_debug_msgs/msg/DebugPoseItem` from `/perception/fp/pose_base/fused/assembly` and filter it by Fabrica `assembly_name` plus numeric `part_id`.
+- The planning local frame is defined from the OBJ by subtracting the arithmetic mean of its vertices, and `pose_base` is interpreted as the world pose of that local frame.
+- `ros2.position_offset_m` can apply a fixed world-axis translation before planning; the current left KUKA real config subtracts `0.840 m` from Y as a temporary frame correction.
 - The package uses `fr3_arm` and `fr3_hand_tcp` by default.
 - `--keep-current-orientation` reuses the current EE orientation from MoveIt FK.
 - The default velocity and acceleration scaling are both `0.05` to keep motion conservative.

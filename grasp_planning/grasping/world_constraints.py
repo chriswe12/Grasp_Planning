@@ -9,9 +9,7 @@ import numpy as np
 
 from .collision import (
     BoxCollisionPrimitive,
-    FingerBoxGripperCollisionModel,
-    FingerBoxWithHandMeshCollisionModel,
-    FrankaHandFingerCollisionModel,
+    GripperCollisionModel,
     MeshCollisionPrimitive,
 )
 from .finger_geometry import finger_box_corners
@@ -103,9 +101,7 @@ class WorldCollisionConstraintEvaluator:
 
     def __init__(
         self,
-        collision_model: FingerBoxGripperCollisionModel
-        | FingerBoxWithHandMeshCollisionModel
-        | FrankaHandFingerCollisionModel,
+        collision_model: GripperCollisionModel,
     ) -> None:
         self._collision_model = collision_model
 
@@ -136,11 +132,13 @@ class WorldCollisionConstraintEvaluator:
         grasp_rotmat_obj = _quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
         contact_point_a = np.asarray(candidate.contact_point_a_obj, dtype=float)
         contact_point_b = np.asarray(candidate.contact_point_b_obj, dtype=float)
+        grasp_center = np.asarray(candidate.grasp_position_obj, dtype=float)
 
         for primitive_obj in self._collision_model.primitives_for_grasp(
             grasp_rotmat=grasp_rotmat_obj,
             contact_point_a=contact_point_a,
             contact_point_b=contact_point_b,
+            grasp_center=grasp_center,
         ):
             primitive_world = _transform_primitive_to_world(primitive_obj, object_pose_world)
             if _primitive_penetrates_plane(primitive_world, plane_constraint):
@@ -152,9 +150,7 @@ def filter_grasp_candidates_above_plane(
     candidates: Iterable[ObjectFrameGraspCandidate],
     *,
     object_pose_world: ObjectWorldPose,
-    collision_model: FingerBoxGripperCollisionModel
-    | FingerBoxWithHandMeshCollisionModel
-    | FrankaHandFingerCollisionModel,
+    collision_model: GripperCollisionModel,
     plane_constraint: HalfSpaceWorldConstraint = _DEFAULT_GROUND_PLANE,
 ) -> list[ObjectFrameGraspCandidate]:
     """Convenience wrapper for world-frame plane filtering."""

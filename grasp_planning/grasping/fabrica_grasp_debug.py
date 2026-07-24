@@ -12,10 +12,17 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .collision import (
+    GRIPPER_COLLISION_MODEL_FRANKA,
+    GRIPPER_COLLISION_MODEL_KUKA_Y,
     BoxCollisionPrimitive,
-    FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
+    GripperCollisionModel,
     MeshCollisionPrimitive,
+    _load_kuka_y_gripper_mesh,
+    _place_kuka_y_left_finger_for_grasp,
+    _place_kuka_y_right_finger_for_grasp,
+    make_gripper_collision_model,
+    normalize_gripper_collision_model_name,
 )
 from .finger_geometry import finger_box_corners
 from .mesh_antipodal_grasp_generator import ObjectFrameGraspCandidate, TriangleMesh
@@ -40,10 +47,10 @@ FRANKA_HAND_MESH_PATH = (
     / "collision"
     / "hand.stl"
 )
+KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1505], dtype=float)
 SCHEMA_VERSION = 2
 FRANKA_CONTACT_PATCH_LATERAL_SIZE_M = 17.5e-3
 FRANKA_CONTACT_PATCH_APPROACH_SIZE_M = 18.5e-3
-DEFAULT_CONTACT_GRID_RESOLUTION = 5
 
 
 @dataclass(frozen=True)
@@ -143,27 +150,23 @@ _FRANKA_RIGHT_FINGER_BOX_SPECS = (
 _FRANKA_FINGER_JOINT_Z_M = 58.4e-3
 _FRANKA_TIP_CONTACT_Z_M = 45.25e-3
 _FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
+_KUKA_Y_GRIPPER_VISUAL_MESH_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
 
 def fmt_vec(vec: Iterable[float]) -> list[float]:
     return [round(float(value), 6) for value in vec]
 
 
-def _equally_spaced_offsets(size_m: float, resolution: int) -> tuple[float, ...]:
-    if resolution <= 0:
-        raise ValueError("resolution must be positive.")
-    step = float(size_m) / float(resolution + 1)
-    half_extent = 0.5 * float(size_m)
-    return tuple(float(-half_extent + step * (index + 1)) for index in range(resolution))
+def _center_contact_offsets(size_m: float) -> tuple[float, ...]:
+    step = float(size_m) / 6.0
+    return (-step, 0.0, step)
 
 
-DEFAULT_CONTACT_LATERAL_OFFSETS_M = _equally_spaced_offsets(
+DEFAULT_CONTACT_LATERAL_OFFSETS_M = _center_contact_offsets(
     FRANKA_CONTACT_PATCH_LATERAL_SIZE_M,
-    DEFAULT_CONTACT_GRID_RESOLUTION,
 )
-DEFAULT_CONTACT_APPROACH_OFFSETS_M = _equally_spaced_offsets(
+DEFAULT_CONTACT_APPROACH_OFFSETS_M = _center_contact_offsets(
     FRANKA_CONTACT_PATCH_APPROACH_SIZE_M,
-    DEFAULT_CONTACT_GRID_RESOLUTION,
 )
 
 DEFAULT_GRASP_SCORING_SIGMA_CENTER_M = 0.01
@@ -413,6 +416,37 @@ def _load_franka_hand_mesh() -> tuple[np.ndarray, np.ndarray]:
     return _FRANKA_HAND_MESH_CACHE
 
 
+def _load_kuka_y_gripper_visual_mesh(key: str) -> tuple[np.ndarray, np.ndarray]:
+    cached = _KUKA_Y_GRIPPER_VISUAL_MESH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    vertices, faces = _load_kuka_y_gripper_mesh(key)
+    _KUKA_Y_GRIPPER_VISUAL_MESH_CACHE[key] = (vertices, faces)
+    return vertices, faces
+
+
+def _append_mesh_payload(
+    *,
+    vertices_local: np.ndarray,
+    faces: np.ndarray,
+    origin_obj: np.ndarray,
+    rotmat: np.ndarray,
+    vertices_out: list[list[float]],
+    faces_out: list[list[int]],
+) -> None:
+    face_offset = len(vertices_out)
+    vertices_obj = (
+        np.asarray(origin_obj, dtype=float)[None, :]
+        + np.asarray(vertices_local, dtype=float)
+        @ np.asarray(
+            rotmat,
+            dtype=float,
+        ).T
+    )
+    vertices_out.extend(fmt_vec(vertex.tolist()) for vertex in vertices_obj)
+    faces_out.extend([int(face_offset + int(index)) for index in face] for face in np.asarray(faces, dtype=np.int64))
+
+
 def franka_collision_geometry(
     *,
     grasp_rotmat: np.ndarray,
@@ -507,6 +541,119 @@ def franka_collision_geometry(
         "franka_right_anchor_error_m": round(
             float(np.linalg.norm(right_tip_anchor - np.asarray(contact_point_a, dtype=float))), 8
         ),
+        "contact_patch_lateral_offset_m": round(float(contact_patch_lateral_offset_m), 6),
+        "contact_patch_approach_offset_m": round(float(contact_patch_approach_offset_m), 6),
+    }
+
+
+def gripper_collision_geometry(
+    *,
+    gripper_collision_model: str,
+    grasp_rotmat: np.ndarray,
+    grasp_center: np.ndarray,
+    contact_point_a: np.ndarray,
+    contact_point_b: np.ndarray,
+    contact_gap_m: float,
+    contact_patch_lateral_offset_m: float = 0.0,
+    contact_patch_approach_offset_m: float = 0.0,
+) -> dict[str, object]:
+    model_name = normalize_gripper_collision_model_name(gripper_collision_model)
+    if model_name == GRIPPER_COLLISION_MODEL_FRANKA:
+        return franka_collision_geometry(
+            grasp_rotmat=grasp_rotmat,
+            grasp_center=grasp_center,
+            contact_point_a=contact_point_a,
+            contact_point_b=contact_point_b,
+            contact_gap_m=contact_gap_m,
+            contact_patch_lateral_offset_m=contact_patch_lateral_offset_m,
+            contact_patch_approach_offset_m=contact_patch_approach_offset_m,
+        )
+    if model_name == GRIPPER_COLLISION_MODEL_KUKA_Y:
+        rotmat = np.asarray(grasp_rotmat, dtype=float)
+        contact_a = np.asarray(contact_point_a, dtype=float)
+        contact_b = np.asarray(contact_point_b, dtype=float)
+        jaw_width = float(np.linalg.norm(contact_b - contact_a))
+        half_opening_m = 0.5 * jaw_width
+        tcp_center_obj = np.asarray(grasp_center, dtype=float)
+        base_origin_obj = tcp_center_obj - rotmat @ KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M
+
+        base_vertices, base_faces = _load_kuka_y_gripper_visual_mesh("base")
+        left_vertices, left_faces = _load_kuka_y_gripper_visual_mesh("left_finger")
+        right_vertices, right_faces = _load_kuka_y_gripper_visual_mesh("right_finger")
+
+        mesh_vertices: list[list[float]] = []
+        mesh_faces: list[list[int]] = []
+        for vertices, faces in (
+            (base_vertices, base_faces),
+            (_place_kuka_y_left_finger_for_grasp(left_vertices, half_opening_m), left_faces),
+            (_place_kuka_y_right_finger_for_grasp(right_vertices, half_opening_m), right_faces),
+        ):
+            _append_mesh_payload(
+                vertices_local=vertices,
+                faces=faces,
+                origin_obj=base_origin_obj,
+                rotmat=rotmat,
+                vertices_out=mesh_vertices,
+                faces_out=mesh_faces,
+            )
+
+        return {
+            "franka_left_boxes": [],
+            "franka_right_boxes": [],
+            "franka_hand_origin_obj": fmt_vec(base_origin_obj.tolist()),
+            "franka_hand_reference_obj": fmt_vec(np.asarray(grasp_center, dtype=float).tolist()),
+            "franka_hand_vertices_obj": mesh_vertices,
+            "franka_hand_faces": mesh_faces,
+            "franka_left_tip_anchor_obj": fmt_vec(contact_b.tolist()),
+            "franka_right_tip_anchor_obj": fmt_vec(contact_a.tolist()),
+            "franka_left_contact_grid_obj": [],
+            "franka_right_contact_grid_obj": [],
+            "franka_left_anchor_error_m": 0.0,
+            "franka_right_anchor_error_m": 0.0,
+            "contact_patch_lateral_offset_m": round(float(contact_patch_lateral_offset_m), 6),
+            "contact_patch_approach_offset_m": round(float(contact_patch_approach_offset_m), 6),
+        }
+
+    collision_model = make_gripper_collision_model(
+        model_name,
+        contact_gap_m=contact_gap_m,
+        contact_patch_lateral_offset_m=contact_patch_lateral_offset_m,
+        contact_patch_approach_offset_m=contact_patch_approach_offset_m,
+    )
+    boxes: list[dict[str, object]] = []
+    mesh_vertices: list[list[float]] = []
+    mesh_faces: list[list[int]] = []
+    for primitive in collision_model.primitives_for_grasp(
+        grasp_rotmat=grasp_rotmat,
+        contact_point_a=np.asarray(contact_point_a, dtype=float),
+        contact_point_b=np.asarray(contact_point_b, dtype=float),
+        grasp_center=np.asarray(grasp_center, dtype=float),
+    ):
+        if isinstance(primitive, BoxCollisionPrimitive):
+            corners = finger_box_corners(primitive.center_obj, primitive.rotation_obj, primitive.half_extents)
+            boxes.append({"name": primitive.name, "corners": [fmt_vec(corner.tolist()) for corner in corners]})
+            continue
+        if isinstance(primitive, MeshCollisionPrimitive):
+            face_offset = len(mesh_vertices)
+            mesh_vertices.extend(fmt_vec(vertex.tolist()) for vertex in np.asarray(primitive.vertices_obj, dtype=float))
+            mesh_faces.extend(
+                [int(face_offset + int(index)) for index in face]
+                for face in np.asarray(primitive.faces, dtype=np.int64)
+            )
+
+    return {
+        "franka_left_boxes": boxes,
+        "franka_right_boxes": [],
+        "franka_hand_origin_obj": fmt_vec(np.asarray(grasp_center, dtype=float).tolist()),
+        "franka_hand_reference_obj": fmt_vec(np.asarray(grasp_center, dtype=float).tolist()),
+        "franka_hand_vertices_obj": mesh_vertices,
+        "franka_hand_faces": mesh_faces,
+        "franka_left_tip_anchor_obj": fmt_vec(np.asarray(contact_point_b, dtype=float).tolist()),
+        "franka_right_tip_anchor_obj": fmt_vec(np.asarray(contact_point_a, dtype=float).tolist()),
+        "franka_left_contact_grid_obj": [],
+        "franka_right_contact_grid_obj": [],
+        "franka_left_anchor_error_m": 0.0,
+        "franka_right_anchor_error_m": 0.0,
         "contact_patch_lateral_offset_m": round(float(contact_patch_lateral_offset_m), 6),
         "contact_patch_approach_offset_m": round(float(contact_patch_approach_offset_m), 6),
     }
@@ -1062,7 +1209,7 @@ def _assembly_collision_free_for_offset(
     object_pose_world: ObjectWorldPose,
     obstacle_scene,
     obstacle_bounds_world: tuple[np.ndarray, np.ndarray] | None,
-    collision_model: FrankaHandFingerCollisionModel,
+    collision_model: GripperCollisionModel,
     object_candidate: ObjectFrameGraspCandidate | None = None,
     grasp_rotmat_obj: np.ndarray | None = None,
     contact_point_a_obj: np.ndarray | None = None,
@@ -1075,10 +1222,12 @@ def _assembly_collision_free_for_offset(
         contact_point_a_obj = np.asarray(candidate_obj.contact_point_a_obj, dtype=float)
     if contact_point_b_obj is None:
         contact_point_b_obj = np.asarray(candidate_obj.contact_point_b_obj, dtype=float)
+    grasp_center_obj = np.asarray(candidate_obj.grasp_position_obj, dtype=float)
     for primitive_obj in collision_model.primitives_for_grasp(
         grasp_rotmat=grasp_rotmat_obj,
         contact_point_a=contact_point_a_obj,
         contact_point_b=contact_point_b_obj,
+        grasp_center=grasp_center_obj,
     ):
         primitive_world = transform_primitive_to_world(primitive_obj, object_pose_world)
         if obstacle_bounds_world is not None:
@@ -1116,28 +1265,24 @@ def filter_grasps_against_assembly(
     object_pose_world: ObjectWorldPose,
     obstacle_mesh_world: TriangleMesh | None,
     contact_gap_m: float,
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
 ) -> list[SavedGraspCandidate]:
     if obstacle_mesh_world is None:
         return list(candidates)
-    hand_vertices_local, hand_faces = _load_franka_hand_mesh()
+    model_name = normalize_gripper_collision_model_name(gripper_collision_model)
     obstacle_scene = GraspCollisionEvaluator(
-        FrankaHandFingerCollisionModel(
-            hand_vertices_local=hand_vertices_local,
-            hand_faces=hand_faces,
+        make_gripper_collision_model(
+            model_name,
             contact_gap_m=contact_gap_m,
         )
     ).build_scene(obstacle_mesh_world)
     obstacle_vertices_world = np.asarray(obstacle_mesh_world.vertices_obj, dtype=float)
     obstacle_bounds_world = (obstacle_vertices_world.min(axis=0), obstacle_vertices_world.max(axis=0))
-    collision_models: dict[tuple[float, float], FrankaHandFingerCollisionModel] = {}
+    collision_models: dict[tuple[float, float], GripperCollisionModel] = {}
     kept: list[SavedGraspCandidate] = []
     for candidate in candidates:
-        object_candidate = candidate.to_object_frame_candidate()
-        grasp_rotmat_obj = quat_to_rotmat_xyzw(object_candidate.grasp_orientation_xyzw_obj)
-        contact_point_a_obj = np.asarray(object_candidate.contact_point_a_obj, dtype=float)
-        contact_point_b_obj = np.asarray(object_candidate.contact_point_b_obj, dtype=float)
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
             candidate,
             contact_lateral_offsets_m=contact_lateral_offsets_m,
@@ -1146,24 +1291,23 @@ def filter_grasps_against_assembly(
             key = (float(lateral_offset_m), float(approach_offset_m))
             collision_model = collision_models.get(key)
             if collision_model is None:
-                collision_model = FrankaHandFingerCollisionModel(
-                    hand_vertices_local=hand_vertices_local,
-                    hand_faces=hand_faces,
+                collision_model = make_gripper_collision_model(
+                    model_name,
                     contact_gap_m=contact_gap_m,
                     contact_patch_lateral_offset_m=lateral_offset_m,
                     contact_patch_approach_offset_m=approach_offset_m,
                 )
                 collision_models[key] = collision_model
             if _assembly_collision_free_for_offset(
-                candidate,
+                _candidate_with_contact_offset(
+                    candidate,
+                    lateral_offset_m=lateral_offset_m,
+                    approach_offset_m=approach_offset_m,
+                ),
                 object_pose_world=object_pose_world,
                 obstacle_scene=obstacle_scene,
                 obstacle_bounds_world=obstacle_bounds_world,
                 collision_model=collision_model,
-                object_candidate=object_candidate,
-                grasp_rotmat_obj=grasp_rotmat_obj,
-                contact_point_a_obj=contact_point_a_obj,
-                contact_point_b_obj=contact_point_b_obj,
             ):
                 kept.append(
                     _candidate_with_contact_offset(
@@ -1181,16 +1325,16 @@ def evaluate_grasps_against_ground(
     *,
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
     floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
 ) -> list[CandidateStatus]:
     statuses: list[CandidateStatus] = []
-    hand_vertices_local, hand_faces = _load_franka_hand_mesh()
+    model_name = normalize_gripper_collision_model_name(gripper_collision_model)
     ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
     evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
     for candidate in candidates:
-        object_candidate = candidate.to_object_frame_candidate()
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
@@ -1202,25 +1346,25 @@ def evaluate_grasps_against_ground(
             evaluator = evaluators.get(key)
             if evaluator is None:
                 evaluator = WorldCollisionConstraintEvaluator(
-                    FrankaHandFingerCollisionModel(
-                        hand_vertices_local=hand_vertices_local,
-                        hand_faces=hand_faces,
+                    make_gripper_collision_model(
+                        model_name,
                         contact_gap_m=contact_gap_m,
                         contact_patch_lateral_offset_m=lateral_offset_m,
                         contact_patch_approach_offset_m=approach_offset_m,
                     )
                 )
                 evaluators[key] = evaluator
+            offset_candidate = _candidate_with_contact_offset(
+                candidate,
+                lateral_offset_m=lateral_offset_m,
+                approach_offset_m=approach_offset_m,
+            )
             if evaluator.is_grasp_above_plane(
-                object_candidate,
+                offset_candidate.to_object_frame_candidate(),
                 object_pose_world=object_pose_world,
                 plane_constraint=ground_constraint,
             ):
-                accepted_candidate = _candidate_with_contact_offset(
-                    candidate,
-                    lateral_offset_m=lateral_offset_m,
-                    approach_offset_m=approach_offset_m,
-                )
+                accepted_candidate = offset_candidate
                 used_refinement = (
                     abs(lateral_offset_m - candidate.contact_patch_lateral_offset_m) > 1.0e-9
                     or abs(approach_offset_m - candidate.contact_patch_approach_offset_m) > 1.0e-9
@@ -1259,6 +1403,7 @@ def evaluate_saved_grasps_against_pickup_pose(
     *,
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
     floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
@@ -1267,6 +1412,7 @@ def evaluate_saved_grasps_against_pickup_pose(
         grasps,
         object_pose_world=object_pose_world,
         contact_gap_m=contact_gap_m,
+        gripper_collision_model=gripper_collision_model,
         floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=contact_lateral_offsets_m,
         contact_approach_offsets_m=contact_approach_offsets_m,
@@ -1384,6 +1530,7 @@ def candidate_payload(
     *,
     contact_gap_m: float,
     object_pose_world: ObjectWorldPose | None = None,
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
 ) -> list[dict[str, object]]:
     status_list = list(candidate_statuses)
     status_list.sort(
@@ -1401,7 +1548,8 @@ def candidate_payload(
         center = np.asarray(candidate.grasp_position_obj, dtype=float)
         rotation = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
         closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
-        geometry = franka_collision_geometry(
+        geometry = gripper_collision_geometry(
+            gripper_collision_model=gripper_collision_model,
             grasp_rotmat=rotation,
             grasp_center=center,
             contact_point_a=point_a,
@@ -1543,6 +1691,7 @@ def write_debug_html(
     display_object_pose_world: ObjectWorldPose | None = None,
     max_mesh_edges: int | None = None,
     max_obstacle_edges: int | None = None,
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
 ) -> None:
     mesh_vertices_display = (
         [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()]
@@ -1600,6 +1749,7 @@ def write_debug_html(
             candidate_statuses,
             contact_gap_m=contact_gap_m,
             object_pose_world=display_object_pose_world,
+            gripper_collision_model=gripper_collision_model,
         ),
     }
     data_json = json.dumps(data, indent=2)
@@ -1707,9 +1857,9 @@ def write_debug_html(
             <span><i class="swatch" style="background: var(--ground)"></i>Ground plane</span>
             <span><i class="swatch" style="background: var(--accepted)"></i>Accepted</span>
             <span><i class="swatch" style="background: var(--rejected)"></i>Rejected</span>
-            <span><i class="swatch" style="background: var(--franka)"></i>Franka finger boxes</span>
-            <span><i class="swatch" style="background: var(--hand)"></i>Franka hand mesh</span>
-            <span><i class="swatch" style="background: #0f766e"></i>5x5 contact grid</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
+            <span><i class="swatch" style="background: #0f766e"></i>3x3 contact grid</span>
           </div>
           <p class="caption">Left drag rotates, middle drag pans, scroll zooms, and arrow keys switch candidates.</p>
         </section>
@@ -1858,10 +2008,49 @@ def write_debug_html(
       drawMeshEdges(data.vertices_obj, data.edges, "#4f6b5f", 2.0, 0.8);
     }
     function drawHandMesh(candidate) {
-      candidate.franka_hand_faces.forEach((face) => {
-        drawLine(candidate.franka_hand_vertices_obj[face[0]], candidate.franka_hand_vertices_obj[face[1]], { stroke: "#8f5a12", strokeWidth: 1.1, opacity: 0.35 });
-        drawLine(candidate.franka_hand_vertices_obj[face[1]], candidate.franka_hand_vertices_obj[face[2]], { stroke: "#8f5a12", strokeWidth: 1.1, opacity: 0.35 });
-        drawLine(candidate.franka_hand_vertices_obj[face[2]], candidate.franka_hand_vertices_obj[face[0]], { stroke: "#8f5a12", strokeWidth: 1.1, opacity: 0.35 });
+      const vertices = candidate.franka_hand_vertices_obj || [];
+      const faces = candidate.franka_hand_faces || [];
+      const edgeMap = new Map();
+      const faceRecords = faces.map((face) => {
+        const points = face.map((index) => vertices[index]);
+        const rotated = points.map((point) => rotate(point));
+        const edgeA = rotated[1].map((value, axis) => value - rotated[0][axis]);
+        const edgeB = rotated[2].map((value, axis) => value - rotated[0][axis]);
+        const normal = [
+          edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+          edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+          edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0],
+        ];
+        const depth = rotated.reduce((sum, point) => sum + point[2], 0) / rotated.length;
+        return { face, points, normal, depth };
+      });
+      faceRecords
+        .filter((record) => record.normal[2] > 0)
+        .sort((a, b) => a.depth - b.depth)
+        .forEach((record) => {
+          drawPolygon(record.points, { fill: "#8f5a12", fillOpacity: 0.045, stroke: "none" });
+        });
+      faceRecords.forEach((record) => {
+        [[0, 1], [1, 2], [2, 0]].forEach(([a, b]) => {
+          const start = record.face[a], end = record.face[b];
+          const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+          const entry = edgeMap.get(key) || { start, end, normals: [] };
+          entry.normals.push(record.normal);
+          edgeMap.set(key, entry);
+        });
+      });
+      edgeMap.forEach((entry) => {
+        let draw = entry.normals.length === 1;
+        if (!draw && entry.normals.length >= 2) {
+          const [a, b] = entry.normals;
+          const lenA = Math.hypot(a[0], a[1], a[2]) || 1;
+          const lenB = Math.hypot(b[0], b[1], b[2]) || 1;
+          const dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (lenA * lenB);
+          draw = (a[2] >= 0 && b[2] < 0) || (a[2] < 0 && b[2] >= 0) || dot < 0.82;
+        }
+        if (draw) {
+          drawLine(vertices[entry.start], vertices[entry.end], { stroke: "#8f5a12", strokeWidth: 1.25, opacity: 0.72 });
+        }
       });
     }
     function drawContactGrid(gridPoints, selectedPoint, gridColor, selectedColor) {

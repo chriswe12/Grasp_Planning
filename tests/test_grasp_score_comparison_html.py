@@ -93,7 +93,7 @@ class GraspScoreComparisonHtmlTests(unittest.TestCase):
         self.assertIn("old_top", html)
         self.assertIn("Solid Mesh", html)
         self.assertIn("Accepted Only", html)
-        self.assertIn("Franka hand mesh", html)
+        self.assertIn("Gripper mesh", html)
         self.assertIn("Most score lost", html)
         self.assertNotIn("New #1, old #1", html)
 

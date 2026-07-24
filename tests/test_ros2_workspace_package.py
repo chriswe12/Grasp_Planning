@@ -20,6 +20,12 @@ def test_workspace_package_layout_exists() -> None:
     assert (WORKSPACE_PACKAGE_ROOT / "package.xml").is_file()
     assert (WORKSPACE_PACKAGE_ROOT / "setup.py").is_file()
     assert (WORKSPACE_PACKAGE_ROOT / "robot_integration_ros" / "__init__.py").is_file()
+    assert (WORKSPACE_PACKAGE_ROOT / "robot_integration_ros" / "grasp_assembly_action_server.py").is_file()
+
+    package_text = (WORKSPACE_PACKAGE_ROOT / "package.xml").read_text(encoding="utf-8")
+    setup_text = (WORKSPACE_PACKAGE_ROOT / "setup.py").read_text(encoding="utf-8")
+    assert "<exec_depend>fp_debug_msgs</exec_depend>" in package_text
+    assert "grasp_assembly_action_server = robot_integration_ros.grasp_assembly_action_server:main" in setup_text
 
 
 def test_workspace_dependency_bootstrap_files_exist() -> None:
@@ -31,11 +37,13 @@ def test_workspace_dependency_bootstrap_files_exist() -> None:
     fp_debug_msgs = repositories["fp_debug_msgs"]
     assert fp_debug_msgs["type"] == "git"
     assert fp_debug_msgs["url"] == "https://github.com/Moreno-Nautilus/fp_debug_msgs.git"
-    assert fp_debug_msgs["version"] == "7cab8c96effad8f3489fa509dfe5cd2795242c37"
+    assert fp_debug_msgs["version"] == "f081fa66ff8c83ebc32e170f12e129c3bce1ceb0"
 
     script_text = ROS2_DOWNLOAD_SCRIPT.read_text(encoding="utf-8")
     assert "ros2_ws/dependencies.repos" in script_text
     assert "fp_debug_msgs" in script_text
+    assert "7cab8c96effad8f3489fa509dfe5cd2795242c37" not in script_text
+    assert '"${FP_DEBUG_MSGS_ROOT}/action/GraspAssembly.action"' in script_text
 
 
 def test_workspace_cli_module_imports_from_source_tree() -> None:
@@ -48,12 +56,17 @@ def test_workspace_cli_module_imports_from_source_tree() -> None:
         sys.path = [entry for entry in sys.path if entry != str(WORKSPACE_PACKAGE_ROOT)]
 
 
-def _write_temp_repo_copy(tmp_path: Path) -> Path:
+def _write_temp_repo_copy(tmp_path: Path, *, dependency_ref: str | None = None) -> Path:
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "ros2_ws").mkdir(parents=True)
     shutil.copy2(ROS2_DOWNLOAD_SCRIPT, repo_root / "scripts" / ROS2_DOWNLOAD_SCRIPT.name)
     shutil.copy2(ROS2_DEPENDENCY_MANIFEST, repo_root / "ros2_ws" / ROS2_DEPENDENCY_MANIFEST.name)
+    if dependency_ref is not None:
+        manifest_path = repo_root / "ros2_ws" / ROS2_DEPENDENCY_MANIFEST.name
+        payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        payload["repositories"]["fp_debug_msgs"]["version"] = dependency_ref
+        manifest_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return repo_root
 
 
@@ -61,11 +74,20 @@ def _create_fp_debug_msgs_remote(tmp_path: Path) -> tuple[Path, str]:
     seed_root = tmp_path / "seed"
     remote_root = tmp_path / "fp_debug_msgs.git"
     (seed_root / "msg").mkdir(parents=True)
+    (seed_root / "action").mkdir(parents=True)
     (seed_root / "package.xml").write_text("<package format='3'></package>\n", encoding="utf-8")
-    (seed_root / "msg" / "DebugFrame.msg").write_text("string object_id\n", encoding="utf-8")
+    (seed_root / "msg" / "DebugPoseItem.msg").write_text("string assembly_name\nint32 part_id\n", encoding="utf-8")
+    (seed_root / "action" / "GraspAssembly.action").write_text(
+        "string assembly_name\n---\nbool success\n---\nstring phase\n",
+        encoding="utf-8",
+    )
 
     subprocess.run(["git", "init"], cwd=seed_root, check=True)
-    subprocess.run(["git", "add", "package.xml", "msg/DebugFrame.msg"], cwd=seed_root, check=True)
+    subprocess.run(
+        ["git", "add", "package.xml", "msg/DebugPoseItem.msg", "action/GraspAssembly.action"],
+        cwd=seed_root,
+        check=True,
+    )
     subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"],
         cwd=seed_root,
@@ -127,11 +149,41 @@ def test_download_script_honors_remote_override_for_vcs_import(tmp_path: Path) -
 
     checkout_root = repo_root / "ros2_ws" / "src" / "fp_debug_msgs"
     assert (checkout_root / "package.xml").is_file()
-    assert (checkout_root / "msg" / "DebugFrame.msg").is_file()
+    assert (checkout_root / "msg" / "DebugPoseItem.msg").is_file()
+    assert (checkout_root / "action" / "GraspAssembly.action").is_file()
     assert subprocess.check_output(
         ["git", "-C", str(checkout_root), "remote", "get-url", "origin"],
         text=True,
     ).strip() == str(remote_root)
+
+
+def test_download_script_uses_manifest_ref_by_default(tmp_path: Path) -> None:
+    remote_root, commit = _create_fp_debug_msgs_remote(tmp_path)
+    repo_root = _write_temp_repo_copy(tmp_path, dependency_ref=commit)
+    fake_bin = _write_fake_vcs(tmp_path)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["FP_DEBUG_MSGS_REMOTE"] = str(remote_root)
+    env.pop("FP_DEBUG_MSGS_REF", None)
+
+    subprocess.run(
+        ["bash", str(repo_root / "scripts" / "download_ros2_dependencies.sh")],
+        cwd=repo_root,
+        env=env,
+        check=True,
+    )
+
+    checkout_root = repo_root / "ros2_ws" / "src" / "fp_debug_msgs"
+    assert (
+        subprocess.check_output(
+            ["git", "-C", str(checkout_root), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+        == commit
+    )
+    assert (checkout_root / "msg" / "DebugPoseItem.msg").is_file()
+    assert (checkout_root / "action" / "GraspAssembly.action").is_file()
 
 
 def test_download_script_skips_fetch_when_checkout_is_already_pinned(tmp_path: Path) -> None:

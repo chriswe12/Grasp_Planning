@@ -37,6 +37,8 @@ import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
 
+ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
+
 
 def _mesh_collision_cfg(name: str):
     if name == "convex_hull":
@@ -69,7 +71,7 @@ def run() -> Path:
         ),
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
-            contact_offset=0.005,
+            contact_offset=ISAAC_MIN_CONTACT_OFFSET_M,
             rest_offset=0.0,
         ),
         mesh_collision_props=_mesh_collision_cfg(args_cli.collision_approximation),

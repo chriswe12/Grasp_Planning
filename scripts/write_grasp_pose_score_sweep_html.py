@@ -730,9 +730,9 @@ def _html_document(data_json: str) -> str:
             <span><i class="swatch" style="background: var(--mesh)"></i>Object mesh</span>
             <span><i class="swatch" style="background: var(--ground)"></i>Floor</span>
             <span><i class="swatch" style="background: var(--base)"></i>Robot base</span>
-            <span><i class="swatch" style="background: var(--franka)"></i>Finger boxes</span>
-            <span><i class="swatch" style="background: var(--hand)"></i>Hand mesh</span>
-            <span><i class="swatch" style="background: #0f766e"></i>5x5 contact grid</span>
+            <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
+            <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
+            <span><i class="swatch" style="background: #0f766e"></i>3x3 contact grid</span>
             <span><i class="swatch" style="background: var(--pregrasp)"></i>Pregrasp proxy</span>
           </div>
           <p class="caption">Left drag rotates, middle drag pans, scroll zooms. Up/Down changes pose; Left/Right changes grasp.</p>

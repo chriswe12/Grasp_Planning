@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 if importlib.util.find_spec("torch") is None:
@@ -9,6 +12,16 @@ if importlib.util.find_spec("torch") is None:
 
 from grasp_planning.planning import pick_execution
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext
+from grasp_planning.start_poses import (
+    DEFAULT_KUKA_ARM_START_JOINT_POS,
+    KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    KUKA_Y_GRIPPER_TRAVEL_M,
+    gripper_joint_target_from_width,
+    gripper_max_open_width,
+    kuka_isaac_to_moveit_joint_positions,
+    kuka_moveit_to_isaac_joint_positions,
+)
 
 
 class _FakeArmJointIds:
@@ -24,6 +37,10 @@ class _FakeContext:
         self.physics_dt = 0.01
 
 
+class _FakeKukaContext(_FakeContext):
+    hand_joint_names = ("left_finger_joint", "right_finger_joint")
+
+
 class _FakeExecutor:
     executions: list[tuple[float, float]] = []
     configs: list[dict[str, object]] = []
@@ -35,6 +52,15 @@ class _FakeExecutor:
     def execute(self, trajectory) -> tuple[bool, str]:
         first_waypoint = float(trajectory.waypoints[0][0, 0].item())
         self.executions.append((first_waypoint, float(self._context.fixed_gripper_width)))
+        return True, "ok"
+
+
+class _GraspSettleFailingExecutor(_FakeExecutor):
+    def execute(self, trajectory) -> tuple[bool, str]:
+        first_waypoint = float(trajectory.waypoints[0][0, 0].item())
+        self.executions.append((first_waypoint, float(self._context.fixed_gripper_width)))
+        if round(first_waypoint, 1) == 0.2:
+            return False, "final waypoint did not settle; last_max_joint_error=0.0532"
         return True, "ok"
 
 
@@ -61,6 +87,55 @@ class _PhaseCallbackExecutor:
 
 
 class IsaacMoveItExecutionTests(unittest.TestCase):
+    def test_kuka_gripper_width_maps_to_closing_joint_target(self) -> None:
+        self.assertAlmostEqual(
+            gripper_joint_target_from_width("left_finger_joint", KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M), 0.0
+        )
+        self.assertAlmostEqual(
+            gripper_joint_target_from_width("right_finger_joint", KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M), 0.0
+        )
+        self.assertAlmostEqual(gripper_joint_target_from_width("left_finger_joint", 0.059), 0.0125)
+        self.assertAlmostEqual(gripper_joint_target_from_width("right_finger_joint", 0.059), -0.0125)
+        self.assertAlmostEqual(gripper_joint_target_from_width("left_finger_joint", 0.0), KUKA_Y_GRIPPER_TRAVEL_M)
+        self.assertAlmostEqual(gripper_joint_target_from_width("right_finger_joint", 0.0), -KUKA_Y_GRIPPER_TRAVEL_M)
+        self.assertAlmostEqual(gripper_joint_target_from_width("panda_finger_joint1", 0.035), 0.035)
+        self.assertAlmostEqual(gripper_max_open_width("left_finger_joint"), KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
+        self.assertAlmostEqual(gripper_max_open_width("panda_finger_joint1"), 0.04)
+
+    def test_kuka_moveit_joint_positions_are_converted_to_generated_usd_coordinates(self) -> None:
+        self.assertEqual(
+            KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+            (0.0, 0.5, 0.0, -1.3962634015954636, 0.0, 1.1, 0.0),
+        )
+        self.assertEqual(
+            kuka_moveit_to_isaac_joint_positions((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)),
+            (1.0, 2.0, 3.0, -4.0, 5.0, 6.0, 7.0),
+        )
+        self.assertEqual(
+            kuka_isaac_to_moveit_joint_positions((1.0, 2.0, 3.0, -4.0, 5.0, 6.0, 7.0)),
+            (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0),
+        )
+        for index, moveit_value in enumerate(KUKA_MOVEIT_ARM_START_JOINT_VALUES, start=1):
+            expected = kuka_moveit_to_isaac_joint_positions(KUKA_MOVEIT_ARM_START_JOINT_VALUES)[index - 1]
+            self.assertAlmostEqual(DEFAULT_KUKA_ARM_START_JOINT_POS[f"joint{index}"], expected)
+            if index == 4:
+                self.assertAlmostEqual(DEFAULT_KUKA_ARM_START_JOINT_POS[f"joint{index}"], -moveit_value)
+
+    def test_motion_context_resolves_kuka_tcp_and_joint_names(self) -> None:
+        robot = SimpleNamespace(
+            body_names=["base_link", "link7", "gripper_base_link", "gripper_tcp"],
+            joint_names=[*(f"joint{i}" for i in range(1, 8)), "left_finger_joint", "right_finger_joint"],
+            device="cpu",
+            is_fixed_base=True,
+        )
+
+        context = FR3MotionContext(robot=robot, scene=object(), sim=object())
+
+        self.assertEqual(context.ee_body_name, "gripper_tcp")
+        self.assertEqual(context.arm_joint_names, tuple(f"joint{i}" for i in range(1, 8)))
+        self.assertEqual(context.hand_joint_names, ("left_finger_joint", "right_finger_joint"))
+        self.assertEqual(context.hand_command_joint_names, ("left_finger_joint",))
+
     def test_isaac_grasp_tcp_mapping_matches_grasp_frame(self) -> None:
         position_w = (0.4, -0.1, 0.2)
         orientation_xyzw = (0.1, 0.2, 0.3, 0.9273618495495703)
@@ -90,7 +165,11 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         with (
             mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
             mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
-            mock.patch.object(pick_execution, "_command_gripper_width") as command_gripper_width,
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ) as command_gripper_width,
         ):
             result = pick_execution.execute_pick_from_moveit_joint_trajectories(
                 sim=object(),
@@ -113,6 +192,614 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
             self.assertAlmostEqual(actual[1], expected[1])
         command_gripper_width.assert_called_once()
         self.assertEqual(command_gripper_width.call_args.kwargs["width"], 0.0)
+        self.assertFalse(command_gripper_width.call_args.kwargs["force_joint_state"])
+
+    def test_moveit_pick_applies_postclose_hold_once_without_changing_close_settle_threshold(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ) as command_gripper_width,
+            mock.patch.object(pick_execution, "_hold_arm_waypoint") as hold_arm_waypoint,
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=0.04,
+                closed_gripper_width=0.0,
+                pregrasp_only=False,
+                postclose_hold_s=1.75,
+            )
+
+        self.assertTrue(result.success)
+        command_gripper_width.assert_called_once()
+        self.assertEqual(
+            command_gripper_width.call_args.kwargs["settle_duration_s"],
+            pick_execution.GRIPPER_CLOSE_SETTLE_DURATION_S,
+        )
+        hold_arm_waypoint.assert_called_once()
+        self.assertEqual(hold_arm_waypoint.call_args.kwargs["duration_s"], 1.75)
+
+    def test_fixed_kuka_pick_keeps_postclose_hold_out_of_close_settle_threshold(self) -> None:
+        script_text = (Path(__file__).resolve().parents[1] / "scripts" / "run_fixed_kuka_pick_in_isaac.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S", script_text)
+        self.assertNotIn("settle_duration_s=max(0.5, float(args_cli.postclose_hold_s))", script_text)
+        self.assertEqual(script_text.count("duration_s=float(args_cli.postclose_hold_s)"), 1)
+
+    def test_fixed_kuka_pick_contact_stall_uses_jaw_width_without_clearance(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_fixed_kuka_pick_in_isaac.py"
+        source = script_path.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        function_node = next(
+            node
+            for node in parsed.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_contact_stall_matches_selected_grasp"
+        )
+        isolated_module = ast.Module(body=[function_node], type_ignores=[])
+        ast.fix_missing_locations(isolated_module)
+        namespace = {"gripper_joint_target_from_width": gripper_joint_target_from_width}
+        exec(compile(isolated_module, str(script_path), "exec"), namespace)
+
+        diagnostics = {
+            "gripper_close_final_joint_positions": [0.005],
+            "gripper_close_final_max_step_delta": 0.0,
+        }
+        world_grasp = SimpleNamespace(jaw_width=0.059, gripper_width=0.069)
+        accepted = namespace["_contact_stall_matches_selected_grasp"](diagnostics, world_grasp)
+
+        self.assertFalse(accepted)
+        self.assertAlmostEqual(diagnostics["gripper_close_contact_stall_selected_jaw_width_m"], 0.059)
+        self.assertIn("selected jaw width 0.0590 m", diagnostics["gripper_close_contact_stall_accept_reason"])
+
+    def test_moveit_pick_allows_source_open_kuka_width_during_approach(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeKukaContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                closed_gripper_width=0.0,
+                pregrasp_only=False,
+            )
+
+        self.assertTrue(result.success)
+        for actual, expected in zip(
+            _FakeExecutor.executions,
+            [(0.1, KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M), (0.2, KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M), (0.3, 0.0)],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual[0], expected[0])
+            self.assertAlmostEqual(actual[1], expected[1])
+        self.assertAlmostEqual(
+            result.diagnostics["nominal_max_open_gripper_width_m"], KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M
+        )
+        self.assertFalse(result.diagnostics["open_gripper_width_exceeds_nominal_limit"])
+
+    def test_gripper_close_waits_for_kuka_finger_convergence_before_lift(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+                self.hand_target = torch.tensor([[0.0]], dtype=torch.float32)
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                if list(joint_ids) == [0]:
+                    self.hand_target = target.detach().cpu().clone()
+
+        class FakeScene:
+            def __init__(self, robot: FakeRobot) -> None:
+                self.robot = robot
+
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                delta = torch.clamp(
+                    self.robot.hand_target - self.robot.data.joint_pos[:, [0]],
+                    min=-0.01,
+                    max=0.01,
+                )
+                self.robot.data.joint_pos[:, [0]] = self.robot.data.joint_pos[:, [0]] + delta
+                self.robot.data.joint_pos[:, [1]] = -self.robot.data.joint_pos[:, [0]]
+
+        class FakeHoldContext:
+            def __init__(self) -> None:
+                self.arm_commands = 0
+
+            def command_arm(self, waypoint) -> None:
+                self.arm_commands += 1
+
+        robot = FakeRobot()
+        hold_context = FakeHoldContext()
+
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(robot),
+            robot=robot,
+            width=0.0,
+            duration_s=0.2,
+            max_duration_s=1.0,
+            settle_duration_s=0.2,
+            hold_context=hold_context,
+            hold_arm_waypoint=torch.tensor([[0.2]], dtype=torch.float32),
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "target_reached")
+        self.assertGreater(diagnostics["gripper_close_steps"], 2)
+        self.assertEqual(hold_context.arm_commands, diagnostics["gripper_close_steps"])
+        for actual, expected in zip(
+            diagnostics["gripper_close_target_joint_positions"],
+            [KUKA_Y_GRIPPER_TRAVEL_M],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertLessEqual(diagnostics["gripper_close_final_max_position_error"], 0.001)
+
+    def test_gripper_close_does_not_treat_stalled_fingers_as_closed(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                pass
+
+        class FakeScene:
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                pass
+
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(),
+            robot=FakeRobot(),
+            width=0.0,
+            duration_s=0.2,
+            max_duration_s=0.5,
+            settle_duration_s=0.2,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "max_duration_elapsed")
+        self.assertEqual(diagnostics["gripper_close_steps"], 5)
+        self.assertGreater(diagnostics["gripper_close_final_max_position_error"], 0.001)
+
+    def test_gripper_close_accepts_near_target_contact_stall(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+                self.hand_target = torch.tensor([[0.0]], dtype=torch.float32)
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                if list(joint_ids) == [0]:
+                    self.hand_target = target.detach().cpu().clone()
+
+        class FakeScene:
+            def __init__(self, robot: FakeRobot) -> None:
+                self.robot = robot
+
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                residual = torch.full_like(self.robot.hand_target, 0.0015)
+                direction = torch.sign(self.robot.hand_target - self.robot.data.joint_pos[:, [0]])
+                blocked_target = self.robot.hand_target - direction * residual
+                delta = torch.clamp(blocked_target - self.robot.data.joint_pos[:, [0]], min=-0.01, max=0.01)
+                self.robot.data.joint_pos[:, [0]] = self.robot.data.joint_pos[:, [0]] + delta
+                self.robot.data.joint_pos[:, [1]] = -self.robot.data.joint_pos[:, [0]]
+
+        robot = FakeRobot()
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(robot),
+            robot=robot,
+            width=0.0,
+            duration_s=0.2,
+            max_duration_s=1.0,
+            settle_duration_s=0.2,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "contact_stalled")
+        self.assertGreater(diagnostics["gripper_close_max_motion_since_start_m"], 0.001)
+        self.assertLessEqual(diagnostics["gripper_close_final_max_position_error"], 0.003)
+
+    def test_gripper_close_accepts_physical_contact_stall_before_target(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+                self.hand_target = torch.tensor([[0.0]], dtype=torch.float32)
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                if list(joint_ids) == [0]:
+                    self.hand_target = target.detach().cpu().clone()
+
+        class FakeScene:
+            def __init__(self, robot: FakeRobot) -> None:
+                self.robot = robot
+
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                blocked_q = torch.tensor([[0.010]], dtype=torch.float32)
+                delta = torch.clamp(blocked_q - self.robot.data.joint_pos[:, [0]], min=-0.003, max=0.003)
+                self.robot.data.joint_pos[:, [0]] = self.robot.data.joint_pos[:, [0]] + delta
+                self.robot.data.joint_pos[:, [1]] = -self.robot.data.joint_pos[:, [0]]
+
+        robot = FakeRobot()
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(robot),
+            robot=robot,
+            width=0.048,
+            duration_s=0.2,
+            max_duration_s=1.0,
+            settle_duration_s=0.2,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "contact_stalled")
+        self.assertGreater(diagnostics["gripper_close_max_motion_since_start_m"], 0.001)
+        self.assertGreater(diagnostics["gripper_close_final_max_position_error"], 0.003)
+
+    def test_gripper_close_reports_stationary_max_duration_as_contact_stall(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                pass
+
+        class FakeScene:
+            def __init__(self, robot: FakeRobot) -> None:
+                self.robot = robot
+
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                blocked_q = torch.tensor([[0.013]], dtype=torch.float32)
+                self.robot.data.joint_pos[:, [0]] = blocked_q
+                self.robot.data.joint_pos[:, [1]] = -blocked_q
+
+        robot = FakeRobot()
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(robot),
+            robot=robot,
+            width=0.0,
+            duration_s=0.2,
+            max_duration_s=0.3,
+            settle_duration_s=1.0,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "contact_stalled")
+        self.assertGreater(diagnostics["gripper_close_max_motion_since_start_m"], 0.001)
+        self.assertGreater(diagnostics["gripper_close_final_max_position_error"], 0.003)
+
+    def test_forced_gripper_close_writes_kuka_fingers_to_closed_target(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+                self.position_targets = []
+                self.state_writes = []
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                self.position_targets.append((target.detach().cpu().clone(), list(joint_ids)))
+
+            def write_joint_state_to_sim(self, q, qd, *, joint_ids) -> None:
+                self.state_writes.append((q.detach().cpu().clone(), qd.detach().cpu().clone(), list(joint_ids)))
+                self.data.joint_pos[:, joint_ids] = q.detach().cpu()
+                if list(joint_ids) == [0]:
+                    self.data.joint_pos[:, [1]] = -self.data.joint_pos[:, [0]]
+
+        class FakeScene:
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                pass
+
+        robot = FakeRobot()
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(),
+            robot=robot,
+            width=0.0,
+            duration_s=0.2,
+            max_duration_s=1.0,
+            settle_duration_s=0.2,
+            force_joint_state=True,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_status"], "target_reached")
+        self.assertTrue(diagnostics["gripper_close_forced_joint_state"])
+        self.assertGreaterEqual(len(robot.state_writes), 2)
+        self.assertLessEqual(diagnostics["gripper_close_final_max_position_error"], 0.001)
+        for actual, expected in zip(
+            robot.data.joint_pos[0].tolist(),
+            [KUKA_Y_GRIPPER_TRAVEL_M, -KUKA_Y_GRIPPER_TRAVEL_M],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected, places=6)
+
+    def test_moveit_pick_stops_before_lift_when_gripper_close_fails(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeKukaContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "max_duration_elapsed"},
+            ),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                closed_gripper_width=0.0,
+                pregrasp_only=False,
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "gripper_close_failed")
+        self.assertEqual(len(_FakeExecutor.executions), 2)
+
+    def test_isaac_runner_validates_kuka_contact_against_jaw_width_without_clearance(self) -> None:
+        runner_path = Path(__file__).resolve().parents[1] / "scripts" / "run_fabrica_grasp_in_isaac.py"
+        tree = ast.parse(runner_path.read_text(encoding="utf-8"))
+        execution_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "execute_pick_from_moveit_joint_trajectories"
+        ]
+
+        self.assertEqual(len(execution_calls), 1)
+        selected_width = next(
+            keyword.value for keyword in execution_calls[0].keywords if keyword.arg == "selected_gripper_width_m"
+        )
+        self.assertEqual(ast.unparse(selected_width), "float(selected_world_grasp.jaw_width)")
+
+        contact_diagnostics = {
+            "gripper_close_joint_names": ["left_finger_joint"],
+            "gripper_close_final_joint_positions": [0.010],
+            "gripper_close_final_max_step_delta": 0.0,
+        }
+        clearance_expanded = dict(contact_diagnostics)
+        actual_jaw = dict(contact_diagnostics)
+        self.assertTrue(pick_execution._kuka_contact_stall_matches_grasp_width(clearance_expanded, 0.0593))
+        self.assertFalse(pick_execution._kuka_contact_stall_matches_grasp_width(actual_jaw, 0.0493))
+
+    def test_moveit_pick_accepts_kuka_contact_at_selected_grasp_width(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeKukaContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={
+                    "gripper_close_status": "contact_stalled",
+                    "gripper_close_joint_names": ["left_finger_joint"],
+                    "gripper_close_final_joint_positions": [0.0132],
+                    "gripper_close_final_max_step_delta": 0.0,
+                },
+            ),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                closed_gripper_width=0.0,
+                selected_gripper_width_m=0.0593,
+                pregrasp_only=False,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(_FakeExecutor.executions), 3)
+        self.assertTrue(result.diagnostics["gripper_close_contact_stall_accepted"])
+
+    def test_moveit_pick_rejects_kuka_contact_before_selected_grasp_width(self) -> None:
+        _FakeExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeKukaContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={
+                    "gripper_close_status": "contact_stalled",
+                    "gripper_close_joint_names": ["left_finger_joint"],
+                    "gripper_close_final_joint_positions": [0.001],
+                    "gripper_close_final_max_step_delta": 0.0,
+                },
+            ),
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                closed_gripper_width=0.0,
+                selected_gripper_width_m=0.0593,
+                pregrasp_only=False,
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "gripper_close_failed")
+        self.assertEqual(len(_FakeExecutor.executions), 2)
+        self.assertFalse(result.diagnostics["gripper_close_contact_stall_accepted"])
+
+    def test_moveit_pick_closes_gripper_when_grasp_waypoint_does_not_settle(self) -> None:
+        _GraspSettleFailingExecutor.executions = []
+        trajectories = {
+            "pregrasp": ((0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "grasp": ((0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+            "lift": ((0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),),
+        }
+
+        with (
+            mock.patch.object(pick_execution, "FR3MotionContext", _FakeKukaContext),
+            mock.patch.object(pick_execution, "TrajectoryExecutor", _GraspSettleFailingExecutor),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ) as command_gripper_width,
+        ):
+            result = pick_execution.execute_pick_from_moveit_joint_trajectories(
+                sim=object(),
+                scene=object(),
+                robot=object(),
+                moveit_joint_trajectories=trajectories,
+                open_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                closed_gripper_width=0.048,
+                pregrasp_only=False,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "ok")
+        self.assertFalse(result.diagnostics["grasp_waypoint_settled"])
+        self.assertIn("final waypoint did not settle", result.diagnostics["grasp_waypoint_settle_detail"])
+        command_gripper_width.assert_called_once()
+        self.assertEqual(command_gripper_width.call_args.kwargs["width"], 0.048)
+        expected = [
+            (0.1, KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M),
+            (0.2, KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M),
+            (0.3, 0.048),
+        ]
+        for actual, expected_values in zip(_GraspSettleFailingExecutor.executions, expected, strict=True):
+            self.assertAlmostEqual(actual[0], expected_values[0])
+            self.assertAlmostEqual(actual[1], expected_values[1])
 
     def test_moveit_pick_validates_object_lift_when_asset_is_available(self) -> None:
         _FakeExecutor.executions = []
@@ -125,7 +812,11 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         with (
             mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
             mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
-            mock.patch.object(pick_execution, "_command_gripper_width"),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ),
             mock.patch.object(pick_execution, "_object_root_z", side_effect=(0.02, 0.08)),
         ):
             result = pick_execution.execute_pick_from_moveit_joint_trajectories(
@@ -157,7 +848,11 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         with (
             mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
             mock.patch.object(pick_execution, "TrajectoryExecutor", _FakeExecutor),
-            mock.patch.object(pick_execution, "_command_gripper_width"),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ),
             mock.patch.object(pick_execution, "_object_root_z", side_effect=(0.02, 0.021)),
         ):
             result = pick_execution.execute_pick_from_moveit_joint_trajectories(
@@ -197,7 +892,11 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         with (
             mock.patch.object(pick_execution, "FR3MotionContext", _FakeContext),
             mock.patch.object(pick_execution, "TrajectoryExecutor", _PhaseCallbackExecutor),
-            mock.patch.object(pick_execution, "_command_gripper_width"),
+            mock.patch.object(
+                pick_execution,
+                "_command_gripper_width",
+                return_value={"gripper_close_status": "target_reached"},
+            ),
             mock.patch.object(pick_execution, "_object_root_z", side_effect=object_root_z),
         ):
             result = pick_execution.execute_pick_from_moveit_joint_trajectories(

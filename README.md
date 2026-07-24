@@ -22,7 +22,9 @@ Default configs:
 
 `sim` and `pitl` both run stage 1, write stage-1 artifacts, run stage 2, write stage-2 artifacts, then execute from the stage-2 bundle with whichever simulation backends are enabled. Use `--backend {config,mujoco,isaac,both,none}` to override the YAML for one run. `real` writes the same stage artifacts and can optionally execute the selected grasp on hardware when `real_execution.enabled: true`.
 
-For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugFrame` subscriber then treats the selected `pose_item.pose_base` as the world pose of that centroid-centered local frame.
+The default `sim` config reproduces corrected KUKA execution-benchmark run 3: `plumbers_block/0` at stable `orientation_002`, world pose `[0.5, 0.0, 0.04]` with quaternion `[-0.7071067811865475, 0.0, 0.0, 0.7071067811865476]`. It regenerates benchmark-equivalent candidates, dynamically selects the highest-scoring stage-2 grasp, and opens the Isaac GUI. Start `./start_lbr_moveit.sh` in another terminal before running `./run_pipeline.sh --mode sim`; pass `--headless` only when the GUI is not wanted.
+
+For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugPoseItem` subscriber then treats `pose_base` as the world pose of that centroid-centered local frame when its Fabrica assembly name and part id match the requested object.
 
 ## Grasp Generation Benchmark
 
@@ -46,6 +48,31 @@ python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam -
 python scripts/run_grasp_execution_benchmark.py --backend mujoco --record-video all --limit-attempts 10
 ```
 
+For the KUKA iiwa7 Isaac path, start the LBR mock state/controller stack and namespaced MoveIt planning server in one terminal:
+
+```bash
+./start_lbr_moveit.sh
+```
+
+The helper launches `robot_state_publisher`, mock `ros2_control`, and MoveGroup together. They all receive a repo-local MoveIt description derived from the same authoritative URDF as the Isaac USD, so MoveIt plans to `gripper_tcp` without the former target-Y reflection or 35 mm TCP compensation.
+
+Then execute the highest-scored direct grasp for every `plumbers_block` orientation that has a stage-2 feasible grasp:
+
+```bash
+export ROS_LOG_DIR=/tmp/ros-log
+source /opt/ros/humble/setup.bash
+source /home/pdz/lbr-stack/install/setup.bash
+source ros2_ws/install/setup.bash
+python3 scripts/run_grasp_execution_benchmark.py \
+  --backend isaac \
+  --assembly plumbers_block \
+  --max-grasps-per-orientation 1 \
+  --no-resume \
+  --output-dir artifacts/grasp_execution_benchmark_kuka_plumbers_block_corrected
+```
+
+The KUKA conversion currently applies only to the benchmark's `isaac` block. Do not use `--backend mujoco` or `--backend both` for this run. Omit `--max-grasps-per-orientation 1` only when intentionally running every direct feasible grasp; the current `plumbers_block` generation artifacts contain thousands of such candidates.
+
 The default config is `configs/grasp_execution_benchmark.yaml`; outputs go to `artifacts/grasp_execution_benchmark/` with resumable `attempts.jsonl`, `results.json`, `summary.csv`, `index.html`, per-attempt `attempt.json`, logs, and browser-playable `attempt.webm` when video recording is enabled. The benchmark consumes the generation benchmark's stage-2 bundles and runs direct stage-2 feasible grasps in descending score order; orientations with no stage-2 feasible grasp are skipped rather than converted into regrasp attempts. By default, execution attempts keep each stage-2 bundle's saved stable orientation and Z height but shift object XY to the normal robot workspace at `[0.5, 0.0]`; pass `--placement-xy-world x,y` to choose another table location or `--use-bundle-placement` to use the generation bundle pose verbatim.
 
 ## ROS2 Workspace
@@ -57,7 +84,7 @@ The repo now contains a dedicated ROS2 workspace for hardware-facing integration
 
 This keeps the real-robot entrypoints and ROS packaging under `colcon`, while the rest of the project stays a normal Python repo.
 
-Before building the overlay, fetch the pinned ROS2 source dependency used by `pitl` and `real` mode DebugFrame intake:
+Before building the overlay, fetch the pinned ROS2 source dependency used by `pitl` and `real` mode `DebugPoseItem` intake:
 
 ```bash
 bash scripts/download_ros2_dependencies.sh
@@ -171,7 +198,7 @@ This does two things:
 - sparse-clones the required MuJoCo Menagerie assets under `.cache/robot_descriptions/mujoco_menagerie`
 - builds `.cache/generated_mujoco_models/fr3_with_panda_hand.xml`
 
-Bootstrap the pinned ROS2 message dependency used by `pitl` / `real` DebugFrame intake:
+Bootstrap the pinned ROS2 message dependency used by `pitl` / `real` `DebugPoseItem` intake:
 
 ```bash
 bash scripts/download_ros2_dependencies.sh
@@ -185,6 +212,15 @@ Override `FP_DEBUG_MSGS_REMOTE` and `FP_DEBUG_MSGS_REF` if you need to bootstrap
 
 The pipeline expects the vendored Franka hand collision mesh at:
 - `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`
+
+The KUKA iiwa7 Y-gripper configs use the local gripper meshes and generated robot USD/URDF:
+- `assets/urdf/kuka_iiwa7_y_gripper/meshes/{hand.STL,left_finger.STL,right_finger.STL}`
+- `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`
+- `assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda`
+
+The URDF above is the KUKA kinematic source of truth. Its calibrated `gripper_tcp` is `0.1813 m` along local Z from `lbr_link_7`: `0.0308 m` from link 7 to the gripper base plus `0.1505 m` from the gripper base to the TCP. `python3 scripts/build_kuka_moveit_description.py` regenerates the repo-local MoveIt/ros2_control xacro while retaining the LBR hardware joint and link names required by the controller stack. The checked-in Isaac USD and the MoveIt description are covered by an FK-equivalence regression test.
+
+For `gripper_collision_model: kuka_y_gripper`, saved bundles identify `robot_model: kuka_iiwa7`, `gripper_model: kuka_y_gripper`, and `tcp_link: gripper_tcp`.
 
 ### Copying Local State To A New Worktree
 
@@ -241,6 +277,7 @@ Real hardware execution config:
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
 - `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
+- `stage1_pose_upright_axis_enabled` adds a live-pose-derived world-upright roll sample during stage 1. Stage-1 caching stores the pose-independent base grasps and augments cache hits with only the missing per-run upright roll variants, so real/PITL pose jitter does not force a full regeneration.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
@@ -295,12 +332,145 @@ Run MuJoCo sim with cuMotion-backed MoveIt planning:
 ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_cumotion.yaml --backend mujoco --headless
 ```
 
-For Isaac execution, use the Isaac-only config or set `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned Franka gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
+The default sim config uses Isaac execution; other configs can opt in with `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
+
+For the KUKA iiwa7 Y-gripper path, use the default sim config, `configs/grasp_pipeline_sim_isaac.yaml`, `configs/grasp_pipeline_gazebo_lbr_iiwa7.yaml`, or `configs/grasp_pipeline_real_lbr_iiwa7.yaml`. These configs use `gripper_collision_model: kuka_y_gripper`; the grasp-generation benchmark config uses the same gripper model and a 3x3 contact-offset grid with max lateral offset `0.002916666666666667 m` and max approach offset `0.0030833333333333333 m`.
+
+### KUKA iiwa7 Real Hardware Runbook
+
+This runbook uses the working three-host network layout:
+
+- `192.170.20.1`: pipeline, LBR ROS2 control, MoveIt, and RViz computer
+- `192.170.20.2`: KUKA controller / FRI peer
+- `192.170.20.3`: gripper computer
+
+All ROS2 processes on `.1` and `.3` must start with the same `ROS_DOMAIN_ID`, non-localhost discovery, and compatible DDS configuration. Environment changes do not affect processes that are already running; restart a process after changing its ROS environment.
+
+On the pipeline computer, source the repository helper in every new ROS2 terminal:
+
+```bash
+cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
+source ./setup_ros2_hardware_env.sh
+```
+
+It sources ROS Humble, `/home/pdz/lbr-stack`, and the repository overlay, then selects domain `0`, network discovery, and Fast DDS. It also sets `GRASP_KEEP_ROS_DISCOVERY_ENV=1` so `run_pipeline.sh` preserves this hardware network configuration.
+
+Before launching ROS, start the FRI client application from the KUKA SmartPAD with the configured client IP and a 10 ms send period. Use position control or joint impedance with client command mode `POSITION`. Place the real arm in a collision-free starting configuration; real execution plans from the current `/lbr/joint_states` and does not reset the physical robot to the Isaac ready pose.
+
+Terminal 1 on `.1`: start the physical robot, trajectory controller, robot-state publisher, and namespaced MoveIt server from the aligned description.
+
+```bash
+cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
+source ./setup_ros2_hardware_env.sh
+./start_lbr_moveit.sh --mode hardware
+```
+
+Terminal 1 on the gripper computer `.3`: start the endpoint gripper controller. Put these exports in its launch wrapper or service environment to avoid repeating them manually.
+
+```bash
+cd /home/s3c/Workspaces
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+export ROS_DOMAIN_ID=0
+export ROS_LOCALHOST_ONLY=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+unset ROS_DISCOVERY_SERVER ROS_STATIC_PEERS ROS_AUTOMATIC_DISCOVERY_RANGE
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
+
+ros2 launch servo_gripper gripper.launch.py
+```
+
+Terminal 3 on `.1`: for the fixed corrected-benchmark run-3 test pose, publish the expected Fabrica `plumbers_block/0` perception pose. The temporary left-robot correction in `configs/grasp_pipeline_real_lbr_iiwa7.yaml` subtracts `0.840 m` from the received world Y coordinate before planning, so the example perception Y of `0.840 m` becomes a MoveIt target Y of `0.0 m`.
+
+```bash
+cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
+source ./setup_ros2_hardware_env.sh
+ros2 topic pub -r 2 \
+  /perception/fp/pose_base/fused/assembly \
+  fp_debug_msgs/msg/DebugPoseItem \
+  "{assembly_name: plumbers_block, part_id: 0, mode: config_test, score: 1.0, pose_base: {pose: {position: {x: 0.5, y: 0.84, z: 0.04}, orientation: {x: -0.7071067811865475, y: 0.0, z: 0.0, w: 0.7071067811865476}}}}"
+```
+
+Terminal 4 on `.1`: verify discovery before enabling hardware execution.
+
+```bash
+cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
+source ./setup_ros2_hardware_env.sh
+
+ros2 service type /gripper_controller/open
+ros2 service type /gripper_controller/close
+ros2 service type /gripper_controller/stop
+ros2 service list | grep -E '^/lbr/(compute_ik|plan_kinematic_path)$'
+ros2 action list | grep '^/lbr/execute_trajectory$'
+ros2 topic list | grep -E '^/(lbr/joint_states|perception/fp/pose_base/fused/assembly)$'
+```
+
+All three gripper type commands must print `std_srvs/srv/Trigger`, and every `grep` must return its requested interface. Then run:
+
+```bash
+./run_pipeline.sh \
+  --mode real \
+  --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+```
+
+Review the printed grasp target and type `yes` only when the workspace is clear. The current KUKA config opens the gripper, moves through pregrasp and grasp, closes, lifts `0.08 m`, and stops while holding the object. It retains confirmation and `0.05` velocity/acceleration scaling.
+
+The ROS2 package also exposes `fp_debug_msgs/action/GraspAssembly`, whose success
+contract includes transporting the insertion part to its pre-assembly pose. The
+current real executor only implements pickup and lift, so the action server is
+deliberately blocked before any hardware subprocess or motion starts. You can
+start it for ROS graph and client-integration checks:
+
+```bash
+source ./setup_ros2_hardware_env.sh
+ros2 run robot_integration_ros grasp_assembly_action_server \
+  --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+```
+
+Then send a current single-robot goal:
+
+```bash
+ros2 action send_goal --feedback \
+  /grasp_assembly \
+  fp_debug_msgs/action/GraspAssembly \
+  "{assembly_name: plumbers_block, base_part_id: 4, insertion_part_id: 0, holder_robot: right, inserter_robot: left}"
+```
+
+For now, goal validation uses only `assembly_name`, `insertion_part_id`, and
+`inserter_robot`, and requires `inserter_robot: left`; `base_part_id` and
+`holder_robot` remain reserved for the future assembly flow. Without `--execute`,
+valid goals abort with `EXECUTION_DISABLED`. Even with `--execute`, they abort
+with `TRANSPORT_UNSUPPORTED` before pose intake, planning, gripper commands, or
+arm motion. This prevents a pickup-only lift from being reported as successful
+completion of the stronger action contract. Use the direct real pipeline command
+above when intentionally testing pickup and lift before pre-assembly transport
+is implemented.
+
+Manual gripper commands from any correctly configured ROS2 terminal:
+
+```bash
+# Release the object.
+ros2 service call /gripper_controller/open std_srvs/srv/Trigger "{}"
+
+# Stop the gripper motor immediately.
+ros2 service call /gripper_controller/stop std_srvs/srv/Trigger "{}"
+```
+
+Stop the pose publisher after the pipeline reports that it received the pose. Shut down the pipeline first, then MoveIt, the hardware launch, and finally the SmartPAD FRI application.
+
+#### Why The ROS Environment Must Match
+
+ROS2 domain and RMW selection happen when each process starts. `ROS_DOMAIN_ID` separates independent DDS graphs, so domain `42` cannot discover domain `0`. `ROS_LOCALHOST_ONLY=1` prevents discovery across `.1` and `.3`. DDS discovery also has to select the correct network interface on a multihomed robot computer.
+
+Using the same middleware implementation is not a fundamental ROS2 requirement: Fast DDS and Cyclone DDS both implement DDS/RTPS and can interoperate in principle. In this setup, however, the gripper was running Cyclone DDS while the pipeline computer had only the Fast DDS RMW installed, and remote service discovery did not succeed reliably. Domain and RMW settings were corrected together, so the session did not prove that the vendor mismatch alone caused the failure. Standardizing both hosts on the already-installed `rmw_fastrtps_cpp` removes that variable and its vendor-specific discovery and interface differences.
+
+The alternatives are to install Cyclone DDS RMW on `.1` and run every process with Cyclone DDS, or deliberately configure mixed-vendor discovery, multicast routing, interfaces, and firewall rules. A Fast DDS discovery server can replace multicast when the network blocks it, but every participant still needs a consistent discovery-server configuration. For this two-computer ROS graph, one shared environment in launch wrappers or system services is simpler than exporting variables interactively and does not require changing middleware on every run.
 
 Run Isaac-backed sim locally:
 
 ```bash
-./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_isaac.yaml --headless
+./run_pipeline.sh --mode sim
 ```
 
 If you want the MuJoCo backend instead, bootstrap its generated robot XML first:
@@ -337,4 +507,4 @@ Fabrica OBJ assets live under `assets/obj/fabrica/`.
 
 - The default Fabrica OBJ scale in the pipeline configs is `0.01`.
 - The MuJoCo runner uses the exact `execution_world_pose` stored in the stage-2 bundle unless you override placement explicitly.
-- `pitl` and `real` use one ROS2 subscriber: set `ros2.debug_frame_topic` and `ros2.object_id` in the pipeline YAML before running those modes.
+- `pitl` and `real` use one ROS2 subscriber: set `ros2.pose_base_topic`, `ros2.assembly_name`, and numeric `ros2.part_id` in the pipeline YAML before running those modes. The configured topic must publish `fp_debug_msgs/msg/DebugPoseItem`. Optional `ros2.position_offset_m: [x, y, z]` adds a fixed world-axis translation to the received pose before planning; the left KUKA real config currently uses `[0.0, -0.840, 0.0]`.
