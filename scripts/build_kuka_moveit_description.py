@@ -9,21 +9,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_URDF = (
-    REPO_ROOT
-    / "assets"
-    / "urdf"
-    / "kuka_iiwa7_y_gripper"
-    / "urdf"
-    / "kuka_iiwa7_y_gripper.urdf"
-)
+DEFAULT_SOURCE_URDF = REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_y_gripper" / "urdf" / "kuka_iiwa7_y_gripper.urdf"
 DEFAULT_OUTPUT_XACRO = (
-    REPO_ROOT
-    / "ros2_ws"
-    / "src"
-    / "robot_integration_ros"
-    / "urdf"
-    / "iiwa7_y_gripper_moveit.urdf.xacro"
+    REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_y_gripper_moveit.urdf.xacro"
 )
 XACRO_NS = "http://www.ros.org/wiki/xacro"
 PACKAGE_MESH_PREFIX = "package://robot_integration_ros/meshes/"
@@ -79,8 +67,7 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
     arm_joints = [
         joint
         for joint in source_root.findall("joint")
-        if str(joint.get("name", "")).startswith("joint")
-        and str(joint.get("name", ""))[5:].isdigit()
+        if str(joint.get("name", "")).startswith("joint") and str(joint.get("name", ""))[5:].isdigit()
     ]
     if len(arm_joints) != 7:
         raise ValueError(f"Expected 7 arm joints in '{source_urdf}', found {len(arm_joints)}.")
@@ -91,8 +78,7 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
     root = ET.Element("robot", {"name": "iiwa7"})
     root.append(
         ET.Comment(
-            " Generated from assets/urdf/kuka_iiwa7_y_gripper/urdf/"
-            "kuka_iiwa7_y_gripper.urdf; do not hand-edit. "
+            " Generated from assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf; do not hand-edit. "
         )
     )
     ET.SubElement(
@@ -167,7 +153,8 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
 
     ET.indent(root, space="  ")
     output_xacro.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(output_xacro, encoding="utf-8", xml_declaration=True)
+    xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    output_xacro.write_bytes(xml_bytes + b"\n")
     return output_xacro
 
 

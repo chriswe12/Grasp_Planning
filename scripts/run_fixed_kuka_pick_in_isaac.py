@@ -234,9 +234,7 @@ def _moveit_start_joint_positions() -> tuple[float, ...]:
     positions = _parse_csv_floats(args_cli.moveit_start_joint_positions)
     joint_names = _moveit_joint_names()
     if len(positions) != len(joint_names):
-        raise ValueError(
-            f"--moveit-start-joint-positions has {len(positions)} values, expected {len(joint_names)}."
-        )
+        raise ValueError(f"--moveit-start-joint-positions has {len(positions)} values, expected {len(joint_names)}.")
     return positions
 
 
@@ -265,7 +263,9 @@ def _mesh_collision_cfg():
 def _object_mass_properties_cfg():
     if args_cli.object_mass_kg is not None:
         return sim_utils.MassPropertiesCfg(mass=float(args_cli.object_mass_kg))
-    density = DEFAULT_PART_DENSITY_KG_M3 if args_cli.object_density_kg_m3 is None else float(args_cli.object_density_kg_m3)
+    density = (
+        DEFAULT_PART_DENSITY_KG_M3 if args_cli.object_density_kg_m3 is None else float(args_cli.object_density_kg_m3)
+    )
     return sim_utils.MassPropertiesCfg(density=density)
 
 
@@ -483,7 +483,9 @@ def _plan_moveit(world_grasp) -> dict[str, tuple[tuple[float, ...], ...]]:
             rclpy.shutdown()
 
 
-def _load_plan_json(path: Path, *, expected_grasp_id: str) -> tuple[dict[str, object], dict[str, tuple[tuple[float, ...], ...]]]:
+def _load_plan_json(
+    path: Path, *, expected_grasp_id: str
+) -> tuple[dict[str, object], dict[str, tuple[tuple[float, ...], ...]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     plan_grasp_id = str(payload.get("selected_grasp_id", ""))
     if plan_grasp_id and plan_grasp_id != expected_grasp_id:
@@ -497,7 +499,9 @@ def _load_plan_json(path: Path, *, expected_grasp_id: str) -> tuple[dict[str, ob
         raw_waypoints = raw_trajectories.get(label)
         if not isinstance(raw_waypoints, list):
             raise ValueError(f"MoveIt plan JSON '{path}' is missing trajectory '{label}'.")
-        trajectories[label] = tuple(_moveit_waypoint_to_isaac(tuple(float(v) for v in waypoint)) for waypoint in raw_waypoints)
+        trajectories[label] = tuple(
+            _moveit_waypoint_to_isaac(tuple(float(v) for v in waypoint)) for waypoint in raw_waypoints
+        )
     return payload, trajectories
 
 
@@ -561,10 +565,14 @@ def _plan_validation_error(payload: dict[str, object], world_grasp) -> str | Non
     return None
 
 
-def _resolve_moveit_trajectories(world_grasp) -> tuple[str, dict[str, object] | None, dict[str, tuple[tuple[float, ...], ...]]]:
+def _resolve_moveit_trajectories(
+    world_grasp,
+) -> tuple[str, dict[str, object] | None, dict[str, tuple[tuple[float, ...], ...]]]:
     plan_json = args_cli.moveit_plan_json
     if not args_cli.force_replan and plan_json is not None and plan_json.expanduser().is_file():
-        payload, trajectories = _load_plan_json(plan_json.expanduser().resolve(), expected_grasp_id=world_grasp.grasp_id)
+        payload, trajectories = _load_plan_json(
+            plan_json.expanduser().resolve(), expected_grasp_id=world_grasp.grasp_id
+        )
         validation_error = _plan_validation_error(payload, world_grasp)
         if validation_error is not None:
             message = (
@@ -626,7 +634,9 @@ def _run_fixed_sequence(*, sim, scene, world_grasp, moveit_joint_trajectories) -
         object_z = _object_root_z(part)
         if object_z is None:
             return
-        observed_lift_object_max_z = object_z if observed_lift_object_max_z is None else max(observed_lift_object_max_z, object_z)
+        observed_lift_object_max_z = (
+            object_z if observed_lift_object_max_z is None else max(observed_lift_object_max_z, object_z)
+        )
 
     print("[INFO]: Warming up fixed scene.", flush=True)
     for _ in range(max(1, int(0.1 / physics_dt))):
@@ -698,7 +708,10 @@ def _run_fixed_sequence(*, sim, scene, world_grasp, moveit_joint_trajectories) -
             )
         )
 
-    print(f"[INFO]: Closing gripper at fixed grasp before lift, close_width={float(args_cli.close_width):.4f}.", flush=True)
+    print(
+        f"[INFO]: Closing gripper at fixed grasp before lift, close_width={float(args_cli.close_width):.4f}.",
+        flush=True,
+    )
     close_diagnostics = _command_gripper_width(
         sim=sim,
         scene=scene,
@@ -709,7 +722,9 @@ def _run_fixed_sequence(*, sim, scene, world_grasp, moveit_joint_trajectories) -
         hold_context=context,
         hold_arm_waypoint=grasp_waypoint,
         settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S,
-        min_contact_motion_m=max(0.001, min(0.003, 0.125 * abs(float(args_cli.open_width) - float(args_cli.close_width)))),
+        min_contact_motion_m=max(
+            0.001, min(0.003, 0.125 * abs(float(args_cli.open_width) - float(args_cli.close_width)))
+        ),
         force_joint_state=False,
         step_callback=_step_callback,
     )
@@ -774,7 +789,9 @@ def _run_fixed_sequence(*, sim, scene, world_grasp, moveit_joint_trajectories) -
     return PickExecutionResult(True, "ok", "Fixed KUKA pick sequence completed.", diagnostics=diagnostics)
 
 
-def _write_artifact(*, bundle, part_usd_path: str, object_pose_world, world_grasp, plan_source: str, plan_payload, result) -> None:
+def _write_artifact(
+    *, bundle, part_usd_path: str, object_pose_world, world_grasp, plan_source: str, plan_payload, result
+) -> None:
     global ATTEMPT_ARTIFACT_WRITTEN
     artifact = {
         "script": "scripts/run_fixed_kuka_pick_in_isaac.py",
@@ -895,7 +912,9 @@ if __name__ == "__main__":
             )
             args_cli.attempt_artifact.parent.mkdir(parents=True, exist_ok=True)
             args_cli.attempt_artifact.write_text(
-                json.dumps({"script": "scripts/run_fixed_kuka_pick_in_isaac.py", "execution": failure.__dict__}, indent=2),
+                json.dumps(
+                    {"script": "scripts/run_fixed_kuka_pick_in_isaac.py", "execution": failure.__dict__}, indent=2
+                ),
                 encoding="utf-8",
             )
         os._exit(1)

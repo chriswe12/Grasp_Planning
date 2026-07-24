@@ -12,12 +12,11 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .collision import (
-    BoxCollisionPrimitive,
-    FrankaHandFingerCollisionModel,
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
-    GripperCollisionModel,
+    BoxCollisionPrimitive,
     GraspCollisionEvaluator,
+    GripperCollisionModel,
     MeshCollisionPrimitive,
     _load_kuka_y_gripper_mesh,
     _place_kuka_y_left_finger_for_grasp,
@@ -436,10 +435,14 @@ def _append_mesh_payload(
     faces_out: list[list[int]],
 ) -> None:
     face_offset = len(vertices_out)
-    vertices_obj = np.asarray(origin_obj, dtype=float)[None, :] + np.asarray(vertices_local, dtype=float) @ np.asarray(
-        rotmat,
-        dtype=float,
-    ).T
+    vertices_obj = (
+        np.asarray(origin_obj, dtype=float)[None, :]
+        + np.asarray(vertices_local, dtype=float)
+        @ np.asarray(
+            rotmat,
+            dtype=float,
+        ).T
+    )
     vertices_out.extend(fmt_vec(vertex.tolist()) for vertex in vertices_obj)
     faces_out.extend([int(face_offset + int(index)) for index in face] for face in np.asarray(faces, dtype=np.int64))
 
@@ -1280,10 +1283,6 @@ def filter_grasps_against_assembly(
     collision_models: dict[tuple[float, float], GripperCollisionModel] = {}
     kept: list[SavedGraspCandidate] = []
     for candidate in candidates:
-        object_candidate = candidate.to_object_frame_candidate()
-        grasp_rotmat_obj = quat_to_rotmat_xyzw(object_candidate.grasp_orientation_xyzw_obj)
-        contact_point_a_obj = np.asarray(object_candidate.contact_point_a_obj, dtype=float)
-        contact_point_b_obj = np.asarray(object_candidate.contact_point_b_obj, dtype=float)
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
             candidate,
             contact_lateral_offsets_m=contact_lateral_offsets_m,
@@ -1336,7 +1335,6 @@ def evaluate_grasps_against_ground(
     ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
     evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
     for candidate in candidates:
-        object_candidate = candidate.to_object_frame_candidate()
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(

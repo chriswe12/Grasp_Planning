@@ -287,9 +287,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         pipeline_payload = run_grasp_pipeline._load_yaml(
             run_grasp_pipeline.REPO_ROOT / "configs" / "grasp_pipeline_sim.yaml"
         )
-        benchmark_payload = run_grasp_execution_benchmark._load_yaml(
-            run_grasp_execution_benchmark.DEFAULT_CONFIG_PATH
-        )
+        benchmark_payload = run_grasp_execution_benchmark._load_yaml(run_grasp_execution_benchmark.DEFAULT_CONFIG_PATH)
 
         self.assertEqual(
             pipeline_payload["geometry"],
@@ -380,9 +378,7 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
     def test_execution_benchmark_moveit_preplan_uses_tcp_offset(self) -> None:
         self.assertEqual(
-            run_grasp_execution_benchmark._tcp_to_grasp_offset_from_cfg(
-                {"tcp_to_grasp_offset": [0.0, 0.0, 0.035]}
-            ),
+            run_grasp_execution_benchmark._tcp_to_grasp_offset_from_cfg({"tcp_to_grasp_offset": [0.0, 0.0, 0.035]}),
             (0.0, 0.0, 0.035),
         )
 

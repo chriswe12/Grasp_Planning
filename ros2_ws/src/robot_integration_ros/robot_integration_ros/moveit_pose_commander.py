@@ -269,7 +269,10 @@ class MoveItPoseCommander(Node):
         ):
             return False, "MoveIt planning-scene message types are unavailable."
         if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
-            return False, f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable."
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
 
         try:
             collision_objects = [

@@ -442,8 +442,7 @@ def _moveit_start_joint_positions_from_cfg(cfg: dict[str, object]) -> tuple[floa
         start_positions = _optional_float_tuple(cfg.get("moveit_start_joint_positions"))
     if len(start_positions) != len(joint_names):
         raise ValueError(
-            "moveit_start_joint_positions must match the configured MoveIt joint-name count "
-            f"({len(joint_names)})."
+            f"moveit_start_joint_positions must match the configured MoveIt joint-name count ({len(joint_names)})."
         )
     return start_positions
 
@@ -749,9 +748,7 @@ def _isaac_command(
     _append_optional(command, "--object-density-kg-m3", cfg.get("object_density_kg_m3"))
     _append_optional(command, "--success-height-margin-m", cfg.get("success_height_margin_m"))
     if cfg.get("tcp_to_grasp_offset") not in ("", None):
-        command.extend(
-            ["--tcp-to-grasp-offset", *(str(value) for value in _tcp_to_grasp_offset_from_cfg(cfg))]
-        )
+        command.extend(["--tcp-to-grasp-offset", *(str(value) for value in _tcp_to_grasp_offset_from_cfg(cfg))])
     command.extend(
         [
             "--moveit-frame-id",

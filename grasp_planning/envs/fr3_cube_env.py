@@ -124,7 +124,11 @@ class FR3CubeSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=DEFAULT_ROBOT_CFG.base_pos,
             rot=DEFAULT_ROBOT_CFG.base_rot,
-            joint_pos={**DEFAULT_ARM_START_JOINT_POS, **DEFAULT_KUKA_ARM_START_JOINT_POS, **DEFAULT_HAND_START_JOINT_POS},
+            joint_pos={
+                **DEFAULT_ARM_START_JOINT_POS,
+                **DEFAULT_KUKA_ARM_START_JOINT_POS,
+                **DEFAULT_HAND_START_JOINT_POS,
+            },
         ),
         actuators={
             "panda_shoulder": ImplicitActuatorCfg(

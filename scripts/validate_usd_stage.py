@@ -8,7 +8,6 @@ from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
-
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("usd_path", type=Path)
 parser.add_argument("--prim", action="append", default=[])

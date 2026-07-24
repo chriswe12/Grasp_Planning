@@ -514,7 +514,9 @@ def execute_real_grasp_from_bundle(*, input_json: Path, config) -> RealExecution
                 )
                 return result
 
-        if not confirmation_done and not _confirm_or_abort(input_json=input_json, config=config, world_grasp=world_grasp):
+        if not confirmation_done and not _confirm_or_abort(
+            input_json=input_json, config=config, world_grasp=world_grasp
+        ):
             result = RealExecutionResult(
                 success=False,
                 status="aborted",

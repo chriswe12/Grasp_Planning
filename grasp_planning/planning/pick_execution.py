@@ -54,9 +54,7 @@ def drive_robot_to_start_pose(
     arm_targets = torch.tensor(
         [[arm_start_positions[name] for name in arm_joint_names]], dtype=torch.float32, device=robot.device
     )
-    hand_joint_names = tuple(
-        name for name in robot.joint_names if is_gripper_command_joint_name(name)
-    )
+    hand_joint_names = tuple(name for name in robot.joint_names if is_gripper_command_joint_name(name))
     physics_dt = sim.get_physics_dt()
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
 
@@ -99,9 +97,7 @@ def _command_gripper_width(
     step_callback: StepCallback | None = None,
 ) -> dict[str, object]:
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
-    hand_joint_names = tuple(
-        name for name in robot.joint_names if is_gripper_command_joint_name(name)
-    )
+    hand_joint_names = tuple(name for name in robot.joint_names if is_gripper_command_joint_name(name))
     if not hand_joint_names:
         return {"gripper_close_status": "no_hand_joints", "gripper_close_steps": 0}
     hand_joint_ids = [joint_name_to_idx[name] for name in hand_joint_names]
@@ -543,8 +539,7 @@ def execute_pick_from_moveit_joint_trajectories(
         context.reset_joint_state(first_pregrasp_waypoint, steps=5)
         reset_start_error = float(torch.max(torch.abs(context.get_arm_q() - first_pregrasp_waypoint)).item())
         print(
-            "[INFO]: Isaac arm state after reset "
-            f"max_joint_error={reset_start_error:.4f}.",
+            f"[INFO]: Isaac arm state after reset max_joint_error={reset_start_error:.4f}.",
             flush=True,
         )
         moveit_diagnostics["initial_start_error_rad"] = initial_start_error
@@ -615,7 +610,9 @@ def execute_pick_from_moveit_joint_trajectories(
         hold_context=context,
         hold_arm_waypoint=grasp_waypoint,
         settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S,
-        min_contact_motion_m=max(0.001, min(0.003, 0.125 * abs(float(open_gripper_width) - float(closed_gripper_width)))),
+        min_contact_motion_m=max(
+            0.001, min(0.003, 0.125 * abs(float(open_gripper_width) - float(closed_gripper_width)))
+        ),
         force_joint_state=False,
         step_callback=_step_callback,
     )

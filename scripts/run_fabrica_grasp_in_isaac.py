@@ -359,8 +359,7 @@ def _moveit_target_position_signs_from_args() -> tuple[float, float, float]:
     signs = _parse_float_tuple(str(args_cli.moveit_target_position_signs))
     if len(signs) != 3:
         raise ValueError(
-            "--moveit-target-position-signs must contain exactly 3 comma-separated values "
-            f"for x,y,z, got {len(signs)}."
+            f"--moveit-target-position-signs must contain exactly 3 comma-separated values for x,y,z, got {len(signs)}."
         )
     return (float(signs[0]), float(signs[1]), float(signs[2]))
 
@@ -384,8 +383,7 @@ def _moveit_start_joint_positions_from_args() -> tuple[float, ...] | None:
     joint_names = _moveit_joint_names_from_args()
     if len(positions) != len(joint_names):
         raise ValueError(
-            "--moveit-start-joint-positions must match the configured MoveIt joint-name count "
-            f"({len(joint_names)})."
+            f"--moveit-start-joint-positions must match the configured MoveIt joint-name count ({len(joint_names)})."
         )
     return positions
 
@@ -409,9 +407,7 @@ def _write_kuka_configured_start_state(scene) -> None:
     robot.set_joint_position_target(joint_pos)
     scene.write_data_to_sim()
     configured = {
-        name: float(joint_pos[0, index])
-        for index, name in enumerate(robot.joint_names)
-        if name.startswith("joint")
+        name: float(joint_pos[0, index]) for index, name in enumerate(robot.joint_names) if name.startswith("joint")
     }
     print(f"[INFO]: Applied configured KUKA articulation start state: {configured}", flush=True)
 

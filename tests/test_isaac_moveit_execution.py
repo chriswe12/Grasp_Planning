@@ -233,9 +233,9 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertEqual(hold_arm_waypoint.call_args.kwargs["duration_s"], 1.75)
 
     def test_fixed_kuka_pick_keeps_postclose_hold_out_of_close_settle_threshold(self) -> None:
-        script_text = (
-            Path(__file__).resolve().parents[1] / "scripts" / "run_fixed_kuka_pick_in_isaac.py"
-        ).read_text(encoding="utf-8")
+        script_text = (Path(__file__).resolve().parents[1] / "scripts" / "run_fixed_kuka_pick_in_isaac.py").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S", script_text)
         self.assertNotIn("settle_duration_s=max(0.5, float(args_cli.postclose_hold_s))", script_text)
@@ -669,9 +669,7 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
 
         self.assertEqual(len(execution_calls), 1)
         selected_width = next(
-            keyword.value
-            for keyword in execution_calls[0].keywords
-            if keyword.arg == "selected_gripper_width_m"
+            keyword.value for keyword in execution_calls[0].keywords if keyword.arg == "selected_gripper_width_m"
         )
         self.assertEqual(ast.unparse(selected_width), "float(selected_world_grasp.jaw_width)")
 

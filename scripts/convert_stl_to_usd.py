@@ -37,7 +37,6 @@ import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
 
-
 ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
 
 

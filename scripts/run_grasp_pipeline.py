@@ -357,7 +357,9 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
         moveit_grasp_settle_time_s=float(raw.get("moveit_grasp_settle_time_s", 0.0)),
-        gripper_close_duration_s=float(raw.get("gripper_close_duration_s", IsaacPipelineConfig.gripper_close_duration_s)),
+        gripper_close_duration_s=float(
+            raw.get("gripper_close_duration_s", IsaacPipelineConfig.gripper_close_duration_s)
+        ),
         gripper_close_max_duration_s=float(
             raw.get("gripper_close_max_duration_s", IsaacPipelineConfig.gripper_close_max_duration_s)
         ),
@@ -638,8 +640,7 @@ def _isaac_moveit_start_joint_positions(isaac_execution: IsaacPipelineConfig) ->
         start_positions = DEFAULT_ARM_START_JOINT_VALUES
     if len(start_positions) != len(joint_names):
         raise ValueError(
-            "Isaac MoveIt start-joint positions must match the MoveIt joint-name count "
-            f"({len(joint_names)})."
+            f"Isaac MoveIt start-joint positions must match the MoveIt joint-name count ({len(joint_names)})."
         )
     return start_positions
 
@@ -736,8 +737,7 @@ def _maybe_write_isaac_moveit_plan(
     output_path = _isaac_moveit_plan_artifact_path(isaac_execution)
     candidates = _ordered_isaac_moveit_grasp_candidates(stage2, isaac_execution)
     print(
-        f"[PIPELINE] Planning Isaac execution with MoveIt before launching Isaac "
-        f"(candidate_count={len(candidates)}).",
+        f"[PIPELINE] Planning Isaac execution with MoveIt before launching Isaac (candidate_count={len(candidates)}).",
         flush=True,
     )
     planning_errors: list[str] = []

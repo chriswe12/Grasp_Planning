@@ -9,7 +9,6 @@ from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
 if str(REPO_ROOT) not in sys.path:
@@ -31,9 +30,7 @@ parser.add_argument(
 parser.add_argument(
     "--show-authored-collision-input",
     action="store_true",
-    help=(
-        "Show the active USD PhysicsCollisionAPI mesh input in addition to the planner/FCL hull overlay."
-    ),
+    help=("Show the active USD PhysicsCollisionAPI mesh input in addition to the planner/FCL hull overlay."),
 )
 parser.add_argument(
     "--keep-gripper-visuals",
@@ -63,7 +60,6 @@ import omni.usd  # noqa: E402
 from pxr import Gf, Sdf, UsdGeom  # noqa: E402
 
 from grasp_planning.grasping.collision import _load_kuka_y_gripper_mesh  # noqa: E402
-
 
 GRIPPER_PATH_MARKERS = (
     "/gripper_base_link/",
@@ -111,7 +107,9 @@ def _is_gripper_prim(path: str) -> bool:
     return any(marker in path for marker in GRIPPER_PATH_MARKERS)
 
 
-def _define_mesh(parent_path: str, name: str, vertices: object, faces: object, color: tuple[float, float, float]) -> str:
+def _define_mesh(
+    parent_path: str, name: str, vertices: object, faces: object, color: tuple[float, float, float]
+) -> str:
     path = f"{parent_path}/{name}"
     mesh = UsdGeom.Mesh.Define(omni.usd.get_context().get_stage(), path)
     mesh.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)

@@ -154,9 +154,7 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         self.assertAlmostEqual(generator._config.detailed_finger_contact_gap_m, 0.002)  # type: ignore[attr-defined]
 
     def test_generator_can_select_kuka_y_gripper_collision_model(self) -> None:
-        generator = AntipodalMeshGraspGenerator(
-            AntipodalGraspGeneratorConfig(gripper_collision_model="kuka_y_gripper")
-        )
+        generator = AntipodalMeshGraspGenerator(AntipodalGraspGeneratorConfig(gripper_collision_model="kuka_y_gripper"))
 
         self.assertIsInstance(generator._collision_evaluator._collision_model, KukaYGripperCollisionModel)  # type: ignore[attr-defined]
         self.assertEqual(generator._config.gripper_collision_model, "kuka_y_gripper")  # type: ignore[attr-defined]
@@ -183,7 +181,10 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
             contact_point_b=np.array([0.0, 0.01, 0.0], dtype=float),
         )
 
-        self.assertEqual([primitive.name for primitive in primitives], ["kuka_y_gripper_base", "kuka_y_left_finger", "kuka_y_right_finger"])
+        self.assertEqual(
+            [primitive.name for primitive in primitives],
+            ["kuka_y_gripper_base", "kuka_y_left_finger", "kuka_y_right_finger"],
+        )
         self.assertAlmostEqual(float(np.max(primitives[1].vertices_obj[:, 1])), -0.012)
         self.assertAlmostEqual(float(np.min(primitives[2].vertices_obj[:, 1])), 0.012)
         self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455)

@@ -26,8 +26,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from grasp_planning.grasping.collision import (  # noqa: E402
-    BoxCollisionPrimitive,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    BoxCollisionPrimitive,
     GraspCollisionEvaluator,
     MeshCollisionPrimitive,
     make_gripper_collision_model,

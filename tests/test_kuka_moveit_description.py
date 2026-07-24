@@ -19,12 +19,7 @@ from scripts.build_kuka_moveit_description import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ISAAC_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
 CHECKED_MOVEIT_XACRO = (
-    REPO_ROOT
-    / "ros2_ws"
-    / "src"
-    / "robot_integration_ros"
-    / "urdf"
-    / "iiwa7_y_gripper_moveit.urdf.xacro"
+    REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_y_gripper_moveit.urdf.xacro"
 )
 KUKA_CONFIGS = (
     "configs/grasp_execution_benchmark.yaml",
@@ -220,4 +215,4 @@ def test_aligned_launch_and_description_are_installed_by_ros_package() -> None:
 def test_start_lbr_moveit_wrapper_exposes_aligned_rviz_flag() -> None:
     wrapper_text = (REPO_ROOT / "start_lbr_moveit.sh").read_text(encoding="utf-8")
     assert "--rviz" in wrapper_text
-    assert 'rviz:=' in wrapper_text
+    assert "rviz:=" in wrapper_text

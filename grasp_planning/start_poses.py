@@ -88,8 +88,7 @@ def kuka_moveit_to_isaac_joint_positions(values: tuple[float, ...]) -> tuple[flo
     if len(values) != len(KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS):
         raise ValueError(f"Expected 7 KUKA joint values, got {len(values)}.")
     return tuple(
-        float(sign) * float(value)
-        for sign, value in zip(KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS, values, strict=True)
+        float(sign) * float(value) for sign, value in zip(KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS, values, strict=True)
     )
 
 

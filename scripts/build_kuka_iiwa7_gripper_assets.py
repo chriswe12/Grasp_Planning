@@ -763,11 +763,15 @@ def _write_materials(handle, indent: str) -> None:
     for name, color in USD_MATERIALS.items():
         handle.write(f'{indent}    def Material "{name}"\n')
         handle.write(f"{indent}    {{\n")
-        handle.write(f"{indent}        token outputs:surface.connect = </{ROBOT_NAME}/Looks/{name}/Shader.outputs:surface>\n")
+        handle.write(
+            f"{indent}        token outputs:surface.connect = </{ROBOT_NAME}/Looks/{name}/Shader.outputs:surface>\n"
+        )
         handle.write(f'{indent}        def Shader "Shader"\n')
         handle.write(f"{indent}        {{\n")
         handle.write(f'{indent}            uniform token info:id = "UsdPreviewSurface"\n')
-        handle.write(f"{indent}            color3f inputs:diffuseColor = ({', '.join(_fmt(value) for value in color)})\n")
+        handle.write(
+            f"{indent}            color3f inputs:diffuseColor = ({', '.join(_fmt(value) for value in color)})\n"
+        )
         handle.write(f"{indent}            float inputs:roughness = 0.55\n")
         handle.write(f"{indent}            float inputs:metallic = 0\n")
         handle.write(f"{indent}            token outputs:surface\n")
@@ -789,13 +793,13 @@ def _write_visual_mesh(handle, spec: MeshSpec, vertices: np.ndarray, faces: np.n
     handle.write(f'{indent}def Mesh "{spec.link_name}_visual_mesh" (\n')
     handle.write(f'{indent}    prepend apiSchemas = ["MaterialBindingAPI"]\n')
     handle.write(f"{indent})\n{indent}{{\n")
-    handle.write(f"{indent}    uniform token subdivisionScheme = \"none\"\n")
+    handle.write(f'{indent}    uniform token subdivisionScheme = "none"\n')
     handle.write(f"{indent}    bool doubleSided = true\n")
     handle.write(f"{indent}    rel material:binding = </{ROBOT_NAME}/Looks/{material_name}> (\n")
     handle.write(f'{indent}        bindMaterialAs = "strongerThanDescendants"\n')
     handle.write(f"{indent}    )\n")
     handle.write(f"{indent}    color3f[] primvars:displayColor = [({color})] (\n")
-    handle.write(f"{indent}        interpolation = \"constant\"\n")
+    handle.write(f'{indent}        interpolation = "constant"\n')
     handle.write(f"{indent}    )\n")
     _write_mesh_geometry(handle, vertices, faces, f"{indent}    ")
     handle.write(f"{indent}}}\n")
@@ -910,9 +914,9 @@ def _write_collision_mesh(handle, spec: MeshSpec, vertices: np.ndarray, faces: n
             f'"PhysicsMeshCollisionAPI", "PhysxConvexHullCollisionAPI"]\n'
         )
         handle.write(f"{indent})\n{indent}{{\n")
-        handle.write(f"{indent}    uniform token subdivisionScheme = \"none\"\n")
-        handle.write(f"{indent}    uniform token purpose = \"guide\"\n")
-        handle.write(f"{indent}    token visibility = \"invisible\"\n")
+        handle.write(f'{indent}    uniform token subdivisionScheme = "none"\n')
+        handle.write(f'{indent}    uniform token purpose = "guide"\n')
+        handle.write(f'{indent}    token visibility = "invisible"\n')
         handle.write(f"{indent}    bool doubleSided = true\n")
         handle.write(f"{indent}    bool physics:collisionEnabled = true\n")
         handle.write(f"{indent}    float physxCollision:contactOffset = {_fmt(ISAAC_MIN_CONTACT_OFFSET_M)}\n")
@@ -943,8 +947,12 @@ def _write_link(
     handle.write(f'{indent}def Xform "{spec.link_name}" (\n')
     handle.write(f"{indent}    prepend apiSchemas = [{quoted_api_schemas}]\n")
     handle.write(f"{indent})\n{indent}{{\n")
-    handle.write(f"{indent}    double3 xformOp:translate = ({_fmt(translation[0])}, {_fmt(translation[1])}, {_fmt(translation[2])})\n")
-    handle.write(f"{indent}    quatf xformOp:orient = ({_fmt(quat[0])}, {_fmt(quat[1])}, {_fmt(quat[2])}, {_fmt(quat[3])})\n")
+    handle.write(
+        f"{indent}    double3 xformOp:translate = ({_fmt(translation[0])}, {_fmt(translation[1])}, {_fmt(translation[2])})\n"
+    )
+    handle.write(
+        f"{indent}    quatf xformOp:orient = ({_fmt(quat[0])}, {_fmt(quat[1])}, {_fmt(quat[2])}, {_fmt(quat[3])})\n"
+    )
     handle.write(f'{indent}    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]\n')
     handle.write(f"{indent}    bool physics:rigidBodyEnabled = true\n")
     handle.write(f"{indent}    bool physxRigidBody:disableGravity = false\n")
@@ -973,12 +981,14 @@ def _write_tcp_link(handle, *, transform: np.ndarray, indent: str) -> None:
     quat = _quat_wxyz_from_rotmat(transform[:3, :3])
     ixx, iyy, izz = GRIPPER_TCP_DIAGONAL_INERTIA
     handle.write(f'{indent}def Xform "{GRIPPER_TCP_LINK}" (\n')
-    handle.write(
-        f'{indent}    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsMassAPI"]\n'
-    )
+    handle.write(f'{indent}    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsMassAPI"]\n')
     handle.write(f"{indent})\n{indent}{{\n")
-    handle.write(f"{indent}    double3 xformOp:translate = ({_fmt(translation[0])}, {_fmt(translation[1])}, {_fmt(translation[2])})\n")
-    handle.write(f"{indent}    quatf xformOp:orient = ({_fmt(quat[0])}, {_fmt(quat[1])}, {_fmt(quat[2])}, {_fmt(quat[3])})\n")
+    handle.write(
+        f"{indent}    double3 xformOp:translate = ({_fmt(translation[0])}, {_fmt(translation[1])}, {_fmt(translation[2])})\n"
+    )
+    handle.write(
+        f"{indent}    quatf xformOp:orient = ({_fmt(quat[0])}, {_fmt(quat[1])}, {_fmt(quat[2])}, {_fmt(quat[3])})\n"
+    )
     handle.write(f'{indent}    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]\n')
     handle.write(f"{indent}    bool physics:rigidBodyEnabled = true\n")
     handle.write(f"{indent}    bool physxRigidBody:disableGravity = false\n")
@@ -997,7 +1007,7 @@ def _write_drive_api(handle, joint: JointSpec, indent: str) -> None:
         if joint.joint_type == "revolute"
         else 0.0
     )
-    handle.write(f"{indent}    token drive:{drive_name}:physics:type = \"force\"\n")
+    handle.write(f'{indent}    token drive:{drive_name}:physics:type = "force"\n')
     handle.write(f"{indent}    float drive:{drive_name}:physics:stiffness = {_fmt(stiffness)}\n")
     handle.write(f"{indent}    float drive:{drive_name}:physics:damping = {_fmt(damping)}\n")
     handle.write(f"{indent}    float drive:{drive_name}:physics:targetPosition = {_fmt(target_position)}\n")
@@ -1015,7 +1025,7 @@ def _write_joint(handle, joint: JointSpec, indent: str) -> None:
             schemas.append(f"PhysxMimicJointAPI:{_usd_mimic_api_axis(joint)}")
         else:
             schemas.insert(0, "PhysicsDriveAPI:angular")
-        api_schemas = ' (\n{}    prepend apiSchemas = [{}]\n{})'.format(
+        api_schemas = " (\n{}    prepend apiSchemas = [{}]\n{})".format(
             indent,
             ", ".join(f'"{schema}"' for schema in schemas),
             indent,
@@ -1027,7 +1037,7 @@ def _write_joint(handle, joint: JointSpec, indent: str) -> None:
             schemas.append(f"PhysxMimicJointAPI:{_usd_mimic_api_axis(joint)}")
         else:
             schemas.insert(0, "PhysicsDriveAPI:linear")
-        api_schemas = ' (\n{}    prepend apiSchemas = [{}]\n{})'.format(
+        api_schemas = " (\n{}    prepend apiSchemas = [{}]\n{})".format(
             indent,
             ", ".join(f'"{schema}"' for schema in schemas),
             indent,
@@ -1042,7 +1052,7 @@ def _write_joint(handle, joint: JointSpec, indent: str) -> None:
     handle.write(f"{indent}    rel physics:body0 = </{ROBOT_NAME}/{joint.parent}>\n")
     handle.write(f"{indent}    rel physics:body1 = </{ROBOT_NAME}/{joint.child}>\n")
     if joint.joint_type != "fixed":
-        handle.write(f"{indent}    uniform token physics:axis = \"{axis_token}\"\n")
+        handle.write(f'{indent}    uniform token physics:axis = "{axis_token}"\n')
         if lower is not None and upper is not None:
             handle.write(f"{indent}    float physics:lowerLimit = {_fmt(lower)}\n")
             handle.write(f"{indent}    float physics:upperLimit = {_fmt(upper)}\n")
@@ -1059,8 +1069,7 @@ def _write_joint(handle, joint: JointSpec, indent: str) -> None:
         if mimic_multiplier is None:
             mimic_multiplier = joint.mimic_multiplier
         handle.write(
-            f"{indent}    rel physxMimicJoint:{mimic_axis}:referenceJoint = "
-            f"</{ROBOT_NAME}/joints/{joint.mimic}>\n"
+            f"{indent}    rel physxMimicJoint:{mimic_axis}:referenceJoint = </{ROBOT_NAME}/joints/{joint.mimic}>\n"
         )
         handle.write(f"{indent}    float physxMimicJoint:{mimic_axis}:gearing = {_fmt(mimic_multiplier)}\n")
         handle.write(f"{indent}    float physxMimicJoint:{mimic_axis}:offset = {_fmt(joint.mimic_offset)}\n")
@@ -1104,9 +1113,9 @@ def _write_usd(
     with usd_path.open("w", encoding="utf-8") as handle:
         handle.write("#usda 1.0\n")
         handle.write("(\n")
-        handle.write(f"    defaultPrim = \"{ROBOT_NAME}\"\n")
+        handle.write(f'    defaultPrim = "{ROBOT_NAME}"\n')
         handle.write("    metersPerUnit = 1\n")
-        handle.write("    upAxis = \"Z\"\n")
+        handle.write('    upAxis = "Z"\n')
         handle.write(")\n\n")
         handle.write(f'def Xform "{ROBOT_NAME}"\n')
         handle.write("{\n")

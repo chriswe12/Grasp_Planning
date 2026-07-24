@@ -91,9 +91,7 @@ def _launch_setup(context: LaunchContext):
             ),
         ]
 
-    controller_event_handler = RegisterEventHandler(
-        OnProcessStart(target_action=ros2_control_node, on_start=spawners)
-    )
+    controller_event_handler = RegisterEventHandler(OnProcessStart(target_action=ros2_control_node, on_start=spawners))
     move_group = LBRMoveGroupMixin.node_move_group(
         namespace=robot_name,
         parameters=[

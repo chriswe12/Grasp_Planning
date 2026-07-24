@@ -238,7 +238,9 @@ def _outcome_from_attempt(
         return PipelineOutcome(False, _error_code_from_output(output_lines), message)
 
     if attempt is None or not isinstance(attempt.get("result"), dict):
-        return PipelineOutcome(False, "RESULT_MISSING", f"Pipeline exited successfully but no result was found at {attempt_path}.")
+        return PipelineOutcome(
+            False, "RESULT_MISSING", f"Pipeline exited successfully but no result was found at {attempt_path}."
+        )
 
     result = dict(attempt["result"])
     if not bool(result.get("success", False)):

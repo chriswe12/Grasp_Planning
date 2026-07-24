@@ -119,6 +119,5 @@ def _normalize_position_mode(position_mode: str) -> str:
         return aliases[normalized]
     except KeyError as exc:
         raise ValueError(
-            "Unsupported gripper_command_position_mode "
-            f"'{position_mode}'. Expected one of: width, kuka_y_finger_joint."
+            f"Unsupported gripper_command_position_mode '{position_mode}'. Expected one of: width, kuka_y_finger_joint."
         ) from exc

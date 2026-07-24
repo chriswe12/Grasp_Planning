@@ -9,9 +9,6 @@ import numpy as np
 
 from .collision import (
     BoxCollisionPrimitive,
-    FingerBoxGripperCollisionModel,
-    FingerBoxWithHandMeshCollisionModel,
-    FrankaHandFingerCollisionModel,
     GripperCollisionModel,
     MeshCollisionPrimitive,
 )

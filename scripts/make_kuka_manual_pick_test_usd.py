@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROBOT_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
 OBJ_PATH = REPO_ROOT / "assets/obj/fabrica/plumbers_block/0.obj"
@@ -46,7 +45,9 @@ def _center_vertices(vertices: list[tuple[float, float, float]]) -> list[tuple[f
     return [tuple(vertex[axis] - center[axis] for axis in range(3)) for vertex in vertices]
 
 
-def _bounds(vertices: list[tuple[float, float, float]]) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+def _bounds(
+    vertices: list[tuple[float, float, float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     mins = tuple(min(vertex[axis] for vertex in vertices) for axis in range(3))
     maxs = tuple(max(vertex[axis] for vertex in vertices) for axis in range(3))
     return mins, maxs
@@ -89,7 +90,7 @@ def main() -> None:
         handle.write('    defaultPrim = "World"\n')
         handle.write("    metersPerUnit = 1\n")
         handle.write(f"    subLayers = [ @{robot_layer}@ ]\n")
-        handle.write("    upAxis = \"Z\"\n")
+        handle.write('    upAxis = "Z"\n')
         handle.write(")\n\n")
         handle.write('def Xform "World"\n{\n')
         handle.write('    def PhysicsScene "PhysicsScene"\n    {\n')
@@ -124,7 +125,9 @@ def main() -> None:
         handle.write("        }\n")
         handle.write("    }\n\n")
         handle.write('    def Cube "GroundPlane" (\n')
-        handle.write('        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]\n')
+        handle.write(
+            '        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]\n'
+        )
         handle.write("    )\n    {\n")
         handle.write("        double size = 1\n")
         handle.write(
@@ -148,8 +151,10 @@ def main() -> None:
         handle.write("        bool physics:rigidBodyEnabled = true\n")
         handle.write("        bool physxRigidBody:disableGravity = false\n")
         handle.write("        float physics:mass = 0.04\n")
-        handle.write("        def Mesh \"plumbers_block0\" (\n")
-        handle.write('            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]\n')
+        handle.write('        def Mesh "plumbers_block0" (\n')
+        handle.write(
+            '            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]\n'
+        )
         handle.write("        )\n        {\n")
         handle.write('            uniform token subdivisionScheme = "none"\n')
         handle.write("            bool doubleSided = true\n")

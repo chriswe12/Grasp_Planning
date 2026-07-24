@@ -154,7 +154,9 @@ def wait_for_debug_pose_item_message(
             if node.latest_pose is not None:
                 node.publish_status("Received object pose.")
                 return node.latest_pose
-        raise TimeoutError(f"Timed out after {timeout_s:.1f}s waiting for object pose on '{topic_name}' for '{part_key}'.")
+        raise TimeoutError(
+            f"Timed out after {timeout_s:.1f}s waiting for object pose on '{topic_name}' for '{part_key}'."
+        )
     finally:
         node.destroy_node()
         if initialized_here:

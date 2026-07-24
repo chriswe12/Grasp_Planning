@@ -50,9 +50,7 @@ class TriggerServiceGripperClient:
     def wait_for_server(self, *, timeout_s: float) -> None:
         for label in ("open", "close", "stop"):
             if not self._clients[label].wait_for_service(timeout_sec=float(timeout_s)):
-                raise RuntimeError(
-                    f"Trigger gripper {label} service '{self._service_names[label]}' is unavailable."
-                )
+                raise RuntimeError(f"Trigger gripper {label} service '{self._service_names[label]}' is unavailable.")
 
     def open(self, *, width: float) -> tuple[bool, str]:
         del width
@@ -86,8 +84,7 @@ class TriggerServiceGripperClient:
         rclpy.spin_until_future_complete(self._node, future, timeout_sec=self._timeout_s)
         if not future.done():
             raise TimeoutError(
-                f"Trigger gripper {label} service '{self._service_names[label]}' "
-                f"timed out after {self._timeout_s:.1f}s"
+                f"Trigger gripper {label} service '{self._service_names[label]}' timed out after {self._timeout_s:.1f}s"
             )
         exception = future.exception()
         if exception is not None:
