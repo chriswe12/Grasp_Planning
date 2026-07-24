@@ -10,6 +10,7 @@ Usage:
   ./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim.yaml
   ./run_pipeline.sh --mode sim --headless
   ./run_pipeline.sh --mode sim --backend isaac --headless
+  ./run_pipeline.sh --mode sim --backend isaac --isaac-grasp-rank 2
   ./run_pipeline.sh --mode pitl --skip-stage1-collision-checks
   ./run_pipeline.sh --mode sim --backend mujoco --force-regrasp-fallback
 
@@ -28,6 +29,7 @@ BACKEND="config"
 HEADLESS=0
 SKIP_STAGE1_COLLISION_CHECKS=0
 FORCE_REGRASP_FALLBACK=0
+ISAAC_GRASP_RANK=""
 
 source_if_exists() {
   local setup_file="$1"
@@ -125,6 +127,10 @@ while [[ $# -gt 0 ]]; do
       FORCE_REGRASP_FALLBACK=1
       shift
       ;;
+    --isaac-grasp-rank)
+      ISAAC_GRASP_RANK="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -182,5 +188,8 @@ if [[ "${SKIP_STAGE1_COLLISION_CHECKS}" -eq 1 ]]; then
 fi
 if [[ "${FORCE_REGRASP_FALLBACK}" -eq 1 ]]; then
   ARGS+=(--force-regrasp-fallback)
+fi
+if [[ -n "${ISAAC_GRASP_RANK}" ]]; then
+  ARGS+=(--isaac-grasp-rank "${ISAAC_GRASP_RANK}")
 fi
 exec "${PYTHON_BIN}" "${ARGS[@]}"

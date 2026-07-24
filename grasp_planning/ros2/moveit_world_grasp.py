@@ -52,9 +52,34 @@ def pose_target_from_world(
 def _signed_position(
     position_xyz: tuple[float, float, float], position_signs: tuple[float, float, float]
 ) -> tuple[float, float, float]:
+    signs = _validated_axis_signs(position_signs)
+    return tuple(float(position_xyz[index]) * signs[index] for index in range(3))
+
+
+def _validated_axis_signs(position_signs: tuple[float, float, float]) -> tuple[float, float, float]:
     if len(position_signs) != 3:
         raise ValueError(f"Expected 3 target position signs, got {len(position_signs)}.")
-    return tuple(float(position_xyz[index]) * float(position_signs[index]) for index in range(3))
+    signs = tuple(float(value) for value in position_signs)
+    if any(abs(abs(value) - 1.0) > 1.0e-9 for value in signs):
+        raise ValueError(f"Target position signs must each be +1 or -1, got {signs}.")
+    return signs
+
+
+def _signed_orientation(
+    orientation_xyzw: tuple[float, float, float, float],
+    position_signs: tuple[float, float, float],
+) -> tuple[float, float, float, float]:
+    """Transform a quaternion consistently with a diagonal target-frame reflection."""
+
+    signs = _validated_axis_signs(position_signs)
+    determinant = signs[0] * signs[1] * signs[2]
+    x, y, z, w = (float(value) for value in orientation_xyzw)
+    return (
+        determinant * signs[0] * x,
+        determinant * signs[1] * y,
+        determinant * signs[2] * z,
+        w,
+    )
 
 
 def _tcp_position_from_grasp_center(
@@ -81,6 +106,7 @@ def world_grasp_pose_targets(
     tcp_to_grasp_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> dict[str, PoseTarget]:
     orientation_xyzw = tuple(float(v) for v in world_grasp.orientation_xyzw)
+    target_orientation_xyzw = _signed_orientation(orientation_xyzw, position_signs)
     grasp_position = tuple(float(v) for v in world_grasp.position_w)
     pregrasp_tcp_position = _tcp_position_from_grasp_center(
         grasp_position_xyz=tuple(float(v) for v in world_grasp.pregrasp_position_w),
@@ -100,17 +126,17 @@ def world_grasp_pose_targets(
     return {
         "pregrasp": pose_target_from_world(
             position_xyz=_signed_position(pregrasp_tcp_position, position_signs),
-            orientation_xyzw=orientation_xyzw,
+            orientation_xyzw=target_orientation_xyzw,
             frame_id=frame_id,
         ),
         "grasp": pose_target_from_world(
             position_xyz=_signed_position(grasp_tcp_position, position_signs),
-            orientation_xyzw=orientation_xyzw,
+            orientation_xyzw=target_orientation_xyzw,
             frame_id=frame_id,
         ),
         "lift": pose_target_from_world(
             position_xyz=_signed_position(lift_tcp_position, position_signs),
-            orientation_xyzw=orientation_xyzw,
+            orientation_xyzw=target_orientation_xyzw,
             frame_id=frame_id,
         ),
     }

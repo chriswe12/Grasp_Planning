@@ -126,7 +126,7 @@ def _robot_metadata_for_planning(planning: PlanningConfig) -> dict[str, object]:
             "robot_model": "kuka_iiwa7",
             "gripper_model": GRIPPER_COLLISION_MODEL_KUKA_Y,
             "tcp_link": "gripper_tcp",
-            "tcp_offset_m": [0.0, 0.0, 0.1455],
+            "tcp_offset_m": [0.0, 0.0, 0.1505],
         }
     return {
         "robot_model": "franka_fr3",
@@ -238,6 +238,7 @@ class IsaacPipelineConfig:
     fr3_usd: str = ""
     controller: str = "moveit"
     grasp_id: str = ""
+    grasp_rank: int = 1
     pregrasp_offset: float | None = None
     gripper_width_clearance: float | None = None
     contact_gap_m: float | None = None
@@ -268,15 +269,20 @@ class IsaacPipelineConfig:
     moveit_acceleration_scale: float = 0.05
     moveit_execution_speed_rad_s: float = 0.35
     moveit_grasp_settle_time_s: float = 0.0
+    gripper_close_duration_s: float = 1.5
+    gripper_close_max_duration_s: float = 10.0
+    postclose_hold_s: float = 1.0
     moveit_allow_collisions: bool = False
 
 
 @dataclass(frozen=True)
 class Ros2Config:
-    debug_frame_topic: str = ""
+    pose_base_topic: str = ""
     frame_id: str = "world"
     timeout_s: float = 10.0
-    object_id: str = ""
+    assembly_name: str = ""
+    part_id: int | None = None
+    position_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -311,6 +317,9 @@ class RealExecutionConfig:
     gripper_command_action: str = "/gripper_controller/gripper_cmd"
     gripper_command_position_mode: str = "width"
     gripper_command_max_effort: float = 30.0
+    gripper_trigger_open_service: str = "/gripper_controller/open"
+    gripper_trigger_close_service: str = "/gripper_controller/close"
+    gripper_trigger_stop_service: str = "/gripper_controller/stop"
     gripper_open_width: float = 0.08
     gripper_grasp_speed: float = 0.03
     gripper_grasp_force: float = 30.0
@@ -428,7 +437,7 @@ def _axes_metadata_payload(axes: tuple[tuple[float, float, float], ...]) -> list
     return [[float(value) for value in axis] for axis in axes]
 
 
-_STAGE1_CACHE_SCHEMA_VERSION = 10
+_STAGE1_CACHE_SCHEMA_VERSION = 13
 
 
 def _path_cache_record(path: str | Path) -> dict[str, object]:

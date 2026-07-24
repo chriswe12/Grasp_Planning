@@ -49,7 +49,7 @@ from grasp_planning.pipeline.regrasp_fallback import (  # noqa: E402
 )
 from grasp_planning.ros2 import (  # noqa: E402
     execute_real_grasp_from_bundle,
-    wait_for_debug_frame_pose_message,
+    wait_for_debug_pose_item_message,
 )
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommander,
@@ -63,7 +63,7 @@ from grasp_planning.start_poses import (  # noqa: E402
 )
 from scripts.write_part_frame_debug_html import write_part_frame_debug_html  # noqa: E402
 
-DEBUG_FRAME_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugFrame"
+DEBUG_POSE_ITEM_MESSAGE_TYPE = "fp_debug_msgs/msg/DebugPoseItem"
 BACKEND_CHOICES = ("config", "mujoco", "isaac", "both", "none")
 
 
@@ -311,6 +311,11 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     object_density_kg_m3 = _optional_float(raw, "object_density_kg_m3")
     if object_mass_kg is not None and object_density_kg_m3 is not None:
         raise ValueError("isaac_execution.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
+    grasp_rank = int(raw.get("grasp_rank", IsaacPipelineConfig.grasp_rank))
+    if grasp_rank < 1:
+        raise ValueError("isaac_execution.grasp_rank must be >= 1.")
+    if str(raw.get("grasp_id", "")) and grasp_rank != IsaacPipelineConfig.grasp_rank:
+        raise ValueError("isaac_execution.grasp_id and grasp_rank are mutually exclusive.")
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -318,6 +323,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         fr3_usd=str(raw.get("fr3_usd", "")),
         controller=controller,
         grasp_id=str(raw.get("grasp_id", "")),
+        grasp_rank=grasp_rank,
         pregrasp_offset=_optional_float(raw, "pregrasp_offset"),
         gripper_width_clearance=_optional_float(raw, "gripper_width_clearance"),
         contact_gap_m=_optional_float(raw, "contact_gap_m"),
@@ -351,17 +357,28 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
         moveit_grasp_settle_time_s=float(raw.get("moveit_grasp_settle_time_s", 0.0)),
+        gripper_close_duration_s=float(raw.get("gripper_close_duration_s", IsaacPipelineConfig.gripper_close_duration_s)),
+        gripper_close_max_duration_s=float(
+            raw.get("gripper_close_max_duration_s", IsaacPipelineConfig.gripper_close_max_duration_s)
+        ),
+        postclose_hold_s=float(raw.get("postclose_hold_s", IsaacPipelineConfig.postclose_hold_s)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
     )
 
 
 def _ros2_config(payload: dict[str, object]) -> Ros2Config:
     raw = dict(payload.get("ros2", {}))
+    raw_part_id = raw.get("part_id")
     return Ros2Config(
-        debug_frame_topic="" if raw.get("debug_frame_topic") in ("", None) else str(raw["debug_frame_topic"]),
+        pose_base_topic="" if raw.get("pose_base_topic") in ("", None) else str(raw["pose_base_topic"]),
         frame_id=str(raw.get("frame_id", "world")),
         timeout_s=float(raw.get("timeout_s", 10.0)),
-        object_id=str(raw.get("object_id", "")),
+        assembly_name=str(raw.get("assembly_name", "")),
+        part_id=None if raw_part_id in ("", None) else int(raw_part_id),
+        position_offset_m=_tuple_floats(
+            raw.get("position_offset_m", Ros2Config.position_offset_m),
+            expected_len=3,
+        ),
     )
 
 
@@ -454,6 +471,9 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         gripper_command_action=str(raw.get("gripper_command_action", "/gripper_controller/gripper_cmd")),
         gripper_command_position_mode=str(raw.get("gripper_command_position_mode", "width")),
         gripper_command_max_effort=float(raw.get("gripper_command_max_effort", raw.get("gripper_grasp_force", 30.0))),
+        gripper_trigger_open_service=str(raw.get("gripper_trigger_open_service", "/gripper_controller/open")),
+        gripper_trigger_close_service=str(raw.get("gripper_trigger_close_service", "/gripper_controller/close")),
+        gripper_trigger_stop_service=str(raw.get("gripper_trigger_stop_service", "/gripper_controller/stop")),
         gripper_open_width=float(raw.get("gripper_open_width", 0.08)),
         gripper_grasp_speed=float(raw.get("gripper_grasp_speed", 0.03)),
         gripper_grasp_force=float(raw.get("gripper_grasp_force", 30.0)),
@@ -464,27 +484,44 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
     )
 
 
-def _format_topic(topic_template: str, *, object_id: str) -> str:
-    if "{object_id}" in topic_template:
-        if not object_id:
-            raise ValueError(f"object_id is required to resolve ROS topic template '{topic_template}'.")
-        return topic_template.format(object_id=object_id)
-    return topic_template
+def _format_topic(topic_template: str, *, assembly_name: str, part_id: int) -> str:
+    return topic_template.replace("{assembly_name}", assembly_name).replace("{part_id}", str(part_id))
 
 
 def _resolve_object_pose_world(ros2: Ros2Config) -> ObjectWorldPose:
-    if not ros2.debug_frame_topic:
-        raise ValueError("ros2.debug_frame_topic must be non-empty for pitl and real modes.")
-    if not ros2.object_id:
-        raise ValueError("ros2.object_id must be non-empty for pitl and real modes.")
+    if not ros2.pose_base_topic:
+        raise ValueError("ros2.pose_base_topic must be non-empty for pitl and real modes.")
+    if not ros2.assembly_name:
+        raise ValueError("ros2.assembly_name must be non-empty for pitl and real modes.")
+    if ros2.part_id is None or ros2.part_id < 0:
+        raise ValueError("ros2.part_id must be a non-negative integer for pitl and real modes.")
 
-    debug_frame_topic = _format_topic(ros2.debug_frame_topic, object_id=ros2.object_id)
-    print("[PIPELINE] Waiting for object pose on DebugFrame topic.", flush=True)
-    return wait_for_debug_frame_pose_message(
-        topic_name=debug_frame_topic,
-        message_type=DEBUG_FRAME_MESSAGE_TYPE,
-        object_id=ros2.object_id,
+    pose_base_topic = _format_topic(
+        ros2.pose_base_topic,
+        assembly_name=ros2.assembly_name,
+        part_id=ros2.part_id,
+    )
+    print("[PIPELINE] Waiting for object pose on fused DebugPoseItem topic.", flush=True)
+    perceived_pose = wait_for_debug_pose_item_message(
+        topic_name=pose_base_topic,
+        message_type=DEBUG_POSE_ITEM_MESSAGE_TYPE,
+        assembly_name=ros2.assembly_name,
+        part_id=ros2.part_id,
         timeout_s=ros2.timeout_s,
+    )
+    corrected_position = tuple(
+        float(position) + float(offset)
+        for position, offset in zip(perceived_pose.position_world, ros2.position_offset_m, strict=True)
+    )
+    if any(abs(float(offset)) > 1.0e-12 for offset in ros2.position_offset_m):
+        print(
+            "[PIPELINE] Applied ROS2 world-position offset "
+            f"{list(ros2.position_offset_m)} m: {list(perceived_pose.position_world)} -> {list(corrected_position)}.",
+            flush=True,
+        )
+    return ObjectWorldPose(
+        position_world=corrected_position,
+        orientation_xyzw_world=perceived_pose.orientation_xyzw_world,
     )
 
 
@@ -541,6 +578,13 @@ def _ordered_isaac_moveit_grasp_candidates(stage2, isaac_execution: IsaacPipelin
             key=lambda grasp: float("-inf") if grasp.score is None else float(grasp.score),
             reverse=True,
         )
+        grasp_index = int(isaac_execution.grasp_rank) - 1
+        if grasp_index >= len(ordered):
+            raise RuntimeError(
+                f"Requested Isaac grasp rank {isaac_execution.grasp_rank}, "
+                f"but stage 2 has only {len(ordered)} feasible grasps."
+            )
+        ordered = [ordered[grasp_index]]
     candidates = []
     for grasp in ordered:
         world_grasp = saved_grasp_to_world_grasp(
@@ -1009,6 +1053,12 @@ def _run_isaac_execution(
             str(isaac_execution.moveit_execution_speed_rad_s),
             "--moveit-grasp-settle-time-s",
             str(isaac_execution.moveit_grasp_settle_time_s),
+            "--gripper-close-duration-s",
+            str(isaac_execution.gripper_close_duration_s),
+            "--gripper-close-max-duration-s",
+            str(isaac_execution.gripper_close_max_duration_s),
+            "--postclose-hold-s",
+            str(isaac_execution.postclose_hold_s),
         ]
     )
     if isaac_execution.moveit_start_joint_positions:
@@ -1345,8 +1395,16 @@ def main() -> None:
         action="store_true",
         help="Force MuJoCo regrasp fallback planning even when direct stage 2 has feasible grasps.",
     )
+    parser.add_argument(
+        "--isaac-grasp-rank",
+        type=int,
+        default=None,
+        help="Override isaac_execution.grasp_id and execute the nth stage-2 Isaac grasp by descending score.",
+    )
     args = parser.parse_args()
     mode = _normalize_mode(args.mode)
+    if args.isaac_grasp_rank is not None and args.isaac_grasp_rank < 1:
+        parser.error("--isaac-grasp-rank must be >= 1.")
 
     if args.config is None:
         default_names = {
@@ -1367,6 +1425,11 @@ def main() -> None:
         mujoco_payload = dict(payload.get("mujoco_execution", {}))
         mujoco_payload["force_regrasp_fallback"] = True
         payload["mujoco_execution"] = mujoco_payload
+    if args.isaac_grasp_rank is not None:
+        isaac_payload = dict(payload.get("isaac_execution", {}))
+        isaac_payload["grasp_id"] = ""
+        isaac_payload["grasp_rank"] = int(args.isaac_grasp_rank)
+        payload["isaac_execution"] = isaac_payload
     if mode == "sim":
         run_sim(payload, headless=bool(args.headless), backend=args.backend)
         return

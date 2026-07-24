@@ -211,7 +211,7 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
             grasp_center=np.array([0.03, 0.0, 0.0], dtype=float),
         )
 
-        self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455 - 0.005000000476837158)
+        self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1505 - 0.005000000476837158)
         self.assertGreater(float(np.mean(primitives[0].vertices_obj[:, 0])), 0.03)
 
     def test_gripper_collision_model_factory_accepts_kuka_alias(self) -> None:

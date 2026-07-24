@@ -148,6 +148,24 @@ parser.add_argument(
     help="Seconds to hold the final MoveIt grasp waypoint before closing the gripper.",
 )
 parser.add_argument(
+    "--gripper-close-duration-s",
+    type=float,
+    default=1.5,
+    help="Nominal gripper close command duration before contact/target settling.",
+)
+parser.add_argument(
+    "--gripper-close-max-duration-s",
+    type=float,
+    default=10.0,
+    help="Maximum gripper close duration before declaring close failure/contact.",
+)
+parser.add_argument(
+    "--postclose-hold-s",
+    type=float,
+    default=1.0,
+    help="Seconds to hold the closed gripper at the grasp waypoint before lift.",
+)
+parser.add_argument(
     "--moveit-plan-json",
     type=Path,
     default=None,
@@ -377,6 +395,42 @@ def _approach_open_gripper_width(selected_world_grasp=None) -> float:
     if _using_kuka_lbr_moveit_joints():
         return float(KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
     return float(DEFAULT_HAND_OPEN_WIDTH)
+
+
+def _write_kuka_configured_start_state(scene) -> None:
+    """Apply Isaac Lab's configured articulation defaults before the first rendered step."""
+
+    if not _using_kuka_lbr_moveit_joints():
+        return
+    robot = scene["robot"]
+    joint_pos = robot.data.default_joint_pos.clone()
+    joint_vel = robot.data.default_joint_vel.clone()
+    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+    robot.set_joint_position_target(joint_pos)
+    scene.write_data_to_sim()
+    configured = {
+        name: float(joint_pos[0, index])
+        for index, name in enumerate(robot.joint_names)
+        if name.startswith("joint")
+    }
+    print(f"[INFO]: Applied configured KUKA articulation start state: {configured}", flush=True)
+
+
+def _prepare_robot_start_pose(sim, scene, *, hand_open_width: float, step_callback=None) -> None:
+    if _using_kuka_lbr_moveit_joints():
+        print(
+            "[INFO]: KUKA spawned at its configured articulation start state; "
+            "skipping the legacy active start-pose drive.",
+            flush=True,
+        )
+        return
+    print("[INFO]: Driving robot to start pose...", flush=True)
+    drive_robot_to_start_pose(
+        sim,
+        scene,
+        hand_open_width=hand_open_width,
+        step_callback=step_callback,
+    )
 
 
 def _effective_close_gripper_width(selected_grasp) -> float:
@@ -841,6 +895,7 @@ def build_scene(
     sim.reset()
     print("[INFO]: Resetting scene buffers...", flush=True)
     scene.reset()
+    _write_kuka_configured_start_state(scene)
     print("[INFO]: Scene ready.", flush=True)
     return sim, scene, video_camera
 
@@ -1091,8 +1146,7 @@ def run() -> None:
         sim.step()
         scene.update(physics_dt)
         _record_step()
-    print("[INFO]: Driving robot to start pose...", flush=True)
-    drive_robot_to_start_pose(
+    _prepare_robot_start_pose(
         sim,
         scene,
         hand_open_width=approach_open_gripper_width,
@@ -1189,6 +1243,10 @@ def run() -> None:
         success_height_margin_m=float(args_cli.success_height_margin_m),
         max_joint_speed_rad_s=float(args_cli.moveit_execution_speed_rad_s),
         grasp_settle_time_s=float(args_cli.moveit_grasp_settle_time_s),
+        gripper_close_duration_s=float(args_cli.gripper_close_duration_s),
+        gripper_close_max_duration_s=float(args_cli.gripper_close_max_duration_s),
+        postclose_hold_s=float(args_cli.postclose_hold_s),
+        selected_gripper_width_m=float(selected_world_grasp.jaw_width),
         step_callback=_record_step,
     )
     if video_recorder is not None:

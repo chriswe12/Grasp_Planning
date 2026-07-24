@@ -7,7 +7,7 @@ import numpy as np
 from grasp_planning.grasping import ObjectWorldPose, TriangleMesh
 from grasp_planning.grasping.fabrica_grasp_debug import canonicalize_target_mesh
 from grasp_planning.pipeline.fabrica_pipeline import _mesh_in_source_frame
-from grasp_planning.ros2.pose_listener import extract_execution_pose_from_debug_frame
+from grasp_planning.ros2.pose_listener import extract_execution_pose_from_debug_pose_item
 
 
 class _Point:
@@ -31,22 +31,24 @@ class _Pose:
         self.orientation = _Quaternion(*orientation)
 
 
+class _PoseStamped:
+    def __init__(self, pose: tuple[tuple[float, float, float], tuple[float, float, float, float]]) -> None:
+        self.pose = _Pose(*pose)
+
+
 class _PoseItem:
     def __init__(
         self,
         *,
-        object_id: str,
+        assembly_name: str,
+        part_id: int,
         score: float,
         pose_base: tuple[tuple[float, float, float], tuple[float, float, float, float]],
     ) -> None:
-        self.object_id = object_id
+        self.assembly_name = assembly_name
+        self.part_id = part_id
         self.score = score
-        self.pose_base = _Pose(*pose_base)
-
-
-class _DebugFrame:
-    def __init__(self, pose_items) -> None:
-        self.pose_items = tuple(pose_items)
+        self.pose_base = _PoseStamped(pose_base)
 
 
 class Ros2FrameSourceTests(unittest.TestCase):
@@ -75,40 +77,38 @@ class Ros2FrameSourceTests(unittest.TestCase):
             atol=1.0e-6,
         )
 
-    def test_extract_execution_pose_from_debug_frame_picks_highest_score_for_object(self) -> None:
-        debug_frame = _DebugFrame(
-            [
-                _PoseItem(
-                    object_id="cooling_screw",
-                    score=0.4,
-                    pose_base=((0.1, 0.0, 0.2), (0.0, 0.0, 0.0, 1.0)),
-                ),
-                _PoseItem(
-                    object_id="cooling_screw",
-                    score=0.9,
-                    pose_base=((0.3, -0.1, 0.5), (0.0, 0.0, 0.70710678, 0.70710678)),
-                ),
-                _PoseItem(
-                    object_id="pb_top",
-                    score=1.0,
-                    pose_base=((9.0, 9.0, 9.0), (0.0, 0.0, 0.0, 1.0)),
-                ),
-            ]
+    def test_extract_execution_pose_from_debug_pose_item_matches_part(self) -> None:
+        pose_item = _PoseItem(
+            assembly_name="cooling_manifold",
+            part_id=2,
+            score=0.9,
+            pose_base=((0.3, -0.1, 0.5), (0.0, 0.0, 0.70710678, 0.70710678)),
         )
 
-        pose = extract_execution_pose_from_debug_frame(debug_frame, object_id="cooling_screw")
+        pose = extract_execution_pose_from_debug_pose_item(
+            pose_item,
+            assembly_name="cooling_manifold",
+            part_id=2,
+        )
 
         self.assertIsNotNone(pose)
         assert pose is not None
         self.assertEqual(pose.position_world, (0.3, -0.1, 0.5))
         np.testing.assert_allclose(pose.orientation_xyzw_world, (0.0, 0.0, 0.70710678, 0.70710678), atol=1.0e-6)
 
-    def test_extract_execution_pose_from_debug_frame_returns_none_when_missing_object(self) -> None:
-        debug_frame = _DebugFrame(
-            [_PoseItem(object_id="pb_top", score=0.9, pose_base=((0.3, -0.1, 0.5), (0.0, 0.0, 0.0, 1.0)))]
+    def test_extract_execution_pose_from_debug_pose_item_returns_none_when_part_does_not_match(self) -> None:
+        pose_item = _PoseItem(
+            assembly_name="plumbers_block",
+            part_id=1,
+            score=0.9,
+            pose_base=((0.3, -0.1, 0.5), (0.0, 0.0, 0.0, 1.0)),
         )
 
-        pose = extract_execution_pose_from_debug_frame(debug_frame, object_id="cooling_screw")
+        pose = extract_execution_pose_from_debug_pose_item(
+            pose_item,
+            assembly_name="cooling_manifold",
+            part_id=2,
+        )
 
         self.assertIsNone(pose)
 

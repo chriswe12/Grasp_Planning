@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a full LBR iiwa 7 R800 + top-level Downloads gripper URDF and USD."""
+"""Build a hardware-aligned LBR iiwa 7 R800 + Y-gripper URDF and USD."""
 
 from __future__ import annotations
 
@@ -32,24 +32,21 @@ GRIPPER_MESH_SCALE = 0.001
 FINGER_TRAVEL_M = 0.04
 GRIPPER_TCP_LINK = "gripper_tcp"
 ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
-GRIPPER_TCP_XYZ = (0.0, 0.0, 0.1455)
+# The canonical lbr-stack EE frame is 35 mm above link_7. The physical Y-gripper
+# mount sits 4.2 mm back along EE-local Z, while its grasp center is calibrated
+# 150.5 mm above the gripper base. Keep these transforms separate so MoveIt and
+# Isaac share the same EE, hand-mount, and TCP contract.
+LBR_LINK_7_TO_EE_XYZ = (0.0, 0.0, 0.035)
+GRIPPER_EE_MOUNT_OFFSET_XYZ = (0.0, 0.0, -0.0042)
+GRIPPER_TCP_XYZ = (0.0, 0.0, 0.1505)
 GRIPPER_TCP_RPY = (0.0, 0.0, 0.0)
 GRIPPER_TCP_MASS_KG = 1.0e-3
 GRIPPER_TCP_DIAGONAL_INERTIA = (1.0e-7, 1.0e-7, 1.0e-7)
-GRIPPER_SOURCE_MOUNT_XYZ = (0.0, 0.0, 0.04069)
-GRIPPER_Z_TRANSLATION_CORRECTION_M = -0.04069
-GRIPPER_MOUNT_XYZ = (
-    GRIPPER_SOURCE_MOUNT_XYZ[0],
-    GRIPPER_SOURCE_MOUNT_XYZ[1],
-    GRIPPER_SOURCE_MOUNT_XYZ[2] + GRIPPER_Z_TRANSLATION_CORRECTION_M,
+GRIPPER_MOUNT_XYZ = tuple(
+    ee_value + mount_offset
+    for ee_value, mount_offset in zip(LBR_LINK_7_TO_EE_XYZ, GRIPPER_EE_MOUNT_OFFSET_XYZ, strict=True)
 )
-GRIPPER_SOURCE_MOUNT_RPY = (-math.pi / 2.0, 0.0, 0.0)
-GRIPPER_X_ROTATION_CORRECTION_RAD = math.pi / 2.0
-GRIPPER_MOUNT_RPY = (
-    GRIPPER_SOURCE_MOUNT_RPY[0] + GRIPPER_X_ROTATION_CORRECTION_RAD,
-    GRIPPER_SOURCE_MOUNT_RPY[1],
-    GRIPPER_SOURCE_MOUNT_RPY[2],
-)
+GRIPPER_MOUNT_RPY = (0.0, 0.0, 0.0)
 USD_JOINT_TARGET_POSITION_DEG = {
     "joint2": 41.0,
     "joint4": 80.0,
@@ -84,6 +81,8 @@ class MeshSpec:
     output_name: str
     scale: float
     color_rgb: tuple[float, float, float]
+    local_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    local_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -91,6 +90,8 @@ class LinkInertial:
     mass_kg: float
     center: tuple[float, float, float]
     diagonal_inertia: tuple[float, float, float]
+    # URDF tensor entries ordered as (ixy, ixz, iyz).
+    off_diagonal_inertia: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,32 @@ class JointSpec:
     mimic_multiplier: float = 1.0
     mimic_offset: float = 0.0
     mimic_usd_multiplier: float | None = None
+
+
+# The downloaded CAD URDF uses alternate per-link frames and joint coordinate
+# signs.  These fixed transforms re-express its meshes and inertials in the
+# canonical lbr-stack link frames at q=0.  Kinematics below use the lbr-stack
+# joint origins and axes directly; no Cartesian reflection is involved.
+ARM_SOURCE_TO_LBR_LINK_FRAME = {
+    "base_link": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    "link1": ((0.0, 0.0, 0.1900), (0.0, 0.0, 0.0)),
+    "link2": ((0.0, 0.0105, -0.0025), (-math.pi / 2.0, 0.0, 0.0)),
+    "link3": ((0.0, 0.0, 0.1893), (0.0, 0.0, 0.0)),
+    "link4": ((0.0, -0.0105, -0.0032), (-math.pi / 2.0, 0.0, 0.0)),
+    "link5": ((0.0, 0.0, 0.1886), (0.0, 0.0, 0.0)),
+    "link6": ((0.0, 0.0707, -0.0039), (-math.pi / 2.0, 0.0, 0.0)),
+    "link7": ((0.0, 0.0, 0.0311), (0.0, 0.0, 0.0)),
+}
+
+LBR_HARDWARE_JOINT_KINEMATICS = (
+    ((0.0, 0.0, 0.1475), (0.0, 0.0, 1.0)),
+    ((0.0, -0.0105, 0.1925), (0.0, 1.0, 0.0)),
+    ((0.0, 0.0105, 0.2075), (0.0, 0.0, 1.0)),
+    ((0.0, 0.0105, 0.1925), (0.0, -1.0, 0.0)),
+    ((0.0, -0.0105, 0.2075), (0.0, 0.0, 1.0)),
+    ((0.0, -0.0707, 0.1925), (0.0, 1.0, 0.0)),
+    ((0.0, 0.0707, 0.0910), (0.0, 0.0, 1.0)),
+)
 
 
 def _material_name(spec: MeshSpec) -> str:
@@ -198,6 +225,39 @@ def _parse_float_triplet(raw: str | None, default: tuple[float, float, float]) -
     return values
 
 
+def _inertia_tensor(inertial: LinkInertial) -> np.ndarray:
+    ixx, iyy, izz = inertial.diagonal_inertia
+    ixy, ixz, iyz = inertial.off_diagonal_inertia
+    return np.array(
+        [
+            [ixx, ixy, ixz],
+            [ixy, iyy, iyz],
+            [ixz, iyz, izz],
+        ],
+        dtype=float,
+    )
+
+
+def _principal_inertia_frame(inertial: LinkInertial) -> tuple[np.ndarray, np.ndarray]:
+    """Return principal moments and their right-handed axes in the link frame."""
+
+    tensor = _inertia_tensor(inertial)
+    off_diagonal = tensor - np.diag(np.diag(tensor))
+    if np.allclose(off_diagonal, 0.0, rtol=0.0, atol=5.0e-12):
+        return np.diag(tensor).copy(), np.eye(3, dtype=float)
+
+    moments, axes = np.linalg.eigh(tensor)
+    # Eigenvector signs are arbitrary. Canonicalize them before enforcing a
+    # proper rotation so generated USD remains stable across rebuilds.
+    for column in range(3):
+        largest_component = int(np.argmax(np.abs(axes[:, column])))
+        if axes[largest_component, column] < 0.0:
+            axes[:, column] *= -1.0
+    if np.linalg.det(axes) < 0.0:
+        axes[:, -1] *= -1.0
+    return moments, axes
+
+
 def _load_arm_model(arm_urdf: Path) -> tuple[dict[str, ET.Element], dict[str, LinkInertial], list[JointSpec]]:
     root = ET.parse(arm_urdf).getroot()
     links: dict[str, ET.Element] = {}
@@ -223,6 +283,11 @@ def _load_arm_model(arm_urdf: Path) -> tuple[dict[str, ET.Element], dict[str, Li
                 float(inertia.get("ixx", "0")),
                 float(inertia.get("iyy", "0")),
                 float(inertia.get("izz", "0")),
+            ),
+            off_diagonal_inertia=(
+                float(inertia.get("ixy", "0")),
+                float(inertia.get("ixz", "0")),
+                float(inertia.get("iyz", "0")),
             ),
         )
 
@@ -284,7 +349,18 @@ def _all_mesh_specs(downloads_dir: Path, arm_mesh_dir: Path) -> tuple[MeshSpec, 
         path = arm_mesh_dir / mesh_name
         if not path.is_file():
             raise FileNotFoundError(f"Missing required LBR arm mesh '{path}'.")
-        arm_specs.append(MeshSpec(link, path, mesh_name, 1.0, (0.65, 0.62, 0.59)))
+        local_xyz, local_rpy = ARM_SOURCE_TO_LBR_LINK_FRAME[link]
+        arm_specs.append(
+            MeshSpec(
+                link,
+                path,
+                mesh_name,
+                1.0,
+                (0.65, 0.62, 0.59),
+                local_xyz=local_xyz,
+                local_rpy=local_rpy,
+            )
+        )
     return tuple(arm_specs) + _gripper_mesh_specs(downloads_dir)
 
 
@@ -342,12 +418,46 @@ def _indent(element: ET.Element, level: int = 0) -> None:
         element.tail = indent
 
 
-def _rewrite_link_meshes_for_output(link: ET.Element) -> None:
+def _rewrite_link_for_output(link: ET.Element, *, spec: MeshSpec, inertial: LinkInertial) -> None:
     name = str(link.get("name"))
     mesh_name = ARM_MESHES[name]
-    for mesh in link.findall(".//mesh"):
-        mesh.set("filename", f"../meshes/{mesh_name}")
-        mesh.set("scale", "1 1 1")
+    for tag in ("visual", "collision"):
+        block = link.find(tag)
+        if block is None:
+            continue
+        origin = block.find("origin")
+        if origin is None:
+            origin = ET.SubElement(block, "origin")
+        origin.set("xyz", _fmt_vec(spec.local_xyz))
+        origin.set("rpy", _fmt_vec(spec.local_rpy))
+        for mesh in block.findall(".//mesh"):
+            mesh.set("filename", f"../meshes/{mesh_name}")
+            mesh.set("scale", "1 1 1")
+
+    inertial_el = link.find("inertial")
+    if inertial_el is not None:
+        origin = inertial_el.find("origin")
+        if origin is None:
+            origin = ET.SubElement(inertial_el, "origin")
+        origin.set("xyz", _fmt_vec(inertial.center))
+        origin.set("rpy", "0 0 0")
+        mass = inertial_el.find("mass")
+        if mass is not None:
+            mass.set("value", _fmt(inertial.mass_kg))
+        inertia = inertial_el.find("inertia")
+        if inertia is not None:
+            ixx, iyy, izz = inertial.diagonal_inertia
+            ixy, ixz, iyz = inertial.off_diagonal_inertia
+            inertia.attrib.update(
+                {
+                    "ixx": _fmt(ixx),
+                    "ixy": _fmt(ixy),
+                    "ixz": _fmt(ixz),
+                    "iyy": _fmt(iyy),
+                    "iyz": _fmt(iyz),
+                    "izz": _fmt(izz),
+                }
+            )
 
 
 def _make_gripper_link_urdf(spec: MeshSpec, inertial: LinkInertial) -> ET.Element:
@@ -356,10 +466,18 @@ def _make_gripper_link_urdf(spec: MeshSpec, inertial: LinkInertial) -> ET.Elemen
     ET.SubElement(inertial_el, "origin", {"xyz": _fmt_vec(inertial.center), "rpy": "0 0 0"})
     ET.SubElement(inertial_el, "mass", {"value": _fmt(inertial.mass_kg)})
     ixx, iyy, izz = inertial.diagonal_inertia
+    ixy, ixz, iyz = inertial.off_diagonal_inertia
     ET.SubElement(
         inertial_el,
         "inertia",
-        {"ixx": _fmt(ixx), "ixy": "0", "ixz": "0", "iyy": _fmt(iyy), "iyz": "0", "izz": _fmt(izz)},
+        {
+            "ixx": _fmt(ixx),
+            "ixy": _fmt(ixy),
+            "ixz": _fmt(ixz),
+            "iyy": _fmt(iyy),
+            "iyz": _fmt(iyz),
+            "izz": _fmt(izz),
+        },
     )
     for tag in ("visual", "collision"):
         block = ET.SubElement(link, tag)
@@ -479,6 +597,56 @@ def _full_joint_specs(arm_joints: list[JointSpec]) -> list[JointSpec]:
     ]
 
 
+def _hardware_aligned_arm_joints(source_joints: list[JointSpec]) -> list[JointSpec]:
+    """Return lbr-stack iiwa7 joint frames while preserving source limits."""
+
+    if len(source_joints) != len(LBR_HARDWARE_JOINT_KINEMATICS):
+        raise ValueError(f"Expected 7 source arm joints, got {len(source_joints)}.")
+    aligned = []
+    for index, (source, (xyz, axis)) in enumerate(
+        zip(source_joints, LBR_HARDWARE_JOINT_KINEMATICS, strict=True),
+        start=1,
+    ):
+        aligned.append(
+            JointSpec(
+                name=f"joint{index}",
+                joint_type="revolute",
+                parent="base_link" if index == 1 else f"link{index - 1}",
+                child=f"link{index}",
+                xyz=xyz,
+                rpy=(0.0, 0.0, 0.0),
+                axis=axis,
+                lower=source.lower,
+                upper=source.upper,
+                effort=source.effort,
+                velocity=source.velocity,
+            )
+        )
+    return aligned
+
+
+def _hardware_aligned_arm_inertials(
+    source_inertials: dict[str, LinkInertial],
+) -> dict[str, LinkInertial]:
+    aligned: dict[str, LinkInertial] = {}
+    for link_name, source in source_inertials.items():
+        xyz, rpy = ARM_SOURCE_TO_LBR_LINK_FRAME[link_name]
+        rotation = _rpy_to_rotmat(*rpy)
+        center = rotation @ np.asarray(source.center, dtype=float) + np.asarray(xyz, dtype=float)
+        inertia = rotation @ _inertia_tensor(source) @ rotation.T
+        aligned[link_name] = LinkInertial(
+            mass_kg=source.mass_kg,
+            center=tuple(float(value) for value in center),
+            diagonal_inertia=tuple(float(value) for value in np.diag(inertia)),
+            off_diagonal_inertia=(
+                float(inertia[0, 1]),
+                float(inertia[0, 2]),
+                float(inertia[1, 2]),
+            ),
+        )
+    return aligned
+
+
 def _write_urdf(
     *,
     urdf_path: Path,
@@ -488,9 +656,14 @@ def _write_urdf(
     inertials: dict[str, LinkInertial],
 ) -> None:
     robot = ET.Element("robot", {"name": ROBOT_NAME})
+    mesh_specs_by_link = {spec.link_name: spec for spec in mesh_specs}
     for link_name in ARM_LINKS:
         link = copy.deepcopy(arm_links[link_name])
-        _rewrite_link_meshes_for_output(link)
+        _rewrite_link_for_output(
+            link,
+            spec=mesh_specs_by_link[link_name],
+            inertial=inertials[link_name],
+        )
         robot.append(link)
     for spec in mesh_specs:
         if spec.link_name in ARM_LINKS:
@@ -505,8 +678,11 @@ def _write_urdf(
     urdf_path.write_text(urdf_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
 
 
-def _mesh_payload(mesh_path: Path, scale: float) -> tuple[np.ndarray, np.ndarray]:
-    return _load_scaled_mesh(mesh_path, scale)
+def _mesh_payload(spec: MeshSpec, mesh_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    vertices, faces = _load_scaled_mesh(mesh_path, spec.scale)
+    transform = _transform_from_xyz_rpy(spec.local_xyz, spec.local_rpy)
+    vertices = vertices @ transform[:3, :3].T + transform[:3, 3]
+    return vertices, faces
 
 
 def _compute_link_world_transforms(joints: list[JointSpec]) -> dict[str, np.ndarray]:
@@ -757,7 +933,9 @@ def _write_link(
 ) -> None:
     translation = transform[:3, 3]
     quat = _quat_wxyz_from_rotmat(transform[:3, :3])
-    ixx, iyy, izz = inertial.diagonal_inertia
+    principal_moments, principal_axes = _principal_inertia_frame(inertial)
+    principal_axes_quat = _quat_wxyz_from_rotmat(principal_axes)
+    ixx, iyy, izz = principal_moments
     api_schemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsMassAPI"]
     if spec.link_name == "base_link":
         api_schemas.extend(["PhysicsArticulationRootAPI", "PhysxArticulationAPI"])
@@ -779,7 +957,12 @@ def _write_link(
         f"({_fmt(inertial.center[0])}, {_fmt(inertial.center[1])}, {_fmt(inertial.center[2])})\n"
     )
     handle.write(f"{indent}    vector3f physics:diagonalInertia = ({_fmt(ixx)}, {_fmt(iyy)}, {_fmt(izz)})\n")
-    vertices, faces = _mesh_payload(mesh_path, spec.scale)
+    handle.write(
+        f"{indent}    quatf physics:principalAxes = "
+        f"({_fmt(principal_axes_quat[0])}, {_fmt(principal_axes_quat[1])}, "
+        f"{_fmt(principal_axes_quat[2])}, {_fmt(principal_axes_quat[3])})\n"
+    )
+    vertices, faces = _mesh_payload(spec, mesh_path)
     _write_visual_mesh(handle, spec, vertices, faces, f"{indent}    ")
     _write_collision_mesh(handle, spec, vertices, faces, f"{indent}    ")
     handle.write(f"{indent}}}\n")
@@ -963,7 +1146,9 @@ def main() -> None:
     asset_root = args.asset_root.expanduser().resolve()
     usd_root = args.usd_root.expanduser().resolve()
 
-    arm_links, arm_inertials, arm_joints = _load_arm_model(arm_urdf)
+    arm_links, source_arm_inertials, source_arm_joints = _load_arm_model(arm_urdf)
+    arm_inertials = _hardware_aligned_arm_inertials(source_arm_inertials)
+    arm_joints = _hardware_aligned_arm_joints(source_arm_joints)
     mesh_specs = _all_mesh_specs(downloads_dir, arm_mesh_dir)
     mesh_paths = _copy_meshes(mesh_specs, asset_root / "meshes")
     inertials = {**arm_inertials, **_gripper_inertials(mesh_specs, mesh_paths)}

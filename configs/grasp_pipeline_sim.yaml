@@ -2,30 +2,38 @@ geometry:
   target_mesh_path: "obj/fabrica/plumbers_block/0.obj"
   mesh_scale: 0.01
   assembly_glob: "obj/fabrica/plumbers_block/*.obj"
+  assembly_obstacle_paths:
+    - "obj/fabrica/plumbers_block/2.obj"
+  assembly_obstacle_sweep_vector_m: [0.0, 0.06565, 0.0]
 
 planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
-  num_surface_samples: 256
+  num_surface_samples: 1024
   min_jaw_width: 0.002
-  max_jaw_width: 0.09
+  max_jaw_width: 0.07
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
   detailed_finger_contact_gap_m: 0.002
+  gripper_collision_model: "kuka_y_gripper"
   floor_clearance_margin_m: 0.01
   top_grasp_score_weight: 0.35
-  regrasp_transfer_top_grasp_score_weight: 0.70
-  reachability_proxy_score_weight: 0.15
+  regrasp_transfer_top_grasp_score_weight: 0.85
+  reachability_proxy_score_weight: 0.0
   reachability_proxy_hand_offset_m: 0.10
+  symmetry_pickup_enabled: false
+  symmetry_asset_path: ""
+  symmetry_max_transforms: 0
+  symmetry_next_orientation_limit: 24
   contact_lateral_offsets_m: [-0.002916666666666667, 0.0, 0.002916666666666667]
   contact_approach_offsets_m: [-0.0030833333333333333, 0.0, 0.0030833333333333333]
   rng_seed: 0
 
-pickup_pose:
-  support_face: "neg_z"
-  yaw_deg: 0.0
-  xy_world: [0.5, 0.0]
+execution_world_pose:
+  # Corrected execution benchmark run 3: plumbers_block/0, orientation_002.
+  position_world: [0.5, 0.0, 0.04]
+  orientation_xyzw_world: [-0.7071067811865475, 0.0, 0.0, 0.7071067811865476]
 
 artifacts:
   stage1_json: "artifacts/pipeline_stage1_assembly_grasps.json"
@@ -35,7 +43,7 @@ artifacts:
   part_frame_html: "artifacts/pipeline_part_frame_debug.html"
 
 mujoco_execution:
-  enabled: true
+  enabled: false
   python_executable: ""
   robot_config: "configs/mujoco_fr3_with_hand.json"
   simulation_config: "configs/mujoco_simulation.yaml"
@@ -92,12 +100,13 @@ mujoco_execution:
   regrasp_coplanar_tolerance_m: 0.000001
 
 isaac_execution:
-  enabled: false
+  enabled: true
   python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
   part_usd: ""  # optional; runner generates a bundle-local USD by default
-  fr3_usd: ""
+  fr3_usd: "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
   controller: "moveit"
   grasp_id: ""
+  grasp_rank: 1
   pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
@@ -111,9 +120,20 @@ isaac_execution:
   pregrasp_only: false
   run_seconds: 0.0
   headless: false
-  moveit_frame_id: "base"
-  moveit_planning_group: "fr3_arm"
-  moveit_pose_link: "fr3_hand_tcp"
+  moveit_frame_id: "lbr_link_0"
+  moveit_target_position_signs: [1.0, 1.0, 1.0]
+  moveit_planning_group: "arm"
+  moveit_pose_link: "gripper_tcp"
+  moveit_namespace: "/lbr"
+  moveit_joint_names:
+    - "lbr_A1"
+    - "lbr_A2"
+    - "lbr_A3"
+    - "lbr_A4"
+    - "lbr_A5"
+    - "lbr_A6"
+    - "lbr_A7"
+  moveit_start_joint_positions: [0.0, 0.5, 0.0, -1.3962634015954636, 0.0, 1.1, 0.0]
   moveit_pipeline_id: ""
   moveit_planner_id: ""
   moveit_wait_for_moveit_timeout_s: 15.0
@@ -122,12 +142,16 @@ isaac_execution:
   moveit_num_planning_attempts: 5
   moveit_velocity_scale: 0.05
   moveit_acceleration_scale: 0.05
-  moveit_execution_speed_rad_s: 0.35
-  moveit_grasp_settle_time_s: 0.25
+  moveit_execution_speed_rad_s: 0.60
+  moveit_grasp_settle_time_s: 1.0
+  gripper_close_duration_s: 1.5
+  gripper_close_max_duration_s: 10.0
+  postclose_hold_s: 1.0
   moveit_allow_collisions: false
 
 ros2:
-  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: ""
+  pose_base_topic: "/perception/fp/pose_base/fused/assembly"
+  assembly_name: "plumbers_block"
+  part_id: 0
   frame_id: "world"
   timeout_s: 10.0

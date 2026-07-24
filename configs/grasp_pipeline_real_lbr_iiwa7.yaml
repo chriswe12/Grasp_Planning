@@ -41,10 +41,17 @@ mujoco_execution:
   viewer: false
 
 ros2:
-  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: "pb_pipe"
+  pose_base_topic: "/perception/fp/pose_base/fused/assembly"
+  assembly_name: "plumbers_block"
+  part_id: 0
+  # Temporary perception-base -> left LBR base translation, applied before planning.
+  position_offset_m: [0.0, -0.840, 0.0]
   frame_id: "world"
-  timeout_s: 10.0
+  timeout_s: 40.0
+
+grasp_assembly_action:
+  action_name: "/grasp_assembly"
+  output_root: "artifacts/grasp_assembly_actions"
 
 real_execution:
   enabled: true
@@ -74,7 +81,7 @@ real_execution:
   gripper_width_clearance_m: 0.01
   lift_height_m: 0.08
   require_confirmation: true
-  stop_after: "pregrasp"
+  stop_after: "lift"
   allow_collisions: false
   planning_scene_obstacles:
     - id: "floor"
@@ -89,17 +96,15 @@ real_execution:
       size_m: [2.0, 0.04, 1.5]
       xyz: [0.0, -0.75, 0.75]
       rpy: [0.0, 0.0, 0.0]
-  gripper_enabled: false
-  gripper_client: "gripper_command"
-  gripper_command_action: "/gripper_controller/gripper_cmd"
-  gripper_command_position_mode: "kuka_y_finger_joint"
-  gripper_command_max_effort: 30.0
-  gripper_grasp_action: ""
-  gripper_move_action: ""
+  gripper_enabled: true
+  gripper_client: "trigger_service"
+  gripper_trigger_open_service: "/gripper_controller/open"
+  gripper_trigger_close_service: "/gripper_controller/close"
+  gripper_trigger_stop_service: "/gripper_controller/stop"
   gripper_open_width: 0.08
   gripper_grasp_speed: 0.03
   gripper_grasp_force: 30.0
   gripper_epsilon_inner: 0.002
   gripper_epsilon_outer: 0.08
-  gripper_timeout_s: 10.0
+  gripper_timeout_s: 12.0  # service may block internally for up to 10 seconds
   grasp_settle_time_s: 0.5

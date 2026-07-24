@@ -62,31 +62,46 @@ isaac:
   python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
   controller: "moveit"
   headless: true
-  pregrasp_offset: 0.05
+  pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
   close_width: 0.0
   object_mass_kg:
   object_density_kg_m3: 1240.0
-  lift_height_m: 0.12
+  lift_height_m: 0.08
+  success_height_margin_m: 0.05
   tcp_to_grasp_offset: [0.0, 0.0, 0.0]
   run_seconds: 0.0
   part_usd: ""
   use_provided_part_usd: false
-  fr3_usd: ""
-  moveit_frame_id: "base"
-  moveit_planning_group: "fr3_arm"
-  moveit_pose_link: "fr3_hand_tcp"
-  moveit_pipeline_id: "isaac_ros_cumotion"
-  moveit_planner_id: "cuMotion"
+  fr3_usd: "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
+  moveit_frame_id: "lbr_link_0"
+  moveit_target_position_signs: [1.0, 1.0, 1.0]
+  moveit_planning_group: "arm"
+  moveit_pose_link: "gripper_tcp"
+  moveit_namespace: "/lbr"
+  moveit_joint_names:
+    - "lbr_A1"
+    - "lbr_A2"
+    - "lbr_A3"
+    - "lbr_A4"
+    - "lbr_A5"
+    - "lbr_A6"
+    - "lbr_A7"
+  moveit_start_joint_positions: [0.0, 0.5, 0.0, -1.3962634015954636, 0.0, 1.1, 0.0]
+  moveit_pipeline_id: ""
+  moveit_planner_id: ""
   moveit_wait_for_moveit_timeout_s: 15.0
   moveit_ik_timeout_s: 2.0
   moveit_planning_time_s: 5.0
   moveit_num_planning_attempts: 5
   moveit_velocity_scale: 0.05
   moveit_acceleration_scale: 0.05
-  moveit_execution_speed_rad_s: 0.35
-  moveit_grasp_settle_time_s: 0.25
+  moveit_execution_speed_rad_s: 0.60
+  moveit_grasp_settle_time_s: 1.0
+  gripper_close_duration_s: 1.5
+  gripper_close_max_duration_s: 10.0
+  postclose_hold_s: 1.0
   moveit_allow_collisions: false
   video:
     fps: 30.0

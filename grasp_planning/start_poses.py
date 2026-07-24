@@ -11,14 +11,17 @@ DEFAULT_ARM_START_JOINT_POS = {
     "panda_joint6": 1.571,
     "panda_joint7": 0.785,
 }
-KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS = (-1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0)
+# MoveIt uses the physical lbr-stack joint coordinates. Isaac USD expresses a
+# negative URDF axis as a positive USD axis with an inverted coordinate, so
+# only A4 requires a sign change at the backend boundary.
+KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS = (1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0)
 KUKA_MOVEIT_ARM_START_JOINT_VALUES = (
     0.0,
-    0.7155849933176751,
+    0.5,
     0.0,
-    1.3962634015954636,
+    -1.3962634015954636,
     0.0,
-    0.8901179185171081,
+    1.1,
     0.0,
 )
 DEFAULT_KUKA_ARM_START_JOINT_POS = {

@@ -75,4 +75,4 @@ def test_candidate_payload_places_kuka_tcp_at_saved_grasp_position() -> None:
         gripper_collision_model="kuka_y_gripper",
     )[0]
 
-    assert payload["franka_hand_origin_obj"] == [0.03, 0.0, -0.1455]
+    assert payload["franka_hand_origin_obj"] == [0.03, 0.0, -0.1505]

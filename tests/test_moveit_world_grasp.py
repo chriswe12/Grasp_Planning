@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.ros2.moveit_world_grasp import pose_target_from_world, world_grasp_pose_targets
 
@@ -41,6 +43,24 @@ def test_world_grasp_pose_targets_can_mirror_target_axes() -> None:
     assert targets["pregrasp"].position_xyz == (0.4, -0.1, 0.1)
     assert targets["grasp"].position_xyz == (0.4, -0.1, 0.2)
     assert targets["lift"].position_xyz == (0.4, -0.1, 0.28)
+
+
+def test_world_grasp_pose_targets_mirror_orientation_with_target_axes() -> None:
+    world_grasp = replace(
+        _world_grasp(),
+        orientation_xyzw=(0.1, 0.2, 0.3, 0.9273618495495703),
+    )
+
+    targets = world_grasp_pose_targets(
+        world_grasp,
+        frame_id="lbr_link_0",
+        lift_height_m=0.08,
+        position_signs=(1.0, -1.0, 1.0),
+    )
+
+    expected = (-0.1, 0.2, -0.3, 0.9273618495495703)
+    for actual, expected_value in zip(targets["grasp"].orientation_xyzw, expected, strict=True):
+        assert abs(actual - expected_value) < 1.0e-12
 
 
 def test_world_grasp_pose_targets_apply_tcp_to_grasp_offset() -> None:

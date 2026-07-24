@@ -242,6 +242,9 @@ def write_temporary_triangle_mesh_stl(
     """Write a temporary binary STL for a triangle mesh and return its path."""
 
     directory = None if dir is None else str(Path(dir).expanduser().resolve())
+    # Isaac Lab's mesh converter splits the basename on "." and requires the
+    # STL suffix to be the only dot in the temporary filename.
+    prefix = str(prefix).replace(".", "_")
     vertices = np.asarray(mesh.vertices_obj, dtype=np.float32)
     faces = np.asarray(mesh.faces, dtype=np.int32)
     with tempfile.NamedTemporaryFile(mode="wb", prefix=prefix, suffix=".stl", dir=directory, delete=False) as handle:

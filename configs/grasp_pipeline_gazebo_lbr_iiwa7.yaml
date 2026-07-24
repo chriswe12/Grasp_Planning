@@ -41,8 +41,9 @@ mujoco_execution:
   viewer: false
 
 ros2:
-  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: "pb_pipe"
+  pose_base_topic: "/perception/fp/pose_base/fused/assembly"
+  assembly_name: "beam"
+  part_id: 2
   frame_id: "world"
   timeout_s: 10.0
 

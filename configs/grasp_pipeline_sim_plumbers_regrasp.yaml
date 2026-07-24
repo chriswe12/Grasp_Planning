@@ -127,7 +127,8 @@ isaac_execution:
   moveit_allow_collisions: false
 
 ros2:
-  debug_frame_topic: "/perception/fp/debug_frame/zed2i_2"
-  object_id: ""
+  pose_base_topic: "/perception/fp/pose_base/fused/assembly"
+  assembly_name: "plumbers_block"
+  part_id: 0
   frame_id: "world"
   timeout_s: 10.0

@@ -455,6 +455,15 @@ def _moveit_target_position_signs_from_cfg(cfg: dict[str, object]) -> tuple[floa
     return (float(signs[0]), float(signs[1]), float(signs[2]))
 
 
+def _tcp_to_grasp_offset_from_cfg(cfg: dict[str, object]) -> tuple[float, float, float]:
+    values = cfg.get("tcp_to_grasp_offset", (0.0, 0.0, 0.0))
+    if values in ("", None):
+        return (0.0, 0.0, 0.0)
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        raise ValueError("isaac.tcp_to_grasp_offset must contain exactly 3 values.")
+    return tuple(float(value) for value in values)
+
+
 def _configured_gripper_width_clearance_m(payload: dict[str, object], backends: tuple[str, ...]) -> float:
     values: list[float] = []
     for backend in backends:
@@ -549,6 +558,7 @@ def _preplan_isaac_moveit(
         frame_id=str(cfg.get("moveit_frame_id", "base")),
         lift_height_m=_optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
         position_signs=_moveit_target_position_signs_from_cfg(cfg),
+        tcp_to_grasp_offset=_tcp_to_grasp_offset_from_cfg(cfg),
     )
     labels = ("pregrasp",) if bool(cfg.get("pregrasp_only", False)) else ("pregrasp", "grasp", "lift")
     initialized_here = False
@@ -590,6 +600,7 @@ def _preplan_isaac_moveit(
             "moveit": {
                 "frame_id": str(cfg.get("moveit_frame_id", "base")),
                 "target_position_signs": list(_moveit_target_position_signs_from_cfg(cfg)),
+                "tcp_to_grasp_offset": list(_tcp_to_grasp_offset_from_cfg(cfg)),
                 "planning_group": str(cfg.get("moveit_planning_group", "fr3_arm")),
                 "pose_link": str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
                 "namespace": str(cfg.get("moveit_namespace", "")),
@@ -737,9 +748,10 @@ def _isaac_command(
     _append_optional(command, "--object-mass-kg", cfg.get("object_mass_kg"))
     _append_optional(command, "--object-density-kg-m3", cfg.get("object_density_kg_m3"))
     _append_optional(command, "--success-height-margin-m", cfg.get("success_height_margin_m"))
-    tcp_offset = cfg.get("tcp_to_grasp_offset")
-    if tcp_offset not in ("", None):
-        command.extend(["--tcp-to-grasp-offset", *(str(value) for value in tcp_offset)])
+    if cfg.get("tcp_to_grasp_offset") not in ("", None):
+        command.extend(
+            ["--tcp-to-grasp-offset", *(str(value) for value in _tcp_to_grasp_offset_from_cfg(cfg))]
+        )
     command.extend(
         [
             "--moveit-frame-id",
@@ -778,6 +790,12 @@ def _isaac_command(
             str(cfg.get("moveit_execution_speed_rad_s", 0.35)),
             "--moveit-grasp-settle-time-s",
             str(cfg.get("moveit_grasp_settle_time_s", 0.0)),
+            "--gripper-close-duration-s",
+            str(cfg.get("gripper_close_duration_s", 1.5)),
+            "--gripper-close-max-duration-s",
+            str(cfg.get("gripper_close_max_duration_s", 10.0)),
+            "--postclose-hold-s",
+            str(cfg.get("postclose_hold_s", 1.0)),
         ]
     )
     if bool(cfg.get("moveit_allow_collisions", False)):

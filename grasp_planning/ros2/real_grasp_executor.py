@@ -13,9 +13,11 @@ from grasp_planning.ros2.franka_gripper_client import FrankaGripperClient
 from grasp_planning.ros2.gripper_command_client import GripperCommandClient
 from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, PoseTarget, rclpy
 from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets
+from grasp_planning.ros2.trigger_service_gripper_client import TriggerServiceGripperClient
 
 GRIPPER_CLIENT_FRANKA = "franka"
 GRIPPER_CLIENT_GRIPPER_COMMAND = "gripper_command"
+GRIPPER_CLIENT_TRIGGER_SERVICE = "trigger_service"
 
 
 @dataclass(frozen=True)
@@ -101,6 +103,9 @@ def _write_attempt_artifact(
             "gripper_client": str(config.gripper_client),
             "gripper_command_action": str(config.gripper_command_action),
             "gripper_command_position_mode": str(config.gripper_command_position_mode),
+            "gripper_trigger_open_service": str(config.gripper_trigger_open_service),
+            "gripper_trigger_close_service": str(config.gripper_trigger_close_service),
+            "gripper_trigger_stop_service": str(config.gripper_trigger_stop_service),
             "planning_scene_obstacles": list(config.planning_scene_obstacles),
         },
         "object_pose_world": {
@@ -142,7 +147,7 @@ def _stop_after_success_result(
         message = "Reached pregrasp and stopped by configuration."
     elif config.stop_after == "grasp":
         status = "stopped_at_grasp"
-        message = "Reached grasp pose and stopped by configuration."
+        message = "Completed grasp phase and stopped before lift by configuration."
     elif config.stop_after == "lift":
         status = "stopped_at_lift"
         message = "Reached lift pose and stopped by configuration."
@@ -173,13 +178,17 @@ def _normalize_gripper_client(name: str) -> str:
         "control_msgs_gripper_command": GRIPPER_CLIENT_GRIPPER_COMMAND,
         "generic": GRIPPER_CLIENT_GRIPPER_COMMAND,
         "generic_gripper_command": GRIPPER_CLIENT_GRIPPER_COMMAND,
+        "trigger": GRIPPER_CLIENT_TRIGGER_SERVICE,
+        "trigger_service": GRIPPER_CLIENT_TRIGGER_SERVICE,
+        "std_srvs": GRIPPER_CLIENT_TRIGGER_SERVICE,
+        "servo_gripper": GRIPPER_CLIENT_TRIGGER_SERVICE,
     }
     try:
         return aliases[normalized]
     except KeyError as exc:
         raise ValueError(
             f"Unsupported real_execution.gripper_client '{name}'. "
-            "Expected one of: franka, gripper_command."
+            "Expected one of: franka, gripper_command, trigger_service."
         ) from exc
 
 
@@ -206,7 +215,31 @@ def _make_gripper_client(*, commander, config):
             position_mode=str(config.gripper_command_position_mode),
             grasp_settle_time_s=float(config.grasp_settle_time_s),
         )
+    if client_name == GRIPPER_CLIENT_TRIGGER_SERVICE:
+        return TriggerServiceGripperClient(
+            commander,
+            open_service_name=str(config.gripper_trigger_open_service),
+            close_service_name=str(config.gripper_trigger_close_service),
+            stop_service_name=str(config.gripper_trigger_stop_service),
+            timeout_s=float(config.gripper_timeout_s),
+            grasp_settle_time_s=float(config.grasp_settle_time_s),
+        )
     raise AssertionError(f"Unhandled gripper client '{client_name}'.")
+
+
+def _best_effort_stop_gripper(gripper, *, reason: str) -> None:
+    stop = getattr(gripper, "stop", None)
+    if not callable(stop):
+        return
+    try:
+        ok, message = stop()
+    except Exception as exc:
+        print(f"[WARN]: Gripper emergency stop after {reason} failed: {exc!r}", flush=True)
+        return
+    print(
+        f"[INFO]: Gripper emergency stop after {reason}: success={bool(ok)} message={message}",
+        flush=True,
+    )
 
 
 def _execute_selected_world_grasp(
@@ -298,19 +331,6 @@ def _execute_selected_world_grasp(
             steps,
         )
     grasp_reached = True
-    if config.stop_after == "grasp":
-        return (
-            _stop_after_success_result(
-                config=config,
-                grasp_id=world_grasp.grasp_id,
-                attempt_artifact_path=attempt_artifact_path,
-                pregrasp_reached=pregrasp_reached,
-                grasp_reached=grasp_reached,
-                lift_reached=lift_reached,
-            ),
-            steps,
-        )
-
     if gripper is not None:
         ok, message = gripper.close(width=world_grasp.jaw_width)
         _record_step("close_gripper", ok=ok, message=message)
@@ -330,6 +350,19 @@ def _execute_selected_world_grasp(
             )
     else:
         _record_step("close_gripper", ok=True, message="Skipped because gripper_enabled=false.")
+
+    if config.stop_after == "grasp":
+        return (
+            _stop_after_success_result(
+                config=config,
+                grasp_id=world_grasp.grasp_id,
+                attempt_artifact_path=attempt_artifact_path,
+                pregrasp_reached=pregrasp_reached,
+                grasp_reached=grasp_reached,
+                lift_reached=lift_reached,
+            ),
+            steps,
+        )
 
     ok, message = commander.move_to_pose(targets["lift"], label="lift", execute=True)
     _record_step("lift", ok=ok, message=message, target=targets["lift"])
@@ -507,13 +540,21 @@ def execute_real_grasp_from_bundle(*, input_json: Path, config) -> RealExecution
             gripper = _make_gripper_client(commander=commander, config=config)
             gripper.wait_for_server(timeout_s=float(config.wait_for_moveit_timeout_s))
 
-        result, execution_steps = _execute_selected_world_grasp(
-            commander=commander,
-            gripper=gripper,
-            world_grasp=world_grasp,
-            config=config,
-            attempt_artifact_path=attempt_artifact_path,
-        )
+        try:
+            result, execution_steps = _execute_selected_world_grasp(
+                commander=commander,
+                gripper=gripper,
+                world_grasp=world_grasp,
+                config=config,
+                attempt_artifact_path=attempt_artifact_path,
+            )
+        except KeyboardInterrupt:
+            _best_effort_stop_gripper(gripper, reason="keyboard interrupt")
+            raise
+        except Exception as exc:
+            if not bool(getattr(exc, "gripper_stop_attempted", False)):
+                _best_effort_stop_gripper(gripper, reason="execution exception")
+            raise
         steps.extend(execution_steps)
         _write_attempt_artifact(
             output_path=attempt_artifact_path,

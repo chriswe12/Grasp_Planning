@@ -99,7 +99,7 @@ def _benchmark_robot_metadata(planning: PlanningConfig) -> dict[str, object]:
             {
                 "robot_model": "kuka_iiwa7",
                 "tcp_link": "gripper_tcp",
-                "tcp_offset_m": [0.0, 0.0, 0.1455],
+                "tcp_offset_m": [0.0, 0.0, 0.1505],
             }
         )
     else:

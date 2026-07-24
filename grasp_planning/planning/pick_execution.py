@@ -13,8 +13,8 @@ from grasp_planning.start_poses import (
     DEFAULT_ARM_START_JOINT_POS,
     DEFAULT_HAND_OPEN_WIDTH,
     DEFAULT_KUKA_ARM_START_JOINT_POS,
-    gripper_max_open_width,
     gripper_joint_target_from_width,
+    gripper_max_open_width,
     is_gripper_command_joint_name,
     is_gripper_joint_name,
 )
@@ -34,6 +34,7 @@ class PickExecutionResult:
 
 
 StepCallback = Callable[[], None]
+GRIPPER_CLOSE_SETTLE_DURATION_S = 0.5
 
 
 def drive_robot_to_start_pose(
@@ -244,6 +245,46 @@ def _nominal_max_open_gripper_width(hand_joint_names: tuple[str, ...]) -> float:
     return max(float(gripper_max_open_width(name)) for name in gripper_joint_names)
 
 
+def _kuka_contact_stall_matches_grasp_width(
+    diagnostics: dict[str, object],
+    selected_gripper_width_m: float | None,
+) -> bool | None:
+    if selected_gripper_width_m is None:
+        return None
+
+    joint_names = diagnostics.get("gripper_close_joint_names")
+    if not isinstance(joint_names, list) or "left_finger_joint" not in joint_names:
+        return None
+
+    final_positions = diagnostics.get("gripper_close_final_joint_positions")
+    if not isinstance(final_positions, list) or len(final_positions) != len(joint_names):
+        diagnostics["gripper_close_contact_stall_accept_reason"] = "missing final KUKA finger positions"
+        return False
+
+    final_step_delta = diagnostics.get("gripper_close_final_max_step_delta")
+    if final_step_delta is not None and float(final_step_delta) > 1.0e-4:
+        diagnostics["gripper_close_contact_stall_accept_reason"] = (
+            f"finger still moving at {float(final_step_delta):.6f} m/step"
+        )
+        return False
+
+    left_index = joint_names.index("left_finger_joint")
+    final_close = abs(float(final_positions[left_index]))
+    expected_close = abs(gripper_joint_target_from_width("left_finger_joint", float(selected_gripper_width_m)))
+    tolerance = 0.003
+    diagnostics["gripper_close_contact_stall_max_abs_joint_position"] = float(final_close)
+    diagnostics["gripper_close_contact_stall_expected_min_joint_position"] = float(expected_close)
+    diagnostics["gripper_close_contact_stall_expected_tolerance_m"] = float(tolerance)
+    accepted = final_close + tolerance >= expected_close
+    diagnostics["gripper_close_contact_stall_accepted"] = bool(accepted)
+    if not accepted:
+        diagnostics["gripper_close_contact_stall_accept_reason"] = (
+            f"finger only closed to {final_close:.4f} m, expected at least {expected_close:.4f} m "
+            f"for selected grasp width {float(selected_gripper_width_m):.4f} m"
+        )
+    return accepted
+
+
 def _validate_object_lift(
     *,
     object_asset,
@@ -426,6 +467,10 @@ def execute_pick_from_moveit_joint_trajectories(
     success_height_margin_m: float = 0.05,
     max_joint_speed_rad_s: float = 0.35,
     grasp_settle_time_s: float = 0.0,
+    gripper_close_duration_s: float = 1.2,
+    gripper_close_max_duration_s: float = 8.0,
+    postclose_hold_s: float = 0.0,
+    selected_gripper_width_m: float | None = None,
     step_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
@@ -471,6 +516,10 @@ def execute_pick_from_moveit_joint_trajectories(
         "open_gripper_width_exceeds_nominal_limit": float(open_gripper_width) > nominal_max_open_width + 1.0e-6,
         "max_joint_speed_rad_s": float(max_joint_speed_rad_s),
         "grasp_settle_time_s": float(grasp_settle_time_s),
+        "gripper_close_duration_s_requested": float(gripper_close_duration_s),
+        "gripper_close_max_duration_s_requested": float(gripper_close_max_duration_s),
+        "postclose_hold_s": float(postclose_hold_s),
+        "selected_gripper_width_m": None if selected_gripper_width_m is None else float(selected_gripper_width_m),
     }
     executor_kwargs = {
         "max_joint_speed_rad_s": float(max_joint_speed_rad_s),
@@ -561,10 +610,11 @@ def execute_pick_from_moveit_joint_trajectories(
         scene=scene,
         robot=robot,
         width=float(closed_gripper_width),
-        duration_s=1.2,
-        max_duration_s=8.0,
+        duration_s=float(gripper_close_duration_s),
+        max_duration_s=float(gripper_close_max_duration_s),
         hold_context=context,
         hold_arm_waypoint=grasp_waypoint,
+        settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S,
         min_contact_motion_m=max(0.001, min(0.003, 0.125 * abs(float(open_gripper_width) - float(closed_gripper_width)))),
         force_joint_state=False,
         step_callback=_step_callback,
@@ -579,14 +629,31 @@ def execute_pick_from_moveit_joint_trajectories(
         flush=True,
     )
     close_status = str(moveit_diagnostics.get("gripper_close_status", "unknown"))
-    if close_status not in {"target_reached", "contact_stalled", "no_hand_joints"}:
+    close_is_acceptable = close_status in {"target_reached", "no_hand_joints"}
+    if close_status == "contact_stalled":
+        matched_grasp_width = _kuka_contact_stall_matches_grasp_width(moveit_diagnostics, selected_gripper_width_m)
+        close_is_acceptable = True if matched_grasp_width is None else bool(matched_grasp_width)
+    elif close_status == "max_duration_elapsed":
+        close_is_acceptable = bool(
+            _kuka_contact_stall_matches_grasp_width(moveit_diagnostics, selected_gripper_width_m)
+        )
+    if not close_is_acceptable:
         return PickExecutionResult(
             False,
             "gripper_close_failed",
-            f"Isaac gripper did not reach the closed target before lift: status={close_status}.",
+            "Isaac gripper did not reach the closed target or a plausible selected-grasp contact before lift: "
+            f"status={close_status}, reason={moveit_diagnostics.get('gripper_close_contact_stall_accept_reason', 'n/a')}.",
             diagnostics=moveit_diagnostics,
         )
     context.fixed_gripper_width = float(closed_gripper_width)
+    if float(postclose_hold_s) > 0.0:
+        print(f"[INFO]: Holding closed Isaac gripper for {float(postclose_hold_s):.2f}s before lift.", flush=True)
+        _hold_arm_waypoint(
+            context=context,
+            waypoint=grasp_waypoint,
+            duration_s=float(postclose_hold_s),
+            step_callback=_step_callback,
+        )
     capture_lift_object_z = True
     try:
         ok, detail = _execute_moveit_waypoint_segment(

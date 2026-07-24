@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import numpy as np
 from isaaclab.app import AppLauncher
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -27,11 +26,11 @@ DEFAULT_OBJECT_ORIENTATION_XYZW = (-0.7071067811865475, 0.0, 0.0, 0.707106781186
 DEFAULT_MOVEIT_JOINT_NAMES = tuple(f"lbr_A{index}" for index in range(1, 8))
 DEFAULT_KUKA_MOVEIT_ARM_START_JOINT_VALUES = (
     0.0,
-    0.7155849933176751,
+    0.5,
     0.0,
-    1.3962634015954636,
+    -1.3962634015954636,
     0.0,
-    0.8901179185171081,
+    1.1,
     0.0,
 )
 DEFAULT_KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M = 0.084
@@ -43,6 +42,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--grasp-id", default="g1013")
     parser.add_argument("--robot-usd", type=Path, default=DEFAULT_ROBOT_USD)
     parser.add_argument(
+        "--kuka-arm-actuator-profile",
+        choices=("working", "source-usd"),
+        default="source-usd",
+        help=(
+            "Arm actuator profile for KUKA IsaacLab execution. "
+            "'source-usd' uses original USD arm stiffness/effort with default damping 80; "
+            "'working' uses the old stiff tracking profile."
+        ),
+    )
+    parser.add_argument(
+        "--kuka-arm-damping",
+        type=float,
+        default=None,
+        help="Override KUKA arm actuator damping for every arm joint while keeping the selected profile's stiffness/effort.",
+    )
+    parser.add_argument(
         "--part-usd",
         type=Path,
         default=None,
@@ -52,6 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--attempt-artifact", type=Path, default=Path("artifacts/fixed_kuka_isaac_pick_attempt.json"))
     parser.add_argument("--object-position", type=float, nargs=3, default=DEFAULT_OBJECT_POSITION)
     parser.add_argument("--object-orientation-xyzw", type=float, nargs=4, default=DEFAULT_OBJECT_ORIENTATION_XYZW)
+    parser.add_argument(
+        "--object-yaw-deg",
+        type=float,
+        default=None,
+        help="Optional extra world-Z yaw applied to --object-orientation-xyzw.",
+    )
     parser.add_argument("--object-mass-kg", type=float, default=None)
     parser.add_argument("--object-density-kg-m3", type=float, default=1240.0)
     parser.add_argument("--pregrasp-offset", type=float, default=0.10)
@@ -60,7 +81,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--close-width", type=float, default=0.0)
     parser.add_argument("--lift-height-m", type=float, default=0.08)
     parser.add_argument("--success-height-margin-m", type=float, default=0.05)
-    parser.add_argument("--tcp-to-grasp-offset", type=float, nargs=3, default=(0.0, 0.0, 0.035))
+    parser.add_argument("--tcp-to-grasp-offset", type=float, nargs=3, default=(0.0, 0.0, 0.0))
     parser.add_argument(
         "--moveit-plan-json",
         type=Path,
@@ -74,7 +95,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Allow loading an old MoveIt plan JSON that does not record the exact object/grasp/offset metadata.",
     )
     parser.add_argument("--moveit-frame-id", default="lbr_link_0")
-    parser.add_argument("--moveit-target-position-signs", type=float, nargs=3, default=(1.0, -1.0, 1.0))
+    parser.add_argument("--moveit-target-position-signs", type=float, nargs=3, default=(1.0, 1.0, 1.0))
     parser.add_argument("--moveit-planning-group", default="arm")
     parser.add_argument("--moveit-pose-link", default="gripper_tcp")
     parser.add_argument("--moveit-namespace", default="/lbr")
@@ -118,14 +139,24 @@ from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E40
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
 from isaaclab.sim.utils import bind_physics_material  # noqa: E402
 
-from grasp_planning.envs import DEFAULT_PART_DENSITY_KG_M3, ISAAC_MIN_CONTACT_OFFSET_M, make_fr3_part_scene_cfg  # noqa: E402
+from grasp_planning.envs import (  # noqa: E402
+    DEFAULT_PART_DENSITY_KG_M3,
+    ISAAC_MIN_CONTACT_OFFSET_M,
+    make_fr3_part_scene_cfg,
+)
 from grasp_planning.envs.franka_collisions import expose_franka_mesh_collisions  # noqa: E402
-from grasp_planning.grasping.fabrica_grasp_debug import TriangleMesh, load_grasp_bundle, load_stl_mesh, quat_to_rotmat_xyzw  # noqa: E402
+from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
+    TriangleMesh,
+    load_grasp_bundle,
+    load_stl_mesh,
+    quat_to_rotmat_xyzw,
+)
 from grasp_planning.grasping.grasp_transforms import saved_grasp_to_world_grasp  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_stl  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
+    GRIPPER_CLOSE_SETTLE_DURATION_S,
     PickExecutionResult,
     _command_gripper_width,
     _execute_moveit_waypoint_segment,
@@ -137,11 +168,17 @@ from grasp_planning.planning.pick_execution import (  # noqa: E402
     drive_robot_to_start_pose,
 )
 from grasp_planning.planning.trajectory_executor import TrajectoryExecutor  # noqa: E402
-from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, rclpy  # noqa: E402
+from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
+    MoveItPoseCommander,
+    MoveItPoseCommanderConfig,
+    rclpy,
+)
 from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
 from grasp_planning.scene_defaults import ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BASE_POSITION  # noqa: E402
-from grasp_planning.start_poses import gripper_joint_target_from_width, kuka_moveit_to_isaac_joint_positions  # noqa: E402
-
+from grasp_planning.start_poses import (  # noqa: E402
+    gripper_joint_target_from_width,
+    kuka_moveit_to_isaac_joint_positions,
+)
 
 ATTEMPT_ARTIFACT_WRITTEN = False
 
@@ -159,6 +196,34 @@ def _parse_csv_floats(raw: str) -> tuple[float, ...]:
 
 def _parse_csv_strings(raw: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in str(raw).split(",") if part.strip())
+
+
+def _quat_multiply_xyzw(lhs: tuple[float, float, float, float], rhs: tuple[float, float, float, float]):
+    x1, y1, z1, w1 = lhs
+    x2, y2, z2, w2 = rhs
+    return (
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+    )
+
+
+def _normalized_quat_xyzw(values) -> tuple[float, float, float, float]:
+    quat = np.asarray(tuple(float(value) for value in values), dtype=float)
+    norm = float(np.linalg.norm(quat))
+    if norm <= 0.0:
+        raise ValueError("Object orientation quaternion must have nonzero norm.")
+    return tuple(float(value) for value in quat / norm)
+
+
+def _object_orientation_xyzw_from_args() -> tuple[float, float, float, float]:
+    base = _normalized_quat_xyzw(args_cli.object_orientation_xyzw)
+    if args_cli.object_yaw_deg is None:
+        return base
+    half_yaw = np.deg2rad(float(args_cli.object_yaw_deg)) * 0.5
+    yaw = (0.0, 0.0, float(np.sin(half_yaw)), float(np.cos(half_yaw)))
+    return _normalized_quat_xyzw(_quat_multiply_xyzw(yaw, base))
 
 
 def _moveit_joint_names() -> tuple[str, ...]:
@@ -308,6 +373,8 @@ def _build_scene(*, part_usd_path: str, object_pose_world: ObjectWorldPose):
         part_density_kg_m3=args_cli.object_density_kg_m3,
         robot_base_position=ROBOT_BASE_POSITION,
         robot_base_orientation_xyzw=ROBOT_BASE_ORIENTATION_XYZW,
+        kuka_arm_actuator_profile=args_cli.kuka_arm_actuator_profile.replace("-", "_"),
+        kuka_arm_damping_override=args_cli.kuka_arm_damping,
     )
     scene = InteractiveScene(scene_cfg)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
@@ -527,17 +594,19 @@ def _contact_stall_matches_selected_grasp(close_diagnostics: dict[str, object], 
         return False
 
     final_close = max(abs(float(value)) for value in final_positions)
-    expected_close = abs(gripper_joint_target_from_width("left_finger_joint", float(world_grasp.gripper_width)))
+    selected_jaw_width_m = float(world_grasp.jaw_width)
+    expected_close = abs(gripper_joint_target_from_width("left_finger_joint", selected_jaw_width_m))
     tolerance = 0.003
     close_diagnostics["gripper_close_contact_stall_max_abs_joint_position"] = float(final_close)
     close_diagnostics["gripper_close_contact_stall_expected_min_joint_position"] = float(expected_close)
     close_diagnostics["gripper_close_contact_stall_expected_tolerance_m"] = float(tolerance)
+    close_diagnostics["gripper_close_contact_stall_selected_jaw_width_m"] = selected_jaw_width_m
     accepted = final_close + tolerance >= expected_close
     close_diagnostics["gripper_close_contact_stall_accepted"] = bool(accepted)
     if not accepted:
         close_diagnostics["gripper_close_contact_stall_accept_reason"] = (
             f"finger only closed to {final_close:.4f} m, expected at least {expected_close:.4f} m "
-            f"for selected grasp width {float(world_grasp.gripper_width):.4f} m"
+            f"for selected jaw width {selected_jaw_width_m:.4f} m"
         )
     return accepted
 
@@ -639,7 +708,7 @@ def _run_fixed_sequence(*, sim, scene, world_grasp, moveit_joint_trajectories) -
         max_duration_s=float(args_cli.gripper_close_max_duration_s),
         hold_context=context,
         hold_arm_waypoint=grasp_waypoint,
-        settle_duration_s=max(0.5, float(args_cli.postclose_hold_s)),
+        settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S,
         min_contact_motion_m=max(0.001, min(0.003, 0.125 * abs(float(args_cli.open_width) - float(args_cli.close_width)))),
         force_joint_state=False,
         step_callback=_step_callback,
@@ -760,7 +829,7 @@ def main() -> None:
 
     object_pose_world = ObjectWorldPose(
         position_world=tuple(float(value) for value in args_cli.object_position),
-        orientation_xyzw_world=tuple(float(value) for value in args_cli.object_orientation_xyzw),
+        orientation_xyzw_world=_object_orientation_xyzw_from_args(),
     )
     world_grasp = saved_grasp_to_world_grasp(
         grasp,
