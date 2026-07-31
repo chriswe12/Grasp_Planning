@@ -47,7 +47,7 @@ FRANKA_HAND_MESH_PATH = (
     / "collision"
     / "hand.stl"
 )
-KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1505], dtype=float)
+KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
 SCHEMA_VERSION = 2
 FRANKA_CONTACT_PATCH_LATERAL_SIZE_M = 17.5e-3
 FRANKA_CONTACT_PATCH_APPROACH_SIZE_M = 18.5e-3
@@ -1326,13 +1326,16 @@ def evaluate_grasps_against_ground(
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
     gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    floor_z_world_m: float = 0.0,
     floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
 ) -> list[CandidateStatus]:
     statuses: list[CandidateStatus] = []
     model_name = normalize_gripper_collision_model_name(gripper_collision_model)
-    ground_constraint = HalfSpaceWorldConstraint(offset_world=-float(floor_clearance_margin_m))
+    ground_constraint = HalfSpaceWorldConstraint(
+        offset_world=-(float(floor_z_world_m) + float(floor_clearance_margin_m))
+    )
     evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
     for candidate in candidates:
         accepted_candidate: SavedGraspCandidate | None = None
@@ -1404,6 +1407,7 @@ def evaluate_saved_grasps_against_pickup_pose(
     object_pose_world: ObjectWorldPose,
     contact_gap_m: float,
     gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    floor_z_world_m: float = 0.0,
     floor_clearance_margin_m: float = 0.0,
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M,
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M,
@@ -1413,6 +1417,7 @@ def evaluate_saved_grasps_against_pickup_pose(
         object_pose_world=object_pose_world,
         contact_gap_m=contact_gap_m,
         gripper_collision_model=gripper_collision_model,
+        floor_z_world_m=floor_z_world_m,
         floor_clearance_margin_m=floor_clearance_margin_m,
         contact_lateral_offsets_m=contact_lateral_offsets_m,
         contact_approach_offsets_m=contact_approach_offsets_m,

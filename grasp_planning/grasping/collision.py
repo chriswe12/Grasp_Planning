@@ -256,7 +256,7 @@ _FRANKA_HAND_MESH_PATH = (
 _FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 _KUKA_Y_GRIPPER_MESH_DIR = Path(__file__).resolve().parents[2] / "assets" / "urdf" / "kuka_iiwa7_y_gripper" / "meshes"
 _KUKA_Y_GRIPPER_MESH_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-_KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1505], dtype=float)
+_KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
 _KUKA_Y_GRIPPER_MESH_NAMES = {
     "base": "hand.STL",
     "left_finger": "left_finger.STL",

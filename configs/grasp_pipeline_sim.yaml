@@ -140,6 +140,14 @@ isaac_execution:
   moveit_ik_timeout_s: 2.0
   moveit_planning_time_s: 5.0
   moveit_num_planning_attempts: 5
+  # Bounded redundant-IK search. Set candidate_count back to 1 for the legacy
+  # single-IK baseline.
+  moveit_ik_candidate_count: 8
+  moveit_ik_beam_width: 3
+  moveit_ik_seed_perturbation_rad: 0.7
+  moveit_ik_dedup_tolerance_rad: 0.05
+  # Prefer base/wrist redundancy over large middle-joint posture changes.
+  moveit_ik_joint_weights: [0.5, 2.0, 2.0, 2.5, 1.5, 1.5, 0.5]
   moveit_velocity_scale: 0.05
   moveit_acceleration_scale: 0.05
   moveit_execution_speed_rad_s: 0.60

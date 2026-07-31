@@ -1250,13 +1250,13 @@ class Stage1CollisionSkipTests(unittest.TestCase):
 
         self.assertEqual(
             fabrica_pipeline._robot_metadata_for_planning(planning)["tcp_offset_m"],
-            [0.0, 0.0, 0.1505],
+            [0.0, 0.0, 0.1455],
         )
         self.assertEqual(
             run_grasp_generation_benchmark._benchmark_robot_metadata(planning)["tcp_offset_m"],
-            [0.0, 0.0, 0.1505],
+            [0.0, 0.0, 0.1455],
         )
-        self.assertEqual(fabrica_pipeline._STAGE1_CACHE_SCHEMA_VERSION, 13)
+        self.assertEqual(fabrica_pipeline._STAGE1_CACHE_SCHEMA_VERSION, 14)
 
     def test_generate_stage1_can_skip_assembly_collision_filter(self) -> None:
         mesh = TriangleMesh(

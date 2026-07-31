@@ -381,6 +381,53 @@ def _execute_moveit_waypoint_segment(
     return bool(ok), detail
 
 
+def execute_moveit_joint_trajectory_sequence(
+    *,
+    sim,
+    scene,
+    robot,
+    moveit_joint_trajectories: Mapping[str, tuple[tuple[float, ...], ...]],
+    labels: tuple[str, ...],
+    fixed_gripper_width: float,
+    max_joint_speed_rad_s: float = 0.35,
+    step_callback: StepCallback | None = None,
+) -> PickExecutionResult:
+    """Execute arbitrary MoveIt segments continuously without resetting the arm."""
+    context = FR3MotionContext(
+        robot=robot,
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=float(fixed_gripper_width),
+    )
+    executor = TrajectoryExecutor(
+        context,
+        max_joint_speed_rad_s=float(max_joint_speed_rad_s),
+        step_callback=step_callback,
+    )
+    diagnostics: dict[str, object] = {"labels": list(labels), "completed_labels": []}
+    for label in labels:
+        ok, detail = _execute_moveit_waypoint_segment(
+            context=context,
+            executor=executor,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            label=label,
+        )
+        if not ok:
+            return PickExecutionResult(
+                False,
+                "moveit_sequence_failed",
+                f"MoveIt sequence segment '{label}' failed: {detail}",
+                diagnostics=diagnostics,
+            )
+        diagnostics["completed_labels"].append(label)
+    return PickExecutionResult(
+        True,
+        "ok",
+        f"Executed {len(labels)} continuous MoveIt trajectory segments.",
+        diagnostics=diagnostics,
+    )
+
+
 def _moveit_waypoint_tensor(
     *,
     context: FR3MotionContext,

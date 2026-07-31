@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 
@@ -109,6 +109,96 @@ class _DebugPoseItemListener(Node):
 
     def publish_status(self, text: str) -> None:
         self.get_logger().info(text)
+
+
+class _DebugPoseItemsListener(Node):
+    def __init__(
+        self,
+        *,
+        topic_name: str,
+        message_type: str,
+        assembly_name: str,
+        part_ids: Iterable[int],
+    ) -> None:
+        super().__init__("grasp_planning_debug_pose_items_listener")
+        if str(message_type) != "fp_debug_msgs/msg/DebugPoseItem":
+            raise ValueError(f"Unsupported fused pose message type '{message_type}'.")
+        self._assembly_name = str(assembly_name)
+        self._part_ids = frozenset(int(part_id) for part_id in part_ids)
+        self._latest_poses: dict[int, ObjectWorldPose] = {}
+        self.create_subscription(
+            DebugPoseItem,
+            topic_name,
+            self._on_debug_pose_item,
+            _subscription_qos(),
+        )
+
+    @property
+    def latest_poses(self) -> dict[int, ObjectWorldPose]:
+        return dict(self._latest_poses)
+
+    def _on_debug_pose_item(self, msg: DebugPoseItem) -> None:
+        part_id = int(getattr(msg, "part_id", -1))
+        if part_id not in self._part_ids:
+            return
+        pose = extract_execution_pose_from_debug_pose_item(
+            msg,
+            assembly_name=self._assembly_name,
+            part_id=part_id,
+        )
+        if pose is not None:
+            self._latest_poses[part_id] = pose
+
+
+def wait_for_debug_pose_item_messages(
+    *,
+    topic_name: str,
+    message_type: str,
+    assembly_name: str,
+    part_ids: Iterable[int],
+    timeout_s: float,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> dict[int, ObjectWorldPose]:
+    """Wait for one current pose for every requested part on a shared topic."""
+
+    requested = tuple(dict.fromkeys(int(part_id) for part_id in part_ids))
+    if not requested or any(part_id < 0 for part_id in requested):
+        raise ValueError("part_ids must contain non-negative part identifiers.")
+    if not str(assembly_name):
+        raise ValueError("assembly_name must be non-empty.")
+    if rclpy is None or DebugPoseItem is None:
+        raise RuntimeError(
+            "ROS2 dependencies are unavailable. Source ROS2 and the repo "
+            "overlay before waiting for DebugPoseItem messages."
+        )
+
+    initialized_here = False
+    if not rclpy.ok():
+        rclpy.init()
+        initialized_here = True
+    node = _DebugPoseItemsListener(
+        topic_name=str(topic_name),
+        message_type=str(message_type),
+        assembly_name=str(assembly_name),
+        part_ids=requested,
+    )
+    try:
+        deadline = time.monotonic() + float(timeout_s)
+        while time.monotonic() < deadline:
+            if cancel_requested is not None and cancel_requested():
+                raise InterruptedError("Cancelled while waiting for perceived part poses.")
+            rclpy.spin_once(node, timeout_sec=0.1)
+            poses = node.latest_poses
+            if all(part_id in poses for part_id in requested):
+                return {part_id: poses[part_id] for part_id in requested}
+        missing = [f"{assembly_name}/{part_id}" for part_id in requested if part_id not in node.latest_poses]
+        raise TimeoutError(
+            f"Timed out after {timeout_s:.1f}s waiting for object poses on '{topic_name}'; missing {missing}."
+        )
+    finally:
+        node.destroy_node()
+        if initialized_here:
+            rclpy.shutdown()
 
 
 def wait_for_debug_pose_item_message(

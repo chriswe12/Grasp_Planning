@@ -33,12 +33,12 @@ FINGER_TRAVEL_M = 0.04
 GRIPPER_TCP_LINK = "gripper_tcp"
 ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
 # The canonical lbr-stack EE frame is 35 mm above link_7. The physical Y-gripper
-# mount sits 4.2 mm back along EE-local Z, while its grasp center is calibrated
-# 150.5 mm above the gripper base. Keep these transforms separate so MoveIt and
+# mount sits 4.2 mm back along EE-local Z, while its TCP is calibrated
+# 145.5 mm above the gripper base. Keep these transforms separate so MoveIt and
 # Isaac share the same EE, hand-mount, and TCP contract.
 LBR_LINK_7_TO_EE_XYZ = (0.0, 0.0, 0.035)
 GRIPPER_EE_MOUNT_OFFSET_XYZ = (0.0, 0.0, -0.0042)
-GRIPPER_TCP_XYZ = (0.0, 0.0, 0.1505)
+GRIPPER_TCP_XYZ = (0.0, 0.0, 0.1455)
 GRIPPER_TCP_RPY = (0.0, 0.0, 0.0)
 GRIPPER_TCP_MASS_KG = 1.0e-3
 GRIPPER_TCP_DIAGONAL_INERTIA = (1.0e-7, 1.0e-7, 1.0e-7)

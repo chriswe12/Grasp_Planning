@@ -82,6 +82,35 @@ class GroundFilterReuseTests(unittest.TestCase):
         self.assertEqual(padded_status.status, "rejected")
         self.assertEqual(padded_status.reason, "ground_collision")
 
+    def test_nonzero_floor_height_translates_ground_constraint(self) -> None:
+        baseline = evaluate_saved_grasps_against_pickup_pose(
+            [self._candidate()],
+            object_pose_world=ObjectWorldPose(
+                position_world=(0.0, 0.0, 0.20),
+                orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+            ),
+            contact_gap_m=0.002,
+        )[0]
+        shifted_pose = ObjectWorldPose(
+            position_world=(0.0, 0.0, -0.10),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+        correct_shifted = evaluate_saved_grasps_against_pickup_pose(
+            [self._candidate()],
+            object_pose_world=shifted_pose,
+            contact_gap_m=0.002,
+            floor_z_world_m=-0.30,
+        )[0]
+        zero_floor_shifted = evaluate_saved_grasps_against_pickup_pose(
+            [self._candidate()],
+            object_pose_world=shifted_pose,
+            contact_gap_m=0.002,
+        )[0]
+
+        self.assertEqual(baseline.status, "accepted")
+        self.assertEqual(correct_shifted.status, baseline.status)
+        self.assertEqual(zero_floor_shifted.status, "rejected")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
 from .fr3_cube_env import (
@@ -280,6 +282,91 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
     )
 
 
+_FR3_PART_SCENE_TEMPLATE = FR3PartSceneCfg()
+
+
+@configclass
+class DualKukaAssemblySceneCfg(InteractiveSceneCfg):
+    """Two KUKA/Y-gripper articulations, one rigid prefix, and one incoming part."""
+
+    num_envs = 1
+    env_spacing = 2.5
+
+    ground = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.ground)
+    dome_light = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.dome_light)
+
+    holder_robot = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.robot)
+    holder_robot.prim_path = "{ENV_REGEX_NS}/HolderRobot"
+
+    inserter_robot = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.robot)
+    inserter_robot.prim_path = "{ENV_REGEX_NS}/InserterRobot"
+
+    base_part = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.part)
+    base_part.prim_path = "{ENV_REGEX_NS}/BasePart"
+
+    incoming_part = copy.deepcopy(_FR3_PART_SCENE_TEMPLATE.part)
+    incoming_part.prim_path = "{ENV_REGEX_NS}/IncomingPart"
+
+    holder_left_finger_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/HolderRobot/left_finger_link",
+        update_period=0.0,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/BasePart"],
+    )
+    holder_right_finger_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/HolderRobot/right_finger_link",
+        update_period=0.0,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/BasePart"],
+    )
+    inserter_left_finger_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/InserterRobot/left_finger_link",
+        update_period=0.0,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/IncomingPart"],
+    )
+    inserter_right_finger_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/InserterRobot/right_finger_link",
+        update_period=0.0,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/IncomingPart"],
+    )
+
+
+def _resolve_asset_path(asset_path: str) -> str:
+    if "://" in asset_path:
+        return asset_path
+    resolved = Path(asset_path).expanduser()
+    if not resolved.is_file():
+        raise FileNotFoundError(f"Asset not found at '{resolved}'.")
+    return str(resolved)
+
+
+def _set_part_mass(
+    part_cfg: RigidObjectCfg,
+    *,
+    part_mass_kg: float | None,
+    part_density_kg_m3: float | None,
+) -> None:
+    if part_mass_kg is not None and part_density_kg_m3 is not None:
+        raise ValueError("part_mass_kg and part_density_kg_m3 are mutually exclusive.")
+    if part_mass_kg is not None and part_mass_kg <= 0.0:
+        raise ValueError("part_mass_kg must be > 0 when set.")
+    if part_density_kg_m3 is not None and part_density_kg_m3 <= 0.0:
+        raise ValueError("part_density_kg_m3 must be > 0 when set.")
+    if part_mass_kg is not None:
+        part_cfg.spawn.mass_props = sim_utils.MassPropertiesCfg(mass=part_mass_kg)
+    elif part_density_kg_m3 is not None:
+        part_cfg.spawn.mass_props = sim_utils.MassPropertiesCfg(density=part_density_kg_m3)
+
+
+def _set_part_pose_xyzw(
+    part_cfg: RigidObjectCfg,
+    *,
+    position: tuple[float, float, float],
+    orientation_xyzw: tuple[float, float, float, float],
+) -> None:
+    part_cfg.init_state.pos = position
+    x, y, z, w = orientation_xyzw
+    part_cfg.init_state.rot = (w, x, y, z)
+
+
 def make_fr3_part_scene_cfg(
     *,
     fr3_asset_path: str,
@@ -295,23 +382,8 @@ def make_fr3_part_scene_cfg(
 ) -> FR3PartSceneCfg:
     """Build a configured scene for a single Franka Panda and rigid part."""
 
-    if part_mass_kg is not None and part_density_kg_m3 is not None:
-        raise ValueError("part_mass_kg and part_density_kg_m3 are mutually exclusive.")
-    if part_mass_kg is not None and part_mass_kg <= 0.0:
-        raise ValueError("part_mass_kg must be > 0 when set.")
-    if part_density_kg_m3 is not None and part_density_kg_m3 <= 0.0:
-        raise ValueError("part_density_kg_m3 must be > 0 when set.")
-
-    def _resolve_path(asset_path: str) -> str:
-        if "://" in asset_path:
-            return asset_path
-        resolved = Path(asset_path).expanduser()
-        if not resolved.is_file():
-            raise FileNotFoundError(f"Asset not found at '{resolved}'.")
-        return str(resolved)
-
     scene_cfg = FR3PartSceneCfg()
-    resolved_robot_path = _resolve_path(fr3_asset_path)
+    resolved_robot_path = _resolve_asset_path(fr3_asset_path)
     scene_cfg.robot.spawn.usd_path = resolved_robot_path
     scene_cfg.robot.init_state.pos = robot_base_position
     scene_cfg.robot.init_state.rot = robot_base_orientation_xyzw
@@ -321,13 +393,102 @@ def make_fr3_part_scene_cfg(
         kuka_arm_actuator_profile=kuka_arm_actuator_profile,
         kuka_arm_damping_override=kuka_arm_damping_override,
     )
-    scene_cfg.part.spawn.usd_path = _resolve_path(part_usd_path)
-    if part_mass_kg is not None:
-        scene_cfg.part.spawn.mass_props = sim_utils.MassPropertiesCfg(mass=part_mass_kg)
-    elif part_density_kg_m3 is not None:
-        scene_cfg.part.spawn.mass_props = sim_utils.MassPropertiesCfg(density=part_density_kg_m3)
-    scene_cfg.part.init_state.pos = part_position
-    # Isaac Lab initial-state quaternions are wxyz, while pipeline world poses are xyzw.
-    x, y, z, w = part_orientation_xyzw
-    scene_cfg.part.init_state.rot = (w, x, y, z)
+    scene_cfg.part.spawn.usd_path = _resolve_asset_path(part_usd_path)
+    _set_part_mass(
+        scene_cfg.part,
+        part_mass_kg=part_mass_kg,
+        part_density_kg_m3=part_density_kg_m3,
+    )
+    _set_part_pose_xyzw(
+        scene_cfg.part,
+        position=part_position,
+        orientation_xyzw=part_orientation_xyzw,
+    )
+    return scene_cfg
+
+
+def make_dual_kuka_assembly_scene_cfg(
+    *,
+    robot_asset_path: str,
+    base_part_usd_path: str,
+    incoming_part_usd_path: str,
+    base_part_position: tuple[float, float, float],
+    base_part_orientation_xyzw: tuple[float, float, float, float],
+    incoming_part_position: tuple[float, float, float],
+    incoming_part_orientation_xyzw: tuple[float, float, float, float],
+    ground_height_m: float = 0.0,
+    holder_robot_base_position: tuple[float, float, float] = (
+        0.0,
+        -0.42,
+        0.0,
+    ),
+    inserter_robot_base_position: tuple[float, float, float] = (
+        0.0,
+        0.42,
+        0.0,
+    ),
+    robot_base_orientation_xyzw: tuple[float, float, float, float] = (
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ),
+    base_part_mass_kg: float | None = None,
+    incoming_part_mass_kg: float | None = None,
+    part_density_kg_m3: float | None = DEFAULT_PART_DENSITY_KG_M3,
+    kuka_arm_actuator_profile: str = KUKA_ARM_ACTUATOR_PROFILE_DEFAULT,
+    kuka_arm_damping_override: float | None = None,
+) -> DualKukaAssemblySceneCfg:
+    """Build a dual-robot Fabrica prefix-holder/pickup physics scene.
+
+    ``base_part_usd_path`` may contain either the bare base or a compound
+    current subassembly rooted in the base source frame.
+    """
+
+    scene_cfg = DualKukaAssemblySceneCfg()
+    scene_cfg.ground.init_state.pos = (
+        0.0,
+        0.0,
+        float(ground_height_m),
+    )
+    resolved_robot_path = _resolve_asset_path(robot_asset_path)
+    for robot_cfg, base_position in (
+        (scene_cfg.holder_robot, holder_robot_base_position),
+        (scene_cfg.inserter_robot, inserter_robot_base_position),
+    ):
+        robot_cfg.spawn.usd_path = resolved_robot_path
+        robot_cfg.spawn.activate_contact_sensors = True
+        robot_cfg.init_state.pos = base_position
+        x, y, z, w = robot_base_orientation_xyzw
+        robot_cfg.init_state.rot = (w, x, y, z)
+        robot_cfg.init_state.joint_pos = _robot_start_joint_pos_for_asset(resolved_robot_path)
+        robot_cfg.actuators = _robot_actuators_for_asset(
+            resolved_robot_path,
+            kuka_arm_actuator_profile=kuka_arm_actuator_profile,
+            kuka_arm_damping_override=kuka_arm_damping_override,
+        )
+
+    scene_cfg.base_part.spawn.usd_path = _resolve_asset_path(base_part_usd_path)
+    _set_part_mass(
+        scene_cfg.base_part,
+        part_mass_kg=base_part_mass_kg,
+        part_density_kg_m3=(None if base_part_mass_kg is not None else part_density_kg_m3),
+    )
+    _set_part_pose_xyzw(
+        scene_cfg.base_part,
+        position=base_part_position,
+        orientation_xyzw=base_part_orientation_xyzw,
+    )
+
+    scene_cfg.incoming_part.spawn.usd_path = _resolve_asset_path(incoming_part_usd_path)
+    _set_part_mass(
+        scene_cfg.incoming_part,
+        part_mass_kg=incoming_part_mass_kg,
+        part_density_kg_m3=(None if incoming_part_mass_kg is not None else part_density_kg_m3),
+    )
+    _set_part_pose_xyzw(
+        scene_cfg.incoming_part,
+        position=incoming_part_position,
+        orientation_xyzw=incoming_part_orientation_xyzw,
+    )
     return scene_cfg

@@ -57,6 +57,10 @@ from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     rclpy,
 )
 from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
+from grasp_planning.ros2.multi_ik_planner import (  # noqa: E402
+    MultiIkPlanningConfig,
+    plan_pose_sequence_multi_ik,
+)
 from grasp_planning.start_poses import (  # noqa: E402
     DEFAULT_ARM_START_JOINT_VALUES,
     DEFAULT_MOVEIT_ARM_JOINT_NAMES,
@@ -199,6 +203,32 @@ def _pickup_pose_config(payload: dict[str, object]) -> PickupPoseConfig | None:
     )
 
 
+def _validate_multi_ik_config(
+    *,
+    candidate_count: int,
+    beam_width: int,
+    seed_perturbation_rad: float,
+    dedup_tolerance_rad: float,
+    joint_weights: tuple[float, ...],
+    expected_joint_count: int | None,
+    field_prefix: str,
+) -> None:
+    if candidate_count < 1:
+        raise ValueError(f"{field_prefix}.moveit_ik_candidate_count must be >= 1.")
+    if beam_width < 1:
+        raise ValueError(f"{field_prefix}.moveit_ik_beam_width must be >= 1.")
+    if seed_perturbation_rad < 0.0:
+        raise ValueError(f"{field_prefix}.moveit_ik_seed_perturbation_rad must be >= 0.")
+    if dedup_tolerance_rad < 0.0:
+        raise ValueError(f"{field_prefix}.moveit_ik_dedup_tolerance_rad must be >= 0.")
+    if any(value <= 0.0 for value in joint_weights):
+        raise ValueError(f"{field_prefix}.moveit_ik_joint_weights values must be positive.")
+    if joint_weights and expected_joint_count is not None and len(joint_weights) != expected_joint_count:
+        raise ValueError(
+            f"{field_prefix}.moveit_ik_joint_weights must match the MoveIt joint-name count ({expected_joint_count})."
+        )
+
+
 def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig:
     raw = dict(payload.get("mujoco_execution", {}))
     controller = str(raw.get("controller", "native")).strip().lower()
@@ -212,7 +242,7 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
     if raw.get("regrasp_staging_xy_world") not in ("", None):
         regrasp_staging_xy_world = _tuple_floats(raw["regrasp_staging_xy_world"], expected_len=2)
     regrasp_staging_xy_offsets_m = _tuple_float_pairs(raw.get("regrasp_staging_xy_offsets_m"))
-    return MujocoPipelineConfig(
+    config = MujocoPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
         robot_config=str(raw.get("robot_config", "")),
@@ -245,6 +275,11 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
         moveit_planning_time_s=float(raw.get("moveit_planning_time_s", 5.0)),
         moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
+        moveit_ik_candidate_count=int(raw.get("moveit_ik_candidate_count", 1)),
+        moveit_ik_beam_width=int(raw.get("moveit_ik_beam_width", 1)),
+        moveit_ik_seed_perturbation_rad=float(raw.get("moveit_ik_seed_perturbation_rad", 0.35)),
+        moveit_ik_dedup_tolerance_rad=float(raw.get("moveit_ik_dedup_tolerance_rad", 0.05)),
+        moveit_ik_joint_weights=_tuple_floats(raw.get("moveit_ik_joint_weights", ())),
         moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execute_timeout_s=float(raw.get("moveit_execute_timeout_s", 120.0)),
@@ -286,6 +321,16 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
         regrasp_stability_margin_m=float(raw.get("regrasp_stability_margin_m", 0.0)),
         regrasp_coplanar_tolerance_m=float(raw.get("regrasp_coplanar_tolerance_m", 1.0e-6)),
     )
+    _validate_multi_ik_config(
+        candidate_count=config.moveit_ik_candidate_count,
+        beam_width=config.moveit_ik_beam_width,
+        seed_perturbation_rad=config.moveit_ik_seed_perturbation_rad,
+        dedup_tolerance_rad=config.moveit_ik_dedup_tolerance_rad,
+        joint_weights=config.moveit_ik_joint_weights,
+        expected_joint_count=None,
+        field_prefix="mujoco_execution",
+    )
+    return config
 
 
 def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
@@ -316,7 +361,7 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         raise ValueError("isaac_execution.grasp_rank must be >= 1.")
     if str(raw.get("grasp_id", "")) and grasp_rank != IsaacPipelineConfig.grasp_rank:
         raise ValueError("isaac_execution.grasp_id and grasp_rank are mutually exclusive.")
-    return IsaacPipelineConfig(
+    config = IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
         part_usd=str(raw.get("part_usd", "")),
@@ -353,6 +398,11 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         moveit_ik_timeout_s=float(raw.get("moveit_ik_timeout_s", 2.0)),
         moveit_planning_time_s=float(raw.get("moveit_planning_time_s", 5.0)),
         moveit_num_planning_attempts=int(raw.get("moveit_num_planning_attempts", 5)),
+        moveit_ik_candidate_count=int(raw.get("moveit_ik_candidate_count", 1)),
+        moveit_ik_beam_width=int(raw.get("moveit_ik_beam_width", 1)),
+        moveit_ik_seed_perturbation_rad=float(raw.get("moveit_ik_seed_perturbation_rad", 0.35)),
+        moveit_ik_dedup_tolerance_rad=float(raw.get("moveit_ik_dedup_tolerance_rad", 0.05)),
+        moveit_ik_joint_weights=_tuple_floats(raw.get("moveit_ik_joint_weights", ())),
         moveit_velocity_scale=float(raw.get("moveit_velocity_scale", 0.05)),
         moveit_acceleration_scale=float(raw.get("moveit_acceleration_scale", 0.05)),
         moveit_execution_speed_rad_s=float(raw.get("moveit_execution_speed_rad_s", 0.35)),
@@ -365,7 +415,29 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         ),
         postclose_hold_s=float(raw.get("postclose_hold_s", IsaacPipelineConfig.postclose_hold_s)),
         moveit_allow_collisions=bool(raw.get("moveit_allow_collisions", False)),
+        record_video=str(raw.get("record_video", "")),
+        video_fps=float(raw.get("video_fps", IsaacPipelineConfig.video_fps)),
+        video_width=int(raw.get("video_width", IsaacPipelineConfig.video_width)),
+        video_height=int(raw.get("video_height", IsaacPipelineConfig.video_height)),
+        video_camera_eye=_tuple_floats(
+            raw.get("video_camera_eye", IsaacPipelineConfig.video_camera_eye),
+            expected_len=3,
+        ),
+        video_camera_target=_tuple_floats(
+            raw.get("video_camera_target", IsaacPipelineConfig.video_camera_target),
+            expected_len=3,
+        ),
     )
+    _validate_multi_ik_config(
+        candidate_count=config.moveit_ik_candidate_count,
+        beam_width=config.moveit_ik_beam_width,
+        seed_perturbation_rad=config.moveit_ik_seed_perturbation_rad,
+        dedup_tolerance_rad=config.moveit_ik_dedup_tolerance_rad,
+        joint_weights=config.moveit_ik_joint_weights,
+        expected_joint_count=len(expected_joint_names),
+        field_prefix="isaac_execution",
+    )
+    return config
 
 
 def _ros2_config(payload: dict[str, object]) -> Ros2Config:
@@ -683,9 +755,32 @@ def _plan_isaac_moveit_joint_trajectories(
         moveit_config = _moveit_config_from_isaac_execution(isaac_execution)
         commander = MoveItPoseCommander(moveit_config, node_name="isaac_pipeline_moveit")
         commander.wait_for_moveit(require_execute=False)
-        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
         current_start = _isaac_moveit_start_joint_positions(isaac_execution)
         joint_names = _isaac_moveit_joint_names(isaac_execution)
+        multi_ik_config = MultiIkPlanningConfig(
+            candidate_count=isaac_execution.moveit_ik_candidate_count,
+            beam_width=isaac_execution.moveit_ik_beam_width,
+            seed_perturbation_rad=isaac_execution.moveit_ik_seed_perturbation_rad,
+            dedup_tolerance_rad=isaac_execution.moveit_ik_dedup_tolerance_rad,
+            joint_weights=isaac_execution.moveit_ik_joint_weights,
+        )
+        if multi_ik_config.enabled:
+            result = plan_pose_sequence_multi_ik(
+                commander,
+                targets=targets,
+                labels=labels,
+                start_joint_positions=current_start,
+                joint_names=joint_names,
+                config=multi_ik_config,
+                label_prefix="isaac",
+            )
+            print(
+                f"[PIPELINE] Multi-IK selected Isaac sequence: "
+                f"cost={result.joint_path_cost:.4f} beam_width={multi_ik_config.beam_width}.",
+                flush=True,
+            )
+            return dict(result.trajectories)
+        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
         for label in labels:
             target = targets[label]
             print(
@@ -790,6 +885,11 @@ def _maybe_write_isaac_moveit_plan(
                     "namespace": isaac_execution.moveit_namespace,
                     "pipeline_id": isaac_execution.moveit_pipeline_id,
                     "planner_id": isaac_execution.moveit_planner_id,
+                    "ik_candidate_count": isaac_execution.moveit_ik_candidate_count,
+                    "ik_beam_width": isaac_execution.moveit_ik_beam_width,
+                    "ik_seed_perturbation_rad": isaac_execution.moveit_ik_seed_perturbation_rad,
+                    "ik_dedup_tolerance_rad": isaac_execution.moveit_ik_dedup_tolerance_rad,
+                    "ik_joint_weights": list(isaac_execution.moveit_ik_joint_weights),
                     "lift_height_m": isaac_execution.lift_height_m,
                     "allow_collisions": bool(isaac_execution.moveit_allow_collisions),
                 },
@@ -885,6 +985,14 @@ def _run_mujoco_execution(
                 str(mujoco_execution.moveit_planning_time_s),
                 "--moveit-num-planning-attempts",
                 str(mujoco_execution.moveit_num_planning_attempts),
+                "--moveit-ik-candidate-count",
+                str(mujoco_execution.moveit_ik_candidate_count),
+                "--moveit-ik-beam-width",
+                str(mujoco_execution.moveit_ik_beam_width),
+                "--moveit-ik-seed-perturbation-rad",
+                str(mujoco_execution.moveit_ik_seed_perturbation_rad),
+                "--moveit-ik-dedup-tolerance-rad",
+                str(mujoco_execution.moveit_ik_dedup_tolerance_rad),
                 "--moveit-velocity-scale",
                 str(mujoco_execution.moveit_velocity_scale),
                 "--moveit-acceleration-scale",
@@ -899,6 +1007,13 @@ def _run_mujoco_execution(
                 str(mujoco_execution.regrasp_moveit_final_candidates_per_placement),
             ]
         )
+        if mujoco_execution.moveit_ik_joint_weights:
+            command.extend(
+                [
+                    "--moveit-ik-joint-weights",
+                    ",".join(str(value) for value in mujoco_execution.moveit_ik_joint_weights),
+                ]
+            )
         if mujoco_execution.moveit_allow_collisions:
             command.append("--moveit-allow-collisions")
     print("[PIPELINE] Starting MuJoCo execution.", flush=True)
@@ -1070,6 +1185,23 @@ def _run_isaac_execution(
         )
     if isaac_execution.moveit_allow_collisions:
         command.append("--moveit-allow-collisions")
+    if isaac_execution.record_video:
+        command.extend(
+            [
+                "--record-video",
+                isaac_execution.record_video,
+                "--video-fps",
+                str(isaac_execution.video_fps),
+                "--video-width",
+                str(isaac_execution.video_width),
+                "--video-height",
+                str(isaac_execution.video_height),
+                "--video-camera-eye",
+                *(str(value) for value in isaac_execution.video_camera_eye),
+                "--video-camera-target",
+                *(str(value) for value in isaac_execution.video_camera_target),
+            ]
+        )
     print("[PIPELINE] Starting Isaac execution.", flush=True)
     subprocess.run(command, check=True, cwd=REPO_ROOT, env=_subprocess_env())
 

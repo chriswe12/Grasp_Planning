@@ -156,10 +156,10 @@ def test_generated_moveit_xacro_uses_lbr_hardware_kinematics_and_grasp_tcp(tmp_p
     gripper_mount_joint = generated_joints["gripper_mount_joint"]
     assert gripper_mount_joint.find("origin").get("xyz") == "0 0 0.0308"
     tcp_joint = generated_joints["gripper_tcp_joint"]
-    assert tcp_joint.find("origin").get("xyz") == "0 0 0.1505"
+    assert tcp_joint.find("origin").get("xyz") == "0 0 0.1455"
     mount_z = float(gripper_mount_joint.find("origin").get("xyz").split()[2])
     tcp_z = float(tcp_joint.find("origin").get("xyz").split()[2])
-    assert math.isclose(mount_z + tcp_z, 0.1813, abs_tol=1.0e-9)
+    assert math.isclose(mount_z + tcp_z, 0.1763, abs_tol=1.0e-9)
     hardware_ee_joint = generated_joints["$(arg robot_name)_joint_ee"]
     assert hardware_ee_joint.get("type") == "fixed"
     assert hardware_ee_joint.find("parent").get("link") == "$(arg robot_name)_link_7"

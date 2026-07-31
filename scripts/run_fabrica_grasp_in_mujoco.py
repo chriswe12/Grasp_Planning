@@ -41,6 +41,7 @@ from grasp_planning.mujoco import (
 from grasp_planning.pipeline.regrasp_fallback import load_mujoco_regrasp_plan
 from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, PoseTarget, rclpy
 from grasp_planning.ros2.moveit_world_grasp import pose_target_from_world, world_grasp_pose_targets
+from grasp_planning.ros2.multi_ik_planner import MultiIkPlanningConfig, plan_pose_sequence_multi_ik
 
 
 def _parse_vec2(raw: str) -> tuple[float, float]:
@@ -505,6 +506,29 @@ def _plan_moveit_target_sequence(
         commander = MoveItPoseCommander(moveit_config, node_name="mujoco_moveit_trajectory_planner")
         commander.wait_for_moveit(require_execute=False)
         start_joint_positions = _home_arm_joint_positions(robot_cfg)
+        multi_ik_config = MultiIkPlanningConfig(
+            candidate_count=int(args_cli.moveit_ik_candidate_count),
+            beam_width=int(args_cli.moveit_ik_beam_width),
+            seed_perturbation_rad=float(args_cli.moveit_ik_seed_perturbation_rad),
+            dedup_tolerance_rad=float(args_cli.moveit_ik_dedup_tolerance_rad),
+            joint_weights=_parse_float_tuple(args_cli.moveit_ik_joint_weights),
+        )
+        if multi_ik_config.enabled:
+            result = plan_pose_sequence_multi_ik(
+                commander,
+                targets=targets,
+                labels=labels,
+                start_joint_positions=start_joint_positions,
+                joint_names=tuple(robot_cfg.arm_joint_names),
+                config=multi_ik_config,
+                label_prefix="mujoco",
+            )
+            print(
+                f"[MUJOCO] Multi-IK selected sequence: cost={result.joint_path_cost:.4f} "
+                f"beam_width={multi_ik_config.beam_width}.",
+                flush=True,
+            )
+            return dict(result.trajectories)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
         for label in labels:
             trajectory, message = commander.plan_to_pose(
@@ -901,6 +925,11 @@ def main() -> None:
     parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
     parser.add_argument("--moveit-planning-time-s", type=float, default=5.0)
     parser.add_argument("--moveit-num-planning-attempts", type=int, default=5)
+    parser.add_argument("--moveit-ik-candidate-count", type=int, default=1)
+    parser.add_argument("--moveit-ik-beam-width", type=int, default=1)
+    parser.add_argument("--moveit-ik-seed-perturbation-rad", type=float, default=0.35)
+    parser.add_argument("--moveit-ik-dedup-tolerance-rad", type=float, default=0.05)
+    parser.add_argument("--moveit-ik-joint-weights", type=str, default="")
     parser.add_argument("--moveit-velocity-scale", type=float, default=0.05)
     parser.add_argument("--moveit-acceleration-scale", type=float, default=0.05)
     parser.add_argument("--moveit-execute-timeout-s", type=float, default=120.0)

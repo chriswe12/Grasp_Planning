@@ -1,0 +1,12 @@
+# Initial mock joint positions [degrees].
+#
+# Keep these synchronized with
+# grasp_planning.start_poses.KUKA_MOVEIT_ARM_START_JOINT_VALUES so RViz,
+# MoveIt, and Isaac all begin from the same dual-arm configuration.
+A1: 0.0
+A2: 28.64788975654116
+A3: 0.0
+A4: -80.0
+A5: 0.0
+A6: 63.02535746439056
+A7: 0.0

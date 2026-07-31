@@ -13,9 +13,35 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml"]),
-        (f"share/{package_name}/launch", ["launch/aligned_lbr_moveit.launch.py"]),
-        (f"share/{package_name}/config", ["config/iiwa7_y_gripper.srdf.xacro"]),
-        (f"share/{package_name}/urdf", ["urdf/iiwa7_y_gripper_moveit.urdf.xacro"]),
+        (
+            f"share/{package_name}/launch",
+            [
+                "launch/aligned_lbr_moveit.launch.py",
+                "launch/dual_aligned_lbr_moveit.launch.py",
+            ],
+        ),
+        (
+            f"share/{package_name}/config",
+            [
+                "config/dual_iiwa7_y_gripper.srdf",
+                "config/dual_lbr_controllers.yaml",
+                "config/dual_lbr_initial_joint_positions.yaml",
+                "config/dual_lbr_joint_limits.yaml",
+                "config/dual_lbr_kinematics.yaml",
+                "config/dual_lbr_moveit.rviz",
+                "config/dual_lbr_moveit_controllers.yaml",
+                "config/iiwa7_y_gripper.srdf.xacro",
+                "config/lbr_one_system_config.yaml",
+                "config/lbr_two_system_config.yaml",
+            ],
+        ),
+        (
+            f"share/{package_name}/urdf",
+            [
+                "urdf/dual_iiwa7_y_gripper_moveit.urdf.xacro",
+                "urdf/iiwa7_y_gripper_moveit.urdf.xacro",
+            ],
+        ),
         (f"share/{package_name}/meshes", [str(path) for path in sorted(kuka_mesh_root.glob("*.STL"))]),
     ],
     install_requires=["setuptools"],

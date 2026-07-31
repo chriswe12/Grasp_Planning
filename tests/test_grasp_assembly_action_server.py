@@ -259,3 +259,27 @@ def test_server_requires_explicit_execute_flag() -> None:
     assert parser.parse_args(["--execute"]).execute is True
     assert parser.parse_args([]).skip_gripper is False
     assert parser.parse_args(["--execute", "--skip-gripper"]).skip_gripper is True
+
+
+def test_server_parser_selects_guarded_dual_modes() -> None:
+    parser = server.build_argument_parser()
+
+    pitl = parser.parse_args(["--dual-mode", "pitl", "--headless"])
+    assert pitl.dual_mode == "pitl"
+    assert pitl.headless is True
+    assert pitl.execute is False
+
+    real = parser.parse_args(
+        [
+            "--dual-mode",
+            "real",
+            "--execute",
+            "--allow-objectless-planning",
+            "--pair-id",
+            "pair_1",
+        ]
+    )
+    assert real.dual_mode == "real"
+    assert real.execute is True
+    assert real.allow_objectless_planning is True
+    assert real.pair_id == "pair_1"

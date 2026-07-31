@@ -172,6 +172,12 @@ parser.add_argument(
     help="Precomputed MoveIt joint waypoint plan. Used when IsaacLab Python cannot import ROS2.",
 )
 parser.add_argument(
+    "--moveit-motion-sequence-json",
+    type=Path,
+    default=None,
+    help="Optional arbitrary MoveIt segment sequence to execute continuously instead of a pickup.",
+)
+parser.add_argument(
     "--moveit-lift-height-m",
     type=float,
     default=0.08,
@@ -257,6 +263,7 @@ from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_st
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
     drive_robot_to_start_pose,
+    execute_moveit_joint_trajectory_sequence,
     execute_pick_from_moveit_joint_trajectories,
 )
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
@@ -1159,6 +1166,49 @@ def run() -> None:
         f"{float(part_pose_w[5]):.6f}, {float(part_pose_w[6]):.6f})",
         flush=True,
     )
+    if args_cli.moveit_motion_sequence_json is not None:
+        sequence_payload = json.loads(args_cli.moveit_motion_sequence_json.read_text(encoding="utf-8"))
+        labels = tuple(str(value) for value in sequence_payload["labels"])
+        trajectories = {
+            str(label): tuple(
+                _moveit_waypoint_to_isaac(tuple(float(value) for value in waypoint)) for waypoint in waypoints
+            )
+            for label, waypoints in dict(sequence_payload["trajectories"]).items()
+        }
+        execution_result = execute_moveit_joint_trajectory_sequence(
+            sim=sim,
+            scene=scene,
+            robot=robot,
+            moveit_joint_trajectories=trajectories,
+            labels=labels,
+            fixed_gripper_width=approach_open_gripper_width,
+            max_joint_speed_rad_s=float(args_cli.moveit_execution_speed_rad_s),
+            step_callback=_record_step,
+        )
+        if video_recorder is not None:
+            video_recorder.capture(force=True)
+            video_recorder.close()
+        args_cli.attempt_artifact.parent.mkdir(parents=True, exist_ok=True)
+        args_cli.attempt_artifact.write_text(
+            json.dumps(
+                {
+                    "execution": {
+                        "success": bool(execution_result.success),
+                        "status": execution_result.status,
+                        "message": execution_result.message,
+                        "diagnostics": dict(execution_result.diagnostics),
+                    },
+                    "sequence_plan": str(args_cli.moveit_motion_sequence_json),
+                    "video_path": None if video_recorder is None else video_recorder.output_path,
+                    "video_frame_count": 0 if video_recorder is None else video_recorder.frame_count,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        if not execution_result.success:
+            raise SystemExit(1)
+        return
     print("[INFO]: Executing pick attempt...", flush=True)
     if args_cli.moveit_plan_json is not None:
         print(f"[INFO]: Loading precomputed MoveIt plan from {args_cli.moveit_plan_json}.", flush=True)

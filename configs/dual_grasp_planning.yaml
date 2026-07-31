@@ -1,0 +1,122 @@
+assembly:
+  name: "plumbers_block"
+  asset_root: "assets/obj/fabrica"
+  mesh_scale: 0.01
+  table_z_assembly_m: 0.0
+  table_contact_tolerance_m: 0.000001
+
+artifacts:
+  output_root: "artifacts/dual_grasp_planning"
+
+# GraspAssembly action adapter for the validated dual vertical slice.
+# "left" maps to lbr_one at Y=-0.42 m and "right" to lbr_two at Y=+0.42 m.
+grasp_assembly_action:
+  action_name: "/grasp_assembly"
+  artifact_root: "artifacts/dual_grasp_planning"
+  output_root: "artifacts/dual_grasp_assembly_actions"
+  pose_base_topic: "/perception/fp/pose_base/fused/assembly"
+  pose_message_type: "fp_debug_msgs/msg/DebugPoseItem"
+  pose_timeout_s: 40.0
+  debug_aabb_topic: "/grasp_assembly/debug_aabbs"
+  position_offset_m: [0.0, 0.0, 0.0]
+  frame_id: "base_link"
+  # Physical work-surface top in base_link.
+  floor_z_world_m: -0.030
+  # Warn above this roll/pitch magnitude; execution continues yaw-only.
+  maximum_assembly_tilt_deg: 5.0
+  holder_robot: "left"
+  inserter_robot: "right"
+  # Last executed and preflighted phase for dual real goals.
+  # This closes both grippers without lifting or moving to pre-insertion.
+  stop_after: "inserter_pickup_grasp"
+  headless: false
+
+planning:
+  stage1_cache_enabled: true
+  stage1_cache_dir: "artifacts/dual_grasp_planning/stage1_cache"
+  num_surface_samples: 1024
+  min_jaw_width: 0.002
+  max_jaw_width: 0.07
+  antipodal_cosine_threshold: 0.984807753012208
+  roll_angle_step_deg: 15.0
+  max_pair_checks: 40960
+  detailed_finger_contact_gap_m: 0.002
+  gripper_collision_model: "kuka_y_gripper"
+  contact_lateral_offsets_m: [-0.002916666666666667, 0.0, 0.002916666666666667]
+  contact_approach_offsets_m: [-0.0030833333333333333, 0.0, 0.0030833333333333333]
+  # Expand object-local inserter contacts by finite incoming-part symmetries.
+  # Every expanded grasp is rechecked through the complete assembly sweep.
+  symmetry_pickup_enabled: true
+  symmetry_max_transforms: 0
+  rng_seed: 0
+
+holder_feasibility:
+  pregrasp_offset_m: 0.05
+  table_clearance_margin_m: 0.002
+  geometry_clearance_margin_m: 0.0
+  incoming_path_samples: 21
+
+pair_planning:
+  max_holder_candidates_per_step: 80
+  max_inserter_candidates_per_step: 160
+  max_candidates_per_cluster: 5
+  contact_position_bin_m: 0.025
+  axis_bin_deg: 30.0
+  max_pair_checks: 16000
+  max_accepted_pairs: 48
+  max_rejected_pairs: 200
+  max_collision_diagnostics_per_step: 24
+  max_pairs_per_holder: 4
+  max_pairs_per_inserter: 4
+  matrix_unary_rejections_per_side: 12
+  table_clearance_margin_m: 0.002
+  geometry_clearance_margin_m: 0.0
+  retreat_distance_m: 0.05
+  path_samples: 21
+  holder_score_weight: 0.45
+  inserter_score_weight: 0.45
+  clearance_score_weight: 0.10
+  clearance_score_saturation_m: 0.05
+  # Compile identity plus all finite, yaw-preserving partial-assembly and
+  # incoming-part symmetry combinations for runtime pre-insertion fallback.
+  transition_symmetry_enabled: true
+  transition_symmetry_geometry_tolerance_m: 0.001
+  transition_symmetry_max_partial_assembly_transforms: 0
+  transition_symmetry_max_incoming_transforms: 0
+
+# Interactive Stage-4A ranking debugger. These transforms are approximate
+# world-frame layout values, not a calibrated two-robot cell definition.
+reachability_debug:
+  robot_separation_y_m: 0.84
+  lock_robot_separation: true
+  holder_base:
+    position_world_m: [0.0, -0.42, 0.0]
+    yaw_deg: 0.0
+  inserter_base:
+    position_world_m: [0.0, 0.42, 0.0]
+    yaw_deg: 0.0
+  assembly:
+    position_world_m: [0.55, 0.0, 0.0]
+    yaw_deg: 0.0
+  scoring:
+    shoulder_offset_base_m: [0.0, 0.0, 0.34]
+    minimum_reach_m: 0.15
+    comfort_reach_m: 0.55
+    maximum_reach_m: 0.95
+    minimum_height_base_m: -0.05
+    comfort_height_base_m: 0.25
+    maximum_height_base_m: 0.85
+    front_zero_m: -0.15
+    front_full_m: 0.15
+    distance_weight: 0.45
+    height_weight: 0.20
+    front_weight: 0.20
+    approach_weight: 0.15
+    target_min_weight: 0.60
+    target_mean_weight: 0.40
+    ownership_margin_m: 0.25
+    ownership_weight: 0.70
+    noncrossing_weight: 0.30
+    offline_pair_weight: 0.40
+    reachability_weight: 0.45
+    layout_weight: 0.15

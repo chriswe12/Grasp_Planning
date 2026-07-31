@@ -325,7 +325,7 @@
     <child link="gripper_base_link" />
   </joint>
   <joint name="gripper_tcp_joint" type="fixed">
-    <origin xyz="0 0 0.1505" rpy="0 0 0" />
+    <origin xyz="0 0 0.1455" rpy="0 0 0" />
     <parent link="gripper_base_link" />
     <child link="gripper_tcp" />
   </joint>

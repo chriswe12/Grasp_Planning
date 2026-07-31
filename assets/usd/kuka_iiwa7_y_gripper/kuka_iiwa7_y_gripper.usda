@@ -137158,7 +137158,7 @@ def Xform "kuka_iiwa7_y_gripper"
         prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsMassAPI"]
     )
     {
-        double3 xformOp:translate = (0, 0, 1.4123)
+        double3 xformOp:translate = (0, 0, 1.4073)
         quatf xformOp:orient = (1, 0, 0, 0)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
         bool physics:rigidBodyEnabled = true
@@ -137349,7 +137349,7 @@ def Xform "kuka_iiwa7_y_gripper"
         {
             rel physics:body0 = </kuka_iiwa7_y_gripper/gripper_base_link>
             rel physics:body1 = </kuka_iiwa7_y_gripper/gripper_tcp>
-            point3f physics:localPos0 = (0, 0, 0.1505)
+            point3f physics:localPos0 = (0, 0, 0.1455)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)

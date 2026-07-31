@@ -302,6 +302,53 @@ class MoveItPoseCommander(Node):
             return False, "MoveIt rejected the planning-scene update."
         return True, f"Applied {len(collision_objects)} planning-scene obstacle(s)."
 
+    def remove_planning_scene_obstacles(
+        self,
+        obstacle_ids: Sequence[str],
+        *,
+        default_frame_id: str,
+    ) -> tuple[bool, str]:
+        normalized_ids = tuple(
+            obstacle_id for obstacle_id in (str(value).strip() for value in obstacle_ids) if obstacle_id
+        )
+        if not normalized_ids:
+            return True, "No planning-scene obstacles requested for removal."
+        if CollisionObject is None or PlanningScene is None or ApplyPlanningScene is None:
+            return False, "MoveIt planning-scene message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        collision_objects = []
+        for obstacle_id in normalized_ids:
+            collision_object = CollisionObject()
+            collision_object.header.frame_id = str(default_frame_id)
+            collision_object.id = obstacle_id
+            collision_object.operation = CollisionObject.REMOVE
+            collision_objects.append(collision_object)
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.world.collision_objects = collision_objects
+
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="planning-scene removal",
+            )
+        except Exception as exc:
+            return False, f"Planning-scene removal failed: {exc}"
+        if response is None:
+            return False, "Planning-scene removal response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the planning-scene removal."
+        return True, f"Removed {len(collision_objects)} planning-scene obstacle(s)."
+
     def _collision_object_from_obstacle_spec(self, obstacle: Mapping[str, object], *, default_frame_id: str):
         obstacle_id = str(obstacle.get("id", "")).strip()
         if not obstacle_id:
@@ -448,6 +495,11 @@ class MoveItPoseCommander(Node):
         request.ik_request.ik_link_name = self.config.pose_link
         request.ik_request.pose_stamped = self._pose_stamped(target)
         request.ik_request.avoid_collisions = bool(self.config.avoid_collisions)
+        # With no explicit seed, make the empty RobotState a diff so MoveIt
+        # resolves it against the current shared planning-scene state. A full
+        # empty state otherwise produces conversion errors and can lose the
+        # stationary second arm during dual-arm collision-aware IK.
+        request.ik_request.robot_state.is_diff = True
         if seed_joint_positions is not None:
             request.ik_request.robot_state.is_diff = False
             request.ik_request.robot_state.joint_state.name = list(self.config.joint_names)

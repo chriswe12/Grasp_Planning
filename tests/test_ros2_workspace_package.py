@@ -21,10 +21,12 @@ def test_workspace_package_layout_exists() -> None:
     assert (WORKSPACE_PACKAGE_ROOT / "setup.py").is_file()
     assert (WORKSPACE_PACKAGE_ROOT / "robot_integration_ros" / "__init__.py").is_file()
     assert (WORKSPACE_PACKAGE_ROOT / "robot_integration_ros" / "grasp_assembly_action_server.py").is_file()
+    assert (WORKSPACE_PACKAGE_ROOT / "robot_integration_ros" / "dual_grasp_assembly_action_runner.py").is_file()
 
     package_text = (WORKSPACE_PACKAGE_ROOT / "package.xml").read_text(encoding="utf-8")
     setup_text = (WORKSPACE_PACKAGE_ROOT / "setup.py").read_text(encoding="utf-8")
     assert "<exec_depend>fp_debug_msgs</exec_depend>" in package_text
+    assert "<exec_depend>visualization_msgs</exec_depend>" in package_text
     assert "grasp_assembly_action_server = robot_integration_ros.grasp_assembly_action_server:main" in setup_text
 
 

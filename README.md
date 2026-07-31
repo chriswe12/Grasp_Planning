@@ -1,11 +1,165 @@
-# Grasp Planning
+# Fabrica Grasp Planning And Dual-Arm Assembly
 
-YAML-driven Fabrica grasp planning with three pipeline modes behind one entrypoint:
-- `sim`: offline execution-world pose from config, then optional MuJoCo and/or Isaac execution
-- `pitl`: ROS2 perception pose intake, then optional MuJoCo and/or Isaac execution
-- `real`: ROS2 perception pose intake, planning, and optional real-robot execution from the stage-2 bundle
+This repository plans collision-checked parallel-jaw grasps for Fabrica parts
+and executes them with Franka Research 3 or KUKA iiwa7 robots. It contains two
+related workflows:
 
-## Entry Point
+1. The **single-object pipeline** generates grasps, filters them at a known
+   world pose, and can execute a selected stage-2 bundle in MuJoCo, Isaac, or
+   on a real robot.
+2. The **dual-arm assembly pipeline** selects one grasp that holds the partial
+   assembly and another that picks and transports the incoming part to a
+   symmetry-aware pre-insertion pose.
+
+Both workflows are YAML-driven and write JSON/HTML artifacts that explain what
+was selected and why alternatives were rejected. Generated artifacts under
+`artifacts/` are local outputs and are not the source code.
+
+## Start Here
+
+Choose the entrypoint that matches the job:
+
+| Goal | Entrypoint | Main config |
+| --- | --- | --- |
+| Generate and execute one grasp | `./run_pipeline.sh --mode sim` | `configs/grasp_pipeline_sim.yaml` |
+| Use a ROS2 perception pose in simulation | `./run_pipeline.sh --mode pitl` | `configs/grasp_pipeline_pitl.yaml` |
+| Plan or execute one real-robot pickup | `./run_pipeline.sh --mode real` | `configs/grasp_pipeline_real.yaml` |
+| Build dual holder/inserter planning artifacts | `scripts/build_dual_grasp_pairs.py` | `configs/dual_grasp_planning.yaml` |
+| Plan and run the dual-arm vertical slice in Isaac | `./run_simple_dual_robot.sh --mode sim` | `configs/dual_grasp_planning.yaml` |
+| Preflight or run the guarded dual-arm hardware slice | `./run_simple_dual_robot.sh --mode real` | `configs/dual_grasp_planning.yaml` |
+| Evaluate grasp generation without execution | `scripts/run_grasp_generation_benchmark.py` | `configs/grasp_generation_benchmark.yaml` |
+| Execute saved benchmark grasps | `scripts/run_grasp_execution_benchmark.py` | `configs/grasp_execution_benchmark.yaml` |
+
+The single-object and dual-arm pipelines share grasp generation and collision
+geometry, but their numbered stages are different. When this README says
+"dual Stage 3," it means holder/inserter pair construction, not the
+single-object stage-2 bundle.
+
+## What Is Implemented
+
+The single-object path supports:
+
+- object-local antipodal grasp generation and scoring;
+- assembly and world-pose collision filtering;
+- finite-symmetry pickup-grasp expansion;
+- stage-2 bundles as the shared MuJoCo, Isaac, and real-execution contract;
+- optional MuJoCo regrasp fallback; and
+- planning-only and execution benchmarks.
+
+The dual-arm path supports:
+
+- compiling an authored assembly order into explicit partial-assembly states;
+- reusable holder grasps checked against each changing assembly state;
+- incoming-part grasps and collision-checked holder/inserter pairs;
+- two distinct uses of symmetry:
+  - **pickup symmetry** creates equivalent object-local grasp choices before
+    the incoming part is grasped;
+  - **transition symmetry** creates equivalent final/pre-insertion corridors
+    after the grasp is fixed;
+- distance/rotation ranking followed by exact MoveIt IK and full trajectory
+  planning with candidate fallback;
+- execution of the validated vertical slice in Isaac; and
+- guarded real-robot planning/execution through pre-insertion.
+
+The dual-arm path does **not** yet execute constrained insertion, release the
+incoming part, retreat, or coordinate an arbitrary complete assembly. Real
+execution stops at the configured phase, no later than pre-insertion. Read
+`DUAL_ROBOT_HOLD_GRASPING_PLAN.md` for implementation status and
+`DUAL_ROBOT_TRANSITION_SYMMETRY_PLAN.md` for the symmetry/frame contract.
+
+## Architecture And Artifact Flow
+
+The single-object path is:
+
+```text
+Fabrica OBJ + assembly metadata + YAML
+              |
+              v
+stage 1: object-local grasp generation and assembly filtering
+              |
+              v
+stage 2: execution-pose floor filtering and scoring
+              |
+              v
+saved stage-2 bundle
+       |             |              |
+       v             v              v
+    MuJoCo         Isaac         real MoveIt
+```
+
+MuJoCo, Isaac, and the real executor consume the same saved stage-2 bundle;
+do not create backend-specific grasp serialization.
+
+The dual-arm path is:
+
+```text
+Fabrica assembly order, pre-insertion poses, meshes, and symmetries
+              |
+              v
+dual Stage 0: explicit partial-assembly sequence
+              |
+              v
+dual Stage 1: reusable holder-grasp library
+              |
+              v
+dual Stage 2: holder feasibility in every assembly state
+              |
+              v
+dual Stage 3: incoming grasps + collision-checked grasp pairs
+              |       + symmetry-equivalent transition corridors
+              v
+runtime layout ranking -> MoveIt IK/path fallback -> Isaac or guarded real run
+```
+
+For `plumbers_block`, the selected order is `2 -> 0 -> 3 -> 1 -> 4`.
+Part `2` is the initial base. Holder-active insertion steps therefore use
+incoming parts `0`, `3`, `1`, and `4`.
+
+## Installation
+
+Install the Python package and test dependencies:
+
+```bash
+python3 -m pip install -e ".[test]"
+```
+
+Simulation and real-robot planning additionally require ROS2 and a compatible
+MoveIt workspace. The current KUKA launchers default to ROS Humble and
+`/home/pdz/lbr-stack`. Isaac commands default to
+`/media/pdz/Elements1/IsaacLab/isaaclab.sh`; override `--lbr-ws` or
+`--isaac-python` when using another installation.
+
+Fetch the pinned ROS2 message dependency and build the repository overlay:
+
+```bash
+bash scripts/download_ros2_dependencies.sh
+
+source /opt/ros/humble/setup.bash
+source /home/pdz/lbr-stack/install/setup.bash
+cd ros2_ws
+colcon build --packages-select fp_debug_msgs robot_integration_ros --symlink-install
+cd ..
+```
+
+Source the dual-arm environment helper in terminals where commands are run
+manually:
+
+```bash
+source ./setup_dual_robot_env.sh
+```
+
+The one-command dual runner sources the standard locations itself.
+
+## Single-Object Quick Start
+
+The user-facing single-object entrypoint has three modes:
+
+- `sim`: take the execution-world pose from YAML, then optionally execute in
+  MuJoCo and/or Isaac;
+- `pitl`: wait for a ROS2 perception pose, then optionally execute in MuJoCo
+  and/or Isaac; and
+- `real`: wait for the same ROS2 pose, write the same planning artifacts, and
+  optionally execute on hardware.
 
 ```bash
 ./run_pipeline.sh --mode sim
@@ -15,16 +169,142 @@ YAML-driven Fabrica grasp planning with three pipeline modes behind one entrypoi
 ./run_pipeline.sh --mode sim --backend isaac --headless
 ```
 
-Default configs:
-- `configs/grasp_pipeline_sim.yaml`
-- `configs/grasp_pipeline_pitl.yaml`
-- `configs/grasp_pipeline_real.yaml`
+Default configs are `configs/grasp_pipeline_sim.yaml`,
+`configs/grasp_pipeline_pitl.yaml`, and `configs/grasp_pipeline_real.yaml`.
+Use `--backend {config,mujoco,isaac,both,none}` to override simulation backend
+selection for one run.
 
-`sim` and `pitl` both run stage 1, write stage-1 artifacts, run stage 2, write stage-2 artifacts, then execute from the stage-2 bundle with whichever simulation backends are enabled. Use `--backend {config,mujoco,isaac,both,none}` to override the YAML for one run. `real` writes the same stage artifacts and can optionally execute the selected grasp on hardware when `real_execution.enabled: true`.
+`sim` and `pitl` both run stages 1 and 2 before executing the resulting
+stage-2 bundle. `real` writes the same artifacts and executes only when
+`real_execution.enabled: true`. The checked-in real config remains safe by
+default: execution is disabled, confirmation is required, motion stops at
+pregrasp, and gripper actuation is disabled.
 
-The default `sim` config reproduces corrected KUKA execution-benchmark run 3: `plumbers_block/0` at stable `orientation_002`, world pose `[0.5, 0.0, 0.04]` with quaternion `[-0.7071067811865475, 0.0, 0.0, 0.7071067811865476]`. It regenerates benchmark-equivalent candidates, dynamically selects the highest-scoring stage-2 grasp, and opens the Isaac GUI. Start `./start_lbr_moveit.sh` in another terminal before running `./run_pipeline.sh --mode sim`; pass `--headless` only when the GUI is not wanted.
+The default sim config reproduces corrected KUKA execution-benchmark run 3:
+`plumbers_block/0` at stable `orientation_002`. Start
+`./start_lbr_moveit.sh` in another terminal, then run
+`./run_pipeline.sh --mode sim`. Pass `--headless` when the Isaac GUI is not
+wanted.
 
-For `pitl` and `real`, the planning local frame is defined from the OBJ itself by subtracting the arithmetic mean of all OBJ vertices. The ROS2 `fp_debug_msgs/msg/DebugPoseItem` subscriber then treats `pose_base` as the world pose of that centroid-centered local frame when its Fabrica assembly name and part id match the requested object.
+For `pitl` and `real`, the planning local frame is the OBJ frame translated by
+the arithmetic mean of all OBJ vertices. A matching
+`fp_debug_msgs/msg/DebugPoseItem.pose_base` is treated as the world pose of
+that centroid-centered frame.
+
+## Dual-Arm Quick Start
+
+### 1. Build the offline planning artifacts
+
+Run the four dual stages in order after changing meshes, assembly metadata,
+grasp settings, pair settings, or symmetry settings:
+
+```bash
+python3 scripts/build_assembly_sequence.py --assembly plumbers_block
+python3 scripts/build_holder_grasp_library.py \
+  --config configs/dual_grasp_planning.yaml
+python3 scripts/build_holder_state_feasibility.py \
+  --config configs/dual_grasp_planning.yaml
+python3 scripts/build_dual_grasp_pairs.py \
+  --config configs/dual_grasp_planning.yaml
+```
+
+`build_dual_grasp_pairs.py` can build/load the earlier stages, but listing all
+four commands makes the dependency order explicit. Outputs are written to
+`artifacts/dual_grasp_planning/plumbers_block/`. The most useful entrypoints
+are:
+
+- `assembly_sequence.html` for the authored sequence and insertion poses;
+- `holder_base_candidates.html` for reusable base grasps;
+- `holder_validity_matrix.html` for per-state holder feasibility;
+- `dual_grasp_pair_summary.html` for per-step holder/inserter pairs; and
+- `dual_robot_pair_score_debug.html` after running
+  `python3 scripts/build_dual_robot_pair_score_debug.py`.
+
+Stage-3 JSON files contain `transition_symmetry.candidates`. Regenerate these
+files after enabling or changing transition symmetry; the runtime runner does
+not silently rebuild stale Stage-3 artifacts.
+
+### 2. Run the dual-arm Isaac vertical slice
+
+For the first holder-active step, run:
+
+```bash
+./run_simple_dual_robot.sh \
+  --mode sim \
+  --assembly plumbers_block \
+  --incoming-part-id 0
+```
+
+This one command starts the shared dual-arm mock MoveIt stack, ranks fresh
+pair/transition tasks for the requested layout, performs exact IK preflight,
+plans the full target sequence with fallback, starts Isaac, and stops the
+MoveIt stack when finished. Add `--headless` for a non-GUI run or
+`--record-video /tmp/dual_part_0.mp4` to save a video.
+
+Do not pass `--holder-only` when testing transition symmetry; that option
+intentionally skips the inserter transport and pre-insertion phases.
+
+The other selected-order incoming parts are `3`, `1`, and `4`:
+
+```bash
+./run_simple_dual_robot.sh --mode sim --incoming-part-id 3
+./run_simple_dual_robot.sh --mode sim --incoming-part-id 1
+./run_simple_dual_robot.sh --mode sim --incoming-part-id 4
+```
+
+The plan and attempt artifacts are written next to the Stage-3 artifacts. For
+part `0`, inspect the chosen grasp pair and transition with:
+
+```bash
+jq '{
+  pair_id,
+  transition_id,
+  is_identity: .transition_symmetry.is_identity,
+  insertion_vector: .transition_symmetry.pre_to_final_translation_assembly_m,
+  transition_motion_score,
+  transition_motion_components
+}' artifacts/dual_grasp_planning/plumbers_block/simple_dual_robot_sim_plan_part_0.json
+```
+
+The selected pickup grasp retains its parent and symmetry provenance. Once the
+gripper closes, its part-to-TCP transform is fixed: transition fallback may
+choose another compatible destination corridor, but cannot silently change
+the grasp or regrasp the part.
+
+### 3. Inspect or run MoveIt separately
+
+To keep MoveIt running for RViz or repeated planner calls:
+
+```bash
+./start_dual_lbr_moveit.sh --mode mock --rviz
+```
+
+In another terminal:
+
+```bash
+source ./setup_dual_robot_env.sh
+python3 scripts/smoke_test_dual_lbr_moveit.py
+./run_simple_dual_robot.sh --mode sim --reuse-moveit --incoming-part-id 0
+```
+
+The shared MoveIt model contains `arm_one`, `arm_two`, and `both_arms` in one
+planning scene, so cross-arm collisions remain enabled. Physical role mapping
+is `lbr_one` at `Y=-0.42 m` as holder and `lbr_two` at `Y=+0.42 m` as inserter.
+
+### 4. Real dual-arm safety boundary
+
+Without `--execute`, real mode performs only non-moving target IK checks:
+
+```bash
+./run_simple_dual_robot.sh --mode real --incoming-part-id 0
+```
+
+Hardware execution requires the correctly configured hardware MoveIt stack,
+explicit `--execute`, confirmation unless `--yes` is supplied, and currently
+`--allow-objectless-planning` because the simple runtime scene does not yet
+contain exact object collision meshes. The latter is a known safety limitation,
+not a convenience flag. Review `./run_simple_dual_robot.sh --help` and the
+KUKA hardware runbook below before enabling motion.
 
 ## Grasp Generation Benchmark
 
@@ -447,6 +727,32 @@ completion of the stronger action contract. Use the direct real pipeline command
 above when intentionally testing pickup and lift before pre-assembly transport
 is implemented.
 
+The same entrypoint also exposes a dual holder/inserter adapter for the
+validated first `plumbers_block` step. Start the shared dual MoveIt stack
+separately, then run either perception-in-the-loop Isaac:
+
+```bash
+ros2 run robot_integration_ros grasp_assembly_action_server \
+  --dual-mode pitl \
+  --config configs/dual_grasp_planning.yaml \
+  --headless
+```
+
+or guarded real execution:
+
+```bash
+ros2 run robot_integration_ros grasp_assembly_action_server \
+  --dual-mode real \
+  --config configs/dual_grasp_planning.yaml \
+  --execute \
+  --allow-objectless-planning
+```
+
+The dual adapter uses both base and insertion `DebugPoseItem` poses and all goal
+fields. Its current validated role mapping is `holder_robot: left` (`lbr_one`)
+and `inserter_robot: right` (`lbr_two`). It reaches pre-insertion but does not
+perform insertion, release, or retreat.
+
 Manual gripper commands from any correctly configured ROS2 terminal:
 
 ```bash
@@ -479,29 +785,57 @@ If you want the MuJoCo backend instead, bootstrap its generated robot XML first:
 bash scripts/download_required_assets.sh
 ```
 
+## Development And Verification
+
+Run the same Python checks used by CI:
+
+```bash
+python3 -m pip install -e ".[dev,test]"
+pre-commit run --all-files
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
+```
+
+The FCL-backed collision tests require the native `libccd`/`libfcl` packages
+and `python-fcl`. ROS2-independent tests use mocks where possible; the dual
+MoveIt smoke test is separate because it requires a live shared MoveIt stack:
+
+```bash
+./start_dual_lbr_moveit.sh --mode mock
+# In a second sourced terminal:
+python3 scripts/smoke_test_dual_lbr_moveit.py
+```
+
 ## Repo Shape
 
-Kept code is limited to the pipeline product:
-- `run_pipeline.sh`
-- `docker_env.sh`
-- `Dockerfile`
-- `scripts/run_grasp_pipeline.py`
-- `scripts/run_fabrica_grasp_in_mujoco.py`
-- `scripts/run_fabrica_grasp_in_isaac.py`
-- `scripts/convert_stl_to_usd.py`
-- `scripts/build_mujoco_fr3_hand_models.py`
-- `scripts/run_grasp_generation_benchmark.py`
-- `scripts/download_required_assets.sh`
-- `scripts/download_ros2_dependencies.sh`
-- `configs/grasp_generation_benchmark.yaml`
-- `grasp_planning/grasping/`
-- `grasp_planning/pipeline/`
-- `grasp_planning/ros2/`
-- `grasp_planning/mujoco/`
-- `grasp_planning/envs/`
-- `grasp_planning/planning/`
+The main source areas are:
 
-Fabrica OBJ assets live under `assets/obj/fabrica/`.
+- `run_pipeline.sh` - single-object `sim`, `pitl`, and `real` wrapper;
+- `run_simple_dual_robot.sh` - one-command dual-arm sim/real vertical slice;
+- `start_lbr_moveit.sh` and `start_dual_lbr_moveit.sh` - single/shared MoveIt
+  launchers;
+- `configs/` - single-object, benchmark, backend, and dual-arm YAML settings;
+- `grasp_planning/grasping/` - mesh loading, antipodal generation, scoring,
+  transforms, and gripper collision geometry;
+- `grasp_planning/pipeline/` - single-object stages, regrasp planning, dual
+  assembly stages, pair scoring, and transition symmetry;
+- `grasp_planning/planning/` - backend-neutral execution data and helpers;
+- `grasp_planning/mujoco/` and `grasp_planning/envs/` - MuJoCo and Isaac
+  execution support;
+- `grasp_planning/ros2/` - perception, MoveIt, gripper, multi-IK, and guarded
+  real execution adapters;
+- `scripts/` - build, run, benchmark, debug, and model-generation commands;
+- `ros2_ws/src/robot_integration_ros/` - ROS2 package, launch descriptions,
+  MoveIt configuration, and action-server entrypoints;
+- `assets/obj/fabrica/` - per-assembly OBJ meshes, precedence plans,
+  pre-insertion poses, and finite symmetry assets;
+- `assets/urdf/` and `assets/usd/` - robot and gripper models; and
+- `tests/` - unit/regression coverage, including ROS-independent MoveIt mocks.
+
+Deep dual-arm implementation notes live in
+`DUAL_ROBOT_HOLD_GRASPING_PLAN.md`; the shorter
+`DUAL_ROBOT_TRANSITION_SYMMETRY_PLAN.md` is the authoritative explanation of
+the two symmetry boundaries. `KUKA_dual_arm_CHEATSHEET.md` is an operational
+lab reference, not the architecture source of truth.
 
 ## Notes
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from argparse import Namespace
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -202,6 +203,41 @@ def test_moveit_pose_commander_config_does_not_double_prefix_namespaced_endpoint
     assert config.execute_action_name == "/lbr/execute_trajectory"
 
 
+def test_remove_planning_scene_obstacles_sends_remove_operations() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        moveit_namespace="/lbr_dual_arm",
+    )
+    commander._apply_planning_scene_client = mock.Mock()
+    commander._apply_planning_scene_client.wait_for_service.return_value = True
+    commander._apply_planning_scene_client.call_async.return_value = object()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(success=True)
+
+    with mock.patch.dict(
+        MoveItPoseCommander.remove_planning_scene_obstacles.__globals__,
+        {
+            "CollisionObject": _FakeCollisionObject,
+            "PlanningScene": _FakePlanningScene,
+            "ApplyPlanningScene": _FakeApplyPlanningScene,
+        },
+    ):
+        ok, message = commander.remove_planning_scene_obstacles(
+            ("base_aabb", "incoming_aabb"),
+            default_frame_id="base_link",
+        )
+
+    request = commander._apply_planning_scene_client.call_async.call_args.args[0]
+    objects = request.scene.world.collision_objects
+    assert ok is True
+    assert message == "Removed 2 planning-scene obstacle(s)."
+    assert [value.id for value in objects] == [
+        "base_aabb",
+        "incoming_aabb",
+    ]
+    assert all(value.operation == _FakeCollisionObject.REMOVE for value in objects)
+    assert all(value.header.frame_id == "base_link" for value in objects)
+
+
 def test_commander_config_from_args_accepts_lbr_moveit_settings() -> None:
     args = Namespace(
         planning_group="arm",
@@ -226,6 +262,84 @@ def test_commander_config_from_args_accepts_lbr_moveit_settings() -> None:
     assert config.pose_link == "lbr_link_ee"
     assert config.joint_names == ("lbr_A1", "lbr_A2", "lbr_A3", "lbr_A4", "lbr_A5", "lbr_A6", "lbr_A7")
     assert config.ik_service_name == "/lbr/compute_ik"
+
+
+def test_compute_ik_without_seed_uses_current_planning_scene_as_diff() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_one",
+        pose_link="lbr_one_gripper_tcp",
+        joint_names=("lbr_one_A1",),
+    )
+    commander._ik_client = mock.Mock()
+    commander._ik_client.call_async.return_value = object()
+    commander._pose_stamped = lambda target: mock.Mock()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        error_code=SimpleNamespace(val=1),
+        solution=SimpleNamespace(
+            joint_state=SimpleNamespace(name=["lbr_one_A1"], position=[0.25]),
+        ),
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.compute_ik.__globals__,
+        {"GetPositionIK": _FakeGetPositionIK, "MoveItErrorCodes": _FakeMoveItErrorCodes},
+    ):
+        joints, message = commander.compute_ik(
+            PoseTarget.from_quaternion(
+                x=0.4,
+                y=-0.2,
+                z=0.5,
+                quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+            )
+        )
+
+    request = commander._ik_client.call_async.call_args.args[0]
+    assert request.ik_request.robot_state.is_diff is True
+    assert request.ik_request.robot_state.joint_state.name == []
+    assert joints == [0.25]
+    assert message == "ok"
+
+
+def test_compute_ik_with_seed_uses_explicit_complete_seed_state() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_two",
+        pose_link="lbr_two_gripper_tcp",
+        joint_names=("lbr_two_A1",),
+    )
+    commander._ik_client = mock.Mock()
+    commander._ik_client.call_async.return_value = object()
+    commander._pose_stamped = lambda target: mock.Mock()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        error_code=SimpleNamespace(val=1),
+        solution=SimpleNamespace(
+            joint_state=SimpleNamespace(name=["lbr_two_A1"], position=[-0.5]),
+        ),
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.compute_ik.__globals__,
+        {"GetPositionIK": _FakeGetPositionIK, "MoveItErrorCodes": _FakeMoveItErrorCodes},
+    ):
+        joints, message = commander.compute_ik(
+            PoseTarget.from_quaternion(
+                x=0.4,
+                y=0.2,
+                z=0.5,
+                quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+            ),
+            seed_joint_positions=(-0.4,),
+        )
+
+    request = commander._ik_client.call_async.call_args.args[0]
+    assert request.ik_request.robot_state.is_diff is False
+    assert request.ik_request.robot_state.joint_state.name == ["lbr_two_A1"]
+    assert request.ik_request.robot_state.joint_state.position == [-0.4]
+    assert joints == [-0.5]
+    assert message == "ok"
 
 
 def test_validate_requested_pipeline_accepts_available_pipeline() -> None:
@@ -296,3 +410,44 @@ class _FakePlannerQueryResponse:
 class _FakePlannerInterface:
     def __init__(self, pipeline_id: str) -> None:
         self.pipeline_id = pipeline_id
+
+
+class _FakeMoveItErrorCodes:
+    SUCCESS = 1
+
+
+class _FakeGetPositionIK:
+    class Request:
+        def __init__(self) -> None:
+            self.ik_request = SimpleNamespace(
+                group_name="",
+                ik_link_name="",
+                pose_stamped=None,
+                avoid_collisions=True,
+                robot_state=SimpleNamespace(
+                    is_diff=False,
+                    joint_state=SimpleNamespace(name=[], position=[]),
+                ),
+                timeout=SimpleNamespace(sec=0, nanosec=0),
+            )
+
+
+class _FakeCollisionObject:
+    REMOVE = 1
+
+    def __init__(self) -> None:
+        self.header = SimpleNamespace(frame_id="")
+        self.id = ""
+        self.operation = -1
+
+
+class _FakePlanningScene:
+    def __init__(self) -> None:
+        self.is_diff = False
+        self.world = SimpleNamespace(collision_objects=[])
+
+
+class _FakeApplyPlanningScene:
+    class Request:
+        def __init__(self) -> None:
+            self.scene = None

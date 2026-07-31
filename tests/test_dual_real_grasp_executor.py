@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import json
+import math
+from pathlib import Path
+
+from grasp_planning.pipeline.dual_robot_simple_sim import (
+    DEFAULT_FLOOR_Z_WORLD_M,
+)
+from grasp_planning.ros2.dual_real_grasp_executor import (
+    MOTION_SEQUENCE,
+    DualRealExecutionConfig,
+    _execute_sequence,
+    _preflight_targets,
+    _select_ranked_preflight_candidate,
+    _work_surface_obstacle,
+    load_and_validate_dual_plan,
+)
+
+
+class _Commander:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        self.scene_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def move_to_pose(self, target, *, label: str, execute: bool):
+        self.calls.append((label, execute))
+        return True, f"{label} executed"
+
+    def apply_planning_scene_obstacles(
+        self,
+        obstacles,
+        *,
+        default_frame_id: str,
+    ):
+        del default_frame_id
+        ids = tuple(str(obstacle["id"]) for obstacle in obstacles)
+        self.scene_calls.append(("apply", ids))
+        return True, f"applied {len(ids)}"
+
+    def remove_planning_scene_obstacles(
+        self,
+        obstacle_ids,
+        *,
+        default_frame_id: str,
+    ):
+        del default_frame_id
+        ids = tuple(str(value) for value in obstacle_ids)
+        self.scene_calls.append(("remove", ids))
+        return True, f"removed {len(ids)}"
+
+
+class _Gripper:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float]] = []
+
+    def open(self, *, width: float):
+        self.calls.append(("open", width))
+        return True, "opened"
+
+    def close(self, *, width: float):
+        self.calls.append(("close", width))
+        return True, "closed"
+
+
+class _FallbackIkCommander:
+    def __init__(self) -> None:
+        self.seeds = []
+
+    def compute_ik(self, target, seed_joint_positions=None):
+        del target
+        self.seeds.append(seed_joint_positions)
+        if seed_joint_positions is None:
+            return None, "live failed"
+        return tuple(seed_joint_positions), "alternate ok"
+
+
+class _RankedIkCommander:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def compute_ik(self, target, seed_joint_positions=None):
+        del seed_joint_positions
+        self.calls += 1
+        if target.x > 0.9:
+            return None, "synthetic no IK"
+        return [0.0] * 7, "ok"
+
+
+def _recorded_steps():
+    steps = []
+
+    def record(**kwargs):
+        steps.append(kwargs)
+
+    return steps, record
+
+
+def _plan_payload() -> dict[str, object]:
+    targets = {
+        target_name: {
+            "position_world_m": [0.5, 0.0, 0.1],
+            "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+        }
+        for _, target_name in MOTION_SEQUENCE
+    }
+    return {
+        "schema_version": 1,
+        "kind": "dual_robot_simple_sim_task",
+        "pair_id": "p001_h0001_i0_0002",
+        "roles": {
+            "holder": {
+                "robot": "lbr_one",
+                "planning_group": "arm_one",
+                "tcp_link": "lbr_one_gripper_tcp",
+            },
+            "inserter": {
+                "robot": "lbr_two",
+                "planning_group": "arm_two",
+                "tcp_link": "lbr_two_gripper_tcp",
+            },
+        },
+        "targets": targets,
+        "grasps": {
+            "holder": {"grasp_id": "h0001", "jaw_width_m": 0.040},
+            "inserter_pickup": {
+                "grasp_id": "i0_0002",
+                "jaw_width_m": 0.043,
+            },
+        },
+    }
+
+
+def _write_plan(tmp_path: Path, payload: dict[str, object] | None = None) -> Path:
+    plan_path = tmp_path / "dual_plan.json"
+    plan_path.write_text(
+        json.dumps(_plan_payload() if payload is None else payload),
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def test_load_and_validate_dual_plan_accepts_saved_vertical_slice(
+    tmp_path: Path,
+) -> None:
+    payload = load_and_validate_dual_plan(_write_plan(tmp_path))
+
+    assert payload["pair_id"] == "p001_h0001_i0_0002"
+    assert payload["roles"]["holder"]["robot"] == "lbr_one"
+    assert payload["roles"]["inserter"]["robot"] == "lbr_two"
+
+
+def test_load_and_validate_dual_plan_rejects_role_swap(tmp_path: Path) -> None:
+    payload = _plan_payload()
+    payload["roles"]["holder"]["robot"] = "lbr_two"
+
+    try:
+        load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+    except ValueError as exc:
+        assert "expected 'lbr_one'" in str(exc)
+    else:
+        raise AssertionError("Expected mismatched role mapping to fail.")
+
+
+def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
+    tmp_path: Path,
+) -> None:
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path))
+    commanders = {"holder": _Commander(), "inserter": _Commander()}
+    grippers = {"holder": _Gripper(), "inserter": _Gripper()}
+    steps, record = _recorded_steps()
+    config = DualRealExecutionConfig(
+        execute=True,
+        allow_objectless_planning=True,
+        stop_after="inserter_preinsertion",
+    )
+
+    success, status, last_completed = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers=grippers,
+        config=config,
+        record=record,
+    )
+
+    assert success is True
+    assert status == "stopped_at_inserter_preinsertion"
+    assert last_completed == "inserter_preinsertion"
+    assert commanders["holder"].calls == [
+        ("holder_pregrasp", True),
+        ("holder_grasp", True),
+    ]
+    assert commanders["inserter"].calls == [
+        (target_name, True) for role, target_name in MOTION_SEQUENCE if role == "inserter"
+    ]
+    assert grippers["holder"].calls == [
+        ("open", 0.06),
+        ("close", plan["grasps"]["holder"]["jaw_width_m"]),
+    ]
+    assert grippers["inserter"].calls == [
+        ("open", 0.06),
+        ("close", plan["grasps"]["inserter_pickup"]["jaw_width_m"]),
+    ]
+    assert steps[-1]["name"] == "inserter_preinsertion"
+
+
+def test_execute_sequence_stops_before_holder_close_at_pregrasp(
+    tmp_path: Path,
+) -> None:
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path))
+    commanders = {"holder": _Commander(), "inserter": _Commander()}
+    grippers = {"holder": _Gripper(), "inserter": _Gripper()}
+    _, record = _recorded_steps()
+    config = DualRealExecutionConfig(
+        execute=True,
+        allow_objectless_planning=True,
+        stop_after="holder_pregrasp",
+    )
+
+    success, status, last_completed = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers=grippers,
+        config=config,
+        record=record,
+    )
+
+    assert success is True
+    assert status == "stopped_at_holder_pregrasp"
+    assert last_completed == "holder_pregrasp"
+    assert commanders["inserter"].calls == []
+    assert grippers["holder"].calls == [("open", 0.06)]
+    assert grippers["inserter"].calls == [("open", 0.06)]
+
+
+def test_execute_sequence_uses_aabbs_only_for_pregrasp_transit(
+    tmp_path: Path,
+) -> None:
+    payload = _plan_payload()
+    payload["moveit"] = {
+        "pregrasp_aabb_collision_geometry": {
+            "obstacles": {
+                "subassembly": {"id": "base_aabb"},
+                "incoming_pickup": {"id": "incoming_aabb"},
+            },
+            "active_by_target": {
+                "holder_pregrasp": [
+                    "subassembly",
+                    "incoming_pickup",
+                ],
+                "inserter_pickup_pregrasp": [
+                    "incoming_pickup",
+                ],
+            },
+            "removed_before_grasp_approach": True,
+        }
+    }
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+    commanders = {"holder": _Commander(), "inserter": _Commander()}
+    grippers = {"holder": _Gripper(), "inserter": _Gripper()}
+    _, record = _recorded_steps()
+
+    success, status, _ = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers=grippers,
+        config=DualRealExecutionConfig(
+            execute=True,
+            allow_objectless_planning=True,
+            stop_after="inserter_pickup_pregrasp",
+        ),
+        record=record,
+    )
+
+    assert success is True
+    assert status == "stopped_at_inserter_pickup_pregrasp"
+    assert commanders["holder"].scene_calls == [
+        ("apply", ("base_aabb", "incoming_aabb")),
+        ("remove", ("base_aabb", "incoming_aabb")),
+        ("apply", ("incoming_aabb",)),
+        ("remove", ("incoming_aabb",)),
+    ]
+
+
+def test_dual_gripper_launch_has_stable_namespaces_and_usb_ids() -> None:
+    source = (Path(__file__).resolve().parents[1] / "scripts/gripper_computer/dual_grippers.launch.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "namespace=role" in source
+    assert '_gripper_node(role="lbr_one"' in source
+    assert '_gripper_node(role="lbr_two"' in source
+    assert "usb-1a86_USB_Single_Serial_5B3D047592-if00" in source
+    assert "usb-1a86_USB_Single_Serial_5B3D044069-if00" in source
+
+
+def test_dual_startup_scripts_force_one_shared_ros_domain() -> None:
+    root = Path(__file__).resolve().parents[1]
+    gripper_start = (root / "scripts/gripper_computer/start_dual_grippers.sh").read_text(encoding="utf-8")
+    dual_run = (root / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    moveit_start = (root / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
+
+    for source in (gripper_start, dual_run, moveit_start):
+        assert 'export ROS_DOMAIN_ID="${ROS_DOMAIN' in source
+        assert "export ROS_LOCALHOST_ONLY=0" in source
+        assert "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" in source
+        assert "unset ROS_DISCOVERY_SERVER" in source
+    expected_local_domain_fallback = 'ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"'
+    assert expected_local_domain_fallback in moveit_start
+    assert expected_local_domain_fallback in dual_run
+    assert 'export ROS_DOMAIN_ID="${ROS_DOMAIN_VALUE}"' in moveit_start
+
+
+def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
+    source = (Path(__file__).resolve().parents[1] / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+
+    assert "scripts/plan_simple_dual_robot_sim.py" in source
+    assert "scripts/run_simple_dual_robot_sim_in_isaac.py" in source
+    assert "scripts/build_simple_dual_robot_task.py" in source
+    assert "scripts/run_simple_dual_robot_real.py" in source
+    assert "./start_dual_lbr_moveit.sh" in source
+    assert "ros2 service list --no-daemon" in source
+    assert 'grep -qx "/lbr_dual_arm/compute_ik"' in source
+    assert 'grep -qx "/lbr_dual_arm/plan_kinematic_path"' in source
+    assert 'FLOOR_Z="-0.030"' in source
+    assert 'ASSEMBLY_Z=""' in source
+    assert 'COMMON_TASK_ARGS+=(--assembly-z "${ASSEMBLY_Z}")' in source
+
+    moveit_start = (Path(__file__).resolve().parents[1] / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
+    assert "ros2 node list --no-daemon" in moveit_start
+
+
+def test_default_dual_work_surface_top_is_minus_thirty_mm() -> None:
+    obstacle = _work_surface_obstacle({})
+    center_z = float(obstacle["xyz"][2])
+    height = float(obstacle["size_m"][2])
+
+    assert DEFAULT_FLOOR_Z_WORLD_M == -0.030
+    assert math.isclose(center_z + 0.5 * height, -0.030)
+
+    config_source = (Path(__file__).resolve().parents[1] / "configs" / "dual_grasp_planning.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "floor_z_world_m: -0.030" in config_source
+
+
+def test_preflight_retries_ik_with_known_start_seed(tmp_path: Path) -> None:
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path))
+    commanders = {
+        "holder": _FallbackIkCommander(),
+        "inserter": _FallbackIkCommander(),
+    }
+    steps, record = _recorded_steps()
+
+    assert (
+        _preflight_targets(
+            plan=plan,
+            commanders=commanders,
+            frame_id="base_link",
+            record=record,
+        )
+        is True
+    )
+    assert all("alternate IK succeeded" in step["message"] for step in steps)
+    for commander in commanders.values():
+        assert len(commander.seeds) >= 2
+        assert commander.seeds[0] is None
+        assert commander.seeds[1] is not None
+
+
+def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:
+    first = _plan_payload()
+    first["selection_score"] = 0.9
+    first["candidate_rank"] = 1
+    first["targets"]["inserter_pickup_pregrasp"]["position_world_m"] = [1.0, 0.0, 0.1]
+
+    second = _plan_payload()
+    second["pair_id"] = "p002_h0001_i0_0003"
+    second["selection_score"] = 0.8
+    second["candidate_rank"] = 2
+    second["grasps"]["inserter_pickup"]["grasp_id"] = "i0_0003"
+
+    plan = dict(first)
+    plan["ranked_pair_candidates"] = [first, second]
+    commanders = {
+        "holder": _RankedIkCommander(),
+        "inserter": _RankedIkCommander(),
+    }
+    steps, record = _recorded_steps()
+
+    selected, summary = _select_ranked_preflight_candidate(
+        plan=plan,
+        commanders=commanders,
+        frame_id="base_link",
+        record=record,
+    )
+
+    assert selected is not None
+    assert selected["pair_id"] == "p002_h0001_i0_0003"
+    assert summary["candidates_checked"] == 2
+    assert summary["selected_rank"] == 2
+    assert summary["selected_pair_id"] == "p002_h0001_i0_0003"
+    assert commanders["holder"].calls == 2
+    assert commanders["inserter"].calls == 7
+    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert any(
+        step["name"] == "candidate_preflight" and step["candidate_rank"] == 1 and step["ok"] is False for step in steps
+    )
+
+
+def test_ranked_preflight_does_not_cache_same_grasp_across_transitions() -> None:
+    first = _plan_payload()
+    first["selection_score"] = 0.9
+    first["candidate_rank"] = 1
+    first["transition_id"] = "tr_left"
+    first["execution_candidate_id"] = "p001_h0001_i0_0002__tr_left"
+    first["targets"]["inserter_preinsertion"]["position_world_m"] = [1.0, 0.0, 0.1]
+
+    second = _plan_payload()
+    second["selection_score"] = 0.8
+    second["candidate_rank"] = 2
+    second["transition_id"] = "tr_right"
+    second["execution_candidate_id"] = "p001_h0001_i0_0002__tr_right"
+
+    plan = dict(first)
+    plan["ranked_pair_candidates"] = [first, second]
+    commanders = {
+        "holder": _RankedIkCommander(),
+        "inserter": _RankedIkCommander(),
+    }
+    _, record = _recorded_steps()
+
+    selected, summary = _select_ranked_preflight_candidate(
+        plan=plan,
+        commanders=commanders,
+        frame_id="base_link",
+        record=record,
+    )
+
+    assert selected is not None
+    assert selected["execution_candidate_id"].endswith("__tr_right")
+    assert summary["selected_transition_id"] == "tr_right"
+    assert commanders["holder"].calls == 2
+    # Five targets for each transition, plus the seeded retry for the first
+    # transition's failing pre-insertion target.
+    assert commanders["inserter"].calls == 11
+    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert summary["records"][1]["roles"]["inserter"]["cache_hit"] is False
+
+
+def test_ranked_preflight_stops_before_unrequested_preinsertion_targets() -> None:
+    candidate = _plan_payload()
+    candidate["targets"]["inserter_above_preinsertion"]["position_world_m"] = [1.0, 0.0, 0.1]
+    candidate["ranked_pair_candidates"] = [dict(candidate)]
+    commanders = {
+        "holder": _RankedIkCommander(),
+        "inserter": _RankedIkCommander(),
+    }
+    steps, record = _recorded_steps()
+
+    selected, summary = _select_ranked_preflight_candidate(
+        plan=candidate,
+        commanders=commanders,
+        frame_id="base_link",
+        record=record,
+        stop_after="inserter_pickup_grasp",
+    )
+
+    assert selected is not None
+    assert selected["pair_id"] == "p001_h0001_i0_0002"
+    assert summary["stop_after"] == "inserter_pickup_grasp"
+    assert commanders["holder"].calls == 2
+    assert commanders["inserter"].calls == 2
+    assert not any(step["name"] == "preflight_inserter_above_preinsertion" for step in steps)

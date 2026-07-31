@@ -126,7 +126,7 @@ def _robot_metadata_for_planning(planning: PlanningConfig) -> dict[str, object]:
             "robot_model": "kuka_iiwa7",
             "gripper_model": GRIPPER_COLLISION_MODEL_KUKA_Y,
             "tcp_link": "gripper_tcp",
-            "tcp_offset_m": [0.0, 0.0, 0.1505],
+            "tcp_offset_m": [0.0, 0.0, 0.1455],
         }
     return {
         "robot_model": "franka_fr3",
@@ -195,6 +195,11 @@ class MujocoPipelineConfig:
     moveit_ik_timeout_s: float = 2.0
     moveit_planning_time_s: float = 5.0
     moveit_num_planning_attempts: int = 5
+    moveit_ik_candidate_count: int = 1
+    moveit_ik_beam_width: int = 1
+    moveit_ik_seed_perturbation_rad: float = 0.35
+    moveit_ik_dedup_tolerance_rad: float = 0.05
+    moveit_ik_joint_weights: tuple[float, ...] = ()
     moveit_velocity_scale: float = 0.05
     moveit_acceleration_scale: float = 0.05
     moveit_execute_timeout_s: float = 120.0
@@ -265,6 +270,11 @@ class IsaacPipelineConfig:
     moveit_ik_timeout_s: float = 2.0
     moveit_planning_time_s: float = 5.0
     moveit_num_planning_attempts: int = 5
+    moveit_ik_candidate_count: int = 1
+    moveit_ik_beam_width: int = 1
+    moveit_ik_seed_perturbation_rad: float = 0.35
+    moveit_ik_dedup_tolerance_rad: float = 0.05
+    moveit_ik_joint_weights: tuple[float, ...] = ()
     moveit_velocity_scale: float = 0.05
     moveit_acceleration_scale: float = 0.05
     moveit_execution_speed_rad_s: float = 0.35
@@ -273,6 +283,12 @@ class IsaacPipelineConfig:
     gripper_close_max_duration_s: float = 10.0
     postclose_hold_s: float = 1.0
     moveit_allow_collisions: bool = False
+    record_video: str = ""
+    video_fps: float = 30.0
+    video_width: int = 960
+    video_height: int = 540
+    video_camera_eye: tuple[float, float, float] = (1.6, -1.2, 1.0)
+    video_camera_target: tuple[float, float, float] = (0.35, 0.0, 0.3)
 
 
 @dataclass(frozen=True)
@@ -437,7 +453,7 @@ def _axes_metadata_payload(axes: tuple[tuple[float, float, float], ...]) -> list
     return [[float(value) for value in axis] for axis in axes]
 
 
-_STAGE1_CACHE_SCHEMA_VERSION = 13
+_STAGE1_CACHE_SCHEMA_VERSION = 14
 
 
 def _path_cache_record(path: str | Path) -> dict[str, object]:

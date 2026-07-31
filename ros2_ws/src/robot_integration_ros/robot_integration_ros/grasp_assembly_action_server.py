@@ -19,21 +19,40 @@ from typing import Any, Callable
 
 import yaml
 
+from .dual_grasp_assembly_action_runner import (
+    DEFAULT_DUAL_CONFIG,
+    DUAL_MODES,
+    DualPipelineRunner,
+)
+
 try:
     import rclpy
     from fp_debug_msgs.action import GraspAssembly
+    from geometry_msgs.msg import Point
     from rclpy.action import ActionServer, CancelResponse, GoalResponse
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
+    from rclpy.qos import (
+        DurabilityPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
+    )
+    from visualization_msgs.msg import Marker, MarkerArray
 except Exception:  # pragma: no cover - exercised only without a sourced ROS2 overlay
     rclpy = None
     GraspAssembly = None
+    Point = None
     ActionServer = None
     CancelResponse = None
     GoalResponse = None
     ReentrantCallbackGroup = None
     MultiThreadedExecutor = None
+    DurabilityPolicy = None
+    QoSProfile = None
+    ReliabilityPolicy = None
+    Marker = None
+    MarkerArray = None
     Node = object
 
 
@@ -433,10 +452,41 @@ class RealPipelineRunner:
         )
 
 
-class GraspAssemblyActionServer(Node):
-    """Single-left-robot adapter for fp_debug_msgs/action/GraspAssembly."""
+def _set_result_pose(
+    result: Any,
+    *,
+    frame_id: str,
+    stamp: Any,
+    position_xyz: tuple[float, float, float],
+    orientation_xyzw: tuple[float, float, float, float],
+) -> None:
+    """Populate either deployed name of the GraspAssembly result pose."""
 
-    def __init__(self, runner: RealPipelineRunner, *, action_name: str, node_name: str) -> None:
+    if hasattr(result, "achieved_part_pose"):
+        pose_stamped = result.achieved_part_pose
+    elif hasattr(result, "grasped_part_pose"):
+        pose_stamped = result.grasped_part_pose
+    else:
+        raise AttributeError("GraspAssembly.Result has neither achieved_part_pose nor grasped_part_pose.")
+    pose_stamped.header.frame_id = str(frame_id)
+    pose_stamped.header.stamp = stamp
+    (
+        pose_stamped.pose.position.x,
+        pose_stamped.pose.position.y,
+        pose_stamped.pose.position.z,
+    ) = position_xyz
+    (
+        pose_stamped.pose.orientation.x,
+        pose_stamped.pose.orientation.y,
+        pose_stamped.pose.orientation.z,
+        pose_stamped.pose.orientation.w,
+    ) = orientation_xyzw
+
+
+class GraspAssemblyActionServer(Node):
+    """Adapter from fp_debug_msgs/GraspAssembly to one selected pipeline."""
+
+    def __init__(self, runner: Any, *, action_name: str, node_name: str) -> None:
         if (
             rclpy is None
             or GraspAssembly is None
@@ -450,6 +500,18 @@ class GraspAssemblyActionServer(Node):
         self._runner = runner
         self._goal_lock = threading.Lock()
         self._goal_active = False
+        self._debug_aabb_publisher = None
+        if isinstance(runner, DualPipelineRunner):
+            debug_qos = QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            )
+            self._debug_aabb_publisher = self.create_publisher(
+                MarkerArray,
+                runner.debug_aabb_topic,
+                debug_qos,
+            )
         self._action_server = ActionServer(
             self,
             GraspAssembly,
@@ -459,15 +521,131 @@ class GraspAssemblyActionServer(Node):
             cancel_callback=self._cancel_callback,
             callback_group=ReentrantCallbackGroup(),
         )
-        if not PREASSEMBLY_TRANSPORT_IMPLEMENTED:
+        runner_description = str(getattr(runner, "description", "single-robot"))
+        if isinstance(runner, DualPipelineRunner):
+            if runner.mode == "real":
+                mode = "ENABLED" if runner.allow_execution else "DISABLED (start with --execute)"
+            else:
+                mode = "ENABLED"
+        elif not PREASSEMBLY_TRANSPORT_IMPLEMENTED:
             mode = "BLOCKED (pre-assembly transport is not implemented)"
         else:
             mode = "ENABLED" if runner.allow_execution else "DISABLED"
         gripper_mode = "SKIPPED" if runner.skip_gripper else "ENABLED"
         self.get_logger().warning(
             f"GraspAssembly server ready on '{action_name}'; "
-            f"hardware execution is {mode}; gripper commands are {gripper_mode}."
+            f"adapter={runner_description}; execution is {mode}; "
+            f"gripper commands are {gripper_mode}."
         )
+
+    def _publish_debug_aabbs(
+        self,
+        records: tuple[dict[str, object], ...],
+    ) -> None:
+        if self._debug_aabb_publisher is None:
+            return
+        stamp = self.get_clock().now().to_msg()
+        marker_array = MarkerArray()
+        delete_all = Marker()
+        delete_all.action = Marker.DELETEALL
+        marker_array.markers.append(delete_all)
+        colors = {
+            "base": (0.10, 0.85, 0.45),
+            "incoming": (1.00, 0.48, 0.08),
+        }
+        edges = (
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
+        )
+        summaries = []
+        for index, record in enumerate(records):
+            role = str(record["role"])
+            part_id = int(record["part_id"])
+            frame_id = str(record["frame_id"])
+            minimum = tuple(float(value) for value in record["minimum_world_m"])
+            maximum = tuple(float(value) for value in record["maximum_world_m"])
+            center = tuple(0.5 * (low + high) for low, high in zip(minimum, maximum, strict=True))
+            size = tuple(max(high - low, 1e-6) for low, high in zip(minimum, maximum, strict=True))
+            red, green, blue = colors.get(role, (0.20, 0.65, 1.00))
+
+            fill = Marker()
+            fill.header.frame_id = frame_id
+            fill.header.stamp = stamp
+            fill.ns = "perceived_part_aabb_fill"
+            fill.id = index * 3
+            fill.type = Marker.CUBE
+            fill.action = Marker.ADD
+            fill.pose.position.x, fill.pose.position.y, fill.pose.position.z = center
+            fill.pose.orientation.w = 1.0
+            fill.scale.x, fill.scale.y, fill.scale.z = size
+            fill.color.r = red
+            fill.color.g = green
+            fill.color.b = blue
+            fill.color.a = 0.12
+            marker_array.markers.append(fill)
+
+            corners = (
+                (minimum[0], minimum[1], minimum[2]),
+                (maximum[0], minimum[1], minimum[2]),
+                (maximum[0], maximum[1], minimum[2]),
+                (minimum[0], maximum[1], minimum[2]),
+                (minimum[0], minimum[1], maximum[2]),
+                (maximum[0], minimum[1], maximum[2]),
+                (maximum[0], maximum[1], maximum[2]),
+                (minimum[0], maximum[1], maximum[2]),
+            )
+            wire = Marker()
+            wire.header.frame_id = frame_id
+            wire.header.stamp = stamp
+            wire.ns = "perceived_part_aabb_wire"
+            wire.id = index * 3 + 1
+            wire.type = Marker.LINE_LIST
+            wire.action = Marker.ADD
+            wire.pose.orientation.w = 1.0
+            wire.scale.x = 0.003
+            wire.color.r = red
+            wire.color.g = green
+            wire.color.b = blue
+            wire.color.a = 1.0
+            for first, second in edges:
+                for corner_index in (first, second):
+                    point = Point()
+                    point.x, point.y, point.z = corners[corner_index]
+                    wire.points.append(point)
+            marker_array.markers.append(wire)
+
+            label = Marker()
+            label.header.frame_id = frame_id
+            label.header.stamp = stamp
+            label.ns = "perceived_part_aabb_label"
+            label.id = index * 3 + 2
+            label.type = Marker.TEXT_VIEW_FACING
+            label.action = Marker.ADD
+            label.pose.position.x = center[0]
+            label.pose.position.y = center[1]
+            label.pose.position.z = maximum[2] + 0.025
+            label.pose.orientation.w = 1.0
+            label.scale.z = 0.025
+            label.color.r = red
+            label.color.g = green
+            label.color.b = blue
+            label.color.a = 1.0
+            label.text = f"{role} part {part_id} AABB"
+            marker_array.markers.append(label)
+            summaries.append(f"{role}={part_id} center={center} size={size}")
+
+        self._debug_aabb_publisher.publish(marker_array)
+        self.get_logger().info("Published non-collision perceived-part AABBs: " + "; ".join(summaries))
 
     def _goal_callback(self, request: Any):
         error = self._runner.validate(request)
@@ -479,10 +657,21 @@ class GraspAssemblyActionServer(Node):
                 self.get_logger().warning("Rejecting GraspAssembly goal because another goal is active.")
                 return GoalResponse.REJECT
             self._goal_active = True
-        self.get_logger().info(
-            "Accepted single-robot goal for "
-            f"{request.assembly_name}/{request.insertion_part_id}; holder/base fields are ignored for now."
-        )
+        if isinstance(self._runner, DualPipelineRunner):
+            summary = (
+                "Accepted dual-robot goal for "
+                f"{request.assembly_name}: base={request.base_part_id} "
+                f"holder={request.holder_robot}, "
+                f"incoming={request.insertion_part_id} "
+                f"inserter={request.inserter_robot}."
+            )
+        else:
+            summary = (
+                "Accepted single-robot goal for "
+                f"{request.assembly_name}/{request.insertion_part_id}; "
+                "holder/base fields are ignored for now."
+            )
+        self.get_logger().info(summary)
         return GoalResponse.ACCEPT
 
     def _cancel_callback(self, _goal_handle: Any):
@@ -499,32 +688,37 @@ class GraspAssemblyActionServer(Node):
             feedback.progress = float(min(max(progress, 0.0), 1.0))
             goal_handle.publish_feedback(feedback)
 
+        def _publish_output(line: str) -> None:
+            prefix = "[WARNING] "
+            if line.startswith(prefix):
+                self.get_logger().warning(f"[real pipeline] {line.removeprefix(prefix)}")
+            else:
+                self.get_logger().info(f"[real pipeline] {line}")
+
         try:
             goal_id = "".join(f"{byte:02x}" for byte in goal_handle.goal_id.uuid)[:16] or "unknown_goal"
+            debug_kwargs = {}
+            if isinstance(self._runner, DualPipelineRunner):
+                debug_kwargs["publish_debug_aabbs"] = self._publish_debug_aabbs
             outcome = self._runner.run(
                 request=goal_handle.request,
                 goal_id=goal_id,
                 cancel_requested=lambda: bool(goal_handle.is_cancel_requested),
                 publish_feedback=_publish_feedback,
-                publish_output=lambda line: self.get_logger().info(f"[real pipeline] {line}"),
+                publish_output=_publish_output,
+                **debug_kwargs,
             )
             result.success = bool(outcome.success)
             result.error_code = str(outcome.error_code)
             result.message = str(outcome.message)
             if outcome.grasped_position_xyz is not None and outcome.grasped_orientation_xyzw is not None:
-                result.grasped_part_pose.header.frame_id = str(outcome.grasped_frame_id)
-                result.grasped_part_pose.header.stamp = self.get_clock().now().to_msg()
-                (
-                    result.grasped_part_pose.pose.position.x,
-                    result.grasped_part_pose.pose.position.y,
-                    result.grasped_part_pose.pose.position.z,
-                ) = outcome.grasped_position_xyz
-                (
-                    result.grasped_part_pose.pose.orientation.x,
-                    result.grasped_part_pose.pose.orientation.y,
-                    result.grasped_part_pose.pose.orientation.z,
-                    result.grasped_part_pose.pose.orientation.w,
-                ) = outcome.grasped_orientation_xyzw
+                _set_result_pose(
+                    result,
+                    frame_id=str(outcome.grasped_frame_id),
+                    stamp=self.get_clock().now().to_msg(),
+                    position_xyz=outcome.grasped_position_xyz,
+                    orientation_xyzw=outcome.grasped_orientation_xyzw,
+                )
 
             if outcome.error_code == "CANCELLED" or goal_handle.is_cancel_requested:
                 goal_handle.canceled()
@@ -553,23 +747,59 @@ class GraspAssemblyActionServer(Node):
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve GraspAssembly goals through the real grasp pipeline.")
     parser.add_argument("--repo-root", type=Path, default=None, help="Grasp-planning repository root.")
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Base real-mode pipeline YAML.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            f"Pipeline YAML. Defaults to the single-real config, or {DEFAULT_DUAL_CONFIG} when --dual-mode is selected."
+        ),
+    )
     parser.add_argument("--action-name", default=None, help=f"ROS action name; default is {DEFAULT_ACTION_NAME}.")
     parser.add_argument("--node-name", default="grasp_assembly_action_server", help="ROS node name.")
+    parser.add_argument(
+        "--dual-mode",
+        choices=DUAL_MODES,
+        default=None,
+        help=(
+            "Use the dual holder/inserter adapter: pitl runs mock MoveIt plus "
+            "Isaac; real runs the guarded hardware vertical slice."
+        ),
+    )
+    parser.add_argument(
+        "--pair-id",
+        default="",
+        help="Optional fixed dual grasp-pair ID; empty selects the ranked fallback.",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run dual PITL Isaac without its viewer.",
+    )
     parser.add_argument(
         "--execute",
         action="store_true",
         help=(
-            "Authorize hardware execution. Goals still abort before motion while pre-assembly transport "
-            "is not implemented."
+            "Authorize hardware execution. The single-robot adapter remains "
+            "blocked before motion; dual real mode executes the guarded "
+            "holder/inserter pre-insertion slice."
         ),
     )
     parser.add_argument(
         "--skip-gripper",
         action="store_true",
         help=(
-            "Prepare future action execution without gripper commands. Currently no arm or gripper motion starts "
-            "because pre-assembly transport is not implemented."
+            "Prepare future single-robot action execution without gripper "
+            "commands. Dual mode rejects this option because both grasps are "
+            "part of the validated slice."
+        ),
+    )
+    parser.add_argument(
+        "--allow-objectless-planning",
+        action="store_true",
+        help=(
+            "Acknowledge that the current dual real MoveIt scene contains both "
+            "robots and the table but omits Fabrica object meshes."
         ),
     )
     return parser
@@ -585,12 +815,27 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         repo_root = _find_repo_root(args.repo_root)
-        runner = RealPipelineRunner(
-            repo_root=repo_root,
-            config_path=args.config,
-            allow_execution=bool(args.execute),
-            skip_gripper=bool(args.skip_gripper),
-        )
+        if args.dual_mode is not None:
+            if args.skip_gripper:
+                parser.error("--skip-gripper is not compatible with a complete dual GraspAssembly action.")
+            runner = DualPipelineRunner(
+                repo_root=repo_root,
+                config_path=args.config or DEFAULT_DUAL_CONFIG,
+                mode=str(args.dual_mode),
+                allow_execution=bool(args.execute),
+                allow_objectless_planning=bool(args.allow_objectless_planning),
+                headless=bool(args.headless),
+                pair_id=str(args.pair_id),
+            )
+        else:
+            if args.allow_objectless_planning:
+                parser.error("--allow-objectless-planning applies only with --dual-mode.")
+            runner = RealPipelineRunner(
+                repo_root=repo_root,
+                config_path=args.config or DEFAULT_CONFIG,
+                allow_execution=bool(args.execute),
+                skip_gripper=bool(args.skip_gripper),
+            )
     except (FileNotFoundError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -614,6 +859,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "GraspAssemblyActionServer",
+    "DualPipelineRunner",
     "PipelineOutcome",
     "RealPipelineRunner",
     "SingleRobotGraspGoal",
