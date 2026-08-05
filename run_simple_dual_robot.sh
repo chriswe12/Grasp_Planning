@@ -20,7 +20,7 @@ Common options:
   --artifact-dir PATH
   --pair-id ID
   --holder-grasp-id ID
-  --max-pair-attempts N         Default: 48
+  --max-pair-attempts N         Default: 256
   --assembly-x M                Default: 0.55
   --assembly-y M                Default: 0.0
   --assembly-z M                Default: --floor-z (assembled prefix supported)
@@ -44,6 +44,10 @@ Common options:
 Simulation options:
   --headless
   --holder-only
+  --no-planning-debug-gui      Do not open the live pair/phase browser view.
+                               It is enabled for visible simulation by default.
+  --skip-joint-space-ranking   Keep Stage-3 order without seeded MoveIt transition ranking.
+  --joint-rank-candidates N    Candidates to pre-plan in joint space. Default: 8
   --record-video PATH
   --isaac-python PATH
 
@@ -64,7 +68,7 @@ ARTIFACT_ROOT="artifacts/dual_grasp_planning"
 ARTIFACT_DIR=""
 PAIR_ID=""
 HOLDER_GRASP_ID=""
-MAX_PAIR_ATTEMPTS="48"
+MAX_PAIR_ATTEMPTS="256"
 ASSEMBLY_X="0.55"
 ASSEMBLY_Y="0.0"
 ASSEMBLY_Z=""
@@ -85,6 +89,9 @@ REUSE_MOVEIT=0
 KEEP_MOVEIT=0
 HEADLESS=0
 HOLDER_ONLY=0
+PLANNING_DEBUG_GUI=1
+JOINT_SPACE_RANKING=1
+JOINT_RANK_CANDIDATES="8"
 RECORD_VIDEO=""
 ISAAC_PYTHON="${ISAAC_PYTHON:-/media/pdz/Elements1/IsaacLab/isaaclab.sh}"
 EXECUTE_REAL=0
@@ -151,6 +158,9 @@ while [[ $# -gt 0 ]]; do
     --keep-moveit) KEEP_MOVEIT=1; shift ;;
     --headless) HEADLESS=1; shift ;;
     --holder-only) HOLDER_ONLY=1; shift ;;
+    --no-planning-debug-gui) PLANNING_DEBUG_GUI=0; shift ;;
+    --skip-joint-space-ranking) JOINT_SPACE_RANKING=0; shift ;;
+    --joint-rank-candidates) JOINT_RANK_CANDIDATES="${2:-}"; shift 2 ;;
     --record-video) RECORD_VIDEO="${2:-}"; shift 2 ;;
     --isaac-python) ISAAC_PYTHON="${2:-}"; shift 2 ;;
     --execute) EXECUTE_REAL=1; shift ;;
@@ -173,6 +183,10 @@ if [[ "${MODE}" != "sim" && "${MODE}" != "real" ]]; then
 fi
 if [[ ! "${ROS_DOMAIN_VALUE}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-RUN] --ros-domain-id must be a non-negative integer." >&2
+  exit 1
+fi
+if [[ ! "${JOINT_RANK_CANDIDATES}" =~ ^[0-9]+$ ]]; then
+  echo "[DUAL-RUN] --joint-rank-candidates must be a non-negative integer." >&2
   exit 1
 fi
 
@@ -288,6 +302,13 @@ if [[ "${MODE}" == "sim" ]]; then
   if [[ "${HOLDER_ONLY}" -eq 1 ]]; then
     PLAN_ARGS+=(--holder-only)
   fi
+  if [[ "${HEADLESS}" -eq 0 && "${PLANNING_DEBUG_GUI}" -eq 1 ]]; then
+    PLAN_ARGS+=(--debug-gui)
+  fi
+  if [[ "${JOINT_SPACE_RANKING}" -eq 0 ]]; then
+    PLAN_ARGS+=(--skip-joint-space-ranking)
+  fi
+  PLAN_ARGS+=(--joint-rank-candidates "${JOINT_RANK_CANDIDATES}")
   python3 scripts/plan_simple_dual_robot_sim.py \
     "${COMMON_TASK_ARGS[@]}" \
     --max-pair-attempts "${MAX_PAIR_ATTEMPTS}" \

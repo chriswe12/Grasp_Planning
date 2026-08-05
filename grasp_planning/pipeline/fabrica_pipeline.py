@@ -15,6 +15,7 @@ from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMesh
 from grasp_planning.grasping.collision import (
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
     normalize_gripper_collision_model_name,
 )
 from grasp_planning.grasping.fabrica_grasp_debug import (
@@ -545,6 +546,12 @@ def _stage1_cache_key_payload(
         "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
         "algorithm": "fabrica_stage1_antipodal_v1",
         "grasp_scoring_algorithm": GRASP_SCORING_ALGORITHM_VERSION,
+        "gripper_collision_geometry_version": (
+            KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION
+            if normalize_gripper_collision_model_name(planning.gripper_collision_model)
+            == GRIPPER_COLLISION_MODEL_KUKA_Y
+            else "franka_hand_geometry_v1"
+        ),
         "geometry": {
             "target_mesh": _path_cache_record(geometry.target_mesh_path),
             "mesh_scale": float(geometry.mesh_scale),

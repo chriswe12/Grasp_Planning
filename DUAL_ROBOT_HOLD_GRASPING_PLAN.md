@@ -134,8 +134,9 @@ Stage 3 is implemented by:
   - supports insertion and retreat scrubbing, compatible/rejected filters,
     sampled collision diagnostics, and clickable matrix cells;
 - [`scripts/build_dual_grasp_pairs.py`](scripts/build_dual_grasp_pairs.py)
-  - builds or loads the previous-stage inputs, writes one inserter bundle and
-    pair JSON/HTML per holder-active step, and writes master JSON/HTML summaries;
+  - builds or loads the previous-stage inputs, republishes the exact Stage-1
+    holder bundle used by Stage 2/3, writes one inserter bundle and pair
+    JSON/HTML per holder-active step, and writes master JSON/HTML summaries;
 - [`tests/test_dual_grasp_pair_planner.py`](tests/test_dual_grasp_pair_planner.py)
   - covers midpoint-only gripper collision, AABB-proven compatibility,
     clearance rejection, deterministic limits, KUKA model enforcement, table
@@ -150,13 +151,24 @@ python3 scripts/build_holder_state_feasibility.py
 python3 scripts/build_dual_grasp_pairs.py
 ```
 
-For the four holder-active `plumbers_block` steps, Stage 3 evaluates exactly
-4,000 shortlisted pairs per step. It finds `2,667`, `2,690`, `3,234`, and
-`3,041` compatible pairs, respectively, and retains 48 diverse ranked
-alternatives per step. The retained sets use 15–16 distinct holder grasps and
-15–23 distinct inserter grasps per step. Pair artifacts reference the holder
-feasibility artifact and per-step inserter bundle by candidate ID rather than
-duplicating grasp serialization.
+Stage 3 first retains a bounded, diverse pair pool for expensive transformed
+corridor checks. It covers distinct inserter grasps before assigning second
+pairs to one inserter, because runtime pickup-floor feasibility changes with
+the detected world orientation. It then flattens every accepted
+`pair_id + transition_id` into a complete execution candidate. A second bounded retention pass round-robins
+those candidates by normalized pre-to-final corridor direction and by pair, so
+both insertion sides survive whenever collision-valid alternatives exist.
+Non-retained compatible pairs remain canonical identity-only records. At
+runtime, pose-feasible candidates are partitioned into a strict clear phase and
+a crossed fallback phase. Retained executions lead within each phase, followed
+by exact non-identity transitions that were explicitly validated for a retained
+pair but fell beyond the execution-retention cap. Already pair-checked canonical
+records fill the remaining bounded fallback budget. A non-identity transform is
+never inferred for an identity-only pair. Pair artifacts
+reference the holder feasibility artifact and per-step inserter bundle by
+candidate ID rather than duplicating grasp serialization. Runtime lookup honors
+those declared sources because generated sequential IDs are scoped to one
+specific library and can name different poses after a rebuild.
 
 Stage 4A is implemented by:
 
@@ -197,8 +209,12 @@ python3 scripts/build_dual_robot_pair_score_debug.py
 
 The generated
 `artifacts/dual_grasp_planning/plumbers_block/dual_robot_pair_score_debug.html`
-starts by ranking the 48 retained Stage-3 alternatives for each step. The
-retained-only filter can be disabled to rank every checked-compatible pair.
+starts by ranking the retained Stage-3 pair set for each step. Its diagnostic
+retained-only filter can be disabled to inspect every checked-compatible pair.
+Runtime planning prioritizes the transition-complete
+`retained_execution_candidates` list, then adds explicitly pair-validated
+transition overflow and canonical identity-only pairs until its configured
+queue bound is reached.
 The offline/reachability/layout weights are adjustable, the selected pair shows
 per-phase diagnostics and grasp geometry, and the current layout can be copied
 as JSON. Manual pair selection or cycling disables automatic rank-1 following
@@ -275,11 +291,37 @@ The first exact-IK and simulation vertical slice is implemented by:
     two-arm scene;
   - resets both arms to the same shared KUKA start joint pose used by the
     single-arm Isaac path;
+  - pre-plans a bounded set of complete inserter candidates from pickup through
+    pre-insertion, caching shared pickup prefixes and enforcing a strict
+    non-crossing phase before any crossed fallback, then ranking by pre-plan
+    status and velocity-weighted joint-path cost within each phase;
+  - seeds equivalent 180-degree transition solutions with bounded A7 `+pi` and
+    `-pi` offsets, while allowing IK to adjust every joint and rejecting seeds
+    outside the actual iiwa limits;
+  - after a partially executed candidate fails, immediately retracts the
+    inserter before resetting the holder so the holder's home path is not
+    planned through an arm still occupying the transition corridor; recovery
+    remains fatal if either arm cannot reach its known start state;
   - adds conservative world AABBs for transit to each pregrasp, then removes
     them before the corresponding grasp approach so intended contact is not
     rejected; exact object meshes remain omitted;
   - saves the exact per-arm MoveIt joint waypoints to
     `simple_dual_robot_sim_plan.json`;
+- [`grasp_planning/pipeline/dual_robot_planning_debug.py`](grasp_planning/pipeline/dual_robot_planning_debug.py)
+  - serves a localhost-only live browser debugger during visible simulation;
+  - renders the partial assembly, incoming part, and selected holder/inserter
+    grippers in the actual `base_link` world poses for the active candidate;
+  - distinguishes holder grasp, incoming-part grasp, and transition stages and
+    reports exact target phases, transition IDs, failures, resets, and fallback
+    history;
+  - reports separate counts for pickup-floor grasp filtering, retained Stage-3
+    pair/transition candidates, the actual pose-filtered runtime queue's
+    clear/crossed split and unique grasps, joint-space pre-ranking, and
+    cumulative exact-IK screening;
+  - reports whether the pickup or pre-insertion shoulder-to-target proxy
+    crosses the holder corridor and renders pre-insertion during IK preflight;
+  - reports exact displayed-mesh holder floor clearance and colors negative
+    clearance red, avoiding judgments based only on the projected table edge;
 - [`scripts/run_simple_dual_robot_sim_in_isaac.py`](scripts/run_simple_dual_robot_sim_in_isaac.py)
   - creates two KUKA/Y-gripper articulations and collision-enabled dynamic
     meshes for base part `2` and incoming part `0`;
@@ -290,13 +332,18 @@ The first exact-IK and simulation vertical slice is implemented by:
     physical gripper contact, preventing the approach from pushing it away,
     then releases it for normal physics;
   - physically closes the holder on the base and the inserter on part `0`
-    using the same effective 1 mm close command as `run_pipeline`, while
-    validating that contact occurs near each candidate's selected jaw width;
-  - replays the saved MoveIt trajectories through lift, transport, and
-    pre-insertion with separate `1.00 rad/s` unloaded and `0.35 rad/s` loaded
-    defaults, a strict `0.005 rad` contact-pose tolerance, a `0.030 rad`
-    transit tolerance, and a `2.0 s` final settling window;
-  - records contact diagnostics, part poses after every transport phase, base
+    using the same effective 1 mm close command as `run_pipeline`; selected jaw
+    width remains the primary contact check, with a fallback requiring
+    bilateral role-filtered fingertip force against the intended object;
+  - streams each saved MoveIt polyline as one continuous position/velocity
+    reference instead of independently stopping at every planner waypoint;
+    consecutive pregrasp/grasp and lift/transport/pre-insertion segments are
+    grouped, with settling only at the two grasp actions and final
+    pre-insertion;
+  - uses separate `1.00 rad/s` unloaded and `0.70 rad/s` loaded defaults, a
+    strict `0.005 rad` contact-pose tolerance, a `0.030 rad` transit tolerance,
+    and a `2.0 s` final settling window;
+  - records contact diagnostics, final grouped-transport part poses, base
     displacement, transport distance, and pre-insertion error in
     `simple_dual_robot_sim_attempt.json`;
 - [`tests/test_dual_robot_simple_sim.py`](tests/test_dual_robot_simple_sim.py)
@@ -320,9 +367,10 @@ The first exact-IK and simulation vertical slice is implemented by:
     confirmation for hardware motion, limits velocity and acceleration
     scaling to at most 20%, and supports a stop after every phase;
 - [`scripts/build_simple_dual_robot_task.py`](scripts/build_simple_dual_robot_task.py)
-  - resolves up to 48 strict-score-order pairs and the current layout directly
-    into a target-only hardware candidate artifact, without depending on
-    previously saved mock trajectories;
+  - resolves up to 256 transition-validated execution candidates and the
+    current perceived pickup orientation/layout directly into a target-only
+    hardware candidate artifact, without depending on previously saved mock
+    trajectories;
 - [`run_simple_dual_robot.sh`](run_simple_dual_robot.sh)
   - provides one entrypoint for this vertical slice in `sim` and `real` modes;
   - starts the appropriate mock or hardware MoveIt stack, generates a fresh
@@ -718,8 +766,11 @@ Avoid an unrestricted Cartesian product:
    configured accepted-pair limit;
 8. retain diversity so alternatives do not all share the same contact region.
 
-The existing handover configuration of `4000` maximum pair checks and `48`
-accepted pairs is a reasonable initial benchmark, not a permanent constant.
+The current configuration permits `16000` pair checks and retains up to `256`
+complete pair/transition execution candidates. The larger retained set is
+intentional: the cheap runtime pickup-floor filter depends on the perceived
+part orientation, so it needs enough holder, inserter, and corridor diversity
+left for exact IK fallback.
 
 ### Artifacts
 
@@ -761,12 +812,12 @@ Build an interactive compatibility matrix:
 One real assembly step must produce a visually verified list of compatible
 holder/inserter pairs without invoking MoveIt.
 
-Completed for all four holder-active `plumbers_block` steps. Each retains 48
-ranked compatible pairs; the master summary and detailed matrix/scene pages
-were browser-rendered and visually inspected. The checked-pair limit is reached
-by design, so unchecked shortlisted cells remain blue and can be evaluated
-with a larger offline budget. No MoveIt, robot IK, robot-link collision, or
-trajectory claim is made at this stage.
+Completed for all four holder-active `plumbers_block` steps with regenerated
+schema-v3 artifacts. The steps retain 256, 208, 188, and 172 pairs respectively
+and 256 complete pair/transition execution candidates each. Every shortlisted
+Cartesian product fits below the configured 16000-pair check budget. The master
+summary and detailed matrix/scene pages were generated. No MoveIt, robot IK,
+robot-link collision, or trajectory claim is made at this stage.
 
 ## Stage 4: Layout-Aware Ranking and Individual Two-Robot IK
 
@@ -799,11 +850,19 @@ transforms. The pickup frame moves the current incoming part separately.
 
 The common MoveIt robot model, per-arm IK groups, gripper TCPs, controllers,
 mock launch, and collision-scene smoke tests are implemented. The simple
-vertical slice now consumes accepted Stage-3 pairs, tries exact MoveIt IK for
-every required pre-insertion phase lazily in strict combined-score order,
-rejects each unreachable pair immediately, caches repeated grasp-IK results,
-and saves the first successful pair's planned joint waypoints. Generalizing that flow to
-every step with FK, joint-margin, alternate-IK, and HTML diagnostics remains.
+vertical slice consumes a retained-transition-first queue completed by safe
+canonical identity fallbacks. It builds a configurable pre-plan prefix by
+round-robin insertion corridor, then
+evaluates that prefix with multi-seed IK and
+joint-space path cost, then performs exact shared-scene IK/path/execution in
+that order. Repeated pickup prefixes are cached, bounded A7 half-turn seeds are
+included for symmetric opposite-side corridors, and valid A7 `+3.0/-3.0` rad
+near-limit branches cover the case where literal pi exceeds the joint bound.
+Every failure falls back to the next retained execution candidate. The
+selected plan artifact records the pre-ranking diagnostics and exact executed
+joint waypoints. Generalizing
+that flow to every step with attached-object collision geometry and HTML
+trajectory diagnostics remains.
 
 #### Goal
 
@@ -1015,9 +1074,12 @@ validates the selected-order base and incoming step, requires the currently
 validated `left` holder (`lbr_one`) and `right` inserter (`lbr_two`), waits for
 both fused `DebugPoseItem` poses, derives the planar assembly and pickup
 transforms, and invokes the same dual planner/executor as the standalone
-wrapper. Real mode embeds up to 48 ranked candidates, checks them lazily in
-strict score order, and starts hardware motion only after one candidate passes
-all target IK checks. A fixed `--pair-id` intentionally disables this fallback.
+wrapper. Real mode embeds up to 256 candidates after rechecking grasps against
+the actual perceived pickup pose and orientation: retained symmetry-validated
+executions first, then other explicitly pair-validated transition corridors
+and canonical identity-only compatible pairs. It checks them
+lazily and starts hardware motion only after one candidate passes all target IK
+checks. A fixed `--pair-id` intentionally disables this fallback.
 PITL returns the Isaac-measured final incoming pose. Real execution currently
 returns the commanded pre-insertion pose because post-motion perception
 verification is not implemented.

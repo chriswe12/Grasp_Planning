@@ -31,6 +31,7 @@ from grasp_planning.pipeline import (
     InserterCandidateStatus,
     InserterGraspLibrary,
     PlanningConfig,
+    RetainedExecutionCandidate,
     Stage1Result,
     generate_inserter_grasp_library,
     plan_dual_grasp_pairs,
@@ -39,6 +40,7 @@ from grasp_planning.pipeline import (
     write_holder_state_feasibility_json,
     write_inserter_grasp_library,
 )
+from grasp_planning.pipeline import dual_grasp_pair_planner as pair_planner
 
 
 def _candidate(
@@ -461,6 +463,95 @@ class DualGraspPairPlannerTests(unittest.TestCase):
         self.assertIn(
             "identity-only",
             nonretained.details["transition_validation_policy"],
+        )
+        self.assertEqual(len(step.retained_execution_candidates), 1)
+        self.assertEqual(
+            step.retained_execution_candidates[0].execution_candidate_id,
+            f"{evaluation.pair_id}__tr_identity__part_identity",
+        )
+        self.assertNotIn(
+            nonretained.pair_id,
+            {candidate.pair_id for candidate in step.retained_execution_candidates},
+        )
+
+    def test_pair_retention_covers_inserter_grasps_before_second_pairs(self) -> None:
+        def evaluation(
+            pair_id: str,
+            holder_id: str,
+            inserter_id: str,
+            score: float,
+        ) -> pair_planner.DualGraspPairEvaluation:
+            return pair_planner.DualGraspPairEvaluation(
+                pair_id=pair_id,
+                holder_grasp_id=holder_id,
+                inserter_grasp_id=inserter_id,
+                status="accepted",
+                reason="accepted",
+                score=score,
+                holder_score=score,
+                inserter_score=score,
+                clearance_score=1.0,
+                minimum_clearance_m=0.01,
+                collision_check="synthetic",
+            )
+
+        retained = pair_planner._retain_diverse_pairs(
+            (
+                evaluation("i1_best", "h1", "i1", 0.99),
+                evaluation("i1_second", "h2", "i1", 0.98),
+                evaluation("i1_third", "h3", "i1", 0.97),
+                evaluation("i2_best", "h4", "i2", 0.80),
+                evaluation("i3_best", "h5", "i3", 0.70),
+            ),
+            config=_config(
+                max_accepted_pairs=3,
+                max_pairs_per_holder=4,
+                max_pairs_per_inserter=4,
+            ),
+        )
+
+        self.assertEqual(retained, ("i1_best", "i2_best", "i3_best"))
+
+    def test_execution_candidate_retention_round_robins_corridors(self) -> None:
+        def candidate(
+            pair_id: str,
+            transition_id: str,
+            score: float,
+            corridor: str,
+            direction: tuple[float, float, float],
+        ) -> RetainedExecutionCandidate:
+            return RetainedExecutionCandidate(
+                execution_candidate_id=f"{pair_id}__{transition_id}",
+                pair_id=pair_id,
+                transition_id=transition_id,
+                holder_grasp_id=f"h_{pair_id}",
+                inserter_grasp_id=f"i_{pair_id}",
+                pair_score=score,
+                corridor_key=corridor,
+                corridor_direction_assembly=direction,
+                is_identity=False,
+                minimum_clearance_m=0.01,
+            )
+
+        retained = pair_planner._retain_diverse_execution_candidates(
+            (
+                candidate("left_1", "tr_left", 1.0, "left", (0.0, -1.0, 0.0)),
+                candidate("left_2", "tr_left", 0.9, "left", (0.0, -1.0, 0.0)),
+                candidate("left_3", "tr_left", 0.8, "left", (0.0, -1.0, 0.0)),
+                candidate("right_1", "tr_right", 0.7, "right", (0.0, 1.0, 0.0)),
+                candidate("right_2", "tr_right", 0.6, "right", (0.0, 1.0, 0.0)),
+            ),
+            limit=4,
+        )
+
+        self.assertEqual(
+            [candidate.execution_candidate_id for candidate in retained],
+            [
+                "left_1__tr_left",
+                "right_1__tr_right",
+                "left_2__tr_left",
+                "right_2__tr_right",
+            ],
         )
 
     def test_pair_clearance_margin_rejects_geometrically_clear_pair(self) -> None:

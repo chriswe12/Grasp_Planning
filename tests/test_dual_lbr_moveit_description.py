@@ -60,9 +60,13 @@ def test_generated_dual_xacro_is_reproducible_and_has_two_complete_y_grippers(tm
         tcp_joint = joints[f"{robot_name}_gripper_tcp_joint"]
         mount_z = float(mount_joint.find("origin").get("xyz").split()[2])
         tcp_z = float(tcp_joint.find("origin").get("xyz").split()[2])
+        mount_rpy = [float(value) for value in mount_joint.find("origin").get("rpy").split()]
+        tcp_rpy = [float(value) for value in tcp_joint.find("origin").get("rpy").split()]
         assert math.isclose(mount_z, 0.0308, abs_tol=1.0e-9)
         assert math.isclose(tcp_z, 0.1455, abs_tol=1.0e-9)
         assert math.isclose(mount_z + tcp_z, 0.1763, abs_tol=1.0e-9)
+        assert mount_rpy == pytest.approx([0.0, 0.0, math.pi], abs=1.0e-8)
+        assert tcp_rpy == pytest.approx([0.0, 0.0, math.pi], abs=1.0e-8)
 
         mimic = joints[f"{robot_name}_right_finger_joint"].find("mimic")
         assert mimic.get("joint") == f"{robot_name}_left_finger_joint"
@@ -171,6 +175,9 @@ def test_dual_launch_assets_and_wrapper_are_installed() -> None:
     assert 'controller="lbr_two_joint_trajectory_controller"' in launch_text
     assert "dual_aligned_lbr_moveit.launch.py" in wrapper_text
     assert "--mode hardware" in wrapper_text
+    assert "setsid ros2 launch" in wrapper_text
+    assert 'kill -TERM -- "-${process_group}"' in wrapper_text
+    assert 'kill -KILL -- "-${process_group}"' in wrapper_text
 
 
 def test_dual_rviz_uses_one_stable_compound_group_motion_planning_display() -> None:

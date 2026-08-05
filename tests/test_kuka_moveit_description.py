@@ -157,6 +157,15 @@ def test_generated_moveit_xacro_uses_lbr_hardware_kinematics_and_grasp_tcp(tmp_p
     assert gripper_mount_joint.find("origin").get("xyz") == "0 0 0.0308"
     tcp_joint = generated_joints["gripper_tcp_joint"]
     assert tcp_joint.find("origin").get("xyz") == "0 0 0.1455"
+    mount_rotation = _rotation_from_rpy(gripper_mount_joint.find("origin").get("rpy"))
+    tcp_rotation = _rotation_from_rpy(tcp_joint.find("origin").get("rpy"))
+    np.testing.assert_allclose(
+        mount_rotation,
+        _rotation_from_axis_angle(np.array([0.0, 0.0, 1.0]), math.pi),
+        atol=1.0e-8,
+    )
+    np.testing.assert_allclose(tcp_rotation, mount_rotation, atol=1.0e-8)
+    np.testing.assert_allclose(mount_rotation @ tcp_rotation, np.eye(3), atol=1.0e-8)
     mount_z = float(gripper_mount_joint.find("origin").get("xyz").split()[2])
     tcp_z = float(tcp_joint.find("origin").get("xyz").split()[2])
     assert math.isclose(mount_z + tcp_z, 0.1763, abs_tol=1.0e-9)

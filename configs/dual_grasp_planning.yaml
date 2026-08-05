@@ -63,7 +63,9 @@ pair_planning:
   contact_position_bin_m: 0.025
   axis_bin_deg: 30.0
   max_pair_checks: 16000
-  max_accepted_pairs: 48
+  # Keep a few hundred pair/transition fallbacks so the pose-dependent pickup
+  # floor check and online IK still see diverse holders and insertion corridors.
+  max_accepted_pairs: 256
   max_rejected_pairs: 200
   max_collision_diagnostics_per_step: 24
   max_pairs_per_holder: 4
@@ -120,3 +122,6 @@ reachability_debug:
     offline_pair_weight: 0.40
     reachability_weight: 0.45
     layout_weight: 0.15
+    # Soft fallback penalty when the holder-to-grasp and inserter-to-target
+    # shoulder lines cross in either pickup or pre-insertion.
+    crossing_penalty: 0.25

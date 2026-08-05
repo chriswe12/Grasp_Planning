@@ -18,11 +18,18 @@ from grasp_planning.pipeline.dual_robot_pair_scoring import (  # noqa: E402
 from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_FLOOR_Z_WORLD_M,
+    DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
     simple_dual_robot_pregrasp_aabb_obstacles,
     simple_dual_robot_pregrasp_aabb_schedule,
 )
+
+
+def _include_nonretained_identity_fallbacks(pair_id: str) -> bool:
+    """Fill the default queue with collision-validated Stage-3 fallbacks."""
+
+    return not bool(pair_id)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -40,11 +47,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-pair-candidates",
         type=int,
-        default=48,
+        default=DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
         help=(
-            "Maximum strict-score-order pair/transition candidates saved for "
-            "pre-motion real IK fallback. A fixed --pair-id keeps all of that "
-            "pair's transitions up to this limit."
+            "Maximum pair/transition candidates saved for pre-motion real IK "
+            "fallback. Fully transition-validated candidates come first, then "
+            "other explicitly validated transitions and canonical identity-only "
+            "pairs fill the queue after the actual pickup-pose floor check. A "
+            "fixed --pair-id keeps all of that pair's transitions up to this limit."
         ),
     )
     parser.add_argument("--assembly-x", type=float, default=0.55)
@@ -111,6 +120,7 @@ def main() -> int:
             pickup_floor_z_world_m=float(args.floor_z),
             transport_clearance_m=float(args.transport_clearance_m),
             retained_only=False,
+            include_nonretained_identity_fallbacks=(_include_nonretained_identity_fallbacks(str(args.pair_id))),
         )
     )
     if args.pair_id:
@@ -148,6 +158,8 @@ def main() -> int:
         "candidate_count": len(candidate_payloads),
         "maximum_candidate_count": int(args.max_pair_candidates),
         "fixed_pair_requested": bool(args.pair_id),
+        "default_candidate_scope": ("retained_transition_validated_then_canonical_identity_fallbacks"),
+        "pickup_floor_check_scope": "actual_supplied_pickup_pose_and_orientation",
         "candidate_identity": "execution_candidate_id",
         "fallback_scope": ("ranked grasp-pair and symmetry-transition targets before motion"),
     }

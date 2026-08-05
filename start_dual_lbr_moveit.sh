@@ -36,6 +36,7 @@ ROBOT_NAMESPACE="lbr_dual_arm"
 ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
 CHECK_ROS_GRAPH=1
 PIDS=()
+PROCESS_GROUPS=()
 
 source_if_exists() {
   local setup_file="$1"
@@ -56,9 +57,20 @@ source_if_exists() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ "${#PROCESS_GROUPS[@]}" -gt 0 ]]; then
+    echo "[DUAL-LBR-MOVEIT] Stopping background ROS process groups..."
+    for process_group in "${PROCESS_GROUPS[@]}"; do
+      kill -TERM -- "-${process_group}" 2>/dev/null || true
+    done
+    # ros2 launch can exit before all launched nodes. Give every member the
+    # same grace period, then guarantee that no orphaned MoveIt/controller
+    # process survives after the launcher returns.
+    sleep 2
+    for process_group in "${PROCESS_GROUPS[@]}"; do
+      kill -KILL -- "-${process_group}" 2>/dev/null || true
+    done
+  fi
   if [[ "${#PIDS[@]}" -gt 0 ]]; then
-    echo "[DUAL-LBR-MOVEIT] Stopping background ROS processes..."
-    kill "${PIDS[@]}" 2>/dev/null || true
     wait "${PIDS[@]}" 2>/dev/null || true
   fi
   exit "${status}"
@@ -141,6 +153,10 @@ if ! command -v ros2 >/dev/null 2>&1; then
   echo "[DUAL-LBR-MOVEIT] Missing required command: ros2" >&2
   exit 1
 fi
+if ! command -v setsid >/dev/null 2>&1; then
+  echo "[DUAL-LBR-MOVEIT] Missing required command: setsid" >&2
+  exit 1
+fi
 if ! ros2 pkg prefix lbr_bringup >/dev/null 2>&1; then
   echo "[DUAL-LBR-MOVEIT] lbr_bringup is unavailable after sourcing ${LBR_WS}/install/setup.bash." >&2
   exit 1
@@ -167,11 +183,30 @@ fi
 trap cleanup EXIT INT TERM
 
 echo "[DUAL-LBR-MOVEIT] Starting both iiwa7/Y-gripper arms in ${MODE} mode on ROS domain ${ROS_DOMAIN_ID}."
-ros2 launch robot_integration_ros dual_aligned_lbr_moveit.launch.py \
+setsid ros2 launch robot_integration_ros dual_aligned_lbr_moveit.launch.py \
   mode:="${MODE}" \
   robot_namespace:="${ROBOT_NAMESPACE}" \
   rviz:="$([[ "${RVIZ}" -eq 1 ]] && printf true || printf false)" &
-PIDS+=("$!")
+launch_pid="$!"
+PIDS+=("${launch_pid}")
+launch_process_group=""
+for _ in $(seq 1 50); do
+  launch_process_group="$(ps -o pgid= -p "${launch_pid}" 2>/dev/null | tr -d '[:space:]')"
+  if [[ "${launch_process_group}" == "${launch_pid}" ]]; then
+    break
+  fi
+  if ! kill -0 "${launch_pid}" 2>/dev/null; then
+    break
+  fi
+  sleep 0.02
+done
+if [[ ! "${launch_process_group}" =~ ^[1-9][0-9]*$ || "${launch_process_group}" != "${launch_pid}" ]]; then
+  echo "[DUAL-LBR-MOVEIT] Failed to isolate the ROS launch in its own process group." >&2
+  kill "${launch_pid}" 2>/dev/null || true
+  wait "${launch_pid}" 2>/dev/null || true
+  exit 1
+fi
+PROCESS_GROUPS+=("${launch_process_group}")
 
 echo "[DUAL-LBR-MOVEIT] Started. Leave this terminal running. Press Ctrl-C to stop the stack."
 set +e

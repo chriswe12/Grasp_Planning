@@ -41134,7 +41134,7 @@ def Xform "kuka_iiwa7_y_gripper"
     )
     {
         double3 xformOp:translate = (0, 0, 1.2618)
-        quatf xformOp:orient = (1, 0, 0, 0)
+        quatf xformOp:orient = (0, 0, 0, 1)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
         bool physics:rigidBodyEnabled = true
         bool physxRigidBody:disableGravity = false
@@ -133833,7 +133833,7 @@ def Xform "kuka_iiwa7_y_gripper"
     )
     {
         double3 xformOp:translate = (0, 0, 1.2618)
-        quatf xformOp:orient = (1, 0, 0, 0)
+        quatf xformOp:orient = (0, 0, 0, 1)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
         bool physics:rigidBodyEnabled = true
         bool physxRigidBody:disableGravity = false
@@ -135496,7 +135496,7 @@ def Xform "kuka_iiwa7_y_gripper"
     )
     {
         double3 xformOp:translate = (0, 0, 1.2618)
-        quatf xformOp:orient = (1, 0, 0, 0)
+        quatf xformOp:orient = (0, 0, 0, 1)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
         bool physics:rigidBodyEnabled = true
         bool physxRigidBody:disableGravity = false
@@ -137341,7 +137341,7 @@ def Xform "kuka_iiwa7_y_gripper"
             rel physics:body1 = </kuka_iiwa7_y_gripper/gripper_base_link>
             point3f physics:localPos0 = (0, 0, 0.0308)
             point3f physics:localPos1 = (0, 0, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 0, 1)
             quatf physics:localRot1 = (1, 0, 0, 0)
         }
 
@@ -137351,7 +137351,7 @@ def Xform "kuka_iiwa7_y_gripper"
             rel physics:body1 = </kuka_iiwa7_y_gripper/gripper_tcp>
             point3f physics:localPos0 = (0, 0, 0.1455)
             point3f physics:localPos1 = (0, 0, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 0, 1)
             quatf physics:localRot1 = (1, 0, 0, 0)
         }
 

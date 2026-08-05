@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.plan_simple_dual_robot_sim import (
     IK_PREFLIGHT_TARGETS,
     _ik_preflight_pair,
     _new_ik_preflight_state,
     _pregrasp_aabb_obstacles_for_target,
+    _rank_tasks_by_inserter_joint_path,
+    _reset_active_roles,
 )
 
 
@@ -15,11 +19,33 @@ class _FakeCommander:
         self.fail_first = fail_first
         self.calls = 0
 
-    def compute_ik(self, _target):
+    def compute_ik(self, _target, *, seed_joint_positions=None):
         self.calls += 1
         if self.fail_first and self.calls == 1:
             return None, "synthetic no IK"
         return [0.0] * 7, "ok"
+
+
+class _ResetCommander:
+    def __init__(self, role: str, shared: dict[str, object]) -> None:
+        self.role = role
+        self.shared = shared
+
+    def plan_to_joint_positions(self, _positions, *, label: str):
+        calls = self.shared.setdefault("calls", [])
+        assert isinstance(calls, list)
+        calls.append(f"plan:{self.role}")
+        if self.role == "holder" and not self.shared.get("inserter_cleared"):
+            return None, "synthetic holder/inserter collision"
+        return SimpleNamespace(), f"{label}: planned"
+
+    def execute_trajectory(self, _trajectory, *, label: str):
+        calls = self.shared.setdefault("calls", [])
+        assert isinstance(calls, list)
+        calls.append(f"execute:{self.role}")
+        if self.role == "inserter":
+            self.shared["inserter_cleared"] = True
+        return True, f"{label}: execution complete"
 
 
 def _task(
@@ -30,6 +56,8 @@ def _task(
     *,
     preinsertion_x: float = 0.5,
     transition_id: str = "tr_identity",
+    corridor_y: float = -1.0,
+    transition_crosses: bool = False,
 ):
     pose = {
         "position_world_m": [0.5, 0.0, 0.2],
@@ -46,7 +74,13 @@ def _task(
         pair_id=pair_id,
         transition_id=transition_id,
         execution_candidate_id=f"{pair_id}__{transition_id}",
+        transition_symmetry={
+            "pre_to_final_translation_assembly_m": [0.0, corridor_y, 0.0],
+        },
         selection_score=score,
+        layout_proxy_components={
+            "transition_segments_cross_xy": transition_crosses,
+        },
         holder_candidate=SimpleNamespace(grasp_id=holder_id),
         inserter_candidate=SimpleNamespace(grasp_id=inserter_id),
         to_payload=lambda: {"targets": targets},
@@ -172,6 +206,260 @@ def test_same_grasp_with_different_transition_targets_is_not_cached() -> None:
     assert not state["pair_records"][1]["roles"]["inserter"]["cache_hit"]
 
 
+def test_joint_space_ranking_prefers_cheaper_transition_and_supplies_a7_seeds(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_plan(
+        _commander,
+        *,
+        targets,
+        labels,
+        start_joint_positions,
+        joint_names,
+        config,
+        label_prefix,
+    ):
+        calls.append((labels, config, label_prefix))
+        cost = 0.5
+        if labels == ("inserter_above_preinsertion", "inserter_preinsertion"):
+            cost = 1.0 if "tr_right" in label_prefix else 5.0
+        terminal = tuple(float(value) for value in start_joint_positions)
+        if labels == (
+            "inserter_pickup_pregrasp",
+            "inserter_pickup_grasp",
+            "inserter_pickup_lift",
+        ):
+            terminal = (*terminal[:-1], 0.4)
+        trajectories = {label: (tuple(float(index) * 0.01 for index in range(7)),) for label in labels}
+        return SimpleNamespace(
+            trajectories=trajectories,
+            joint_path_cost=cost,
+            terminal_joint_positions=terminal,
+            diagnostics=(),
+        )
+
+    monkeypatch.setattr(
+        "scripts.plan_simple_dual_robot_sim.plan_pose_sequence_multi_ik",
+        fake_plan,
+    )
+    wrong = _task(
+        "pair_1",
+        "holder_1",
+        "inserter_1",
+        0.9,
+        transition_id="tr_wrong",
+    )
+    right = _task(
+        "pair_1",
+        "holder_1",
+        "inserter_1",
+        0.8,
+        transition_id="tr_right",
+    )
+
+    ranked, diagnostics, preferred = _rank_tasks_by_inserter_joint_path(
+        [wrong, right],
+        commander=object(),
+        candidate_limit=2,
+        ik_candidate_count=4,
+        beam_width=1,
+    )
+
+    assert [task.transition_id for task in ranked] == ["tr_right", "tr_wrong"]
+    assert diagnostics["candidate_count_planned"] == 2
+    assert preferred[right.execution_candidate_id]["inserter_preinsertion"][-1] == pytest.approx(0.06)
+    transition_configs = [
+        config
+        for labels, config, _prefix in calls
+        if labels == ("inserter_above_preinsertion", "inserter_preinsertion")
+    ]
+    assert transition_configs
+    assert all(config.seed_offsets_rad[0][-1] == pytest.approx(3.141592653589793) for config in transition_configs)
+    assert all(config.seed_offsets_rad[1][-1] == pytest.approx(-3.141592653589793) for config in transition_configs)
+    assert all(config.seed_offsets_rad[2][-1] == pytest.approx(2.6) for config in transition_configs)
+    assert all(config.seed_offsets_rad[3][-1] == pytest.approx(-3.4) for config in transition_configs)
+    assert all(config.continuous_joints == (False,) * 7 for config in transition_configs)
+
+
+def test_joint_space_ranking_pool_preserves_insertion_corridor_diversity(
+    monkeypatch,
+) -> None:
+    planned_execution_ids = []
+
+    def fake_plan(
+        _commander,
+        *,
+        targets,
+        labels,
+        start_joint_positions,
+        joint_names,
+        config,
+        label_prefix,
+    ):
+        del targets, joint_names, config
+        if labels == ("inserter_above_preinsertion", "inserter_preinsertion"):
+            planned_execution_ids.append(label_prefix)
+        trajectories = {label: ((0.0,) * 7,) for label in labels}
+        return SimpleNamespace(
+            trajectories=trajectories,
+            joint_path_cost=1.0,
+            terminal_joint_positions=tuple(float(value) for value in start_joint_positions),
+            diagnostics=(),
+        )
+
+    monkeypatch.setattr(
+        "scripts.plan_simple_dual_robot_sim.plan_pose_sequence_multi_ik",
+        fake_plan,
+    )
+    identity_tasks = [
+        _task(
+            f"identity_{index}",
+            f"holder_{index}",
+            f"inserter_{index}",
+            1.0 - index * 0.01,
+            transition_id="tr_identity",
+            corridor_y=-1.0,
+        )
+        for index in range(5)
+    ]
+    symmetric = _task(
+        "symmetric",
+        "holder_symmetric",
+        "inserter_symmetric",
+        0.5,
+        transition_id="tr_symmetric",
+        corridor_y=1.0,
+    )
+
+    _ranked, diagnostics, _preferred = _rank_tasks_by_inserter_joint_path(
+        [*identity_tasks, symmetric],
+        commander=object(),
+        candidate_limit=2,
+        ik_candidate_count=2,
+        beam_width=1,
+    )
+
+    assert diagnostics["candidate_count_checked"] == 2
+    assert len(diagnostics["corridors_checked"]) == 2
+    assert any("symmetric__tr_symmetric" in label for label in planned_execution_ids)
+
+
+def test_joint_space_ranking_keeps_planned_noncrossing_transition_first(
+    monkeypatch,
+) -> None:
+    def fake_plan(
+        _commander,
+        *,
+        targets,
+        labels,
+        start_joint_positions,
+        joint_names,
+        config,
+        label_prefix,
+    ):
+        del targets, joint_names, config
+        transition_cost = 0.1 if "crossed" in label_prefix else 2.0
+        trajectories = {label: ((0.0,) * 7,) for label in labels}
+        return SimpleNamespace(
+            trajectories=trajectories,
+            joint_path_cost=transition_cost,
+            terminal_joint_positions=tuple(float(value) for value in start_joint_positions),
+            diagnostics=(),
+        )
+
+    monkeypatch.setattr(
+        "scripts.plan_simple_dual_robot_sim.plan_pose_sequence_multi_ik",
+        fake_plan,
+    )
+    crossed = _task(
+        "crossed",
+        "holder_crossed",
+        "inserter_crossed",
+        0.9,
+        transition_id="tr_crossed",
+        transition_crosses=True,
+    )
+    clear = _task(
+        "clear",
+        "holder_clear",
+        "inserter_clear",
+        0.8,
+        transition_id="tr_clear",
+        transition_crosses=False,
+    )
+
+    ranked, diagnostics, _preferred = _rank_tasks_by_inserter_joint_path(
+        [crossed, clear],
+        commander=object(),
+        candidate_limit=2,
+        ik_candidate_count=2,
+        beam_width=1,
+    )
+
+    assert [task.transition_id for task in ranked] == ["tr_clear", "tr_crossed"]
+    assert diagnostics["primary_sort"] == (
+        "strict_noncrossing_phase_then_preplan_status_then_transition_joint_path_cost"
+    )
+
+
+def test_joint_space_ranking_keeps_unranked_clear_before_planned_crossed(
+    monkeypatch,
+) -> None:
+    def fake_plan(
+        _commander,
+        *,
+        targets,
+        labels,
+        start_joint_positions,
+        joint_names,
+        config,
+        label_prefix,
+    ):
+        del targets, joint_names, config, label_prefix
+        trajectories = {label: ((0.0,) * 7,) for label in labels}
+        return SimpleNamespace(
+            trajectories=trajectories,
+            joint_path_cost=0.1,
+            terminal_joint_positions=tuple(float(value) for value in start_joint_positions),
+            diagnostics=(),
+        )
+
+    monkeypatch.setattr(
+        "scripts.plan_simple_dual_robot_sim.plan_pose_sequence_multi_ik",
+        fake_plan,
+    )
+    crossed = _task(
+        "crossed",
+        "holder_crossed",
+        "inserter_crossed",
+        0.99,
+        transition_id="tr_crossed",
+        corridor_y=-1.0,
+        transition_crosses=True,
+    )
+    clear = _task(
+        "clear",
+        "holder_clear",
+        "inserter_clear",
+        0.20,
+        transition_id="tr_clear",
+        corridor_y=-1.0,
+        transition_crosses=False,
+    )
+
+    ranked, _diagnostics, _preferred = _rank_tasks_by_inserter_joint_path(
+        [crossed, clear],
+        commander=object(),
+        candidate_limit=1,
+        ik_candidate_count=2,
+        beam_width=1,
+    )
+
+    assert [task.transition_id for task in ranked] == ["tr_clear", "tr_crossed"]
+
+
 def test_pregrasp_aabb_schedule_avoids_intended_grasp_contacts() -> None:
     obstacles = {
         "holder_base_00": {
@@ -209,3 +497,26 @@ def test_pregrasp_aabb_schedule_avoids_intended_grasp_contacts() -> None:
         )
         == []
     )
+
+
+def test_candidate_recovery_retracts_inserter_before_holder() -> None:
+    shared: dict[str, object] = {}
+    commanders = {
+        "holder": _ResetCommander("holder", shared),
+        "inserter": _ResetCommander("inserter", shared),
+    }
+
+    ok, messages = _reset_active_roles(
+        commanders,  # type: ignore[arg-type]
+        active_roles=("holder", "inserter"),
+        recovering_from_candidate=True,
+    )
+
+    assert ok
+    assert list(messages) == ["inserter", "holder"]
+    assert shared["calls"] == [
+        "plan:inserter",
+        "execute:inserter",
+        "plan:holder",
+        "execute:holder",
+    ]

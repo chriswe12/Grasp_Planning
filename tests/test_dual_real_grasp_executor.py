@@ -16,6 +16,9 @@ from grasp_planning.ros2.dual_real_grasp_executor import (
     _work_surface_obstacle,
     load_and_validate_dual_plan,
 )
+from scripts.build_simple_dual_robot_task import (
+    _include_nonretained_identity_fallbacks,
+)
 
 
 class _Commander:
@@ -325,9 +328,15 @@ def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
     assert 'FLOOR_Z="-0.030"' in source
     assert 'ASSEMBLY_Z=""' in source
     assert 'COMMON_TASK_ARGS+=(--assembly-z "${ASSEMBLY_Z}")' in source
+    assert 'MAX_PAIR_ATTEMPTS="256"' in source
 
     moveit_start = (Path(__file__).resolve().parents[1] / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
     assert "ros2 node list --no-daemon" in moveit_start
+
+
+def test_real_task_adds_only_identity_fallbacks_without_a_fixed_pair() -> None:
+    assert _include_nonretained_identity_fallbacks("") is True
+    assert _include_nonretained_identity_fallbacks("p001_h0001_i0_0002") is False
 
 
 def test_default_dual_work_surface_top_is_minus_thirty_mm() -> None:

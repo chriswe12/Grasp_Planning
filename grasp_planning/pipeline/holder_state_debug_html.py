@@ -9,7 +9,7 @@ import numpy as np
 
 from grasp_planning.grasping.fabrica_grasp_debug import (
     KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
-    _load_kuka_y_gripper_visual_mesh,
+    _load_kuka_y_gripper_visual_mesh_tcp,
     quat_to_rotmat_xyzw,
     rotmat_to_quat_xyzw,
 )
@@ -20,7 +20,7 @@ from .holder_state_feasibility import HolderStateFeasibilityResult
 
 
 def _component_payload(name: str) -> dict[str, object]:
-    vertices, faces = _load_kuka_y_gripper_visual_mesh(name)
+    vertices, faces = _load_kuka_y_gripper_visual_mesh_tcp(name)
     return {
         "vertices": np.round(vertices, 6).tolist(),
         "faces": np.asarray(faces, dtype=np.int64).tolist(),
@@ -28,8 +28,8 @@ def _component_payload(name: str) -> dict[str, object]:
 
 
 def _gripper_payload() -> dict[str, object]:
-    left_vertices, _ = _load_kuka_y_gripper_visual_mesh("left_finger")
-    right_vertices, _ = _load_kuka_y_gripper_visual_mesh("right_finger")
+    left_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("left_finger")
+    right_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("right_finger")
     left_tip = left_vertices[left_vertices[:, 2] >= 0.08]
     right_tip = right_vertices[right_vertices[:, 2] >= 0.08]
     return {

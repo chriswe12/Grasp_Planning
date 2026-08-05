@@ -20,6 +20,7 @@ from .dual_grasp_pair_planner import (
     DualGraspPairStepResult,
     InserterCandidateStatus,
     InserterGraspLibrary,
+    RetainedExecutionCandidate,
     dual_grasp_pair_summary_payload,
     generate_inserter_grasp_libraries,
     generate_inserter_grasp_library,
@@ -44,6 +45,10 @@ from .dual_robot_pair_scoring import (
     robot_shoulder_world,
     transform_target_pose,
     workspace_pose_score,
+)
+from .dual_robot_planning_debug import (
+    DualRobotPlanningDebugServer,
+    dual_robot_planning_scene_payload,
 )
 from .dual_robot_simple_sim import (
     DualRobotStepSelection,
@@ -131,6 +136,7 @@ __all__ = [
     "DualGraspPairPlanningResult",
     "DualGraspPairStepResult",
     "DualRobotStepSelection",
+    "DualRobotPlanningDebugServer",
     "ExecutionWorldPoseConfig",
     "GeometryConfig",
     "GroundRecheckResult",
@@ -154,6 +160,7 @@ __all__ = [
     "HolderStateFeasibilityResult",
     "InserterCandidateStatus",
     "InserterGraspLibrary",
+    "RetainedExecutionCandidate",
     "MujocoRegraspFallbackPlan",
     "MujocoRegraspPlacementOption",
     "StableOrientation",
@@ -167,6 +174,7 @@ __all__ = [
     "compose_source_pose_world",
     "build_dual_robot_pair_score_debug_payload",
     "dual_grasp_pair_summary_payload",
+    "dual_robot_planning_scene_payload",
     "enumerate_stable_orientations",
     "expand_grasp_candidates_by_symmetry",
     "generate_stage1_result",

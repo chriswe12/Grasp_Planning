@@ -77,6 +77,7 @@ class ReachabilityProxyConfig:
     offline_pair_weight: float = 0.40
     reachability_weight: float = 0.45
     layout_weight: float = 0.15
+    crossing_penalty: float = 0.25
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.minimum_reach_m < self.comfort_reach_m < self.maximum_reach_m):
@@ -105,6 +106,8 @@ class ReachabilityProxyConfig:
         for weights in weight_groups:
             if any(weight < 0.0 for weight in weights) or sum(weights) <= 0.0:
                 raise ValueError("Reachability score weights must be nonnegative with a positive sum in each group.")
+        if not 0.0 <= self.crossing_penalty <= 1.0:
+            raise ValueError("crossing_penalty must be between 0 and 1.")
 
     def to_payload(self) -> dict[str, object]:
         return {field_name: getattr(self, field_name) for field_name in self.__dataclass_fields__}
@@ -276,11 +279,18 @@ def pair_layout_score(
     inserter_targets: Iterable[TaskTargetPose],
     holder_grasp_target: TaskTargetPose,
     inserter_grasp_target: TaskTargetPose,
+    inserter_transition_target: TaskTargetPose | None = None,
     holder_robot_base_world: MovableFrame,
     inserter_robot_base_world: MovableFrame,
     config: ReachabilityProxyConfig,
 ) -> dict[str, object]:
-    """Rank one Stage-3 pair for a movable cell layout."""
+    """Rank one Stage-3 pair for a movable cell layout.
+
+    ``inserter_grasp_target`` is the pickup-side target.  When supplied,
+    ``inserter_transition_target`` also evaluates the arm ownership and XY
+    shoulder-to-TCP crossing at pre-insertion.  A crossing remains a soft
+    penalty so collision-aware planning can still use it as a fallback.
+    """
 
     holder = arm_target_set_score(
         holder_targets,
@@ -311,48 +321,88 @@ def pair_layout_score(
         holder_grasp_target.position_world_m,
         dtype=float,
     )
-    inserter_target = np.asarray(
-        inserter_grasp_target.position_world_m,
-        dtype=float,
-    )
     holder_own = float(np.linalg.norm(holder_target - holder_shoulder))
     holder_other = float(np.linalg.norm(holder_target - inserter_shoulder))
-    inserter_own = float(np.linalg.norm(inserter_target - inserter_shoulder))
-    inserter_other = float(np.linalg.norm(inserter_target - holder_shoulder))
     holder_ownership = _clamp01(0.5 + (holder_other - holder_own) / (2.0 * config.ownership_margin_m))
-    inserter_ownership = _clamp01(0.5 + (inserter_other - inserter_own) / (2.0 * config.ownership_margin_m))
-    ownership_score = (
-        config.target_min_weight * min(holder_ownership, inserter_ownership)
-        + config.target_mean_weight * 0.5 * (holder_ownership + inserter_ownership)
+
+    def phase_layout(inserter_target_pose: TaskTargetPose) -> dict[str, float | bool]:
+        inserter_target = np.asarray(
+            inserter_target_pose.position_world_m,
+            dtype=float,
+        )
+        inserter_own = float(np.linalg.norm(inserter_target - inserter_shoulder))
+        inserter_other = float(np.linalg.norm(inserter_target - holder_shoulder))
+        inserter_ownership = _clamp01(0.5 + (inserter_other - inserter_own) / (2.0 * config.ownership_margin_m))
+        ownership_score = (
+            config.target_min_weight * min(holder_ownership, inserter_ownership)
+            + config.target_mean_weight * 0.5 * (holder_ownership + inserter_ownership)
+        ) / (config.target_min_weight + config.target_mean_weight)
+        segments_cross = _segments_cross_xy(
+            holder_shoulder,
+            holder_target,
+            inserter_shoulder,
+            inserter_target,
+        )
+        noncrossing_score = 0.0 if segments_cross else 1.0
+        layout_score = (config.ownership_weight * ownership_score + config.noncrossing_weight * noncrossing_score) / (
+            config.ownership_weight + config.noncrossing_weight
+        )
+        return {
+            "layout_score": float(layout_score),
+            "ownership_score": float(ownership_score),
+            "inserter_ownership_score": float(inserter_ownership),
+            "noncrossing_score": float(noncrossing_score),
+            "segments_cross_xy": bool(segments_cross),
+        }
+
+    pickup_layout = phase_layout(inserter_grasp_target)
+    transition_layout = (
+        phase_layout(inserter_transition_target) if inserter_transition_target is not None else dict(pickup_layout)
+    )
+    layout_score = (
+        config.target_min_weight
+        * min(
+            float(pickup_layout["layout_score"]),
+            float(transition_layout["layout_score"]),
+        )
+        + config.target_mean_weight
+        * 0.5
+        * (float(pickup_layout["layout_score"]) + float(transition_layout["layout_score"]))
     ) / (config.target_min_weight + config.target_mean_weight)
-    segments_cross = _segments_cross_xy(
-        holder_shoulder,
-        holder_target,
-        inserter_shoulder,
-        inserter_target,
-    )
-    noncrossing_score = 0.0 if segments_cross else 1.0
-    layout_score = (config.ownership_weight * ownership_score + config.noncrossing_weight * noncrossing_score) / (
-        config.ownership_weight + config.noncrossing_weight
-    )
     total_weight = config.offline_pair_weight + config.reachability_weight + config.layout_weight
-    combined_score = (
+    score_before_crossing_penalty = (
         config.offline_pair_weight * _clamp01(offline_pair_score)
         + config.reachability_weight * reachability_score
         + config.layout_weight * layout_score
     ) / total_weight
+    segments_cross = bool(pickup_layout["segments_cross_xy"]) or bool(transition_layout["segments_cross_xy"])
+    crossing_penalty_applied = config.crossing_penalty if segments_cross else 0.0
+    combined_score = _clamp01(score_before_crossing_penalty - crossing_penalty_applied)
     return {
         "score": float(combined_score),
+        "score_before_crossing_penalty": float(score_before_crossing_penalty),
+        "crossing_penalty": float(config.crossing_penalty),
+        "crossing_penalty_applied": float(crossing_penalty_applied),
         "offline_pair_score": _clamp01(offline_pair_score),
         "reachability_score": float(reachability_score),
         "layout_score": float(layout_score),
         "holder": holder,
         "inserter": inserter,
-        "ownership_score": float(ownership_score),
+        "ownership_score": min(
+            float(pickup_layout["ownership_score"]),
+            float(transition_layout["ownership_score"]),
+        ),
         "holder_ownership_score": holder_ownership,
-        "inserter_ownership_score": inserter_ownership,
-        "noncrossing_score": noncrossing_score,
+        "inserter_ownership_score": min(
+            float(pickup_layout["inserter_ownership_score"]),
+            float(transition_layout["inserter_ownership_score"]),
+        ),
+        "noncrossing_score": 0.0 if segments_cross else 1.0,
         "segments_cross_xy": segments_cross,
+        "pickup_layout": pickup_layout,
+        "transition_layout": transition_layout,
+        "pickup_segments_cross_xy": bool(pickup_layout["segments_cross_xy"]),
+        "transition_segments_cross_xy": bool(transition_layout["segments_cross_xy"]),
     }
 
 

@@ -39,14 +39,18 @@ ISAAC_MIN_CONTACT_OFFSET_M = 1.0e-5
 LBR_LINK_7_TO_EE_XYZ = (0.0, 0.0, 0.035)
 GRIPPER_EE_MOUNT_OFFSET_XYZ = (0.0, 0.0, -0.0042)
 GRIPPER_TCP_XYZ = (0.0, 0.0, 0.1455)
-GRIPPER_TCP_RPY = (0.0, 0.0, 0.0)
+# Mount the physical hand/camera on the opposite side of tool Z. Applying the
+# same half-turn at the TCP child cancels it in the link7 -> TCP chain, keeping
+# all existing grasp targets and hardware TCP semantics unchanged.
+GRIPPER_BODY_YAW_RAD = math.pi
+GRIPPER_TCP_RPY = (0.0, 0.0, GRIPPER_BODY_YAW_RAD)
 GRIPPER_TCP_MASS_KG = 1.0e-3
 GRIPPER_TCP_DIAGONAL_INERTIA = (1.0e-7, 1.0e-7, 1.0e-7)
 GRIPPER_MOUNT_XYZ = tuple(
     ee_value + mount_offset
     for ee_value, mount_offset in zip(LBR_LINK_7_TO_EE_XYZ, GRIPPER_EE_MOUNT_OFFSET_XYZ, strict=True)
 )
-GRIPPER_MOUNT_RPY = (0.0, 0.0, 0.0)
+GRIPPER_MOUNT_RPY = (0.0, 0.0, GRIPPER_BODY_YAW_RAD)
 USD_JOINT_TARGET_POSITION_DEG = {
     "joint2": 41.0,
     "joint4": 80.0,

@@ -256,7 +256,13 @@ _FRANKA_HAND_MESH_PATH = (
 _FRANKA_HAND_MESH_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 _KUKA_Y_GRIPPER_MESH_DIR = Path(__file__).resolve().parents[2] / "assets" / "urdf" / "kuka_iiwa7_y_gripper" / "meshes"
 _KUKA_Y_GRIPPER_MESH_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-_KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
+KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
+# The physical hand/camera is mounted half a turn around tool Z. The generated
+# robot model applies the inverse half turn at gripper_tcp, so the public TCP
+# frame and every saved grasp pose remain unchanged while the collision body is
+# represented in its real mounting orientation.
+KUKA_Y_GRIPPER_BODY_ROTATION_TCP = _rpy_to_rotmat(0.0, 0.0, np.pi)
+KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION = "kuka_y_body_yaw_pi_tcp_preserving_v1"
 _KUKA_Y_GRIPPER_MESH_NAMES = {
     "base": "hand.STL",
     "left_finger": "left_finger.STL",
@@ -451,7 +457,7 @@ class KukaYGripperCollisionModel:
     contact_gap_m: float = 0.002
     contact_patch_lateral_offset_m: float = 0.0
     contact_patch_approach_offset_m: float = 0.0
-    tcp_to_grasp_center_m: tuple[float, float, float] = tuple(float(v) for v in _KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M)
+    tcp_to_grasp_center_m: tuple[float, float, float] = tuple(float(v) for v in KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M)
 
     def __post_init__(self) -> None:
         for vertices_field, faces_field in (
@@ -493,7 +499,8 @@ class KukaYGripperCollisionModel:
             )
         else:
             tcp_center_obj = np.asarray(grasp_center, dtype=float)
-        base_origin_obj = tcp_center_obj - rotmat @ np.asarray(self.tcp_to_grasp_center_m, dtype=float)
+        body_rotmat = rotmat @ KUKA_Y_GRIPPER_BODY_ROTATION_TCP
+        base_origin_obj = tcp_center_obj - body_rotmat @ np.asarray(self.tcp_to_grasp_center_m, dtype=float)
 
         base_vertices, base_faces = self._mesh("base")
         left_vertices, left_faces = self._mesh("left_finger")
@@ -506,21 +513,21 @@ class KukaYGripperCollisionModel:
                 vertices_local=base_vertices,
                 faces=base_faces,
                 origin_obj=base_origin_obj,
-                rotmat=rotmat,
+                rotmat=body_rotmat,
             ),
             self._mesh_to_object(
                 name="kuka_y_left_finger",
                 vertices_local=left_shifted,
                 faces=left_faces,
                 origin_obj=base_origin_obj,
-                rotmat=rotmat,
+                rotmat=body_rotmat,
             ),
             self._mesh_to_object(
                 name="kuka_y_right_finger",
                 vertices_local=right_shifted,
                 faces=right_faces,
                 origin_obj=base_origin_obj,
-                rotmat=rotmat,
+                rotmat=body_rotmat,
             ),
         )
 

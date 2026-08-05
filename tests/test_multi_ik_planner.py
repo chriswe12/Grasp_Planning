@@ -36,6 +36,28 @@ class _Commander:
         return trajectory, "ok"
 
 
+class _BoundedCommander(_Commander):
+    def compute_ik(self, target, *, seed_joint_positions):
+        seed = tuple(float(value) for value in seed_joint_positions)
+        self.ik_calls.append(seed)
+        return ([0.0] if seed[0] >= 0.0 else [-3.0]), "ok"
+
+    def plan_to_joint_positions(self, joints, *, label, start_joint_positions):
+        del label
+        goal = tuple(float(value) for value in joints)
+        start = tuple(float(value) for value in start_joint_positions)
+        self.plan_calls.append((start, goal))
+        return (
+            SimpleNamespace(
+                joint_trajectory=SimpleNamespace(
+                    joint_names=["A1"],
+                    points=[SimpleNamespace(positions=goal)],
+                )
+            ),
+            "ok",
+        )
+
+
 def _target() -> PoseTarget:
     return PoseTarget.from_quaternion(
         x=0.4,
@@ -116,3 +138,67 @@ def test_joint_weight_count_must_match_robot() -> None:
             config=MultiIkPlanningConfig(candidate_count=2, joint_weights=(1.0,)),
             label_prefix="bad",
         )
+
+
+def test_explicit_half_turn_seed_is_filtered_by_bounded_joint_limits() -> None:
+    commander = _Commander()
+    plan_pose_sequence_multi_ik(
+        commander,
+        targets={"target": _target()},
+        labels=("target",),
+        start_joint_positions=(0.0, 1.0),
+        joint_names=("A1", "A2"),
+        config=MultiIkPlanningConfig(
+            candidate_count=2,
+            seed_offsets_rad=((0.0, 3.141592653589793), (0.0, -3.141592653589793)),
+            joint_lower_limits_rad=(-2.97, -3.05),
+            joint_upper_limits_rad=(2.97, 3.05),
+        ),
+        label_prefix="bounded_seed",
+    )
+
+    assert commander.ik_calls == pytest.approx(
+        [
+            (0.0, 1.0),
+            (0.0, 1.0 - 3.141592653589793),
+        ]
+    )
+
+
+def test_bounded_joint_cost_does_not_wrap_across_position_limits() -> None:
+    commander = _BoundedCommander()
+    result = plan_pose_sequence_multi_ik(
+        commander,
+        targets={"target": _target()},
+        labels=("target",),
+        start_joint_positions=(3.0,),
+        joint_names=("A1",),
+        config=MultiIkPlanningConfig(
+            candidate_count=2,
+            seed_offsets_rad=((-6.0,),),
+            joint_lower_limits_rad=(-3.05,),
+            joint_upper_limits_rad=(3.05,),
+            continuous_joints=(False,),
+        ),
+        label_prefix="bounded_cost",
+    )
+
+    assert result.terminal_joint_positions == pytest.approx((0.0,))
+
+
+def test_unspecified_joint_topology_preserves_legacy_wrapped_cost() -> None:
+    commander = _BoundedCommander()
+    result = plan_pose_sequence_multi_ik(
+        commander,
+        targets={"target": _target()},
+        labels=("target",),
+        start_joint_positions=(3.0,),
+        joint_names=("A1",),
+        config=MultiIkPlanningConfig(
+            candidate_count=2,
+            seed_offsets_rad=((-6.0,),),
+        ),
+        label_prefix="legacy_wrapped_cost",
+    )
+
+    assert result.terminal_joint_positions == pytest.approx((-3.0,))

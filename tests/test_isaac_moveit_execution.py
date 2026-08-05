@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import math
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -265,6 +266,49 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertFalse(accepted)
         self.assertAlmostEqual(diagnostics["gripper_close_contact_stall_selected_jaw_width_m"], 0.059)
         self.assertIn("selected jaw width 0.0590 m", diagnostics["gripper_close_contact_stall_accept_reason"])
+
+    def test_dual_isaac_accepts_only_bilateral_contacts_filtered_to_selected_object(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_simple_dual_robot_sim_in_isaac.py"
+        source = script_path.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        helper_node = next(
+            node
+            for node in parsed.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_filtered_bilateral_contact_matches_selected_object"
+        )
+        isolated_module = ast.Module(body=[helper_node], type_ignores=[])
+        ast.fix_missing_locations(isolated_module)
+        namespace = {"math": math}
+        exec(compile(isolated_module, str(script_path), "exec"), namespace)
+        matches = namespace["_filtered_bilateral_contact_matches_selected_object"]
+
+        bilateral = {
+            "left": {"available": True, "filtered_force_norm_n": 0.020},
+            "right": {"available": True, "filtered_force_norm_n": 0.015},
+        }
+        one_sided = {
+            **bilateral,
+            "right": {"available": True, "filtered_force_norm_n": 0.005},
+        }
+        unavailable = {
+            **bilateral,
+            "right": {"available": False, "filtered_force_norm_n": 1.0},
+        }
+
+        self.assertTrue(matches(bilateral, minimum_force_n=0.01))
+        self.assertFalse(matches(one_sided, minimum_force_n=0.01))
+        self.assertFalse(matches(unavailable, minimum_force_n=0.01))
+
+        close_node = next(
+            node for node in parsed.body if isinstance(node, ast.FunctionDef) and node.name == "_close_gripper"
+        )
+        call_names = {
+            node.func.id
+            for node in ast.walk(close_node)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("_finger_contact_snapshot", call_names)
+        self.assertIn("_filtered_bilateral_contact_matches_selected_object", call_names)
 
     def test_moveit_pick_allows_source_open_kuka_width_during_approach(self) -> None:
         _FakeExecutor.executions = []

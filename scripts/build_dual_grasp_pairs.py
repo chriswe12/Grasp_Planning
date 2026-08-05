@@ -24,6 +24,7 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_dual_grasp_pair_debug_artifacts,
     write_dual_grasp_pair_step_json,
     write_dual_grasp_pair_summary_json,
+    write_holder_grasp_library_artifacts,
     write_holder_state_feasibility_json,
     write_inserter_grasp_library,
 )
@@ -47,7 +48,7 @@ def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
         contact_position_bin_m=float(raw.get("contact_position_bin_m", 0.025)),
         axis_bin_deg=float(raw.get("axis_bin_deg", 30.0)),
         max_pair_checks=int(raw.get("max_pair_checks", 4000)),
-        max_accepted_pairs=int(raw.get("max_accepted_pairs", 48)),
+        max_accepted_pairs=int(raw.get("max_accepted_pairs", 256)),
         max_rejected_pairs=int(raw.get("max_rejected_pairs", 200)),
         max_collision_diagnostics_per_step=int(raw.get("max_collision_diagnostics_per_step", 24)),
         max_pairs_per_holder=int(raw.get("max_pairs_per_holder", 4)),
@@ -165,6 +166,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    write_holder_grasp_library_artifacts(
+        holder_library,
+        sequence=sequence,
+        planning=planning,
+        output_json=output_dir / "holder_base_candidates.json",
+        output_html=output_dir / "holder_base_candidates.html",
+    )
     holder_source = output_dir / "holder_state_feasibility.json"
     write_holder_state_feasibility_json(
         holder_feasibility,

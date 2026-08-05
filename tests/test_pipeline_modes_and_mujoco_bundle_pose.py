@@ -1389,6 +1389,40 @@ class Stage1CollisionSkipTests(unittest.TestCase):
         self.assertNotEqual(changed_key, baseline_key)
         self.assertEqual(changed_payload["grasp_scoring_algorithm"], "unit-test-scoring-vnext")
 
+    def test_stage1_cache_key_records_kuka_mount_collision_geometry(self) -> None:
+        kwargs = {
+            "geometry": GeometryConfig(
+                target_mesh_path="obj/fabrica/beam/2.obj",
+                mesh_scale=0.01,
+                assembly_glob="obj/fabrica/beam/*.obj",
+            ),
+            "planning": PlanningConfig(
+                stage1_cache_enabled=True,
+                gripper_collision_model="kuka_y_gripper",
+            ),
+            "source_frame_pose_obj_world": None,
+            "upright_approach_axes_obj": (),
+        }
+
+        _, baseline_key, payload = fabrica_pipeline._stage1_cache_path(**kwargs)
+
+        self.assertEqual(
+            payload["gripper_collision_geometry_version"],
+            fabrica_pipeline.KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
+        )
+        with mock.patch.object(
+            fabrica_pipeline,
+            "KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION",
+            "unit-test-kuka-mount-vnext",
+        ):
+            _, changed_key, changed_payload = fabrica_pipeline._stage1_cache_path(**kwargs)
+
+        self.assertNotEqual(changed_key, baseline_key)
+        self.assertEqual(
+            changed_payload["gripper_collision_geometry_version"],
+            "unit-test-kuka-mount-vnext",
+        )
+
     def test_benchmark_target_uses_selected_precedence_order_as_obstacles(self) -> None:
         spec = run_grasp_generation_benchmark._target_spec_from_asset_path(
             Path("obj/fabrica/beam/0.obj"),

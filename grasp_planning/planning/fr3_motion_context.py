@@ -190,6 +190,9 @@ class FR3MotionContext:
     def get_arm_q(self) -> torch.Tensor:
         return self.robot.data.joint_pos[:, self.arm_joint_ids].clone()
 
+    def get_arm_qd(self) -> torch.Tensor:
+        return self.robot.data.joint_vel[:, self.arm_joint_ids].clone()
+
     def get_hand_q(self) -> torch.Tensor:
         if self.hand_joint_ids.numel() == 0:
             return torch.zeros((1, 0), dtype=torch.float32, device=self.device)
@@ -280,6 +283,9 @@ class FR3MotionContext:
     def command_arm(self, q: torch.Tensor) -> None:
         self.robot.set_joint_position_target(q, joint_ids=self.arm_joint_ids)
 
+    def command_arm_velocity(self, qd: torch.Tensor) -> None:
+        self.robot.set_joint_velocity_target(qd, joint_ids=self.arm_joint_ids)
+
     def reset_joint_state(
         self,
         q_arm: torch.Tensor,
@@ -293,6 +299,7 @@ class FR3MotionContext:
         arm_vel = torch.zeros_like(q_arm)
         self.robot.write_joint_state_to_sim(q_arm, arm_vel, joint_ids=self.arm_joint_ids)
         self.robot.set_joint_position_target(q_arm, joint_ids=self.arm_joint_ids)
+        self.command_arm_velocity(arm_vel)
         if q_hand is not None and self.hand_joint_ids.numel() > 0 and q_hand.numel() > 0:
             q_hand = q_hand.clone().to(dtype=torch.float32, device=self.device)
             hand_vel = torch.zeros_like(q_hand)
@@ -324,8 +331,10 @@ class FR3MotionContext:
             self.scene.update(self.physics_dt)
 
     def hold_position(self, q: torch.Tensor, steps: int = 1) -> None:
+        zero_velocity = torch.zeros_like(q)
         for _ in range(max(1, int(steps))):
             self.command_arm(q)
+            self.command_arm_velocity(zero_velocity)
             self.command_fixed_gripper()
             self.scene.write_data_to_sim()
             self.sim.step()
@@ -395,6 +404,7 @@ class FR3MotionContext:
             target_tcp_position_b=desired_pos_b,
         )
         self.command_arm(joint_pos_cmd)
+        self.command_arm_velocity(torch.zeros_like(joint_pos_cmd))
         return joint_pos_cmd
 
     def compute_ee_position_corrected_arm_command(

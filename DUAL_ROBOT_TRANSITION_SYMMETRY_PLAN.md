@@ -74,8 +74,12 @@ For each holder-active assembly step:
 6. For every retained grasp pair, re-run the transformed inserter-gripper
    insertion/retreat sweep against the table, assembled prefix, and selected
    holder gripper. Robot-link checks remain the runtime planner's job.
-7. Save stable transition IDs, transforms, matching symmetry names, validation
-   evidence, and rejection reasons in the per-step pair artifact.
+7. Flatten every accepted pair/transition combination into an execution
+   candidate and retain a bounded final set by round-robin corridor direction
+   and pair diversity.
+8. Save stable execution-candidate and transition IDs, transforms, matching
+   symmetry names, validation evidence, and rejection reasons in the per-step
+   pair artifact.
 
 Identity must always remain available. Continuous symmetry hints are not
 expanded until a bounded sampling policy is explicitly introduced.
@@ -90,12 +94,27 @@ At runtime:
 4. Lock the selected part-to-TCP transform after close.
 5. Instantiate all compatible transition corridors in the perceived world
    assembly frame using that fixed grasp.
-6. Rank cheaply from the actual pickup/post-lift TCP using translation and
-   rotation cost.
-7. Try collision-aware IK in rank order. The simulation planning path also
-   plans complete target sequences in rank order; the real executor plans the
-   selected target online as each guarded motion executes.
-8. Retain compatible alternatives as pre-motion fallbacks. After hardware
+6. Use the Cartesian layout score only to order within each corridor, then
+   round-robin corridors to bound the online pre-ranking pool. This guarantees
+   that an identity corridor cannot consume the whole pool before joint-space
+   evaluation reaches an equivalent opposite-side corridor.
+7. Plan the shared pickup prefix once per incoming grasp. From its terminal
+   lift joints, use multi-seed IK and path planning for every candidate's
+   above-pre-insertion and pre-insertion targets.
+8. Probe A7 `+pi` and `-pi` seed offsets for symmetry candidates and reject
+   out-of-limit probes. Because iiwa A7 is bounded slightly below pi, also seed
+   valid `+3.0` and `-3.0` rad branch targets derived from the reached lift
+   state. Partition the complete bounded queue into a strict non-crossing
+   phase and a crossed fallback phase. Within each phase, rank successful
+   pre-plans by velocity-weighted joint-path cost before unchecked and failed
+   cheap-preplan fallbacks. A crossed successful pre-plan must not jump ahead
+   of any remaining non-crossing candidate.
+   A7 is a cheap seed direction, not a commanded single-joint shortcut; IK may
+   adjust every joint.
+9. Execute in joint-space rank order with exact shared-scene replanning and
+   retain the remaining complete candidates as fallbacks. The real executor
+   continues to plan the selected target online as each guarded motion executes.
+10. After hardware
    motion starts, a path failure stops execution rather than switching
    candidates from a changed physical state.
 
@@ -106,9 +125,29 @@ Fallback has two levels:
   selected grasp may be selected.
 
 Non-identity corridors are pair-conditionally checked for the bounded retained
-fallback set. Other Stage-3 accepted pairs remain available through their
-already checked identity corridor only; runtime must not infer transformed
-compatibility where the pair artifact contains no such evidence.
+pair pool, then retained online as complete pair/transition execution IDs. The
+default bound is 256 so the orientation-dependent pickup-floor check can remove
+invalid grasps without collapsing runtime fallback to only a few holders.
+Retained-pair selection covers distinct inserter grasps before taking repeated
+pairs for one inserter, preserving pickup-orientation diversity without baking
+in a simulated world pose. The
+same actual-pose check and retained pool are used in simulation and real mode;
+no particular pickup orientation is compiled into the offline artifacts.
+Other Stage-3 accepted pairs remain identity-only records. Default runtime
+planning may also use a non-retained execution when its retained pair contains
+an explicit accepted validation for that exact transition; already
+collision-checked canonical targets from identity-only pairs fill the rest of
+the bounded queue. It must never infer transformed compatibility where the
+artifact contains no such evidence.
+
+The online layout proxy evaluates both the pickup target and pre-insertion
+target. It combines ownership/non-crossing scores across the two phases and
+records a soft crossing penalty if either shoulder-to-target line crosses the
+holder line in XY. Runtime ordering adds a strict phase boundary around that
+proxy: every bounded non-crossing candidate is tried before the crossed phase.
+This is still not collision proof; exact shared MoveIt planning remains
+authoritative, and crossed candidates remain available only after the clear
+phase fails.
 
 IK/preflight caches must include the transition identity or complete target
 signature. Caching only by grasp ID is invalid because one grasp can lead to
@@ -122,6 +161,7 @@ Every executable candidate must preserve at least:
 parent_grasp_id
 selected_pickup_grasp_id
 pickup_grasp_symmetry
+execution_candidate_id
 transition_id
 partial_assembly_symmetry
 incoming_final_symmetry
@@ -141,6 +181,11 @@ attempt artifacts so later insertion uses the same final-pose representative.
   is valid; environment collision checks must always be rerun.
 - The complete partial assembly, table support, holder gripper, both robot
   arms, and the attached incoming object remain collision constraints.
+- Stage-3 checks the incoming object and both selected end effectors. The
+  current simple MoveIt scene still omits exact attached-object geometry, so
+  its joint-space ranking is a robot/work-surface pre-plan and Isaac remains
+  responsible for physics/contact validation. This limitation must be removed
+  before treating the same path as hardware-safe.
 - A pointwise IK success is only a prefilter. Hardware execution requires a
   planned path from the current joint state.
 - The real executor currently selects a candidate by collision-aware IK before

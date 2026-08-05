@@ -41,7 +41,7 @@ parser.add_argument(
 parser.add_argument(
     "--loaded-max-joint-speed-rad-s",
     type=float,
-    default=0.35,
+    default=0.70,
     help="Maximum inserter speed while transporting the grasped part.",
 )
 parser.add_argument(
@@ -86,6 +86,15 @@ parser.add_argument(
     "--gripper-close-max-duration-s",
     type=float,
     default=10.0,
+)
+parser.add_argument(
+    "--finger-contact-min-force-n",
+    type=float,
+    default=0.01,
+    help=(
+        "Minimum filtered force required on each finger to accept bilateral "
+        "contact with that gripper's selected object."
+    ),
 )
 parser.add_argument("--postclose-hold-s", type=float, default=1.0)
 parser.add_argument("--final-hold-s", type=float, default=2.0)
@@ -143,6 +152,8 @@ if args_cli.loaded_max_joint_speed_rad_s <= 0.0:
     parser.error("--loaded-max-joint-speed-rad-s must be positive.")
 if args_cli.close_width < 0.0:
     parser.error("--close-width must be non-negative.")
+if args_cli.finger_contact_min_force_n < 0.0:
+    parser.error("--finger-contact-min-force-n must be non-negative.")
 if args_cli.max_joint_speed_rad_s is not None and args_cli.max_joint_speed_rad_s <= 0.0:
     parser.error("--max-joint-speed-rad-s must be positive when provided.")
 if args_cli.record_video is not None:
@@ -462,16 +473,34 @@ def _trajectory(
     )
 
 
-def _execute_segment(
+def _trajectory_group(
     *,
     context: FR3MotionContext,
-    raw: dict[str, object],
-    label: str,
+    segments: tuple[tuple[str, dict[str, object]], ...],
+) -> JointTrajectory:
+    """Join consecutive MoveIt segments without stopping at their boundary."""
+
+    waypoints: list[torch.Tensor] = []
+    for label, raw in segments:
+        segment = _trajectory(context=context, raw=raw, label=label)
+        for waypoint in segment.waypoints:
+            if waypoints and float(torch.max(torch.abs(waypoint - waypoints[-1])).item()) <= 1.0e-9:
+                continue
+            waypoints.append(waypoint)
+    if not waypoints:
+        raise ValueError("A grouped MoveIt trajectory must contain at least one waypoint.")
+    return JointTrajectory(waypoints=waypoints, dt=context.physics_dt)
+
+
+def _execute_segments(
+    *,
+    context: FR3MotionContext,
+    segments: tuple[tuple[str, dict[str, object]], ...],
     max_joint_speed_rad_s: float,
     waypoint_tolerance_rad: float,
     step_callback: Callable[[], None] | None = None,
 ) -> tuple[torch.Tensor, str, float]:
-    trajectory = _trajectory(context=context, raw=raw, label=label)
+    trajectory = _trajectory_group(context=context, segments=segments)
     executor = TrajectoryExecutor(
         context,
         waypoint_tolerance_rad=float(waypoint_tolerance_rad),
@@ -485,9 +514,32 @@ def _execute_segment(
     started_at = time.perf_counter()
     ok, detail = executor.execute(trajectory)
     duration_s = time.perf_counter() - started_at
+    labels = [label for label, _raw in segments]
     if not ok:
-        raise RuntimeError(f"{label} execution failed: {detail}")
-    return trajectory.waypoints[-1].clone(), detail, duration_s
+        raise RuntimeError(f"{' -> '.join(labels)} execution failed: {detail}")
+    return (
+        trajectory.waypoints[-1].clone(),
+        f"continuous segments {' -> '.join(labels)}: {detail}",
+        duration_s,
+    )
+
+
+def _execute_segment(
+    *,
+    context: FR3MotionContext,
+    raw: dict[str, object],
+    label: str,
+    max_joint_speed_rad_s: float,
+    waypoint_tolerance_rad: float,
+    step_callback: Callable[[], None] | None = None,
+) -> tuple[torch.Tensor, str, float]:
+    return _execute_segments(
+        context=context,
+        segments=((label, raw),),
+        max_joint_speed_rad_s=max_joint_speed_rad_s,
+        waypoint_tolerance_rad=waypoint_tolerance_rad,
+        step_callback=step_callback,
+    )
 
 
 def _close_gripper(
@@ -496,6 +548,7 @@ def _close_gripper(
     arm_waypoint: torch.Tensor,
     selected_jaw_width_m: float,
     label: str,
+    contact_role: str,
     step_callback: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     requested_close_width_m = float(args_cli.close_width)
@@ -529,14 +582,14 @@ def _close_gripper(
         step_callback=step_callback,
     )
     status = str(diagnostics.get("gripper_close_status", "unknown"))
-    matched = _kuka_contact_stall_matches_grasp_width(
+    width_matched = _kuka_contact_stall_matches_grasp_width(
         diagnostics,
         float(selected_jaw_width_m),
     )
     joint_names = diagnostics.get("gripper_close_joint_names")
     final_positions = diagnostics.get("gripper_close_final_joint_positions")
     if (
-        not matched
+        not width_matched
         and isinstance(joint_names, list)
         and isinstance(final_positions, list)
         and "left_finger_joint" in joint_names
@@ -550,13 +603,45 @@ def _close_gripper(
                 float(selected_jaw_width_m),
             )
         )
-        matched = final_close + 0.003 >= selected_close
-        diagnostics["selected_width_geometry_match"] = bool(matched)
+        width_matched = final_close + 0.003 >= selected_close
+        diagnostics["selected_width_geometry_match"] = bool(width_matched)
         diagnostics["selected_width_final_close_m"] = final_close
         diagnostics["selected_width_expected_close_m"] = selected_close
+    width_rejection_reason = str(
+        diagnostics.get(
+            "gripper_close_contact_stall_accept_reason",
+            "selected-width geometry did not match",
+        )
+    )
+    filtered_contacts = _finger_contact_snapshot(
+        context.scene,
+        role=contact_role,
+    )
+    filtered_contact_matched = _filtered_bilateral_contact_matches_selected_object(
+        filtered_contacts,
+        minimum_force_n=float(args_cli.finger_contact_min_force_n),
+    )
+    matched = bool(width_matched) or filtered_contact_matched
     diagnostics["selected_jaw_width_m"] = float(selected_jaw_width_m)
     diagnostics["requested_close_width_m"] = requested_close_width_m
     diagnostics["transport_command_width_m"] = commanded_width_m
+    diagnostics["selected_width_geometry_match"] = bool(width_matched)
+    diagnostics["selected_object_filtered_finger_contacts"] = filtered_contacts
+    diagnostics["selected_object_contact_min_force_n"] = float(args_cli.finger_contact_min_force_n)
+    diagnostics["selected_object_bilateral_contact_match"] = filtered_contact_matched
+    diagnostics["selected_contact_acceptance"] = (
+        "selected_width_geometry"
+        if bool(width_matched)
+        else "filtered_bilateral_object_contact"
+        if filtered_contact_matched
+        else "rejected"
+    )
+    if filtered_contact_matched and not bool(width_matched):
+        diagnostics["selected_width_geometry_rejection_reason"] = width_rejection_reason
+        diagnostics["gripper_close_contact_stall_accept_reason"] = (
+            f"both {contact_role} fingers contact the selected object above "
+            f"{float(args_cli.finger_contact_min_force_n):.4f} N"
+        )
     diagnostics["selected_width_contact_matched"] = matched
     if status not in {
         "target_reached",
@@ -617,6 +702,29 @@ def _finger_contact_snapshot(scene: InteractiveScene, *, role: str) -> dict[str,
             "available": True,
         }
     return contacts
+
+
+def _filtered_bilateral_contact_matches_selected_object(
+    contacts: dict[str, object],
+    *,
+    minimum_force_n: float,
+) -> bool:
+    """Accept only two-sided contacts filtered to the role's intended object."""
+
+    threshold = float(minimum_force_n)
+    if threshold < 0.0:
+        raise ValueError("minimum_force_n must be non-negative.")
+    for side in ("left", "right"):
+        raw_contact = contacts.get(side)
+        if not isinstance(raw_contact, dict) or not bool(raw_contact.get("available", False)):
+            return False
+        try:
+            force_norm_n = float(raw_contact["filtered_force_norm_n"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not math.isfinite(force_norm_n) or force_norm_n < threshold:
+            return False
+    return True
 
 
 def _distance(
@@ -949,6 +1057,14 @@ def main() -> int:
             "transit": float(args_cli.trajectory_waypoint_tolerance_rad),
             "contact_pose": float(args_cli.contact_pose_tolerance_rad),
         },
+        "trajectory_playback": {
+            "mode": "continuous_moveit_polyline_with_velocity_feedforward",
+            "settle_boundaries": [
+                "holder_grasp",
+                "inserter_pickup_grasp",
+                "inserter_preinsertion",
+            ],
+        },
         "steps": [],
     }
     unloaded_speed = float(
@@ -974,8 +1090,9 @@ def main() -> int:
         target_arm: torch.Tensor,
         detail: str,
         duration_s: float,
+        segment_labels: tuple[str, ...] = (),
     ) -> dict[str, object]:
-        return {
+        record = {
             "label": label,
             "ok": True,
             "detail": detail,
@@ -1000,6 +1117,9 @@ def main() -> int:
                 incoming_part=incoming_part,
             ),
         }
+        if segment_labels:
+            record["continuous_segment_labels"] = list(segment_labels)
+        return record
 
     if holder_sequence:
         sequence_results: list[dict[str, object]] = []
@@ -1066,26 +1186,24 @@ def main() -> int:
                 "video_start_frame": (0 if video_recorder is None else video_recorder.frame_count),
             }
             try:
-                holder_last = None
-                for label in ("holder_pregrasp", "holder_grasp"):
-                    holder_last, detail, duration_s = _execute_segment(
+                holder_labels = ("holder_pregrasp", "holder_grasp")
+                holder_last, detail, duration_s = _execute_segments(
+                    context=holder_context,
+                    segments=tuple((f"case_{case_index}_{label}", trajectories[label]) for label in holder_labels),
+                    max_joint_speed_rad_s=unloaded_speed,
+                    waypoint_tolerance_rad=_tolerance_for_segment("holder_grasp"),
+                    step_callback=(None if video_recorder is None else video_recorder.capture),
+                )
+                case_result["steps"].append(  # type: ignore[union-attr]
+                    _step_record(
+                        label="holder_grasp",
                         context=holder_context,
-                        raw=trajectories[label],
-                        label=f"case_{case_index}_{label}",
-                        max_joint_speed_rad_s=unloaded_speed,
-                        waypoint_tolerance_rad=_tolerance_for_segment(label),
-                        step_callback=(None if video_recorder is None else video_recorder.capture),
+                        target_arm=holder_last,
+                        detail=detail,
+                        duration_s=duration_s,
+                        segment_labels=holder_labels,
                     )
-                    case_result["steps"].append(  # type: ignore[union-attr]
-                        _step_record(
-                            label=label,
-                            context=holder_context,
-                            target_arm=holder_last,
-                            detail=detail,
-                            duration_s=duration_s,
-                        )
-                    )
-                assert holder_last is not None
+                )
                 case_result["holder_close"] = _close_gripper(
                     context=holder_context,
                     arm_waypoint=holder_last,
@@ -1093,6 +1211,7 @@ def main() -> int:
                         dict(case_plan["grasps"])["holder"]["jaw_width_m"]  # type: ignore[index]
                     ),
                     label=f"holder_case_{case_index}",
+                    contact_role="holder",
                     step_callback=(None if video_recorder is None else video_recorder.capture),
                 )
                 hold_steps = max(
@@ -1149,26 +1268,24 @@ def main() -> int:
         return 0
 
     try:
-        holder_last = None
-        for label in ("holder_pregrasp", "holder_grasp"):
-            holder_last, detail, duration_s = _execute_segment(
+        holder_labels = ("holder_pregrasp", "holder_grasp")
+        holder_last, detail, duration_s = _execute_segments(
+            context=holder_context,
+            segments=tuple((label, trajectories[label]) for label in holder_labels),
+            max_joint_speed_rad_s=unloaded_speed,
+            waypoint_tolerance_rad=_tolerance_for_segment("holder_grasp"),
+            step_callback=_step_callback,
+        )
+        result["steps"].append(
+            _step_record(
+                label="holder_grasp",
                 context=holder_context,
-                raw=trajectories[label],
-                label=label,
-                max_joint_speed_rad_s=unloaded_speed,
-                waypoint_tolerance_rad=_tolerance_for_segment(label),
-                step_callback=_step_callback,
+                target_arm=holder_last,
+                detail=detail,
+                duration_s=duration_s,
+                segment_labels=holder_labels,
             )
-            result["steps"].append(
-                _step_record(
-                    label=label,
-                    context=holder_context,
-                    target_arm=holder_last,
-                    detail=detail,
-                    duration_s=duration_s,
-                )
-            )
-        assert holder_last is not None
+        )
         holder_close = _close_gripper(
             context=holder_context,
             arm_waypoint=holder_last,
@@ -1176,6 +1293,7 @@ def main() -> int:
                 dict(plan["grasps"])["holder"]["jaw_width_m"]  # type: ignore[index]
             ),
             label="holder",
+            contact_role="holder",
             step_callback=_step_callback,
         )
         result["holder_close"] = holder_close
@@ -1232,29 +1350,27 @@ def main() -> int:
             )
             return 0
 
-        inserter_last = None
-        for label in (
+        pickup_labels = (
             "inserter_pickup_pregrasp",
             "inserter_pickup_grasp",
-        ):
-            inserter_last, detail, duration_s = _execute_segment(
+        )
+        inserter_last, detail, duration_s = _execute_segments(
+            context=inserter_context,
+            segments=tuple((label, trajectories[label]) for label in pickup_labels),
+            max_joint_speed_rad_s=unloaded_speed,
+            waypoint_tolerance_rad=_tolerance_for_segment("inserter_pickup_grasp"),
+            step_callback=_step_callback,
+        )
+        result["steps"].append(
+            _step_record(
+                label="inserter_pickup_grasp",
                 context=inserter_context,
-                raw=trajectories[label],
-                label=label,
-                max_joint_speed_rad_s=unloaded_speed,
-                waypoint_tolerance_rad=_tolerance_for_segment(label),
-                step_callback=_step_callback,
+                target_arm=inserter_last,
+                detail=detail,
+                duration_s=duration_s,
+                segment_labels=pickup_labels,
             )
-            result["steps"].append(
-                _step_record(
-                    label=label,
-                    context=inserter_context,
-                    target_arm=inserter_last,
-                    detail=detail,
-                    duration_s=duration_s,
-                )
-            )
-        assert inserter_last is not None
+        )
         inserter_close = _close_gripper(
             context=inserter_context,
             arm_waypoint=inserter_last,
@@ -1264,6 +1380,7 @@ def main() -> int:
                 ]
             ),
             label="inserter",
+            contact_role="inserter",
             step_callback=_step_callback,
         )
         result["inserter_close"] = inserter_close
@@ -1283,31 +1400,32 @@ def main() -> int:
             ),
         }
 
-        for label in (
+        transport_labels = (
             "inserter_pickup_lift",
             "inserter_above_preinsertion",
             "inserter_preinsertion",
-        ):
-            inserter_last, detail, duration_s = _execute_segment(
+        )
+        inserter_last, detail, duration_s = _execute_segments(
+            context=inserter_context,
+            segments=tuple((label, trajectories[label]) for label in transport_labels),
+            max_joint_speed_rad_s=loaded_speed,
+            waypoint_tolerance_rad=_tolerance_for_segment("inserter_preinsertion"),
+            step_callback=_step_callback,
+        )
+        result["steps"].append(
+            _step_record(
+                label="inserter_preinsertion",
                 context=inserter_context,
-                raw=trajectories[label],
-                label=label,
-                max_joint_speed_rad_s=loaded_speed,
-                waypoint_tolerance_rad=_tolerance_for_segment(label),
+                target_arm=inserter_last,
+                detail=detail,
+                duration_s=duration_s,
+                segment_labels=transport_labels,
             )
-            result["steps"].append(
-                _step_record(
-                    label=label,
-                    context=inserter_context,
-                    target_arm=inserter_last,
-                    detail=detail,
-                    duration_s=duration_s,
-                )
-            )
-            result[f"after_{label}"] = {
-                "incoming_pose": _root_pose(incoming_part),
-                "hand_joint_positions": _hand_joint_positions(inserter_context),
-            }
+        )
+        result["after_inserter_preinsertion"] = {
+            "incoming_pose": _root_pose(incoming_part),
+            "hand_joint_positions": _hand_joint_positions(inserter_context),
+        }
 
         final_steps = max(
             1,

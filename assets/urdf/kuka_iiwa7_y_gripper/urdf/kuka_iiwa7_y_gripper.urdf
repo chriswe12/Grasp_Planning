@@ -306,12 +306,12 @@
     <dynamics damping="10.0" friction="0.0" />
     </joint>
   <joint name="gripper_mount_joint" type="fixed">
-    <origin xyz="0 0 0.0308" rpy="0 0 0" />
+    <origin xyz="0 0 0.0308" rpy="0 0 3.14159265" />
     <parent link="link7" />
     <child link="gripper_base_link" />
     </joint>
   <joint name="gripper_tcp_joint" type="fixed">
-    <origin xyz="0 0 0.1455" rpy="0 0 0" />
+    <origin xyz="0 0 0.1455" rpy="0 0 3.14159265" />
     <parent link="gripper_base_link" />
     <child link="gripper_tcp" />
     </joint>

@@ -88,6 +88,44 @@ class DualRobotPairScoringTests(unittest.TestCase):
             crossed["ownership_score"],
         )
 
+    def test_preinsertion_crossing_is_penalized_when_pickup_is_clear(self) -> None:
+        config = ReachabilityProxyConfig(crossing_penalty=0.25)
+        holder_robot = MovableFrame((0.0, -0.42, 0.0), 0.0)
+        inserter_robot = MovableFrame((0.0, 0.42, 0.0), 0.0)
+        holder_target = _target("holder", (0.55, -0.10, 0.25))
+        pickup_target = _target("pickup", (0.55, 0.20, 0.25))
+        clear_preinsertion = _target("clear_preinsertion", (0.55, 0.10, 0.25))
+        crossed_preinsertion = _target("crossed_preinsertion", (0.55, -0.20, 0.25))
+
+        clear = pair_layout_score(
+            offline_pair_score=0.8,
+            holder_targets=(holder_target,),
+            inserter_targets=(pickup_target, clear_preinsertion),
+            holder_grasp_target=holder_target,
+            inserter_grasp_target=pickup_target,
+            inserter_transition_target=clear_preinsertion,
+            holder_robot_base_world=holder_robot,
+            inserter_robot_base_world=inserter_robot,
+            config=config,
+        )
+        crossed = pair_layout_score(
+            offline_pair_score=0.8,
+            holder_targets=(holder_target,),
+            inserter_targets=(pickup_target, crossed_preinsertion),
+            holder_grasp_target=holder_target,
+            inserter_grasp_target=pickup_target,
+            inserter_transition_target=crossed_preinsertion,
+            holder_robot_base_world=holder_robot,
+            inserter_robot_base_world=inserter_robot,
+            config=config,
+        )
+
+        self.assertFalse(crossed["pickup_segments_cross_xy"])
+        self.assertTrue(crossed["transition_segments_cross_xy"])
+        self.assertEqual(crossed["crossing_penalty_applied"], 0.25)
+        self.assertEqual(clear["crossing_penalty_applied"], 0.0)
+        self.assertGreater(clear["score"], crossed["score"])
+
     def test_transform_target_pose_applies_parent_yaw_and_translation(self) -> None:
         transformed = transform_target_pose(
             position_parent_m=(0.2, 0.0, 0.1),
@@ -171,6 +209,8 @@ class DualRobotPairScoringTests(unittest.TestCase):
                 comfort_reach_m=0.5,
                 maximum_reach_m=0.9,
             )
+        with self.assertRaisesRegex(ValueError, "crossing_penalty"):
+            ReachabilityProxyConfig(crossing_penalty=1.1)
 
 
 if __name__ == "__main__":

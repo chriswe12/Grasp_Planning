@@ -56,8 +56,9 @@ The dual-arm path supports:
     the incoming part is grasped;
   - **transition symmetry** creates equivalent final/pre-insertion corridors
     after the grasp is fixed;
-- distance/rotation ranking followed by exact MoveIt IK and full trajectory
-  planning with candidate fallback;
+- cheap distance/rotation pool ordering, corridor-diverse joint-space
+  pre-ranking from the planned pickup lift, then exact MoveIt IK/full
+  trajectory planning with candidate fallback;
 - execution of the validated vertical slice in Isaac; and
 - guarded real-robot planning/execution through pre-insertion.
 
@@ -220,9 +221,18 @@ are:
 - `dual_robot_pair_score_debug.html` after running
   `python3 scripts/build_dual_robot_pair_score_debug.py`.
 
-Stage-3 JSON files contain `transition_symmetry.candidates`. Regenerate these
-files after enabling or changing transition symmetry; the runtime runner does
-not silently rebuild stale Stage-3 artifacts.
+Stage-3 JSON files contain both `transition_symmetry.candidates` and a bounded
+`retained_execution_candidates` list. Each retained execution ID names a
+collision-validated `pair_id + transition_id`; retention round-robins across
+distinct insertion-corridor directions so one canonical approach cannot crowd
+out an equivalent opposite-side approach. The Stage-3 builder republishes the
+matching `holder_base_candidates.json`, and each pair artifact declares its
+exact holder/inserter candidate source. Runtime lookup follows that declaration;
+sequential IDs such as `h0460` must never be resolved through a different or
+stale generated library. Regenerate these files after
+enabling or changing transition symmetry; the runtime runner does not silently
+rebuild stale Stage-3 artifacts. Schema-2 artifacts remain readable, but the
+runtime then falls back to the transition-validated retained pair subset.
 
 ### 2. Run the dual-arm Isaac vertical slice
 
@@ -235,11 +245,67 @@ For the first holder-active step, run:
   --incoming-part-id 0
 ```
 
-This one command starts the shared dual-arm mock MoveIt stack, ranks fresh
-pair/transition tasks for the requested layout, performs exact IK preflight,
-plans the full target sequence with fallback, starts Isaac, and stops the
-MoveIt stack when finished. Add `--headless` for a non-GUI run or
-`--record-video /tmp/dual_part_0.mp4` to save a video.
+This one command starts the shared dual-arm mock MoveIt stack and pre-plans the
+first eight inserter transitions in joint space. Stage 3 retains up to 256
+complete pair/transition candidates. After the actual-pose floor check, the
+runtime queue is split into a strict non-crossing phase followed by a crossed
+fallback phase; retained candidates lead only within their phase. Other non-identity corridors are
+eligible only when the artifact contains an explicit accepted pair-conditioned
+transition validation; collision-checked canonical identity pairs then fill
+the remaining 256-candidate fallback budget. A transformed corridor is never
+inferred for an identity-only pair. Before either simulation or real planning,
+the loader rechecks the full saved inserter grasp library
+against the supplied pickup position, roll, pitch, yaw, and floor height; this
+is deliberately not tied to one simulated orientation. Stage-3 pair retention
+round-robins across inserter grasps before taking second pairs for the same
+grasp, so arbitrary detected orientations do not collapse the validated pool
+onto a few similar pickup approaches. That eight-candidate pool is itself
+round-robined across retained insertion corridors, so the earlier Cartesian
+score cannot hide the opposite-side option before joint planning. Runtime
+layout scoring evaluates shoulder-to-grasp lines at both pickup and
+pre-insertion and records a soft score penalty when either phase crosses the
+arms. The bounded queue and the post-MoveIt pre-rank order additionally enforce
+the hard phase boundary, so a successfully pre-planned crossed corridor cannot
+jump ahead of an unchecked or cheap-preplan-failed clear corridor. The
+pre-ranker starts at each planned pickup-lift joint state, probes A7
+`+pi`/`-pi`, and also seeds valid A7 `+3.0`/`-3.0` rad branches because the
+iiwa limit is slightly below pi. IK is free to adjust every joint to make up
+the remaining orientation. It sorts successful candidates with non-crossing
+pre-insertion phase first, then by pre-plan status and velocity-weighted transition joint-path cost before
+the normal exact IK/path/execution fallback. It then starts Isaac and streams
+each MoveIt polyline continuously with position and velocity targets. It
+settles only at the holder grasp, incoming-part grasp, and final pre-insertion
+pose; intermediate MoveIt points and transport checkpoints no longer become
+stop-and-oscillate commands. Loaded transport defaults to `0.70 rad/s`. The
+wrapper stops the MoveIt stack when finished. Add `--headless` for a non-GUI run or
+`--record-video /tmp/dual_part_0.mp4` to save a video. Use
+`--joint-rank-candidates N` to change the pre-plan bound or
+`--skip-joint-space-ranking` only for a comparison run.
+
+The MoveIt launch is isolated in its own process group. On success, planner
+failure, Isaac failure, Ctrl-C, or shell exit, the wrapper gives every ROS
+process two seconds to stop and then kills any remaining members before
+returning. A normal rerun therefore does not require `--reuse-moveit`.
+
+During visible simulation, a localhost browser debugger opens before Isaac.
+It follows the currently attempted pair, renders the partial assembly,
+incoming part, and both selected grippers in `base_link`, and highlights
+whether MoveIt is planning the holder grasp, incoming-part pickup, or
+pickup-to-pre-insertion transition. Joint-space candidate pre-ranking is shown
+as part of the transition stage. The debugger also shows the exact target phase,
+transition ID, failure message, and recent fallback history. Its candidate-check
+card distinguishes pickup grasps accepted by the runtime floor check, retained
+Stage-3 pairs/executions, the pose-filtered queue's clear/crossed split and unique holder/inserter
+grasps, joint-space pre-ranking results, and cumulative exact-IK checks. Drag
+to orbit and use the mouse wheel to zoom. The candidate card explicitly marks
+pickup or insertion crossing, and IK preflight renders the pre-insertion side
+rather than the pickup pose. It also reports holder-gripper floor clearance in
+millimetres from the exact displayed mesh and colors a penetrating gripper red.
+Geometry is bounded, projected once
+per rendered frame, and redrawn only when the visual planner state or camera
+changes, while the status panel polls independently at 10 Hz. Pass
+`--no-planning-debug-gui` to suppress only this browser view; `--headless`
+suppresses it together with the Isaac GUI.
 
 Do not pass `--holder-only` when testing transition symmetry; that option
 intentionally skips the inserter transport and pre-insertion phases.
@@ -262,14 +328,23 @@ jq '{
   is_identity: .transition_symmetry.is_identity,
   insertion_vector: .transition_symmetry.pre_to_final_translation_assembly_m,
   transition_motion_score,
-  transition_motion_components
+  transition_motion_components,
+  joint_space_ranking: .moveit.joint_space_ranking
 }' artifacts/dual_grasp_planning/plumbers_block/simple_dual_robot_sim_plan_part_0.json
 ```
 
 The selected pickup grasp retains its parent and symmetry provenance. Once the
 gripper closes, its part-to-TCP transform is fixed: transition fallback may
 choose another compatible destination corridor, but cannot silently change
-the grasp or regrasp the part.
+the grasp or regrasp the part. A 180-degree A7 seed is considered only while
+solving a symmetry-validated destination pose, is discarded when it exceeds
+the bounded iiwa joint limits, and never bypasses MoveIt path planning.
+
+If a candidate fails after partial mock execution, recovery retracts the
+inserter before returning the holder to its start pose. This ordering clears
+the central shared workspace before the holder moves. A recovery failure is
+still fatal because the next candidate must never be planned from an unknown
+or partially reset state; its messages are saved in the failed plan artifact.
 
 ### 3. Inspect or run MoveIt separately
 
@@ -298,6 +373,11 @@ Without `--execute`, real mode performs only non-moving target IK checks:
 ```bash
 ./run_simple_dual_robot.sh --mode real --incoming-part-id 0
 ```
+
+Real mode uses the same pose-dependent pickup-floor filter and retained-first,
+identity-fallback queue as simulation. It writes at most 256 candidates to the
+preflight task by default; use `--max-pair-attempts N` to override the bound for
+either mode.
 
 Hardware execution requires the correctly configured hardware MoveIt stack,
 explicit `--execute`, confirmation unless `--yes` is supplied, and currently
@@ -498,7 +578,11 @@ The KUKA iiwa7 Y-gripper configs use the local gripper meshes and generated robo
 - `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`
 - `assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda`
 
-The URDF above is the KUKA kinematic source of truth. Its calibrated `gripper_tcp` is `0.1813 m` along local Z from `lbr_link_7`: `0.0308 m` from link 7 to the gripper base plus `0.1505 m` from the gripper base to the TCP. `python3 scripts/build_kuka_moveit_description.py` regenerates the repo-local MoveIt/ros2_control xacro while retaining the LBR hardware joint and link names required by the controller stack. The checked-in Isaac USD and the MoveIt description are covered by an FK-equivalence regression test.
+The URDF above is the KUKA kinematic source of truth. Its calibrated `gripper_tcp` is `0.1763 m` along local Z from `link7`: `0.0308 m` from link 7 to the gripper base plus `0.1455 m` from the gripper base to the TCP. The physical gripper body and camera are mounted with a `pi` rotation around tool Z. A matching `pi` rotation at the fixed TCP child preserves the previous link-7-to-TCP position and orientation, so saved grasp targets do not change while visual and collision geometry use the flipped body. `python3 scripts/build_kuka_iiwa7_gripper_assets.py` regenerates the authoritative URDF and Isaac USD; `python3 scripts/build_kuka_moveit_description.py` then regenerates both repo-local MoveIt/ros2_control xacros used by mock simulation and real hardware. The checked-in Isaac USD and MoveIt descriptions are covered by FK-equivalence and mount-contract regression tests.
+
+Changing the physical mount also changes collision geometry. The KUKA Stage-1 cache key includes a mount-geometry version, so rebuild the dual artifacts before sim or real testing rather than reusing grasps checked against the old hand orientation.
+
+During dual Isaac close, selected-width finger travel remains a useful geometry check. If physics stalls slightly early, the replay also accepts measured contact only when both role-specific fingertip sensors report force against the intended object (`BasePart` for the holder or `IncomingPart` for the inserter). Floor, other-part, and one-sided contacts cannot satisfy that fallback.
 
 For `gripper_collision_model: kuka_y_gripper`, saved bundles identify `robot_model: kuka_iiwa7`, `gripper_model: kuka_y_gripper`, and `tcp_link: gripper_tcp`.
 

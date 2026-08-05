@@ -14,6 +14,8 @@ from scipy.spatial import cKDTree
 from .collision import (
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    KUKA_Y_GRIPPER_BODY_ROTATION_TCP,
+    KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
     BoxCollisionPrimitive,
     GraspCollisionEvaluator,
     GripperCollisionModel,
@@ -47,7 +49,6 @@ FRANKA_HAND_MESH_PATH = (
     / "collision"
     / "hand.stl"
 )
-KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
 SCHEMA_VERSION = 2
 FRANKA_CONTACT_PATCH_LATERAL_SIZE_M = 17.5e-3
 FRANKA_CONTACT_PATCH_APPROACH_SIZE_M = 18.5e-3
@@ -425,6 +426,21 @@ def _load_kuka_y_gripper_visual_mesh(key: str) -> tuple[np.ndarray, np.ndarray]:
     return vertices, faces
 
 
+def _load_kuka_y_gripper_visual_mesh_tcp(name: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return one mounted visual component expressed in the unchanged TCP frame."""
+
+    # A half-turn swaps the physical fingers in TCP coordinates. Expose them
+    # by TCP-side name so the HTML renderers can retain their symmetric
+    # jaw-width placement convention.
+    source_name = {
+        "base": "base",
+        "left_finger": "right_finger",
+        "right_finger": "left_finger",
+    }[name]
+    vertices, faces = _load_kuka_y_gripper_visual_mesh(source_name)
+    return vertices @ KUKA_Y_GRIPPER_BODY_ROTATION_TCP.T, faces
+
+
 def _append_mesh_payload(
     *,
     vertices_local: np.ndarray,
@@ -575,7 +591,8 @@ def gripper_collision_geometry(
         jaw_width = float(np.linalg.norm(contact_b - contact_a))
         half_opening_m = 0.5 * jaw_width
         tcp_center_obj = np.asarray(grasp_center, dtype=float)
-        base_origin_obj = tcp_center_obj - rotmat @ KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M
+        body_rotmat = rotmat @ KUKA_Y_GRIPPER_BODY_ROTATION_TCP
+        base_origin_obj = tcp_center_obj - body_rotmat @ KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M
 
         base_vertices, base_faces = _load_kuka_y_gripper_visual_mesh("base")
         left_vertices, left_faces = _load_kuka_y_gripper_visual_mesh("left_finger")
@@ -592,7 +609,7 @@ def gripper_collision_geometry(
                 vertices_local=vertices,
                 faces=faces,
                 origin_obj=base_origin_obj,
-                rotmat=rotmat,
+                rotmat=body_rotmat,
                 vertices_out=mesh_vertices,
                 faces_out=mesh_faces,
             )

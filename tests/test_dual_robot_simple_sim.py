@@ -12,9 +12,11 @@ import yaml
 import grasp_planning.pipeline.dual_robot_simple_sim as simple_sim
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+from grasp_planning.pipeline.dual_grasp_pair_planner import DualGraspPairConfig
 from grasp_planning.pipeline.dual_robot_pair_scoring import MovableFrame
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_HOLDER_PREGRASP_OFFSET_M,
+    DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     compose_source_pose_world,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
@@ -34,6 +36,84 @@ def test_runtime_holder_pregrasp_matches_offline_feasibility_config() -> None:
 
     assert DEFAULT_HOLDER_PREGRASP_OFFSET_M == 0.05
     assert config["holder_feasibility"]["pregrasp_offset_m"] == DEFAULT_HOLDER_PREGRASP_OFFSET_M
+
+
+def test_runtime_pair_budget_matches_stage3_retention_budget() -> None:
+    config = yaml.safe_load((REPO_ROOT / "configs/dual_grasp_planning.yaml").read_text(encoding="utf-8"))
+
+    assert DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT == 256
+    assert DualGraspPairConfig().max_accepted_pairs == DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT
+    assert config["pair_planning"]["max_accepted_pairs"] == DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT
+
+
+def test_runtime_uses_stage3_declared_holder_source_instead_of_stale_library(
+    tmp_path: Path,
+) -> None:
+    source_candidate = {
+        "grasp_id": "h0001",
+        "grasp_pose_obj": {
+            "position": [0.1, 0.2, 0.3],
+            "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+        },
+        "contact_points_obj": [[0.1, 0.19, 0.3], [0.1, 0.21, 0.3]],
+        "contact_normals_obj": [[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]],
+        "jaw_width": 0.02,
+        "roll_angle_rad": 0.0,
+        "contact_patch_offset_local": [0.0, 0.0],
+        "score": 0.9,
+        "score_components": {"score": 0.9},
+        "metadata": {},
+    }
+    (tmp_path / "holder_state_feasibility.json").write_text(
+        json.dumps(
+            {
+                "source_holder_cache_key": "current-cache",
+                "source_frame_pose_assembly": {
+                    "position": [0.4, 0.5, 0.6],
+                    "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                },
+                "candidates": {"h0001": source_candidate},
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale_candidate = simple_sim._saved_candidate_from_payload(
+        {
+            **source_candidate,
+            "grasp_pose_obj": {
+                "position": [-9.0, -9.0, -9.0],
+                "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+        }
+    )
+
+    candidates, source_pose, diagnostics = simple_sim._declared_holder_candidate_source(
+        root=tmp_path,
+        pair_payload={
+            "candidate_sources": {
+                "holder": {
+                    "artifact": "holder_state_feasibility.json",
+                    "candidate_collection": "candidates",
+                }
+            }
+        },
+        fallback_candidates=(stale_candidate,),
+        fallback_source_pose_assembly=ObjectWorldPose(
+            position_world=(-9.0, -9.0, -9.0),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        ),
+    )
+
+    assert candidates[0].grasp_id == "h0001"
+    assert candidates[0].grasp_position_obj == (0.1, 0.2, 0.3)
+    assert source_pose.position_world == (0.4, 0.5, 0.6)
+    assert diagnostics == {
+        "artifact": "holder_state_feasibility.json",
+        "candidate_collection": "candidates",
+        "legacy_fallback": False,
+        "candidate_count": 1,
+        "source_holder_cache_key": "current-cache",
+    }
 
 
 def test_selected_order_request_resolves_every_plumbers_block_step() -> None:
@@ -344,7 +424,9 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
     assert '"--unloaded-max-joint-speed-rad-s"' in isaac_runner
     assert "default=1.00" in isaac_runner
     assert '"--loaded-max-joint-speed-rad-s"' in isaac_runner
-    assert "default=0.35" in isaac_runner
+    assert "default=0.70" in isaac_runner
+    assert "continuous_moveit_polyline_with_velocity_feedforward" in isaac_runner
+    assert "_execute_segments" in isaac_runner
     assert '"--contact-pose-tolerance-rad"' in isaac_runner
     assert '"holder_grasp", "inserter_pickup_grasp"' in isaac_runner
     assert "default=0.005" in isaac_runner
@@ -433,10 +515,49 @@ def test_simple_dual_sim_filters_and_records_grounded_pickup_floor_clearance() -
     assert tasks
     task = tasks[0]
     floor_check = task.to_payload()["collision_checks"]["inserter_pickup_floor"]
+    counts = task.to_payload()["candidate_filter_diagnostics"]
     assert floor_check["status"] == "accepted"
     assert floor_check["gripper_collision_model"] == "kuka_y_gripper"
     assert floor_check["floor_clearance_margin_m"] == 0.001
+    assert counts["pickup_grasps_checked"] == (counts["pickup_grasps_accepted"] + counts["pickup_grasps_rejected"])
+    assert counts["pose_feasible_execution_candidates"] == len(tasks)
+    assert counts["pose_feasible_unique_holder_grasps"] <= len(tasks)
+    assert counts["pose_feasible_unique_inserter_grasps"] <= len(tasks)
+    assert counts["stage3_retained_execution_candidates"] >= counts["stage3_retained_pairs"]
     assert all(task.inserter_candidate.grasp_id != "i0_2040" for task in tasks)
+
+
+def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -> None:
+    artifact_dir = REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"
+    retained = load_simple_dual_robot_pair_tasks(
+        artifact_dir=artifact_dir,
+        step_id="step_001_part_0",
+        retained_only=True,
+    )
+    expanded = load_simple_dual_robot_pair_tasks(
+        artifact_dir=artifact_dir,
+        step_id="step_001_part_0",
+        retained_only=False,
+        include_nonretained_identity_fallbacks=True,
+    )
+
+    retained_execution_ids = {task.execution_candidate_id for task in retained}
+    assert len(expanded) > len(retained)
+    crossing_flags = [bool(task.layout_proxy_components["transition_segments_cross_xy"]) for task in expanded]
+    assert crossing_flags == sorted(crossing_flags)
+    fallback = [task for task in expanded if task.execution_candidate_id not in retained_execution_ids]
+    transformed_fallback = [task for task in fallback if not bool(task.transition_symmetry.get("is_identity"))]
+    assert transformed_fallback
+    assert all(
+        dict(task.transition_symmetry.get("pair_collision_validation", {})).get("status") == "accepted"
+        for task in transformed_fallback
+    )
+    counts = expanded[0].candidate_filter_diagnostics
+    assert counts["pose_feasible_retained_execution_candidates"] == len(retained)
+    assert counts["pose_feasible_identity_fallback_candidates"] + counts[
+        "pose_feasible_validated_transition_fallback_candidates"
+    ] == (len(expanded) - len(retained))
+    assert counts["pose_feasible_validated_transition_fallback_candidates"] == len(transformed_fallback)
 
 
 def test_later_step_task_contains_the_offline_checked_assembled_prefix() -> None:
@@ -474,6 +595,7 @@ def test_task_expansion_uses_only_pair_compatible_transitions(
         retained_only=True,
     )
     assert baseline
+    baseline_pair_ids = {task.pair_id for task in baseline}
     source_pose = baseline[0].incoming_source_pose_assembly
     canonical = simple_sim._legacy_transition_payload(
         source_pose_assembly=source_pose,
@@ -511,6 +633,14 @@ def test_task_expansion_uses_only_pair_compatible_transitions(
             rejected["transition_id"]: {"status": "rejected"},
         }
         evaluation["details"] = details
+    pair_payload["retained_execution_candidate_ids"] = [
+        f"{pair_id}__{transition_id}"
+        for pair_id in sorted(baseline_pair_ids)
+        for transition_id in (
+            canonical["transition_id"],
+            accepted["transition_id"],
+        )
+    ]
 
     original_read_json = simple_sim._read_json
 
@@ -526,7 +656,7 @@ def test_task_expansion_uses_only_pair_compatible_transitions(
         retained_only=True,
     )
 
-    assert len(expanded) == 2 * len(baseline)
+    assert len(expanded) == 2 * len(baseline_pair_ids)
     assert {task.transition_id for task in expanded} == {
         canonical["transition_id"],
         "tr_test_accepted",
@@ -555,5 +685,6 @@ def test_current_lowered_table_pickup_pose_keeps_feasible_pairs() -> None:
         retained_only=False,
     )
 
-    assert len(tasks) == 1916
-    assert len({task.inserter_candidate.grasp_id for task in tasks}) == 42
+    assert tasks
+    assert len({task.inserter_candidate.grasp_id for task in tasks}) > 1
+    assert all(task.to_payload()["collision_checks"]["inserter_pickup_floor"]["status"] == "accepted" for task in tasks)

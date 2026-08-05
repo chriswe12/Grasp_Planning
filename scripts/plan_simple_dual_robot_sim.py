@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
+import time
 from pathlib import Path
+
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -15,9 +19,13 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.pipeline.dual_robot_pair_scoring import (  # noqa: E402
     MovableFrame,
 )
+from grasp_planning.pipeline.dual_robot_planning_debug import (  # noqa: E402
+    DualRobotPlanningDebugServer,
+)
 from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_FLOOR_Z_WORLD_M,
+    DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
     simple_dual_robot_pregrasp_aabb_obstacles,
@@ -28,6 +36,10 @@ from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommanderConfig,
     PoseTarget,
     rclpy,
+)
+from grasp_planning.ros2.multi_ik_planner import (  # noqa: E402
+    MultiIkPlanningConfig,
+    plan_pose_sequence_multi_ik,
 )
 from grasp_planning.start_poses import (  # noqa: E402
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
@@ -57,6 +69,25 @@ TARGET_SEQUENCE = (
 )
 WORK_SURFACE_SIZE_M = (1.20, 1.40, 0.05)
 WORK_SURFACE_CENTER_XY_M = (0.75, 0.0)
+INSERTER_PICKUP_SEQUENCE = (
+    "inserter_pickup_pregrasp",
+    "inserter_pickup_grasp",
+    "inserter_pickup_lift",
+)
+INSERTER_TRANSITION_SEQUENCE = (
+    "inserter_above_preinsertion",
+    "inserter_preinsertion",
+)
+# Mirrors ros2_ws/.../dual_iiwa7_y_gripper_moveit.urdf.xacro.
+KUKA_MOVEIT_JOINT_LOWER_LIMITS = (-2.97, -2.09, -2.97, -2.09, -2.97, -2.09, -3.05)
+KUKA_MOVEIT_JOINT_UPPER_LIMITS = (2.97, 2.09, 2.97, 2.09, 2.97, 2.09, 3.05)
+KUKA_MOVEIT_JOINT_MAX_VELOCITIES = (1.71, 1.71, 1.75, 2.27, 2.44, 3.14, 3.14)
+KUKA_MOVEIT_TRANSITION_JOINT_WEIGHTS = tuple(1.0 / velocity for velocity in KUKA_MOVEIT_JOINT_MAX_VELOCITIES)
+KUKA_A7_HALF_TURN_SEED_OFFSETS = (
+    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, math.pi),
+    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -math.pi),
+)
+KUKA_A7_NEAR_LIMIT_BRANCH_RAD = 3.0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -110,7 +141,11 @@ def _parse_args() -> argparse.Namespace:
             "previous case terminal state instead of the nominal reset pose."
         ),
     )
-    parser.add_argument("--max-pair-attempts", type=int, default=48)
+    parser.add_argument(
+        "--max-pair-attempts",
+        type=int,
+        default=DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
+    )
     parser.add_argument("--assembly-x", type=float, default=0.55)
     parser.add_argument("--assembly-y", type=float, default=0.0)
     parser.add_argument(
@@ -173,6 +208,40 @@ def _parse_args() -> argparse.Namespace:
         "--skip-ik-preflight",
         action="store_true",
         help="Skip the fast per-grasp IK screen before full trajectory attempts.",
+    )
+    parser.add_argument(
+        "--skip-joint-space-ranking",
+        action="store_true",
+        help="Keep the retained Stage-3 order without MoveIt joint-path pre-ranking.",
+    )
+    parser.add_argument(
+        "--joint-rank-candidates",
+        type=int,
+        default=8,
+        help="Number of retained execution candidates to pre-plan and rank in joint space.",
+    )
+    parser.add_argument(
+        "--joint-rank-ik-candidates",
+        type=int,
+        default=4,
+        help="Seeded IK solutions considered per target during joint-space ranking.",
+    )
+    parser.add_argument(
+        "--joint-rank-beam-width",
+        type=int,
+        default=1,
+        help="Partial joint paths retained per transition target during ranking.",
+    )
+    parser.add_argument(
+        "--debug-gui",
+        action="store_true",
+        help=("Open a localhost browser GUI showing the active grasp pair, world-frame parts, and planning phase."),
+    )
+    parser.add_argument(
+        "--debug-gui-port",
+        type=int,
+        default=0,
+        help="Local debug server port; 0 selects an available port.",
     )
     return parser.parse_args()
 
@@ -241,6 +310,341 @@ def _trajectory_payload(
     }
 
 
+def _multi_ik_joint_targets(plan) -> dict[str, tuple[float, ...]]:
+    targets: dict[str, tuple[float, ...]] = {}
+    for label, waypoints in plan.trajectories.items():
+        if not waypoints:
+            raise RuntimeError(f"Joint-space ranking returned no waypoints for '{label}'.")
+        targets[str(label)] = tuple(float(value) for value in waypoints[-1])
+    return targets
+
+
+def _pickup_target_signature(task) -> tuple[object, ...]:
+    targets = dict(task.to_payload()["targets"])
+    return (
+        task.inserter_candidate.grasp_id,
+        *(
+            round(float(value), 9)
+            for label in INSERTER_PICKUP_SEQUENCE
+            for field in ("position_world_m", "orientation_xyzw_world")
+            for value in dict(targets[label])[field]
+        ),
+    )
+
+
+def _transition_corridor_key(task) -> str:
+    raw_transition = getattr(task, "transition_symmetry", {})
+    transition = dict(raw_transition) if isinstance(raw_transition, dict) else {}
+    raw_vector = transition.get("pre_to_final_translation_assembly_m")
+    try:
+        vector = np.asarray(raw_vector, dtype=float)
+    except (TypeError, ValueError):
+        return "corridor_unknown"
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        return "corridor_unknown"
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1.0e-12:
+        direction = np.zeros(3, dtype=float)
+    else:
+        direction = vector / norm
+    return "corridor_" + "_".join(f"{float(value):+.6f}" for value in direction)
+
+
+def _transition_crosses_holder_corridor(task) -> bool:
+    components = getattr(task, "layout_proxy_components", {})
+    if not isinstance(components, dict):
+        return False
+    return bool(components.get("transition_segments_cross_xy", False))
+
+
+def _corridor_diverse_joint_rank_pool(tasks: list, *, limit: int) -> list:
+    """Select the cheap preplan pool round-robin across insertion corridors."""
+
+    bounded_limit = max(0, min(int(limit), len(tasks)))
+    if bounded_limit == 0:
+        return []
+    by_corridor: dict[str, list] = {}
+    for task in tasks:
+        by_corridor.setdefault(_transition_corridor_key(task), []).append(task)
+    corridor_order = tuple(by_corridor)
+    selected: list = []
+    depth = 0
+    while len(selected) < bounded_limit:
+        added = False
+        for corridor_key in corridor_order:
+            corridor_tasks = by_corridor[corridor_key]
+            if depth >= len(corridor_tasks):
+                continue
+            selected.append(corridor_tasks[depth])
+            added = True
+            if len(selected) >= bounded_limit:
+                break
+        if not added:
+            break
+        depth += 1
+    return selected
+
+
+def _a7_transition_seed_offsets(
+    start_joint_positions: tuple[float, ...],
+) -> tuple[tuple[float, ...], ...]:
+    """Add valid near-limit A7 branches when a literal half-turn is bounded."""
+
+    if len(start_joint_positions) != 7:
+        raise ValueError(f"Expected seven iiwa start joints, got {len(start_joint_positions)}.")
+    current_a7 = float(start_joint_positions[-1])
+    branch_offsets = []
+    for target_a7 in (KUKA_A7_NEAR_LIMIT_BRANCH_RAD, -KUKA_A7_NEAR_LIMIT_BRANCH_RAD):
+        branch_offsets.append(
+            (
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                target_a7 - current_a7,
+            )
+        )
+    return (*KUKA_A7_HALF_TURN_SEED_OFFSETS, *branch_offsets)
+
+
+def _rank_tasks_by_inserter_joint_path(
+    tasks: list,
+    *,
+    commander,
+    candidate_limit: int,
+    ik_candidate_count: int,
+    beam_width: int,
+    update_debug=None,
+) -> tuple[list, dict[str, object], dict[str, dict[str, tuple[float, ...]]]]:
+    """Pre-plan pickup/transition IK chains and prefer the cheapest transition."""
+
+    checked_tasks = _corridor_diverse_joint_rank_pool(
+        tasks,
+        limit=candidate_limit,
+    )
+    if not checked_tasks:
+        return (
+            tasks,
+            {
+                "skipped": True,
+                "reason": "candidate_limit_is_zero",
+                "candidate_count_before": len(tasks),
+            },
+            {},
+        )
+
+    common_config = {
+        "candidate_count": max(1, int(ik_candidate_count)),
+        "beam_width": max(1, int(beam_width)),
+        "seed_perturbation_rad": 0.35,
+        "dedup_tolerance_rad": 0.05,
+        "joint_weights": KUKA_MOVEIT_TRANSITION_JOINT_WEIGHTS,
+        "joint_lower_limits_rad": KUKA_MOVEIT_JOINT_LOWER_LIMITS,
+        "joint_upper_limits_rad": KUKA_MOVEIT_JOINT_UPPER_LIMITS,
+        "continuous_joints": (False,) * 7,
+    }
+    pickup_config = MultiIkPlanningConfig(**common_config)
+    joint_names = tuple(str(value) for value in ARM_SPECS["inserter"]["joint_names"])
+    pickup_cache: dict[tuple[object, ...], tuple[object | None, str]] = {}
+    preferred_joint_targets: dict[str, dict[str, tuple[float, ...]]] = {}
+    planned: list[tuple[bool, float, float, int, object]] = []
+    failed: list[tuple[int, object]] = []
+    records: list[dict[str, object]] = []
+
+    for original_rank, task in enumerate(checked_tasks, start=1):
+        if update_debug is not None:
+            update_debug(
+                task=task,
+                attempt_index=original_rank,
+                phase="joint_space_ranking",
+                status="planning",
+                message=(
+                    "Pre-planning pickup-to-pre-insertion joint paths with "
+                    "bounded A7 half-turn and near-limit branch seeds."
+                ),
+            )
+        payload = task.to_payload()
+        raw_targets = dict(payload["targets"])
+        pose_targets = {
+            label: _pose_target(dict(raw_targets[label]))
+            for label in (*INSERTER_PICKUP_SEQUENCE, *INSERTER_TRANSITION_SEQUENCE)
+        }
+        pickup_key = _pickup_target_signature(task)
+        pickup_cache_hit = pickup_key in pickup_cache
+        if pickup_cache_hit:
+            pickup_plan, pickup_failure = pickup_cache[pickup_key]
+        else:
+            try:
+                pickup_plan = plan_pose_sequence_multi_ik(
+                    commander,
+                    targets=pose_targets,
+                    labels=INSERTER_PICKUP_SEQUENCE,
+                    start_joint_positions=MOVEIT_START_JOINT_POSITIONS,
+                    joint_names=joint_names,
+                    config=pickup_config,
+                    label_prefix=f"joint_rank_{task.inserter_candidate.grasp_id}_pickup",
+                )
+                pickup_failure = ""
+            except (RuntimeError, ValueError) as exc:
+                pickup_plan = None
+                pickup_failure = str(exc)
+            pickup_cache[pickup_key] = (pickup_plan, pickup_failure)
+
+        record: dict[str, object] = {
+            "original_rank": original_rank,
+            "pair_id": task.pair_id,
+            "transition_id": task.transition_id,
+            "execution_candidate_id": task.execution_candidate_id,
+            "corridor_key": _transition_corridor_key(task),
+            "transition_segments_cross_xy": _transition_crosses_holder_corridor(task),
+            "selection_score": float(task.selection_score),
+            "pickup_cache_hit": pickup_cache_hit,
+        }
+        if pickup_plan is None:
+            record.update(
+                {
+                    "status": "failed",
+                    "failure": pickup_failure,
+                    "failed_phase": "pickup",
+                }
+            )
+            records.append(record)
+            failed.append((original_rank, task))
+            if update_debug is not None:
+                update_debug(
+                    task=task,
+                    attempt_index=original_rank,
+                    phase="joint_space_ranking",
+                    status="failed",
+                    message=pickup_failure,
+                )
+            continue
+
+        transition_seed_offsets = _a7_transition_seed_offsets(
+            pickup_plan.terminal_joint_positions,
+        )
+        transition_config = MultiIkPlanningConfig(
+            **common_config,
+            seed_offsets_rad=transition_seed_offsets,
+        )
+        try:
+            transition_plan = plan_pose_sequence_multi_ik(
+                commander,
+                targets=pose_targets,
+                labels=INSERTER_TRANSITION_SEQUENCE,
+                start_joint_positions=pickup_plan.terminal_joint_positions,
+                joint_names=joint_names,
+                config=transition_config,
+                label_prefix=f"joint_rank_{task.execution_candidate_id}",
+            )
+        except (RuntimeError, ValueError) as exc:
+            failure = str(exc)
+            record.update(
+                {
+                    "status": "failed",
+                    "failure": failure,
+                    "failed_phase": "transition",
+                    "pickup_joint_path_cost": float(pickup_plan.joint_path_cost),
+                }
+            )
+            records.append(record)
+            failed.append((original_rank, task))
+            if update_debug is not None:
+                update_debug(
+                    task=task,
+                    attempt_index=original_rank,
+                    phase="joint_space_ranking",
+                    status="failed",
+                    message=failure,
+                )
+            continue
+
+        transition_cost = float(transition_plan.joint_path_cost)
+        preferred_joint_targets[task.execution_candidate_id] = {
+            **_multi_ik_joint_targets(pickup_plan),
+            **_multi_ik_joint_targets(transition_plan),
+        }
+        record.update(
+            {
+                "status": "planned",
+                "failure": "",
+                "pickup_joint_path_cost": float(pickup_plan.joint_path_cost),
+                "transition_joint_path_cost": transition_cost,
+                "a7_seed_offsets_rad": [list(offset) for offset in transition_seed_offsets],
+                "pickup_diagnostics": list(pickup_plan.diagnostics),
+                "transition_diagnostics": list(transition_plan.diagnostics),
+            }
+        )
+        records.append(record)
+        planned.append(
+            (
+                _transition_crosses_holder_corridor(task),
+                transition_cost,
+                -float(task.selection_score),
+                original_rank,
+                task,
+            )
+        )
+        if update_debug is not None:
+            update_debug(
+                task=task,
+                attempt_index=original_rank,
+                phase="joint_space_ranking",
+                status="succeeded",
+                message=f"Transition joint-path cost {transition_cost:.4f}.",
+            )
+
+    planned.sort(key=lambda item: item[:4])
+    checked_object_ids = {id(task) for task in checked_tasks}
+    unranked = [task for task in tasks if id(task) not in checked_object_ids]
+    planned_tasks = [item[4] for item in planned]
+    failed_tasks = [item[1] for item in failed]
+
+    def crossing_phase(crosses: bool) -> list:
+        return [
+            *(task for task in planned_tasks if _transition_crosses_holder_corridor(task) is crosses),
+            *(task for task in unranked if _transition_crosses_holder_corridor(task) is crosses),
+            *(task for task in failed_tasks if _transition_crosses_holder_corridor(task) is crosses),
+        ]
+
+    # A successful cheap pre-plan is useful evidence, but it must never move a
+    # crossed corridor ahead of an unchecked or cheap-preplan-failed clear
+    # corridor. Exact shared-scene planning remains the authority inside each
+    # phase; crossing is entered only after the bounded clear phase is spent.
+    ordered_tasks = crossing_phase(False) + crossing_phase(True)
+    final_rank_by_id = {task.execution_candidate_id: rank for rank, task in enumerate(ordered_tasks, start=1)}
+    for record in records:
+        record["final_rank"] = final_rank_by_id[str(record["execution_candidate_id"])]
+    diagnostics = {
+        "skipped": False,
+        "mode": "seeded_multi_ik_transition_joint_path",
+        "candidate_count_before": len(tasks),
+        "candidate_count_checked": len(checked_tasks),
+        "candidate_count_planned": len(planned),
+        "candidate_count_failed": len(failed),
+        "unranked_fallback_count": len(unranked),
+        "pool_selection": "round_robin_insertion_corridor",
+        "corridors_checked": list(dict.fromkeys(_transition_corridor_key(task) for task in checked_tasks)),
+        "primary_sort": "strict_noncrossing_phase_then_preplan_status_then_transition_joint_path_cost",
+        "tie_breaker": "selection_score_within_preplan_status",
+        "joint_weights_inverse_max_velocity": list(KUKA_MOVEIT_TRANSITION_JOINT_WEIGHTS),
+        "bounded_joint_limits": {
+            "lower_rad": list(KUKA_MOVEIT_JOINT_LOWER_LIMITS),
+            "upper_rad": list(KUKA_MOVEIT_JOINT_UPPER_LIMITS),
+            "continuous": [False] * 7,
+        },
+        "a7_half_turn_seed_offsets_rad": [list(offset) for offset in KUKA_A7_HALF_TURN_SEED_OFFSETS],
+        "a7_near_limit_branch_targets_rad": [
+            KUKA_A7_NEAR_LIMIT_BRANCH_RAD,
+            -KUKA_A7_NEAR_LIMIT_BRANCH_RAD,
+        ],
+        "records": records,
+    }
+    return ordered_tasks, diagnostics, preferred_joint_targets
+
+
 def _commander(
     *,
     role: str,
@@ -270,8 +674,22 @@ def _plan_and_execute(
     target: PoseTarget,
     label: str,
     expected_joint_names: tuple[str, ...],
+    preferred_joint_positions: tuple[float, ...] | None = None,
 ) -> tuple[dict[str, object] | None, str]:
-    trajectory, message = commander.plan_to_pose(target, label=label)
+    if preferred_joint_positions is None:
+        trajectory, message = commander.plan_to_pose(target, label=label)
+    else:
+        trajectory, message = commander.plan_to_joint_positions(
+            preferred_joint_positions,
+            label=f"{label}_joint_ranked",
+        )
+        if trajectory is None:
+            pose_trajectory, pose_message = commander.plan_to_pose(
+                target,
+                label=f"{label}_pose_fallback",
+            )
+            trajectory = pose_trajectory
+            message = f"preferred joint target failed ({message}); pose fallback: {pose_message}"
     if trajectory is None and message.startswith("IK failed"):
         fallback_joints, fallback_message = commander.compute_ik(
             target,
@@ -322,6 +740,40 @@ def _reset_arm(
     )
 
 
+def _reset_active_roles(
+    commanders: dict[str, MoveItPoseCommander],
+    *,
+    active_roles: tuple[str, ...],
+    holder_start_joint_positions: tuple[float, ...] | None = None,
+    recovering_from_candidate: bool,
+) -> tuple[bool, dict[str, str]]:
+    """Return both arms to known starts in a collision-aware order.
+
+    After a partially executed candidate, the inserter is the arm deep in the
+    shared workspace. Retracting it first clears the holder's route home. The
+    initial reset retains normal holder/inserter order because neither arm has
+    entered a candidate trajectory yet.
+    """
+
+    reset_order = tuple(reversed(active_roles)) if recovering_from_candidate else active_roles
+    messages: dict[str, str] = {}
+    all_ok = True
+    for role in reset_order:
+        reset_positions = (
+            holder_start_joint_positions
+            if role == "holder" and holder_start_joint_positions is not None
+            else MOVEIT_START_JOINT_POSITIONS
+        )
+        ok, message = _reset_arm(
+            commanders[role],
+            role=role,
+            joint_positions=reset_positions,
+        )
+        messages[role] = message
+        all_ok = all_ok and ok
+    return all_ok, messages
+
+
 IK_PREFLIGHT_TARGETS = {
     "holder": ("holder_pregrasp", "holder_grasp"),
     "inserter": (
@@ -366,6 +818,7 @@ def _ik_preflight_pair(
     state: dict[str, object],
     rank: int,
     roles: tuple[str, ...] = ("holder", "inserter"),
+    preferred_joint_targets: dict[str, tuple[float, ...]] | None = None,
 ) -> tuple[bool, str]:
     """Screen one ranked pair and stop immediately on its first failed role."""
 
@@ -376,6 +829,7 @@ def _ik_preflight_pair(
         "inserter": task.inserter_candidate.grasp_id,
     }
     pair_role_records: dict[str, object] = {}
+    preferred_joint_targets = preferred_joint_targets or {}
     failure = ""
     for role in roles:
         target_names = IK_PREFLIGHT_TARGETS[role]
@@ -388,6 +842,10 @@ def _ik_preflight_pair(
                 "orientation_xyzw_world",
             )
             for value in dict(targets[target_name])[field_name]  # type: ignore[index]
+        ) + tuple(
+            round(float(value), 9)
+            for target_name in target_names
+            for value in preferred_joint_targets.get(target_name, ())
         )
         cache_key = (grasp_id, target_signature)
         cache_hit = cache_key in feasible_cache[role]
@@ -396,8 +854,16 @@ def _ik_preflight_pair(
         else:
             target_records = []
             grasp_feasible = True
+            previous_joints: tuple[float, ...] | None = None
             for target_name in target_names:
-                joints, message = commanders[role].compute_ik(_pose_target(dict(targets[target_name])))
+                seed = preferred_joint_targets.get(target_name, previous_joints)
+                if seed is None:
+                    joints, message = commanders[role].compute_ik(_pose_target(dict(targets[target_name])))
+                else:
+                    joints, message = commanders[role].compute_ik(
+                        _pose_target(dict(targets[target_name])),
+                        seed_joint_positions=seed,
+                    )
                 ok = joints is not None
                 target_records.append(
                     {
@@ -410,6 +876,7 @@ def _ik_preflight_pair(
                     grasp_feasible = False
                     failure = f"{role} grasp {grasp_id} failed {target_name}: {message}"
                     break
+                previous_joints = tuple(float(value) for value in joints)
             feasible_cache[role][cache_key] = grasp_feasible
             records = state["records"]
             assert isinstance(records, dict)
@@ -466,6 +933,12 @@ def main() -> int:
         )
     if args.max_pair_attempts < 1:
         raise ValueError("--max-pair-attempts must be at least 1.")
+    if args.joint_rank_candidates < 0:
+        raise ValueError("--joint-rank-candidates must be non-negative.")
+    if args.joint_rank_ik_candidates < 1:
+        raise ValueError("--joint-rank-ik-candidates must be at least 1.")
+    if args.joint_rank_beam_width < 1:
+        raise ValueError("--joint-rank-beam-width must be at least 1.")
     assembly_z = float(args.floor_z) if args.assembly_z is None else float(args.assembly_z)
     selection = resolve_dual_robot_step_selection(
         assembly=args.assembly,
@@ -482,6 +955,7 @@ def main() -> int:
         flush=True,
     )
 
+    strict_retained_only = bool(args.retained_only) and not bool(args.all_compatible) and not bool(args.pair_id)
     tasks = list(
         load_simple_dual_robot_pair_tasks(
             artifact_dir=selection.artifact_dir,
@@ -507,7 +981,8 @@ def main() -> int:
             pickup_floor_clearance_margin_m=float(args.pickup_floor_clearance_margin_m),
             transport_clearance_m=float(args.transport_clearance_m),
             pickup_top_down_score_weight=float(args.pickup_top_down_score_weight),
-            retained_only=bool(args.retained_only) and not (bool(args.all_compatible) or bool(args.pair_id)),
+            retained_only=strict_retained_only,
+            include_nonretained_identity_fallbacks=(not strict_retained_only and not bool(args.pair_id)),
         )
     )
     if args.pair_id:
@@ -532,9 +1007,83 @@ def main() -> int:
     tasks = tasks[: int(args.max_pair_attempts)]
     if not tasks:
         raise RuntimeError("No ranked compatible pair is available to plan.")
+    debug_candidate_counts = dict(getattr(tasks[0], "candidate_filter_diagnostics", {}))
+    debug_candidate_counts.update(
+        {
+            "planner_queue_execution_candidates": len(tasks),
+            "planner_queue_noncrossing_execution_candidates": sum(
+                not _transition_crosses_holder_corridor(task) for task in tasks
+            ),
+            "planner_queue_crossed_execution_candidates": sum(
+                _transition_crosses_holder_corridor(task) for task in tasks
+            ),
+            "planner_queue_unique_holder_grasps": len({task.holder_candidate.grasp_id for task in tasks}),
+            "planner_queue_unique_inserter_grasps": len({task.inserter_candidate.grasp_id for task in tasks}),
+            "joint_rank_candidates_checked": 0,
+            "joint_rank_candidates_planned": 0,
+            "joint_rank_candidates_failed": 0,
+            "exact_ik_pair_tasks_checked": 0,
+            "exact_ik_holder_grasps_checked": 0,
+            "exact_ik_inserter_grasps_checked": 0,
+        }
+    )
+    debug_server: DualRobotPlanningDebugServer | None = None
+    if bool(args.debug_gui):
+        try:
+            debug_server = DualRobotPlanningDebugServer(port=int(args.debug_gui_port))
+            debug_url = debug_server.start(open_browser=True)
+            print(
+                f"[DUAL-SIM-PLAN] Live planning debugger: {debug_url}",
+                flush=True,
+            )
+        except OSError as exc:
+            print(
+                f"[DUAL-SIM-PLAN] Could not start live planning debugger: {exc}",
+                flush=True,
+            )
+            debug_server = None
+
+    def update_debug(
+        *,
+        task=None,
+        attempt_index: int | None = None,
+        phase: str,
+        status: str,
+        message: str = "",
+        record_event: bool = True,
+    ) -> None:
+        if debug_server is None:
+            return
+        try:
+            debug_server.update(
+                task=task,
+                attempt_index=attempt_index,
+                attempt_total=len(tasks),
+                phase=phase,
+                status=status,
+                message=message,
+                candidate_counts=debug_candidate_counts,
+                record_event=record_event,
+            )
+        except Exception as exc:  # pragma: no cover - display must not stop planning
+            print(
+                f"[DUAL-SIM-PLAN] Live debugger update failed: {exc}",
+                flush=True,
+            )
+
     rclpy.init()
     commanders: dict[str, MoveItPoseCommander] = {}
     attempt_records: list[dict[str, object]] = []
+    fatal_failure = ""
+    joint_space_ranking: dict[str, object] = {
+        "skipped": True,
+        "reason": "not_started",
+        "candidate_count_before": len(tasks),
+    }
+    preferred_joint_targets_by_candidate: dict[
+        str,
+        dict[str, tuple[float, ...]],
+    ] = {}
     ik_preflight = (
         {
             "skipped": True,
@@ -575,34 +1124,91 @@ def main() -> int:
             flush=True,
         )
 
-        needs_reset = True
+        update_debug(
+            task=tasks[0],
+            attempt_index=0,
+            phase="reset",
+            status="planning",
+            message="Returning both mock arms to the nominal start state.",
+        )
+        reset_ok, reset_messages = _reset_active_roles(
+            commanders,
+            active_roles=active_roles,
+            holder_start_joint_positions=(
+                None
+                if args.holder_start_joint_positions is None
+                else tuple(float(value) for value in args.holder_start_joint_positions)
+            ),
+            recovering_from_candidate=False,
+        )
+        if not reset_ok:
+            update_debug(
+                task=tasks[0],
+                attempt_index=0,
+                phase="reset",
+                status="fatal",
+                message=f"Initial dual-arm reset failed: {reset_messages}",
+            )
+            time.sleep(0.35)
+            raise RuntimeError(f"Could not reset dual MoveIt mock state: {reset_messages}")
+
+        if args.holder_only:
+            joint_space_ranking = {
+                "skipped": True,
+                "reason": "holder_only",
+                "candidate_count_before": len(tasks),
+            }
+        elif bool(args.skip_joint_space_ranking):
+            joint_space_ranking = {
+                "skipped": True,
+                "reason": "disabled_by_cli",
+                "candidate_count_before": len(tasks),
+            }
+        else:
+            tasks, joint_space_ranking, preferred_joint_targets_by_candidate = _rank_tasks_by_inserter_joint_path(
+                tasks,
+                commander=commanders["inserter"],
+                candidate_limit=int(args.joint_rank_candidates),
+                ik_candidate_count=int(args.joint_rank_ik_candidates),
+                beam_width=int(args.joint_rank_beam_width),
+                update_debug=update_debug,
+            )
+            print(
+                "[DUAL-SIM-PLAN] Joint-space transition ranking: "
+                f"checked={joint_space_ranking['candidate_count_checked']} "
+                f"planned={joint_space_ranking['candidate_count_planned']} "
+                f"failed={joint_space_ranking['candidate_count_failed']}",
+                flush=True,
+            )
+            debug_candidate_counts.update(
+                {
+                    "joint_rank_candidates_checked": int(joint_space_ranking["candidate_count_checked"]),
+                    "joint_rank_candidates_planned": int(joint_space_ranking["candidate_count_planned"]),
+                    "joint_rank_candidates_failed": int(joint_space_ranking["candidate_count_failed"]),
+                }
+            )
+
+        last_task = tasks[0]
         for attempt_index, task in enumerate(tasks, start=1):
+            last_task = task
+            update_debug(
+                task=task,
+                attempt_index=attempt_index,
+                phase="ik_preflight",
+                status="planning",
+                message=(
+                    "Checking exact holder and inserter target IK before "
+                    "executing this candidate in the mock MoveIt state."
+                ),
+            )
             print(
                 f"[DUAL-SIM-PLAN] Attempt {attempt_index}/{len(tasks)} "
-                f"pair={task.pair_id} pair_score={task.pair_score:.4f} "
+                f"pair={task.pair_id} transition={task.transition_id} "
+                f"pair_score={task.pair_score:.4f} "
                 f"selection_score={task.selection_score:.4f} "
                 f"layout_proxy={task.layout_proxy_score:.4f}",
                 flush=True,
             )
-            if needs_reset:
-                reset_ok = True
-                reset_messages = {}
-                for role in active_roles:
-                    reset_positions = (
-                        tuple(float(value) for value in args.holder_start_joint_positions)
-                        if role == "holder" and args.holder_start_joint_positions is not None
-                        else MOVEIT_START_JOINT_POSITIONS
-                    )
-                    ok, message = _reset_arm(
-                        commanders[role],
-                        role=role,
-                        joint_positions=reset_positions,
-                    )
-                    reset_messages[role] = message
-                    reset_ok = reset_ok and ok
-                if not reset_ok:
-                    raise RuntimeError(f"Could not reset dual MoveIt mock state: {reset_messages}")
-                needs_reset = False
 
             task_payload = task.to_payload()
             targets = dict(task_payload["targets"])
@@ -616,11 +1222,31 @@ def main() -> int:
                     state=ik_preflight,
                     rank=attempt_index,
                     roles=active_roles,
+                    preferred_joint_targets=(
+                        preferred_joint_targets_by_candidate.get(
+                            task.execution_candidate_id,
+                            {},
+                        )
+                    ),
                 )
                 checked = int(ik_preflight["pair_tasks_checked"])
                 holder_checked = int(ik_preflight["holder_grasps_checked"])
                 inserter_checked = int(ik_preflight["inserter_grasps_checked"])
+                debug_candidate_counts.update(
+                    {
+                        "exact_ik_pair_tasks_checked": checked,
+                        "exact_ik_holder_grasps_checked": holder_checked,
+                        "exact_ik_inserter_grasps_checked": inserter_checked,
+                    }
+                )
                 if not pair_ik_ok:
+                    update_debug(
+                        task=task,
+                        attempt_index=attempt_index,
+                        phase="ik_preflight",
+                        status="failed",
+                        message=pair_ik_failure,
+                    )
                     print(
                         "[DUAL-SIM-PLAN] IK preflight "
                         f"rank {attempt_index}/{len(tasks)} failed: "
@@ -633,6 +1259,8 @@ def main() -> int:
                         {
                             "attempt_index": attempt_index,
                             "pair_id": task.pair_id,
+                            "transition_id": task.transition_id,
+                            "execution_candidate_id": task.execution_candidate_id,
                             "score": task.pair_score,
                             "selection_score": task.selection_score,
                             "pickup_top_down_score": (task.pickup_top_down_score),
@@ -651,10 +1279,24 @@ def main() -> int:
                     "starting its full trajectory plan immediately.",
                     flush=True,
                 )
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase="ik_preflight",
+                    status="succeeded",
+                    message="Exact target IK preflight passed.",
+                )
             trajectories: dict[str, object] = {}
             steps: list[dict[str, object]] = []
             failure = ""
             for role, target_name in target_sequence:
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase=target_name,
+                    status="planning",
+                    message=(f"Planning and executing {role} target '{target_name}' in the shared MoveIt scene."),
+                )
                 target = _pose_target(dict(targets[target_name]))
                 joint_names = tuple(str(value) for value in ARM_SPECS[role]["joint_names"])
                 active_aabbs = _pregrasp_aabb_obstacles_for_target(
@@ -678,6 +1320,14 @@ def main() -> int:
                         target=target,
                         label=f"{task.pair_id}_{target_name}",
                         expected_joint_names=joint_names,
+                        preferred_joint_positions=(
+                            preferred_joint_targets_by_candidate.get(
+                                task.execution_candidate_id,
+                                {},
+                            ).get(target_name)
+                            if role == "inserter"
+                            else None
+                        ),
                     )
                 finally:
                     if active_aabbs:
@@ -706,13 +1356,29 @@ def main() -> int:
                 )
                 if not ok:
                     failure = f"{target_name}: {message}"
+                    update_debug(
+                        task=task,
+                        attempt_index=attempt_index,
+                        phase=target_name,
+                        status="failed",
+                        message=message,
+                    )
                     break
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase=target_name,
+                    status="succeeded",
+                    message=message,
+                )
                 trajectories[target_name] = trajectory_payload
 
             attempt_records.append(
                 {
                     "attempt_index": attempt_index,
                     "pair_id": task.pair_id,
+                    "transition_id": task.transition_id,
+                    "execution_candidate_id": task.execution_candidate_id,
                     "score": task.pair_score,
                     "selection_score": task.selection_score,
                     "pickup_top_down_score": (task.pickup_top_down_score),
@@ -725,7 +1391,49 @@ def main() -> int:
                 }
             )
             if failure:
-                needs_reset = True
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase="reset",
+                    status="planning",
+                    message=(
+                        "Candidate failed after partial mock execution; retracting inserter before resetting holder."
+                    ),
+                )
+                recovery_ok, recovery_messages = _reset_active_roles(
+                    commanders,
+                    active_roles=active_roles,
+                    holder_start_joint_positions=(
+                        None
+                        if args.holder_start_joint_positions is None
+                        else tuple(float(value) for value in args.holder_start_joint_positions)
+                    ),
+                    recovering_from_candidate=True,
+                )
+                attempt_records[-1]["reset"] = {
+                    "ok": recovery_ok,
+                    "order": list(reversed(active_roles)),
+                    "messages": recovery_messages,
+                }
+                if not recovery_ok:
+                    fatal_failure = (
+                        f"Could not safely recover the mock state after candidate {attempt_index}: {recovery_messages}"
+                    )
+                    update_debug(
+                        task=task,
+                        attempt_index=attempt_index,
+                        phase="reset",
+                        status="fatal",
+                        message=fatal_failure,
+                    )
+                    break
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase="reset",
+                    status="succeeded",
+                    message=f"Mock-state recovery complete: {recovery_messages}",
+                )
                 continue
 
             task_payload["generated_by"] = "scripts/plan_simple_dual_robot_sim.py"
@@ -744,6 +1452,7 @@ def main() -> int:
                 "arm_arm_collision_checking": True,
                 "start_joint_positions": list(MOVEIT_START_JOINT_POSITIONS),
                 "ik_preflight": ik_preflight,
+                "joint_space_ranking": joint_space_ranking,
                 "attempts": attempt_records,
             }
             task_payload["trajectories"] = trajectories
@@ -762,12 +1471,30 @@ def main() -> int:
                 f"[DUAL-SIM-PLAN] Selected pair {task.pair_id}; wrote {output}",
                 flush=True,
             )
+            update_debug(
+                task=task,
+                attempt_index=attempt_index,
+                phase="complete",
+                status="complete",
+                message=f"Selected {task.execution_candidate_id}; plan written to {output}",
+            )
+            time.sleep(0.35)
             return 0
+        update_debug(
+            task=last_task,
+            attempt_index=len(attempt_records),
+            phase="complete",
+            status="fatal" if fatal_failure else "failed",
+            message=(fatal_failure or f"No complete plan among {len(tasks)} ranked candidates."),
+        )
+        time.sleep(0.35)
     finally:
         for commander in commanders.values():
             commander.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+        if debug_server is not None:
+            debug_server.close()
 
     output = (
         selection.artifact_dir / f"simple_dual_robot_sim_plan_{selection.step_id}.json"
@@ -780,6 +1507,8 @@ def main() -> int:
         "assembly": selection.assembly,
         "incoming_part_id": selection.incoming_part_id,
         "step_id": selection.step_id,
+        "fatal_failure": fatal_failure,
+        "joint_space_ranking": joint_space_ranking,
         "ik_preflight": ik_preflight,
         "attempts": attempt_records,
     }
@@ -788,6 +1517,8 @@ def main() -> int:
         json.dumps(failure_payload, indent=2),
         encoding="utf-8",
     )
+    if fatal_failure:
+        raise RuntimeError(f"{fatal_failure}; diagnostics written to {output}.")
     raise RuntimeError(f"MoveIt could not plan any of {len(tasks)} ranked pairs; diagnostics written to {output}.")
 
 

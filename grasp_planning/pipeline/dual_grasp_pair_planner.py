@@ -42,7 +42,7 @@ from .transition_symmetry import (
     load_assembly_symmetry_records,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 REASON_ACCEPTED = "accepted"
 REASON_ASSEMBLY_INSERTION_SWEEP_COLLISION = "assembly_insertion_sweep_collision"
@@ -71,7 +71,7 @@ class DualGraspPairConfig:
     contact_position_bin_m: float = 0.025
     axis_bin_deg: float = 30.0
     max_pair_checks: int = 4000
-    max_accepted_pairs: int = 48
+    max_accepted_pairs: int = 256
     max_rejected_pairs: int = 200
     max_collision_diagnostics_per_step: int = 24
     max_pairs_per_holder: int = 4
@@ -238,6 +238,36 @@ class DualGraspPairEvaluation:
 
 
 @dataclass(frozen=True)
+class RetainedExecutionCandidate:
+    """One collision-validated grasp-pair and transition combination."""
+
+    execution_candidate_id: str
+    pair_id: str
+    transition_id: str
+    holder_grasp_id: str
+    inserter_grasp_id: str
+    pair_score: float
+    corridor_key: str
+    corridor_direction_assembly: tuple[float, float, float]
+    is_identity: bool
+    minimum_clearance_m: float | None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "execution_candidate_id": self.execution_candidate_id,
+            "pair_id": self.pair_id,
+            "transition_id": self.transition_id,
+            "holder_grasp_id": self.holder_grasp_id,
+            "inserter_grasp_id": self.inserter_grasp_id,
+            "pair_score": self.pair_score,
+            "corridor_key": self.corridor_key,
+            "corridor_direction_assembly": list(self.corridor_direction_assembly),
+            "is_identity": self.is_identity,
+            "minimum_clearance_m": self.minimum_clearance_m,
+        }
+
+
+@dataclass(frozen=True)
 class UnaryCandidateReference:
     grasp_id: str
     status: str
@@ -273,6 +303,7 @@ class DualGraspPairStepResult:
     matrix_inserter_ids: tuple[str, ...]
     evaluations: tuple[DualGraspPairEvaluation, ...]
     retained_pair_ids: tuple[str, ...]
+    retained_execution_candidates: tuple[RetainedExecutionCandidate, ...]
     detailed_rejected_pair_ids: tuple[str, ...]
     transition_candidates: tuple[TransitionSymmetryCandidate, ...]
     transition_symmetry_metadata: dict[str, object]
@@ -331,6 +362,12 @@ class DualGraspPairStepResult:
             "evaluations": [evaluation.to_payload() for evaluation in self.evaluations],
             "retained_pair_ids": list(self.retained_pair_ids),
             "retained_pairs": [evaluation_by_id[pair_id].to_payload() for pair_id in self.retained_pair_ids],
+            "retained_execution_candidate_ids": [
+                candidate.execution_candidate_id for candidate in self.retained_execution_candidates
+            ],
+            "retained_execution_candidates": [
+                candidate.to_payload() for candidate in self.retained_execution_candidates
+            ],
             "detailed_rejected_pair_ids": list(self.detailed_rejected_pair_ids),
             "reason_counts": self.reason_counts,
             "metadata": self.metadata,
@@ -1498,6 +1535,15 @@ def _retain_diverse_pairs(
     *,
     config: DualGraspPairConfig,
 ) -> tuple[str, ...]:
+    """Retain high-scoring pairs while covering inserter grasps first.
+
+    Pickup-floor feasibility depends on the detected world orientation and is
+    deliberately deferred to runtime.  Retaining several pairs for the same
+    high-scoring inserter before covering other inserter orientations makes
+    the transition-symmetry pool brittle at that later check, so selection is
+    round-robin by inserter grasp and score-ordered within each grasp.
+    """
+
     holder_counts: Counter[str] = Counter()
     inserter_counts: Counter[str] = Counter()
     retained: list[str] = []
@@ -1505,16 +1551,180 @@ def _retain_diverse_pairs(
         (evaluation for evaluation in evaluations if evaluation.status == "accepted"),
         key=lambda evaluation: (-evaluation.score, evaluation.pair_id),
     )
+    by_inserter: dict[str, list[DualGraspPairEvaluation]] = {}
     for evaluation in compatible:
-        if (
-            holder_counts[evaluation.holder_grasp_id] >= config.max_pairs_per_holder
-            or inserter_counts[evaluation.inserter_grasp_id] >= config.max_pairs_per_inserter
-        ):
-            continue
-        retained.append(evaluation.pair_id)
-        holder_counts[evaluation.holder_grasp_id] += 1
-        inserter_counts[evaluation.inserter_grasp_id] += 1
-        if len(retained) >= config.max_accepted_pairs:
+        by_inserter.setdefault(evaluation.inserter_grasp_id, []).append(evaluation)
+    inserter_order = tuple(
+        sorted(
+            by_inserter,
+            key=lambda inserter_id: (
+                -by_inserter[inserter_id][0].score,
+                inserter_id,
+            ),
+        )
+    )
+    indices = {inserter_id: 0 for inserter_id in inserter_order}
+    while len(retained) < config.max_accepted_pairs:
+        added = False
+        for inserter_id in inserter_order:
+            if inserter_counts[inserter_id] >= config.max_pairs_per_inserter:
+                continue
+            candidates = by_inserter[inserter_id]
+            index = indices[inserter_id]
+            while (
+                index < len(candidates)
+                and holder_counts[candidates[index].holder_grasp_id] >= config.max_pairs_per_holder
+            ):
+                index += 1
+            indices[inserter_id] = index
+            if index >= len(candidates):
+                continue
+            evaluation = candidates[index]
+            indices[inserter_id] += 1
+            retained.append(evaluation.pair_id)
+            holder_counts[evaluation.holder_grasp_id] += 1
+            inserter_counts[inserter_id] += 1
+            added = True
+            if len(retained) >= config.max_accepted_pairs:
+                break
+        if not added:
+            break
+    return tuple(retained)
+
+
+def _corridor_identity(
+    transition: TransitionSymmetryCandidate,
+) -> tuple[str, tuple[float, float, float]]:
+    vector = np.asarray(
+        transition.pre_to_final_translation_assembly_m,
+        dtype=float,
+    )
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1.0e-12:
+        direction = (0.0, 0.0, 0.0)
+    else:
+        direction = tuple(float(round(value, 6)) for value in vector / norm)
+    key = "corridor_" + "_".join(f"{value:+.6f}" for value in direction)
+    return key, direction
+
+
+def _compatible_execution_candidates(
+    evaluations: tuple[DualGraspPairEvaluation, ...],
+    *,
+    retained_pair_ids: tuple[str, ...],
+    transition_candidates: tuple[TransitionSymmetryCandidate, ...],
+) -> tuple[RetainedExecutionCandidate, ...]:
+    """Flatten validated retained pairs into complete execution candidates."""
+
+    evaluation_by_id = {evaluation.pair_id: evaluation for evaluation in evaluations}
+    transition_by_id = {transition.transition_id: transition for transition in transition_candidates}
+    candidates: list[RetainedExecutionCandidate] = []
+    for pair_id in retained_pair_ids:
+        evaluation = evaluation_by_id[pair_id]
+        compatible_ids = tuple(
+            str(value)
+            for value in evaluation.details.get(
+                "compatible_transition_ids",
+                (),
+            )
+        )
+        validations = dict(evaluation.details.get("transition_validation", {}))
+        for transition_id in compatible_ids:
+            transition = transition_by_id.get(transition_id)
+            if transition is None:
+                raise ValueError(f"Pair '{pair_id}' references unknown transition '{transition_id}'.")
+            validation = dict(validations.get(transition_id, {}))
+            if validation.get("status") != REASON_ACCEPTED:
+                continue
+            corridor_key, corridor_direction = _corridor_identity(transition)
+            raw_clearance = validation.get(
+                "minimum_clearance_m",
+                evaluation.minimum_clearance_m,
+            )
+            minimum_clearance = None if raw_clearance is None else float(raw_clearance)
+            candidates.append(
+                RetainedExecutionCandidate(
+                    execution_candidate_id=f"{pair_id}__{transition_id}",
+                    pair_id=pair_id,
+                    transition_id=transition_id,
+                    holder_grasp_id=evaluation.holder_grasp_id,
+                    inserter_grasp_id=evaluation.inserter_grasp_id,
+                    pair_score=evaluation.score,
+                    corridor_key=corridor_key,
+                    corridor_direction_assembly=corridor_direction,
+                    is_identity=transition.is_identity,
+                    minimum_clearance_m=minimum_clearance,
+                )
+            )
+    return tuple(candidates)
+
+
+def _retain_diverse_execution_candidates(
+    candidates: Iterable[RetainedExecutionCandidate],
+    *,
+    limit: int,
+) -> tuple[RetainedExecutionCandidate, ...]:
+    """Round-robin complete candidates across approach corridors and pairs."""
+
+    grouped: dict[str, dict[str, list[RetainedExecutionCandidate]]] = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate.corridor_key, {}).setdefault(candidate.pair_id, []).append(candidate)
+
+    corridor_sequences: dict[str, list[RetainedExecutionCandidate]] = {}
+    corridor_best_scores: dict[str, float] = {}
+    for corridor_key, by_pair in grouped.items():
+        for pair_candidates in by_pair.values():
+            pair_candidates.sort(
+                key=lambda candidate: (
+                    -candidate.pair_score,
+                    -(candidate.minimum_clearance_m if candidate.minimum_clearance_m is not None else -math.inf),
+                    candidate.execution_candidate_id,
+                )
+            )
+        pair_order = sorted(
+            by_pair,
+            key=lambda pair_id: (
+                -by_pair[pair_id][0].pair_score,
+                pair_id,
+            ),
+        )
+        sequence: list[RetainedExecutionCandidate] = []
+        depth = 0
+        while True:
+            added = False
+            for pair_id in pair_order:
+                pair_candidates = by_pair[pair_id]
+                if depth < len(pair_candidates):
+                    sequence.append(pair_candidates[depth])
+                    added = True
+            if not added:
+                break
+            depth += 1
+        corridor_sequences[corridor_key] = sequence
+        corridor_best_scores[corridor_key] = max(candidate.pair_score for candidate in sequence)
+
+    corridor_order = sorted(
+        corridor_sequences,
+        key=lambda corridor_key: (
+            -corridor_best_scores[corridor_key],
+            corridor_key,
+        ),
+    )
+    retained: list[RetainedExecutionCandidate] = []
+    corridor_indices = {corridor_key: 0 for corridor_key in corridor_order}
+    while len(retained) < int(limit):
+        added = False
+        for corridor_key in corridor_order:
+            index = corridor_indices[corridor_key]
+            sequence = corridor_sequences[corridor_key]
+            if index >= len(sequence):
+                continue
+            retained.append(sequence[index])
+            corridor_indices[corridor_key] = index + 1
+            added = True
+            if len(retained) >= int(limit):
+                break
+        if not added:
             break
     return tuple(retained)
 
@@ -1719,6 +1929,15 @@ def plan_dual_grasp_pairs(
             config=config,
             model_cache=model_cache,
         )
+        compatible_execution_candidates = _compatible_execution_candidates(
+            evaluations,
+            retained_pair_ids=retained_pair_ids,
+            transition_candidates=transition_candidates,
+        )
+        retained_execution_candidates = _retain_diverse_execution_candidates(
+            compatible_execution_candidates,
+            limit=config.max_accepted_pairs,
+        )
         retained_pair_id_set = set(retained_pair_ids)
         compatible_pair_transition_count = sum(
             len(
@@ -1754,6 +1973,10 @@ def plan_dual_grasp_pairs(
             "checked_retained_pair_transition_count": (checked_pair_transition_count),
             "compatible_retained_pair_transition_count": (compatible_pair_transition_count),
             "identity_only_nonretained_pair_count": (identity_only_nonretained_pair_count),
+            "retained_execution_candidate_count": len(retained_execution_candidates),
+            "retained_execution_corridor_count": len(
+                {candidate.corridor_key for candidate in retained_execution_candidates}
+            ),
         }
         rejected = sorted(
             (evaluation for evaluation in evaluations if evaluation.status == "rejected"),
@@ -1785,6 +2008,7 @@ def plan_dual_grasp_pairs(
                 ),
                 evaluations=evaluations,
                 retained_pair_ids=retained_pair_ids,
+                retained_execution_candidates=retained_execution_candidates,
                 detailed_rejected_pair_ids=tuple(
                     evaluation.pair_id for evaluation in rejected[: config.max_rejected_pairs]
                 ),
@@ -1803,12 +2027,20 @@ def plan_dual_grasp_pairs(
                     "compatible_pair_count": compatible_count,
                     "rejected_pair_count": (len(evaluations) - compatible_count),
                     "retained_pair_count": len(retained_pair_ids),
+                    "compatible_execution_candidate_count": len(compatible_execution_candidates),
+                    "retained_execution_candidate_count": len(retained_execution_candidates),
+                    "retained_execution_corridor_count": len(
+                        {candidate.corridor_key for candidate in retained_execution_candidates}
+                    ),
                     "checked_retained_pair_transition_count": (checked_pair_transition_count),
                     "compatible_retained_pair_transition_count": (compatible_pair_transition_count),
                     "identity_only_nonretained_pair_count": (identity_only_nonretained_pair_count),
                     "retention_policy": {
+                        "unit": "pair_transition_execution_candidate",
+                        "corridor_diversity": "round_robin_normalized_pre_to_final_direction",
                         "max_pairs_per_holder": (config.max_pairs_per_holder),
                         "max_pairs_per_inserter": (config.max_pairs_per_inserter),
+                        "max_execution_candidates": config.max_accepted_pairs,
                     },
                 },
             )
@@ -1894,10 +2126,17 @@ def dual_grasp_pair_summary_payload(
                 "checked_pair_count": step.metadata["checked_pair_count"],
                 "compatible_pair_count": step.metadata["compatible_pair_count"],
                 "retained_pair_count": step.metadata["retained_pair_count"],
+                "retained_execution_candidate_count": step.metadata["retained_execution_candidate_count"],
+                "retained_execution_corridor_count": step.metadata["retained_execution_corridor_count"],
                 "transition_symmetry_enabled": bool(step.transition_symmetry_metadata.get("enabled", False)),
                 "transition_candidate_count": len(step.transition_candidates),
                 "reason_counts": step.reason_counts,
                 "selected_pair_id": (None if not step.retained_pair_ids else step.retained_pair_ids[0]),
+                "selected_execution_candidate_id": (
+                    None
+                    if not step.retained_execution_candidates
+                    else step.retained_execution_candidates[0].execution_candidate_id
+                ),
             }
             for step in result.steps
         ],
@@ -1927,6 +2166,7 @@ __all__ = [
     "DualGraspPairStepResult",
     "InserterCandidateStatus",
     "InserterGraspLibrary",
+    "RetainedExecutionCandidate",
     "UnaryCandidateReference",
     "dual_grasp_pair_summary_payload",
     "generate_inserter_grasp_libraries",

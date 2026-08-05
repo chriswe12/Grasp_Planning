@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -62,6 +62,7 @@ DEFAULT_TRANSITION_TRANSLATION_SCALE_M = 0.50
 DEFAULT_TRANSITION_TRANSLATION_WEIGHT = 0.50
 DEFAULT_TRANSITION_ROTATION_WEIGHT = 0.50
 DEFAULT_FLOOR_Z_WORLD_M = -0.030
+DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT = 256
 DEFAULT_PREGRASP_AABB_CORRIDOR_MARGIN_M = 0.002
 _MIN_PREGRASP_AABB_PIECE_SIZE_M = 1.0e-5
 
@@ -379,6 +380,14 @@ def resolve_planar_runtime_layout(
     holder_bundle = load_grasp_bundle(root / "holder_base_candidates.json")
     inserter_bundle = load_grasp_bundle(root / f"inserter_candidates_{step_id}.json")
     base_source_pose_assembly = _source_pose_from_bundle(holder_bundle)
+    pair_path = root / f"dual_grasp_pairs_{step_id}.json"
+    if pair_path.is_file():
+        _, base_source_pose_assembly, _ = _declared_holder_candidate_source(
+            root=root,
+            pair_payload=_read_json(pair_path),
+            fallback_candidates=holder_bundle.candidates,
+            fallback_source_pose_assembly=base_source_pose_assembly,
+        )
     incoming_source_pose_assembly = _source_pose_from_bundle(inserter_bundle)
     perceived_part_aabbs = (
         source_mesh_aabb_world(
@@ -452,6 +461,148 @@ def _candidate_by_id(
         if candidate.grasp_id == grasp_id:
             return candidate
     raise ValueError(f"Grasp candidate '{grasp_id}' is missing from its source artifact.")
+
+
+def _saved_candidate_from_payload(
+    raw_candidate: Mapping[str, object],
+    *,
+    expected_grasp_id: str | None = None,
+) -> SavedGraspCandidate:
+    """Deserialize one candidate embedded in a declared Stage-3 source."""
+
+    grasp_id = str(raw_candidate["grasp_id"])
+    if expected_grasp_id is not None and grasp_id != expected_grasp_id:
+        raise ValueError(
+            "Candidate mapping key does not match its payload grasp_id: "
+            f"key={expected_grasp_id!r}, payload={grasp_id!r}."
+        )
+    grasp_pose = raw_candidate.get("grasp_pose_obj")
+    contact_points = raw_candidate.get("contact_points_obj")
+    contact_normals = raw_candidate.get("contact_normals_obj")
+    if not isinstance(grasp_pose, Mapping):
+        raise ValueError(f"Grasp candidate '{grasp_id}' has no grasp_pose_obj mapping.")
+    if not isinstance(contact_points, list) or len(contact_points) != 2:
+        raise ValueError(f"Grasp candidate '{grasp_id}' must contain two contact points.")
+    if not isinstance(contact_normals, list) or len(contact_normals) != 2:
+        raise ValueError(f"Grasp candidate '{grasp_id}' must contain two contact normals.")
+    contact_patch_offset = raw_candidate.get("contact_patch_offset_local", (0.0, 0.0))
+    if not isinstance(contact_patch_offset, (list, tuple)) or len(contact_patch_offset) != 2:
+        raise ValueError(f"Grasp candidate '{grasp_id}' has an invalid contact_patch_offset_local.")
+    score_components_raw = raw_candidate.get("score_components")
+    metadata_raw = raw_candidate.get("metadata")
+    return SavedGraspCandidate(
+        grasp_id=grasp_id,
+        grasp_position_obj=tuple(float(value) for value in grasp_pose["position"]),  # type: ignore[arg-type]
+        grasp_orientation_xyzw_obj=tuple(
+            float(value)
+            for value in grasp_pose["orientation_xyzw"]  # type: ignore[arg-type]
+        ),
+        contact_point_a_obj=tuple(float(value) for value in contact_points[0]),  # type: ignore[arg-type]
+        contact_point_b_obj=tuple(float(value) for value in contact_points[1]),  # type: ignore[arg-type]
+        contact_normal_a_obj=tuple(float(value) for value in contact_normals[0]),  # type: ignore[arg-type]
+        contact_normal_b_obj=tuple(float(value) for value in contact_normals[1]),  # type: ignore[arg-type]
+        jaw_width=float(raw_candidate["jaw_width"]),
+        roll_angle_rad=float(raw_candidate["roll_angle_rad"]),
+        contact_patch_lateral_offset_m=float(contact_patch_offset[0]),
+        contact_patch_approach_offset_m=float(contact_patch_offset[1]),
+        score=None if raw_candidate.get("score") is None else float(raw_candidate["score"]),
+        score_components=(
+            None
+            if score_components_raw is None
+            else {str(key): float(value) for key, value in dict(score_components_raw).items()}  # type: ignore[arg-type]
+        ),
+        metadata=(dict(metadata_raw) or None if isinstance(metadata_raw, Mapping) else None),
+    )
+
+
+def _declared_holder_candidate_source(
+    *,
+    root: Path,
+    pair_payload: Mapping[str, object],
+    fallback_candidates: tuple[SavedGraspCandidate, ...],
+    fallback_source_pose_assembly: ObjectWorldPose,
+) -> tuple[tuple[SavedGraspCandidate, ...], ObjectWorldPose, dict[str, object]]:
+    """Load holder poses from the source explicitly named by Stage 3.
+
+    Sequential grasp IDs are meaningful only within one generated library. A
+    pair artifact therefore must not resolve those IDs through an unrelated or
+    stale ``holder_base_candidates.json`` file.
+    """
+
+    sources_raw = pair_payload.get("candidate_sources")
+    sources = dict(sources_raw) if isinstance(sources_raw, Mapping) else {}
+    holder_raw = sources.get("holder")
+    if not isinstance(holder_raw, Mapping):
+        return (
+            fallback_candidates,
+            fallback_source_pose_assembly,
+            {
+                "artifact": "holder_base_candidates.json",
+                "candidate_collection": "candidates",
+                "legacy_fallback": True,
+                "candidate_count": len(fallback_candidates),
+            },
+        )
+
+    artifact_raw = holder_raw.get("artifact")
+    collection_name = str(holder_raw.get("candidate_collection", "candidates"))
+    if not artifact_raw:
+        raise ValueError("Stage-3 holder candidate source has no artifact path.")
+    artifact_path = Path(str(artifact_raw)).expanduser()
+    if not artifact_path.is_absolute():
+        artifact_path = root / artifact_path
+    artifact_path = artifact_path.resolve()
+    if artifact_path != root and root not in artifact_path.parents:
+        raise ValueError(f"Stage-3 holder candidate source escapes its artifact directory: {artifact_path}")
+    if not artifact_path.is_file():
+        raise FileNotFoundError(f"Stage-3 holder candidate source does not exist: {artifact_path}")
+
+    source_payload = _read_json(artifact_path)
+    collection_raw = source_payload.get(collection_name)
+    candidate_items: list[tuple[str | None, Mapping[str, object]]] = []
+    if isinstance(collection_raw, Mapping):
+        for candidate_id, raw_candidate in collection_raw.items():
+            if not isinstance(raw_candidate, Mapping):
+                raise ValueError(f"Candidate '{candidate_id}' in '{artifact_path}' is not a mapping.")
+            candidate_items.append((str(candidate_id), raw_candidate))
+    elif isinstance(collection_raw, list):
+        for index, raw_candidate in enumerate(collection_raw):
+            if not isinstance(raw_candidate, Mapping):
+                raise ValueError(f"Candidate index {index} in '{artifact_path}' is not a mapping.")
+            candidate_items.append((None, raw_candidate))
+    else:
+        raise ValueError(f"Stage-3 holder source '{artifact_path}' has no candidate collection '{collection_name}'.")
+    candidates = tuple(
+        _saved_candidate_from_payload(raw_candidate, expected_grasp_id=candidate_id)
+        for candidate_id, raw_candidate in candidate_items
+    )
+    candidate_ids = [candidate.grasp_id for candidate in candidates]
+    if len(set(candidate_ids)) != len(candidate_ids):
+        raise ValueError(f"Stage-3 holder source '{artifact_path}' contains duplicate grasp IDs.")
+
+    source_pose_raw = source_payload.get("source_frame_pose_assembly")
+    if isinstance(source_pose_raw, Mapping):
+        source_pose_assembly = ObjectWorldPose(
+            position_world=tuple(float(value) for value in source_pose_raw["position"]),  # type: ignore[arg-type]
+            orientation_xyzw_world=tuple(
+                float(value)
+                for value in source_pose_raw["orientation_xyzw"]  # type: ignore[arg-type]
+            ),
+        )
+    else:
+        source_pose_assembly = fallback_source_pose_assembly
+
+    return (
+        candidates,
+        source_pose_assembly,
+        {
+            "artifact": artifact_path.name,
+            "candidate_collection": collection_name,
+            "legacy_fallback": False,
+            "candidate_count": len(candidates),
+            "source_holder_cache_key": source_payload.get("source_holder_cache_key"),
+        },
+    )
 
 
 def _world_grasp_payload(
@@ -668,6 +819,7 @@ class SimpleDualRobotPairTask:
     transition_motion_components: dict[str, float]
     pickup_top_down_score: float
     layout_proxy_score: float
+    layout_proxy_components: dict[str, object]
     holder_reachability_proxy_score: float
     inserter_reachability_proxy_score: float
     holder_candidate: SavedGraspCandidate
@@ -695,6 +847,7 @@ class SimpleDualRobotPairTask:
     pickup_contact_gap_m: float
     pickup_gripper_collision_model: str
     transition_symmetry: dict[str, object]
+    candidate_filter_diagnostics: dict[str, object] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, object]:
         pickup_grasp = np.asarray(
@@ -721,8 +874,10 @@ class SimpleDualRobotPairTask:
             "selection_score": self.selection_score,
             "transition_motion_score": self.transition_motion_score,
             "transition_motion_components": dict(self.transition_motion_components),
+            "candidate_filter_diagnostics": dict(self.candidate_filter_diagnostics),
             "pickup_top_down_score": self.pickup_top_down_score,
             "layout_proxy_score": self.layout_proxy_score,
+            "layout_proxy_components": dict(self.layout_proxy_components),
             "holder_reachability_proxy_score": (self.holder_reachability_proxy_score),
             "inserter_reachability_proxy_score": (self.inserter_reachability_proxy_score),
             "roles": {
@@ -1220,8 +1375,12 @@ def load_simple_dual_robot_pair_tasks(
     transition_rotation_weight: float = DEFAULT_TRANSITION_ROTATION_WEIGHT,
     reachability_proxy_config: ReachabilityProxyConfig = (ReachabilityProxyConfig()),
     retained_only: bool = True,
+    include_nonretained_identity_fallbacks: bool = False,
 ) -> tuple[SimpleDualRobotPairTask, ...]:
     """Resolve ranked Stage-3 pairs for the first holder/inserter simulation."""
+
+    if retained_only and include_nonretained_identity_fallbacks:
+        raise ValueError("retained_only and include_nonretained_identity_fallbacks are mutually exclusive.")
 
     root = Path(artifact_dir).expanduser().resolve()
     pair_path = root / f"dual_grasp_pairs_{step_id}.json"
@@ -1247,7 +1406,17 @@ def load_simple_dual_robot_pair_tasks(
     inserter_bundle = load_grasp_bundle(root / f"inserter_candidates_{step_id}.json")
     base_mesh_path = resolve_mesh_path(holder_bundle.target_stl_path)
     incoming_mesh_path = resolve_mesh_path(inserter_bundle.target_stl_path)
-    holder_source_pose_assembly = _source_pose_from_bundle(holder_bundle)
+    holder_bundle_source_pose_assembly = _source_pose_from_bundle(holder_bundle)
+    (
+        holder_candidates,
+        holder_source_pose_assembly,
+        holder_candidate_source,
+    ) = _declared_holder_candidate_source(
+        root=root,
+        pair_payload=pair_payload,
+        fallback_candidates=holder_bundle.candidates,
+        fallback_source_pose_assembly=holder_bundle_source_pose_assembly,
+    )
     inserter_source_pose_assembly = _source_pose_from_bundle(inserter_bundle)
     holder_source_pose_world = compose_source_pose_world(
         source_pose_assembly=holder_source_pose_assembly,
@@ -1320,6 +1489,13 @@ def load_simple_dual_robot_pair_tasks(
     retained_ids = set(
         str(value)
         for value in pair_payload["retained_pair_ids"]  # type: ignore[index]
+    )
+    raw_retained_execution_ids = pair_payload.get(
+        "retained_execution_candidate_ids",
+        (),
+    )
+    retained_execution_ids = (
+        {str(value) for value in raw_retained_execution_ids} if isinstance(raw_retained_execution_ids, list) else set()
     )
     if not 0.0 <= float(pickup_top_down_score_weight) <= 1.0:
         raise ValueError("pickup_top_down_score_weight must be between 0 and 1.")
@@ -1396,7 +1572,7 @@ def load_simple_dual_robot_pair_tasks(
     lift = np.asarray((0.0, 0.0, float(transport_clearance_m)))
     for evaluation in evaluations:
         holder_candidate = _candidate_by_id(
-            holder_bundle.candidates,
+            holder_candidates,
             str(evaluation["holder_grasp_id"]),
         )
         pickup_floor_status = pickup_floor_accepted[str(evaluation["inserter_grasp_id"])]
@@ -1445,6 +1621,27 @@ def load_simple_dual_robot_pair_tasks(
         raw_transition_validation = details.get("transition_validation")
         transition_validation = dict(raw_transition_validation) if isinstance(raw_transition_validation, dict) else {}
         for transition in evaluation_transitions:
+            transition_id = str(transition.get("transition_id", "tr_identity"))
+            pair_id = str(evaluation["pair_id"])
+            execution_candidate_id = f"{pair_id}__{transition_id}"
+            execution_is_retained = (
+                execution_candidate_id in retained_execution_ids if retained_execution_ids else pair_id in retained_ids
+            )
+            if (
+                include_nonretained_identity_fallbacks
+                and not execution_is_retained
+                and not bool(transition.get("is_identity", False))
+            ):
+                # A transformed corridor may exceed the final execution cap
+                # even though Stage 3 explicitly validated it for a retained
+                # pair. Keep that useful fallback, but never extrapolate a
+                # nonidentity transform onto an identity-only non-retained
+                # pair or past a rejected/missing validation record.
+                validation = dict(transition_validation.get(transition_id, {}))
+                if pair_id not in retained_ids or validation.get("status") != "accepted":
+                    continue
+            if retained_only and retained_execution_ids and execution_candidate_id not in retained_execution_ids:
+                continue
             raw_final_pose = transition.get("final_source_pose_assembly")
             raw_pre_pose = transition.get("preinsertion_source_pose_assembly")
             if not isinstance(raw_final_pose, dict) or not isinstance(
@@ -1502,6 +1699,7 @@ def load_simple_dual_robot_pair_tasks(
                 inserter_targets=inserter_targets,
                 holder_grasp_target=holder_targets[-1],
                 inserter_grasp_target=inserter_targets[1],
+                inserter_transition_target=inserter_targets[-1],
                 holder_robot_base_world=DEFAULT_HOLDER_BASE_WORLD,
                 inserter_robot_base_world=DEFAULT_INSERTER_BASE_WORLD,
                 config=reachability_proxy_config,
@@ -1519,12 +1717,10 @@ def load_simple_dual_robot_pair_tasks(
             selection_score = (1.0 - float(transition_score_weight)) * pickup_layout_score + float(
                 transition_score_weight
             ) * float(transition_motion["score"])
-            transition_id = str(transition.get("transition_id", "tr_identity"))
             selected_transition = {
                 **transition,
                 "pair_collision_validation": dict(transition_validation.get(transition_id, {})),
             }
-            pair_id = str(evaluation["pair_id"])
             final_to_pre_candidate = tuple(
                 float(value)
                 for value in (pre_source_pose_assembly.translation_world - final_source_pose_assembly.translation_world)
@@ -1539,13 +1735,20 @@ def load_simple_dual_robot_pair_tasks(
                     incoming_part_id=str(pair_payload["incoming_part_id"]),
                     pair_id=pair_id,
                     transition_id=transition_id,
-                    execution_candidate_id=(f"{pair_id}__{transition_id}"),
+                    execution_candidate_id=execution_candidate_id,
                     pair_score=pair_score,
                     selection_score=float(selection_score),
                     transition_motion_score=float(transition_motion["score"]),
                     transition_motion_components=transition_motion,
                     pickup_top_down_score=pickup_top_down_score,
                     layout_proxy_score=float(layout_proxy["score"]),
+                    layout_proxy_components={
+                        "score_before_crossing_penalty": float(layout_proxy["score_before_crossing_penalty"]),
+                        "crossing_penalty": float(layout_proxy["crossing_penalty"]),
+                        "crossing_penalty_applied": float(layout_proxy["crossing_penalty_applied"]),
+                        "pickup_segments_cross_xy": bool(layout_proxy["pickup_segments_cross_xy"]),
+                        "transition_segments_cross_xy": bool(layout_proxy["transition_segments_cross_xy"]),
+                    },
                     holder_reachability_proxy_score=float(dict(layout_proxy["holder"])["score"]),
                     inserter_reachability_proxy_score=float(dict(layout_proxy["inserter"])["score"]),
                     holder_candidate=holder_candidate,
@@ -1575,8 +1778,16 @@ def load_simple_dual_robot_pair_tasks(
                     transition_symmetry=selected_transition,
                 )
             )
+
+    def is_retained_execution(task: SimpleDualRobotPairTask) -> bool:
+        if retained_execution_ids:
+            return task.execution_candidate_id in retained_execution_ids
+        return task.pair_id in retained_ids
+
     tasks.sort(
         key=lambda task: (
+            bool(task.layout_proxy_components.get("transition_segments_cross_xy", False)),
+            (0 if include_nonretained_identity_fallbacks and is_retained_execution(task) else 1),
             -task.selection_score,
             -task.pair_score,
             task.execution_candidate_id,
@@ -1598,6 +1809,39 @@ def load_simple_dual_robot_pair_tasks(
             f"evaluations={len(accepted_pair_evaluations)} using "
             f"{len(unique_pair_inserters)} unique inserter grasps."
         )
+    pickup_rejection_counts = Counter(status.reason for status in pickup_floor_statuses if status.status != "accepted")
+    candidate_filter_diagnostics: dict[str, object] = {
+        "pickup_grasps_checked": len(pickup_floor_statuses),
+        "pickup_grasps_accepted": len(pickup_floor_accepted),
+        "pickup_grasps_rejected": len(pickup_floor_statuses) - len(pickup_floor_accepted),
+        "pickup_grasp_rejection_counts": dict(sorted(pickup_rejection_counts.items())),
+        "offline_compatible_pairs": len(accepted_offline_evaluations),
+        "stage3_retained_pairs": len(retained_ids),
+        "stage3_retained_execution_candidates": (
+            len(retained_execution_ids) if retained_execution_ids else len(retained_ids)
+        ),
+        "pose_feasible_retained_execution_candidates": sum(is_retained_execution(task) for task in tasks),
+        "pose_feasible_identity_fallback_candidates": sum(
+            not is_retained_execution(task) and bool(task.transition_symmetry.get("is_identity", False))
+            for task in tasks
+        ),
+        "pose_feasible_validated_transition_fallback_candidates": sum(
+            not is_retained_execution(task) and not bool(task.transition_symmetry.get("is_identity", False))
+            for task in tasks
+        ),
+        "pose_feasible_pair_evaluations": len(evaluations),
+        "pose_feasible_execution_candidates": len(tasks),
+        "pose_feasible_unique_holder_grasps": len({task.holder_candidate.grasp_id for task in tasks}),
+        "pose_feasible_unique_inserter_grasps": len({task.inserter_candidate.grasp_id for task in tasks}),
+        "holder_candidate_source": holder_candidate_source,
+    }
+    tasks = [
+        replace(
+            task,
+            candidate_filter_diagnostics=candidate_filter_diagnostics,
+        )
+        for task in tasks
+    ]
     return tuple(tasks)
 
 
@@ -1616,6 +1860,7 @@ __all__ = [
     "DEFAULT_PICKUP_FLOOR_CLEARANCE_MARGIN_M",
     "DEFAULT_PICKUP_TOP_DOWN_SCORE_WEIGHT",
     "DEFAULT_PREGRASP_AABB_CORRIDOR_MARGIN_M",
+    "DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT",
     "DEFAULT_STEP_ID",
     "DEFAULT_TRANSPORT_CLEARANCE_M",
     "PlanarRuntimeLayout",

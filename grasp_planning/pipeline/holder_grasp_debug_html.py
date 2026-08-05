@@ -10,7 +10,7 @@ import numpy as np
 from grasp_planning.grasping.fabrica_grasp_debug import (
     KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
     SavedGraspCandidate,
-    _load_kuka_y_gripper_visual_mesh,
+    _load_kuka_y_gripper_visual_mesh_tcp,
 )
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 
@@ -20,7 +20,7 @@ def _rounded(values: np.ndarray, digits: int = 6) -> list[list[float]]:
 
 
 def _component_payload(name: str) -> dict[str, object]:
-    vertices, faces = _load_kuka_y_gripper_visual_mesh(name)
+    vertices, faces = _load_kuka_y_gripper_visual_mesh_tcp(name)
     return {
         "vertices": _rounded(vertices),
         "faces": np.asarray(faces, dtype=np.int64).tolist(),
@@ -59,8 +59,8 @@ def write_holder_grasp_debug_html(
 ) -> None:
     """Write one shared KUKA mesh plus lightweight data for every candidate."""
 
-    left_vertices, _ = _load_kuka_y_gripper_visual_mesh("left_finger")
-    right_vertices, _ = _load_kuka_y_gripper_visual_mesh("right_finger")
+    left_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("left_finger")
+    right_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("right_finger")
     left_tip = left_vertices[left_vertices[:, 2] >= 0.08]
     right_tip = right_vertices[right_vertices[:, 2] >= 0.08]
     if not len(left_tip):

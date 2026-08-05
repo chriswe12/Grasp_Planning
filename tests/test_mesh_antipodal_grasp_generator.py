@@ -185,8 +185,10 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
             [primitive.name for primitive in primitives],
             ["kuka_y_gripper_base", "kuka_y_left_finger", "kuka_y_right_finger"],
         )
-        self.assertAlmostEqual(float(np.max(primitives[1].vertices_obj[:, 1])), -0.012)
-        self.assertAlmostEqual(float(np.min(primitives[2].vertices_obj[:, 1])), 0.012)
+        # The physical mount is rotated pi around the unchanged TCP, so the
+        # source-left and source-right fingers exchange TCP-frame sides.
+        self.assertAlmostEqual(float(np.min(primitives[1].vertices_obj[:, 1])), 0.012)
+        self.assertAlmostEqual(float(np.max(primitives[2].vertices_obj[:, 1])), -0.012)
         self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455)
 
     def test_kuka_y_gripper_places_real_fingertips_at_grasp_width(self) -> None:
@@ -213,7 +215,7 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455 - 0.005000000476837158)
-        self.assertGreater(float(np.mean(primitives[0].vertices_obj[:, 0])), 0.03)
+        self.assertLess(float(np.mean(primitives[0].vertices_obj[:, 0])), 0.03)
 
     def test_gripper_collision_model_factory_accepts_kuka_alias(self) -> None:
         self.assertIsInstance(make_gripper_collision_model("lbr_iiwa7_y_gripper"), KukaYGripperCollisionModel)
