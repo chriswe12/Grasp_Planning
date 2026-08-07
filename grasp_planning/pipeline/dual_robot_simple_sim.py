@@ -67,6 +67,19 @@ DEFAULT_PREGRASP_AABB_CORRIDOR_MARGIN_M = 0.002
 _MIN_PREGRASP_AABB_PIECE_SIZE_M = 1.0e-5
 
 
+class NoPoseFeasibleDualTasksError(ValueError):
+    """Report an empty runtime queue while retaining filter diagnostics."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        candidate_filter_diagnostics: Mapping[str, object],
+    ) -> None:
+        super().__init__(message)
+        self.candidate_filter_diagnostics = dict(candidate_filter_diagnostics)
+
+
 @dataclass(frozen=True)
 class PlanarRuntimeLayout:
     """Runtime placement inputs accepted by the table-supported slice."""
@@ -839,6 +852,10 @@ class SimpleDualRobotPairTask:
     subassembly_parts: tuple[SimpleDualRobotSubassemblyPart, ...]
     mesh_scale: float
     assembly_world: MovableFrame
+    holder_robot_name: str
+    inserter_robot_name: str
+    holder_robot_base_world: MovableFrame
+    inserter_robot_base_world: MovableFrame
     final_to_preinsertion_translation_assembly_m: tuple[float, float, float]
     transport_clearance_m: float
     pickup_floor_z_world_m: float
@@ -882,20 +899,20 @@ class SimpleDualRobotPairTask:
             "inserter_reachability_proxy_score": (self.inserter_reachability_proxy_score),
             "roles": {
                 "holder": {
-                    "robot": "lbr_one",
-                    "planning_group": "arm_one",
-                    "tcp_link": "lbr_one_gripper_tcp",
+                    "robot": self.holder_robot_name,
+                    "planning_group": ("arm_one" if self.holder_robot_name == "lbr_one" else "arm_two"),
+                    "tcp_link": f"{self.holder_robot_name}_gripper_tcp",
                 },
                 "inserter": {
-                    "robot": "lbr_two",
-                    "planning_group": "arm_two",
-                    "tcp_link": "lbr_two_gripper_tcp",
+                    "robot": self.inserter_robot_name,
+                    "planning_group": ("arm_one" if self.inserter_robot_name == "lbr_one" else "arm_two"),
+                    "tcp_link": f"{self.inserter_robot_name}_gripper_tcp",
                 },
             },
             "layout": {
                 "assembly_world": self.assembly_world.to_payload(),
-                "holder_base_world_m": list(DEFAULT_HOLDER_BASE_WORLD.position_world_m),
-                "inserter_base_world_m": list(DEFAULT_INSERTER_BASE_WORLD.position_world_m),
+                "holder_base_world_m": list(self.holder_robot_base_world.position_world_m),
+                "inserter_base_world_m": list(self.inserter_robot_base_world.position_world_m),
                 "final_to_preinsertion_translation_assembly_m": list(self.final_to_preinsertion_translation_assembly_m),
                 "pickup_floor_z_world_m": self.pickup_floor_z_world_m,
             },
@@ -1374,6 +1391,10 @@ def load_simple_dual_robot_pair_tasks(
     transition_translation_weight: float = (DEFAULT_TRANSITION_TRANSLATION_WEIGHT),
     transition_rotation_weight: float = DEFAULT_TRANSITION_ROTATION_WEIGHT,
     reachability_proxy_config: ReachabilityProxyConfig = (ReachabilityProxyConfig()),
+    holder_robot_name: str = "lbr_one",
+    inserter_robot_name: str = "lbr_two",
+    holder_robot_base_world: MovableFrame = DEFAULT_HOLDER_BASE_WORLD,
+    inserter_robot_base_world: MovableFrame = DEFAULT_INSERTER_BASE_WORLD,
     retained_only: bool = True,
     include_nonretained_identity_fallbacks: bool = False,
 ) -> tuple[SimpleDualRobotPairTask, ...]:
@@ -1381,6 +1402,8 @@ def load_simple_dual_robot_pair_tasks(
 
     if retained_only and include_nonretained_identity_fallbacks:
         raise ValueError("retained_only and include_nonretained_identity_fallbacks are mutually exclusive.")
+    if {str(holder_robot_name), str(inserter_robot_name)} != {"lbr_one", "lbr_two"}:
+        raise ValueError("holder_robot_name and inserter_robot_name must assign lbr_one and lbr_two exactly once.")
 
     root = Path(artifact_dir).expanduser().resolve()
     pair_path = root / f"dual_grasp_pairs_{step_id}.json"
@@ -1700,8 +1723,8 @@ def load_simple_dual_robot_pair_tasks(
                 holder_grasp_target=holder_targets[-1],
                 inserter_grasp_target=inserter_targets[1],
                 inserter_transition_target=inserter_targets[-1],
-                holder_robot_base_world=DEFAULT_HOLDER_BASE_WORLD,
-                inserter_robot_base_world=DEFAULT_INSERTER_BASE_WORLD,
+                holder_robot_base_world=holder_robot_base_world,
+                inserter_robot_base_world=inserter_robot_base_world,
                 config=reachability_proxy_config,
             )
             transition_motion = _transition_motion_components(
@@ -1768,6 +1791,10 @@ def load_simple_dual_robot_pair_tasks(
                     subassembly_parts=tuple(subassembly_parts),
                     mesh_scale=float(holder_bundle.stl_scale),
                     assembly_world=assembly_world,
+                    holder_robot_name=str(holder_robot_name),
+                    inserter_robot_name=str(inserter_robot_name),
+                    holder_robot_base_world=holder_robot_base_world,
+                    inserter_robot_base_world=inserter_robot_base_world,
                     final_to_preinsertion_translation_assembly_m=(final_to_pre_candidate),
                     transport_clearance_m=float(transport_clearance_m),
                     pickup_floor_z_world_m=float(pickup_floor_z_world_m),
@@ -1793,24 +1820,10 @@ def load_simple_dual_robot_pair_tasks(
             task.execution_candidate_id,
         )
     )
-    if not tasks:
-        rejection_counts = Counter(status.reason for status in pickup_floor_statuses if status.status != "accepted")
-        reason_summary = ", ".join(f"{reason}={count}" for reason, count in sorted(rejection_counts.items()))
-        accepted_pair_evaluations = accepted_offline_evaluations
-        unique_pair_inserters = {
-            str(dict(evaluation).get("inserter_grasp_id")) for evaluation in accepted_pair_evaluations
-        }
-        raise ValueError(
-            "No compatible grasp pairs remain after checking the grounded "
-            f"pickup pose in '{pair_path}'. "
-            f"Pickup candidates accepted={len(pickup_floor_accepted)}/"
-            f"{len(pickup_floor_statuses)}; rejection reasons: "
-            f"{reason_summary or 'none'}. Offline-compatible pair "
-            f"evaluations={len(accepted_pair_evaluations)} using "
-            f"{len(unique_pair_inserters)} unique inserter grasps."
-        )
     pickup_rejection_counts = Counter(status.reason for status in pickup_floor_statuses if status.status != "accepted")
-    candidate_filter_diagnostics: dict[str, object] = {
+    base_candidate_filter_diagnostics: dict[str, object] = {
+        "pickup_floor_z_world_m": float(pickup_floor_z_world_m),
+        "pickup_floor_clearance_margin_m": float(pickup_floor_clearance_margin_m),
         "pickup_grasps_checked": len(pickup_floor_statuses),
         "pickup_grasps_accepted": len(pickup_floor_accepted),
         "pickup_grasps_rejected": len(pickup_floor_statuses) - len(pickup_floor_accepted),
@@ -1820,6 +1833,37 @@ def load_simple_dual_robot_pair_tasks(
         "stage3_retained_execution_candidates": (
             len(retained_execution_ids) if retained_execution_ids else len(retained_ids)
         ),
+        "holder_candidate_source": holder_candidate_source,
+    }
+    if not tasks:
+        reason_summary = ", ".join(f"{reason}={count}" for reason, count in sorted(pickup_rejection_counts.items()))
+        accepted_pair_evaluations = accepted_offline_evaluations
+        unique_pair_inserters = {
+            str(dict(evaluation).get("inserter_grasp_id")) for evaluation in accepted_pair_evaluations
+        }
+        raise NoPoseFeasibleDualTasksError(
+            (
+                "No compatible grasp pairs remain after checking the grounded "
+                f"pickup pose in '{pair_path}'. "
+                f"Pickup candidates accepted={len(pickup_floor_accepted)}/"
+                f"{len(pickup_floor_statuses)}; rejection reasons: "
+                f"{reason_summary or 'none'}. Offline-compatible pair "
+                f"evaluations={len(accepted_pair_evaluations)} using "
+                f"{len(unique_pair_inserters)} unique inserter grasps."
+            ),
+            candidate_filter_diagnostics={
+                **base_candidate_filter_diagnostics,
+                "pose_feasible_retained_execution_candidates": 0,
+                "pose_feasible_identity_fallback_candidates": 0,
+                "pose_feasible_validated_transition_fallback_candidates": 0,
+                "pose_feasible_pair_evaluations": 0,
+                "pose_feasible_execution_candidates": 0,
+                "pose_feasible_unique_holder_grasps": 0,
+                "pose_feasible_unique_inserter_grasps": 0,
+            },
+        )
+    candidate_filter_diagnostics: dict[str, object] = {
+        **base_candidate_filter_diagnostics,
         "pose_feasible_retained_execution_candidates": sum(is_retained_execution(task) for task in tasks),
         "pose_feasible_identity_fallback_candidates": sum(
             not is_retained_execution(task) and bool(task.transition_symmetry.get("is_identity", False))
@@ -1833,7 +1877,6 @@ def load_simple_dual_robot_pair_tasks(
         "pose_feasible_execution_candidates": len(tasks),
         "pose_feasible_unique_holder_grasps": len({task.holder_candidate.grasp_id for task in tasks}),
         "pose_feasible_unique_inserter_grasps": len({task.inserter_candidate.grasp_id for task in tasks}),
-        "holder_candidate_source": holder_candidate_source,
     }
     tasks = [
         replace(
@@ -1863,6 +1906,7 @@ __all__ = [
     "DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT",
     "DEFAULT_STEP_ID",
     "DEFAULT_TRANSPORT_CLEARANCE_M",
+    "NoPoseFeasibleDualTasksError",
     "PlanarRuntimeLayout",
     "RuntimePartAabb",
     "DualRobotStepSelection",

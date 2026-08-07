@@ -166,8 +166,11 @@ def _robot_actuators_for_asset(
     *,
     kuka_arm_actuator_profile: str = KUKA_ARM_ACTUATOR_PROFILE_DEFAULT,
     kuka_arm_damping_override: float | None = None,
+    kuka_hand_effort_limit_sim: float = 40.0,
 ) -> dict[str, ImplicitActuatorCfg]:
     if _is_kuka_lbr_asset(asset_path):
+        if float(kuka_hand_effort_limit_sim) <= 0.0:
+            raise ValueError("KUKA hand effort limit must be positive.")
         return {
             **_kuka_arm_actuators(
                 kuka_arm_actuator_profile,
@@ -177,7 +180,7 @@ def _robot_actuators_for_asset(
                 joint_names_expr=["left_finger_joint"],
                 stiffness=7500.0,
                 damping=173.0,
-                effort_limit_sim=40.0,
+                effort_limit_sim=float(kuka_hand_effort_limit_sim),
                 velocity_limit_sim=0.04,
             ),
             "hand_passive": ImplicitActuatorCfg(
@@ -438,6 +441,7 @@ def make_dual_kuka_assembly_scene_cfg(
     part_density_kg_m3: float | None = DEFAULT_PART_DENSITY_KG_M3,
     kuka_arm_actuator_profile: str = KUKA_ARM_ACTUATOR_PROFILE_DEFAULT,
     kuka_arm_damping_override: float | None = None,
+    kuka_hand_effort_limit_sim: float = 40.0,
 ) -> DualKukaAssemblySceneCfg:
     """Build a dual-robot Fabrica prefix-holder/pickup physics scene.
 
@@ -466,6 +470,7 @@ def make_dual_kuka_assembly_scene_cfg(
             resolved_robot_path,
             kuka_arm_actuator_profile=kuka_arm_actuator_profile,
             kuka_arm_damping_override=kuka_arm_damping_override,
+            kuka_hand_effort_limit_sim=kuka_hand_effort_limit_sim,
         )
 
     scene_cfg.base_part.spawn.usd_path = _resolve_asset_path(base_part_usd_path)

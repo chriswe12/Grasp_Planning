@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
@@ -85,6 +86,9 @@ class DualRealExecutionConfig:
     inserter_gripper_open_service: str = "/lbr_two/gripper_controller/open"
     inserter_gripper_close_service: str = "/lbr_two/gripper_controller/close"
     inserter_gripper_stop_service: str = "/lbr_two/gripper_controller/stop"
+    debug_gui: bool = False
+    debug_gui_port: int = 0
+    debug_gui_open_browser: bool = True
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,13 @@ def _ranked_candidate_plans(
 
     candidates: list[dict[str, object]] = []
     seen_candidate_ids: set[str] = set()
+    raw_candidate_ranks = [
+        raw_candidate.get("candidate_rank") if isinstance(raw_candidate, dict) else None
+        for raw_candidate in raw_candidates
+    ]
+    uses_explicit_ranks = any(value is not None for value in raw_candidate_ranks)
+    if uses_explicit_ranks and any(value is None for value in raw_candidate_ranks):
+        raise ValueError("ranked_pair_candidates must either all declare candidate_rank or all omit it.")
     previous_score = float("inf")
     for rank, raw_candidate in enumerate(raw_candidates, start=1):
         if not isinstance(raw_candidate, dict):
@@ -163,7 +174,11 @@ def _ranked_candidate_plans(
                 candidate.get("pair_score", 0.0),
             )
         )
-        if score > previous_score + 1.0e-12:
+        if uses_explicit_ranks:
+            saved_rank = candidate.get("candidate_rank")
+            if isinstance(saved_rank, bool) or not isinstance(saved_rank, int) or saved_rank != rank:
+                raise ValueError(f"Ranked real candidate {rank} has candidate_rank={saved_rank!r}; expected {rank}.")
+        elif score > previous_score + 1.0e-12:
             raise ValueError(
                 f"ranked_pair_candidates are not in descending score order at rank {rank}: {score} > {previous_score}."
             )
@@ -365,6 +380,7 @@ def _preflight_targets(
     candidate_rank: int | None = None,
     pair_id: str = "",
     stop_after: str = "inserter_preinsertion",
+    resolved_joint_targets: dict[str, tuple[float, ...]] | None = None,
 ) -> bool:
     targets = plan["targets"]
     assert isinstance(targets, dict)
@@ -385,6 +401,8 @@ def _preflight_targets(
             else:
                 message = f"live-state IK failed ({message}); start-seeded alternate IK failed ({fallback_message})"
         ok = joints is not None
+        if joints is not None and resolved_joint_targets is not None:
+            resolved_joint_targets[target_name] = tuple(float(value) for value in joints)
         record_args: dict[str, object] = {
             "name": f"preflight_{target_name}",
             "role": role,
@@ -461,17 +479,19 @@ def _select_ranked_preflight_candidate(
     frame_id: str,
     record: Callable[..., None],
     stop_after: str = "inserter_preinsertion",
+    update_debug: Callable[..., None] | None = None,
 ) -> tuple[dict[str, object] | None, dict[str, object]]:
-    """Select the first strict-score-order pair passing all target IK checks."""
+    """Select the first producer-ranked pair passing all target IK checks."""
 
     candidates = _ranked_candidate_plans(plan)
     role_cache: dict[
         tuple[str, str, tuple[float, ...]],
-        tuple[bool, str],
+        tuple[bool, str, dict[str, tuple[float, ...]]],
     ] = {}
     candidate_records: list[dict[str, object]] = []
     selected: dict[str, object] | None = None
     selected_rank: int | None = None
+    selected_joint_targets: dict[str, tuple[float, ...]] = {}
 
     for rank, candidate in enumerate(candidates, start=1):
         pair_id = str(candidate["pair_id"])
@@ -488,7 +508,16 @@ def _select_ranked_preflight_candidate(
             f"selection_score={score:.4f}",
             flush=True,
         )
+        if update_debug is not None:
+            update_debug(
+                candidate=candidate,
+                attempt_index=rank,
+                phase="ik_preflight",
+                status="planning",
+                message="Checking exact holder and inserter target IK before hardware motion.",
+            )
         role_records: dict[str, object] = {}
+        candidate_joint_targets: dict[str, tuple[float, ...]] = {}
         candidate_ok = True
         active_roles = tuple(dict.fromkeys(role for role, _ in _motion_sequence_through(stop_after)))
         for role in active_roles:
@@ -504,7 +533,7 @@ def _select_ranked_preflight_candidate(
             )
             cache_hit = cache_key in role_cache
             if cache_hit:
-                role_ok, failure = role_cache[cache_key]
+                role_ok, failure, role_joint_targets = role_cache[cache_key]
                 record(
                     name=f"preflight_{role}_cached",
                     role=role,
@@ -517,6 +546,7 @@ def _select_ranked_preflight_candidate(
                     pair_id=pair_id,
                 )
             else:
+                role_joint_targets = {}
                 role_ok = _preflight_targets(
                     plan=candidate,
                     commanders=commanders,
@@ -527,9 +557,15 @@ def _select_ranked_preflight_candidate(
                     candidate_rank=rank,
                     pair_id=pair_id,
                     stop_after=stop_after,
+                    resolved_joint_targets=role_joint_targets,
                 )
                 failure = "" if role_ok else "target IK failed"
-                role_cache[cache_key] = (role_ok, failure)
+                role_cache[cache_key] = (
+                    role_ok,
+                    failure,
+                    dict(role_joint_targets),
+                )
+            candidate_joint_targets.update(role_joint_targets)
             role_records[role] = {
                 "grasp_id": grasp_id,
                 "cache_hit": cache_hit,
@@ -562,13 +598,26 @@ def _select_ranked_preflight_candidate(
             candidate_rank=rank,
             pair_id=pair_id,
         )
+        if update_debug is not None:
+            update_debug(
+                candidate=candidate,
+                attempt_index=rank,
+                phase="ik_preflight",
+                status="succeeded" if candidate_ok else "failed",
+                message=(
+                    f"Selected ranked pair {pair_id}."
+                    if candidate_ok
+                    else f"Rejected ranked pair {pair_id}; trying the next pair."
+                ),
+            )
         if candidate_ok:
             selected = candidate
             selected_rank = rank
+            selected_joint_targets = candidate_joint_targets
             break
 
     summary = {
-        "policy": "strict_score_order_collision_aware_ik_before_motion",
+        "policy": "producer_ranked_queue_collision_aware_ik_before_motion",
         "candidate_count": len(candidates),
         "candidates_checked": len(candidate_records),
         "selected_rank": selected_rank,
@@ -584,6 +633,7 @@ def _select_ranked_preflight_candidate(
             else ""
         ),
         "selected_transition_id": (str(selected.get("transition_id", "")) if selected is not None else ""),
+        "selected_joint_targets": {name: list(joints) for name, joints in selected_joint_targets.items()},
         "records": candidate_records,
         "cached_role_grasp_count": len(role_cache),
         "stop_after": stop_after,
@@ -598,6 +648,9 @@ def _execute_sequence(
     grippers: Mapping[str, object],
     config: DualRealExecutionConfig,
     record: Callable[..., None],
+    preferred_joint_targets: Mapping[str, Sequence[float]] | None = None,
+    candidate_rank: int | None = None,
+    update_debug: Callable[..., None] | None = None,
 ) -> tuple[bool, str, str]:
     targets = plan["targets"]
     assert isinstance(targets, dict)
@@ -606,12 +659,37 @@ def _execute_sequence(
     for role in ("holder", "inserter"):
         if role not in grippers:
             continue
+        debug_phase = "holder_pregrasp" if role == "holder" else "inserter_pickup_pregrasp"
+        if update_debug is not None:
+            update_debug(
+                candidate=plan,
+                attempt_index=candidate_rank,
+                phase=debug_phase,
+                status="planning",
+                message=f"Opening the {role} gripper before approach.",
+            )
         ok, message = grippers[role].open(width=0.06)
         record(name=f"open_{role}_gripper", role=role, ok=ok, message=message)
         if not ok:
+            if update_debug is not None:
+                update_debug(
+                    candidate=plan,
+                    attempt_index=candidate_rank,
+                    phase=debug_phase,
+                    status="failed",
+                    message=message,
+                )
             return False, f"{role}_gripper_open_failed", last_completed
 
     for role, target_name in MOTION_SEQUENCE:
+        if update_debug is not None:
+            update_debug(
+                candidate=plan,
+                attempt_index=candidate_rank,
+                phase=target_name,
+                status="planning",
+                message=f"Planning and executing {role} target '{target_name}' on hardware.",
+            )
         target = _target_from_payload(
             targets[target_name],
             frame_id=str(config.frame_id),
@@ -638,11 +716,27 @@ def _execute_sequence(
                     last_completed,
                 )
         try:
-            ok, message = commanders[role].move_to_pose(
-                target,
-                label=target_name,
-                execute=True,
-            )
+            preferred_joints = None if preferred_joint_targets is None else preferred_joint_targets.get(target_name)
+            if preferred_joints is None:
+                ok, message = commanders[role].move_to_pose(
+                    target,
+                    label=target_name,
+                    execute=True,
+                )
+            else:
+                trajectory, plan_message = commanders[role].plan_to_joint_positions(
+                    preferred_joints,
+                    label=target_name,
+                )
+                if trajectory is None:
+                    ok = False
+                    message = f"{target_name}: planning to preflight IK target failed: {plan_message}"
+                else:
+                    ok, execute_message = commanders[role].execute_trajectory(
+                        trajectory,
+                        label=target_name,
+                    )
+                    message = f"preflight IK target planned ({plan_message}); {execute_message}"
             record(
                 name=target_name,
                 role=role,
@@ -665,8 +759,24 @@ def _execute_sequence(
                 if not remove_ok:
                     raise RuntimeError(f"Could not remove temporary AABBs after {target_name}: {remove_message}")
         if not ok:
+            if update_debug is not None:
+                update_debug(
+                    candidate=plan,
+                    attempt_index=candidate_rank,
+                    phase=target_name,
+                    status="failed",
+                    message=message,
+                )
             return False, f"{target_name}_failed", last_completed
         last_completed = target_name
+        if update_debug is not None:
+            update_debug(
+                candidate=plan,
+                attempt_index=candidate_rank,
+                phase=target_name,
+                status="succeeded",
+                message=message,
+            )
 
         close_role = GRIPPER_CLOSE_AFTER.get(target_name)
         if close_role is not None and close_role in grippers:
@@ -684,6 +794,14 @@ def _execute_sequence(
                 message=message,
             )
             if not ok:
+                if update_debug is not None:
+                    update_debug(
+                        candidate=plan,
+                        attempt_index=candidate_rank,
+                        phase=target_name,
+                        status="failed",
+                        message=message,
+                    )
                 return False, f"{close_role}_gripper_close_failed", last_completed
 
         if target_name == config.stop_after:
@@ -751,11 +869,12 @@ def execute_dual_real_plan(
     plan_json = plan_json.expanduser().resolve()
     output_path = attempt_artifact_path.expanduser().resolve()
     source_plan = load_and_validate_dual_plan(plan_json)
+    ranked_candidates = _ranked_candidate_plans(source_plan)
     execution_plan = source_plan
     pair_id = ""
     pair_selection: dict[str, object] = {
-        "policy": "strict_score_order_collision_aware_ik_before_motion",
-        "candidate_count": len(_ranked_candidate_plans(source_plan)),
+        "policy": "producer_ranked_queue_collision_aware_ik_before_motion",
+        "candidate_count": len(ranked_candidates),
         "candidates_checked": 0,
         "selected_rank": None,
         "selected_pair_id": "",
@@ -765,6 +884,31 @@ def execute_dual_real_plan(
     steps: list[dict[str, object]] = []
     commanders: dict[str, object] = {}
     grippers: dict[str, object] = {}
+    debug_server = None
+    debug_scene_candidate_id = ""
+    candidate_counts = dict(ranked_candidates[0].get("candidate_filter_diagnostics", {}))
+    candidate_counts.update(
+        {
+            "planner_queue_execution_candidates": len(ranked_candidates),
+            "planner_queue_noncrossing_execution_candidates": sum(
+                not bool(dict(candidate.get("layout_proxy_components", {})).get("transition_segments_cross_xy"))
+                for candidate in ranked_candidates
+            ),
+            "planner_queue_crossed_execution_candidates": sum(
+                bool(dict(candidate.get("layout_proxy_components", {})).get("transition_segments_cross_xy"))
+                for candidate in ranked_candidates
+            ),
+            "planner_queue_unique_holder_grasps": len(
+                {_candidate_grasp_id(candidate, role="holder") for candidate in ranked_candidates}
+            ),
+            "planner_queue_unique_inserter_grasps": len(
+                {_candidate_grasp_id(candidate, role="inserter") for candidate in ranked_candidates}
+            ),
+            "exact_ik_pair_tasks_checked": 0,
+            "exact_ik_holder_grasps_checked": 0,
+            "exact_ik_inserter_grasps_checked": 0,
+        }
+    )
     initialized_here = False
     result = DualRealExecutionResult(
         success=False,
@@ -774,6 +918,52 @@ def execute_dual_real_plan(
         last_completed_phase="",
         attempt_artifact_path=output_path,
     )
+
+    if config.debug_gui:
+        try:
+            from grasp_planning.pipeline.dual_robot_planning_debug import (
+                DualRobotPlanningDebugServer,
+            )
+
+            debug_server = DualRobotPlanningDebugServer(port=int(config.debug_gui_port))
+            debug_url = debug_server.start(open_browser=bool(config.debug_gui_open_browser))
+            print(f"[DUAL-REAL] Live planning debugger: {debug_url}", flush=True)
+        except OSError as exc:
+            print(f"[DUAL-REAL] Could not start live planning debugger: {exc}", flush=True)
+            debug_server = None
+
+    def _update_debug(
+        *,
+        candidate: Mapping[str, object],
+        attempt_index: int | None,
+        phase: str,
+        status: str,
+        message: str,
+    ) -> None:
+        nonlocal debug_scene_candidate_id
+        if debug_server is None:
+            return
+        try:
+            candidate_id = str(candidate.get("execution_candidate_id", candidate.get("pair_id", "")))
+            scene_payload = None
+            if candidate_id != debug_scene_candidate_id:
+                from grasp_planning.pipeline.dual_robot_planning_debug import (
+                    dual_robot_planning_scene_payload_from_plan,
+                )
+
+                scene_payload = dual_robot_planning_scene_payload_from_plan(dict(candidate))
+                debug_scene_candidate_id = candidate_id
+            debug_server.update(
+                scene_payload=scene_payload,
+                attempt_index=attempt_index,
+                attempt_total=len(ranked_candidates),
+                phase=phase,
+                status=status,
+                message=message,
+                candidate_counts=candidate_counts,
+            )
+        except Exception as exc:  # pragma: no cover - display must not stop hardware handling
+            print(f"[DUAL-REAL] Live debugger update failed: {exc}", flush=True)
 
     def _record(
         *,
@@ -836,6 +1026,18 @@ def execute_dual_real_plan(
             frame_id=str(config.frame_id),
             record=_record,
             stop_after=str(config.stop_after),
+            update_debug=_update_debug,
+        )
+        candidate_counts["exact_ik_pair_tasks_checked"] = int(pair_selection["candidates_checked"])
+        candidate_counts["exact_ik_holder_grasps_checked"] = sum(
+            1
+            for candidate_record in pair_selection["records"]
+            if isinstance(candidate_record, dict) and "holder" in dict(candidate_record.get("roles", {}))
+        )
+        candidate_counts["exact_ik_inserter_grasps_checked"] = sum(
+            1
+            for candidate_record in pair_selection["records"]
+            if isinstance(candidate_record, dict) and "inserter" in dict(candidate_record.get("roles", {}))
         )
         if selected_plan is None:
             result = DualRealExecutionResult(
@@ -908,6 +1110,15 @@ def execute_dual_real_plan(
             grippers=grippers,
             config=config,
             record=_record,
+            preferred_joint_targets=(
+                pair_selection.get("selected_joint_targets")
+                if isinstance(pair_selection.get("selected_joint_targets"), dict)
+                else None
+            ),
+            candidate_rank=(
+                int(pair_selection["selected_rank"]) if pair_selection.get("selected_rank") is not None else None
+            ),
+            update_debug=_update_debug,
         )
         message = (
             (f"Ranked pair {pair_id} stopped after {last_completed} as configured.")
@@ -954,6 +1165,23 @@ def execute_dual_real_plan(
             commander.destroy_node()
         if initialized_here and rclpy.ok():
             rclpy.shutdown()
+        if debug_server is not None:
+            terminal_phase = result.last_completed_phase or (
+                "ik_preflight" if result.status in {"preflight_ok", "ik_preflight_failed"} else "complete"
+            )
+            _update_debug(
+                candidate=execution_plan,
+                attempt_index=(
+                    int(pair_selection["selected_rank"])
+                    if pair_selection.get("selected_rank") is not None
+                    else int(pair_selection.get("candidates_checked", 0))
+                ),
+                phase=terminal_phase,
+                status="complete" if result.success else "failed",
+                message=result.message,
+            )
+            time.sleep(0.35)
+            debug_server.close()
 
 
 __all__ = [

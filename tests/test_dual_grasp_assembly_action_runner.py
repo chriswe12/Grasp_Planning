@@ -305,6 +305,114 @@ def test_dual_real_goal_builds_perceived_runtime_command_and_result(
     assert all(record["frame_id"] == "base_link" for record in debug_aabbs)
 
 
+def test_dual_real_pickup_only_stop_is_not_reported_as_preinsertion(
+    tmp_path: Path,
+) -> None:
+    repo_root, config_path = _repo(tmp_path)
+    runner = DualPipelineRunner(
+        repo_root=repo_root,
+        config_path=config_path,
+        mode="real",
+        allow_execution=True,
+        allow_objectless_planning=True,
+    )
+    task_path = tmp_path / "task.json"
+    attempt_path = tmp_path / "attempt.json"
+    task_path.write_text(json.dumps({"objects": {}}), encoding="utf-8")
+    attempt_path.write_text(
+        json.dumps(
+            {
+                "result": {
+                    "success": True,
+                    "status": "stopped_at_inserter_pickup_grasp",
+                    "last_completed_phase": "inserter_pickup_grasp",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outcome = runner._outcome_from_artifacts(
+        return_code=0,
+        task_path=task_path,
+        attempt_path=attempt_path,
+        output_lines=[],
+        cancelled=False,
+    )
+
+    assert outcome.success is False
+    assert outcome.error_code == "PARTIAL_EXECUTION"
+    assert "inserter_pickup_grasp" in outcome.message
+    assert outcome.grasped_position_xyz is None
+
+
+def test_dual_real_result_uses_selected_fallback_candidate_pose(
+    tmp_path: Path,
+) -> None:
+    repo_root, config_path = _repo(tmp_path)
+    runner = DualPipelineRunner(
+        repo_root=repo_root,
+        config_path=config_path,
+        mode="real",
+        allow_execution=True,
+        allow_objectless_planning=True,
+    )
+
+    def candidate(candidate_id: str, pair_id: str, x: float) -> dict[str, object]:
+        return {
+            "execution_candidate_id": candidate_id,
+            "pair_id": pair_id,
+            "objects": {
+                "incoming": {
+                    "preinsertion_source_pose_world": {
+                        "position_world_m": [x, 0.0, 0.04],
+                        "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                    }
+                }
+            },
+        }
+
+    first = candidate("candidate_1", "pair_1", 0.51)
+    second = candidate("candidate_2", "pair_2", 0.72)
+    task_path = tmp_path / "task.json"
+    attempt_path = tmp_path / "attempt.json"
+    task_path.write_text(
+        json.dumps({**first, "ranked_pair_candidates": [first, second]}),
+        encoding="utf-8",
+    )
+    attempt_path.write_text(
+        json.dumps(
+            {
+                "pair_id": "pair_2",
+                "execution_candidate_id": "candidate_2",
+                "pair_selection": {
+                    "selected_rank": 2,
+                    "selected_pair_id": "pair_2",
+                    "selected_execution_candidate_id": "candidate_2",
+                },
+                "result": {
+                    "success": True,
+                    "status": "stopped_at_inserter_preinsertion",
+                    "last_completed_phase": "inserter_preinsertion",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outcome = runner._outcome_from_artifacts(
+        return_code=0,
+        task_path=task_path,
+        attempt_path=attempt_path,
+        output_lines=[],
+        cancelled=False,
+    )
+
+    assert outcome.success is True
+    assert outcome.grasped_position_xyz == (0.72, 0.0, 0.04)
+    assert "pair_2" in outcome.message
+
+
 def test_dual_runner_rejects_invalid_configured_stop_phase(
     tmp_path: Path,
 ) -> None:

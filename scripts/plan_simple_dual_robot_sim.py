@@ -25,6 +25,8 @@ from grasp_planning.pipeline.dual_robot_planning_debug import (  # noqa: E402
 from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_FLOOR_Z_WORLD_M,
+    DEFAULT_HOLDER_BASE_WORLD,
+    DEFAULT_INSERTER_BASE_WORLD,
     DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
@@ -46,17 +48,21 @@ from grasp_planning.start_poses import (  # noqa: E402
 )
 
 MOVEIT_START_JOINT_POSITIONS = KUKA_MOVEIT_ARM_START_JOINT_VALUES
-ARM_SPECS = {
-    "holder": {
+ARM_SPEC_BY_ROBOT = {
+    "lbr_one": {
         "planning_group": "arm_one",
         "pose_link": "lbr_one_gripper_tcp",
         "joint_names": tuple(f"lbr_one_A{index}" for index in range(1, 8)),
     },
-    "inserter": {
+    "lbr_two": {
         "planning_group": "arm_two",
         "pose_link": "lbr_two_gripper_tcp",
         "joint_names": tuple(f"lbr_two_A{index}" for index in range(1, 8)),
     },
+}
+ARM_SPECS = {
+    "holder": dict(ARM_SPEC_BY_ROBOT["lbr_one"]),
+    "inserter": dict(ARM_SPEC_BY_ROBOT["lbr_two"]),
 }
 TARGET_SEQUENCE = (
     ("holder", "holder_pregrasp"),
@@ -163,6 +169,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--pickup-roll-deg", type=float, default=0.0)
     parser.add_argument("--pickup-pitch-deg", type=float, default=0.0)
     parser.add_argument("--pickup-yaw-deg", type=float, default=0.0)
+    parser.add_argument(
+        "--inserter-arm",
+        choices=("auto", "lbr_one", "lbr_two"),
+        default="lbr_two",
+        help=(
+            "Physical arm assigned to incoming-part pickup. 'auto' selects "
+            "lbr_one for pickup Y below assembly Y and lbr_two otherwise."
+        ),
+    )
     parser.add_argument(
         "--floor-z",
         type=float,
@@ -925,6 +940,36 @@ def _ik_preflight_pair(
     return pair_feasible, failure
 
 
+def _configure_role_assignment(
+    *,
+    requested_inserter_arm: str,
+    pickup_y: float,
+    assembly_y: float,
+) -> tuple[str, str, MovableFrame, MovableFrame]:
+    global ARM_SPECS
+
+    inserter_robot = str(requested_inserter_arm)
+    if inserter_robot == "auto":
+        inserter_robot = "lbr_one" if float(pickup_y) < float(assembly_y) else "lbr_two"
+    if inserter_robot not in ARM_SPEC_BY_ROBOT:
+        raise ValueError(f"Unsupported inserter arm '{requested_inserter_arm}'.")
+    holder_robot = "lbr_two" if inserter_robot == "lbr_one" else "lbr_one"
+    robot_bases = {
+        "lbr_one": DEFAULT_HOLDER_BASE_WORLD,
+        "lbr_two": DEFAULT_INSERTER_BASE_WORLD,
+    }
+    ARM_SPECS = {
+        "holder": dict(ARM_SPEC_BY_ROBOT[holder_robot]),
+        "inserter": dict(ARM_SPEC_BY_ROBOT[inserter_robot]),
+    }
+    return (
+        holder_robot,
+        inserter_robot,
+        robot_bases[holder_robot],
+        robot_bases[inserter_robot],
+    )
+
+
 def main() -> int:
     args = _parse_args()
     if rclpy is None:
@@ -939,6 +984,22 @@ def main() -> int:
         raise ValueError("--joint-rank-ik-candidates must be at least 1.")
     if args.joint_rank_beam_width < 1:
         raise ValueError("--joint-rank-beam-width must be at least 1.")
+    (
+        holder_robot,
+        inserter_robot,
+        holder_robot_base_world,
+        inserter_robot_base_world,
+    ) = _configure_role_assignment(
+        requested_inserter_arm=str(args.inserter_arm),
+        pickup_y=float(args.pickup_y),
+        assembly_y=float(args.assembly_y),
+    )
+    print(
+        "[DUAL-SIM-PLAN] Role assignment "
+        f"holder={holder_robot} inserter={inserter_robot} "
+        f"pickup_y={float(args.pickup_y):.3f}",
+        flush=True,
+    )
     assembly_z = float(args.floor_z) if args.assembly_z is None else float(args.assembly_z)
     selection = resolve_dual_robot_step_selection(
         assembly=args.assembly,
@@ -981,6 +1042,10 @@ def main() -> int:
             pickup_floor_clearance_margin_m=float(args.pickup_floor_clearance_margin_m),
             transport_clearance_m=float(args.transport_clearance_m),
             pickup_top_down_score_weight=float(args.pickup_top_down_score_weight),
+            holder_robot_name=holder_robot,
+            inserter_robot_name=inserter_robot,
+            holder_robot_base_world=holder_robot_base_world,
+            inserter_robot_base_world=inserter_robot_base_world,
             retained_only=strict_retained_only,
             include_nonretained_identity_fallbacks=(not strict_retained_only and not bool(args.pair_id)),
         )

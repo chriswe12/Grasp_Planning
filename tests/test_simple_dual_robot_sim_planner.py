@@ -6,12 +6,32 @@ import pytest
 
 from scripts.plan_simple_dual_robot_sim import (
     IK_PREFLIGHT_TARGETS,
+    _configure_role_assignment,
     _ik_preflight_pair,
     _new_ik_preflight_state,
     _pregrasp_aabb_obstacles_for_target,
     _rank_tasks_by_inserter_joint_path,
     _reset_active_roles,
 )
+
+
+def test_auto_role_assignment_uses_arm_nearest_pickup_side() -> None:
+    holder, inserter, holder_base, inserter_base = _configure_role_assignment(
+        requested_inserter_arm="auto",
+        pickup_y=-0.26,
+        assembly_y=0.0,
+    )
+
+    assert (holder, inserter) == ("lbr_two", "lbr_one")
+    assert holder_base.position_world_m == (0.0, 0.42, 0.0)
+    assert inserter_base.position_world_m == (0.0, -0.42, 0.0)
+
+    holder, inserter, _, _ = _configure_role_assignment(
+        requested_inserter_arm="auto",
+        pickup_y=0.26,
+        assembly_y=0.0,
+    )
+    assert (holder, inserter) == ("lbr_one", "lbr_two")
 
 
 class _FakeCommander:

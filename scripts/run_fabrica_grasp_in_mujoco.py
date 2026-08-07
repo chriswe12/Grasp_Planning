@@ -58,6 +58,10 @@ def _parse_float_tuple(raw: str) -> tuple[float, ...]:
     return values
 
 
+def _parse_optional_float_tuple(raw: str) -> tuple[float, ...]:
+    return _parse_float_tuple(raw) if str(raw).strip() else ()
+
+
 def _parse_str_tuple(raw: str) -> tuple[str, ...]:
     values = tuple(part.strip() for part in raw.split(",") if part.strip())
     if not values:
@@ -511,7 +515,7 @@ def _plan_moveit_target_sequence(
             beam_width=int(args_cli.moveit_ik_beam_width),
             seed_perturbation_rad=float(args_cli.moveit_ik_seed_perturbation_rad),
             dedup_tolerance_rad=float(args_cli.moveit_ik_dedup_tolerance_rad),
-            joint_weights=_parse_float_tuple(args_cli.moveit_ik_joint_weights),
+            joint_weights=_parse_optional_float_tuple(args_cli.moveit_ik_joint_weights),
         )
         if multi_ik_config.enabled:
             result = plan_pose_sequence_multi_ik(

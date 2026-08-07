@@ -26,6 +26,7 @@ Choose the entrypoint that matches the job:
 | Plan or execute one real-robot pickup | `./run_pipeline.sh --mode real` | `configs/grasp_pipeline_real.yaml` |
 | Build dual holder/inserter planning artifacts | `scripts/build_dual_grasp_pairs.py` | `configs/dual_grasp_planning.yaml` |
 | Plan and run the dual-arm vertical slice in Isaac | `./run_simple_dual_robot.sh --mode sim` | `configs/dual_grasp_planning.yaml` |
+| Benchmark every dual assembly step with videos | `scripts/run_dual_assembly_benchmark.py` | `configs/dual_assembly_benchmark.yaml` |
 | Preflight or run the guarded dual-arm hardware slice | `./run_simple_dual_robot.sh --mode real` | `configs/dual_grasp_planning.yaml` |
 | Evaluate grasp generation without execution | `scripts/run_grasp_generation_benchmark.py` | `configs/grasp_generation_benchmark.yaml` |
 | Execute saved benchmark grasps | `scripts/run_grasp_execution_benchmark.py` | `configs/grasp_execution_benchmark.yaml` |
@@ -277,7 +278,13 @@ each MoveIt polyline continuously with position and velocity targets. It
 settles only at the holder grasp, incoming-part grasp, and final pre-insertion
 pose; intermediate MoveIt points and transport checkpoints no longer become
 stop-and-oscillate commands. Loaded transport defaults to `0.70 rad/s`. The
-wrapper stops the MoveIt stack when finished. Add `--headless` for a non-GUI run or
+incoming part is pinned at its authored pickup pose only until the inserter
+establishes contact; loaded transport then relies on physics contact instead of
+overwriting the part root state. Final validation checks both position and
+orientation for the held base and incoming part. Incoming orientation is
+accepted against the selected target and finite symmetry-equivalent targets for
+the same held-base pose. The default angular tolerance is `0.20 rad` for each
+object. The wrapper stops the MoveIt stack when finished. Add `--headless` for a non-GUI run or
 `--record-video /tmp/dual_part_0.mp4` to save a video. Use
 `--joint-rank-candidates N` to change the pre-plan bound or
 `--skip-joint-space-ranking` only for a comparison run.
@@ -287,7 +294,12 @@ failure, Isaac failure, Ctrl-C, or shell exit, the wrapper gives every ROS
 process two seconds to stop and then kills any remaining members before
 returning. A normal rerun therefore does not require `--reuse-moveit`.
 
-During visible simulation, a localhost browser debugger opens before Isaac.
+During visible simulation and guarded real execution, a localhost browser
+debugger opens before candidate preflight or Isaac. In real mode it starts
+before the actual-pose pickup-floor filter, so even an empty candidate queue
+shows the configured floor plane, checked/accepted counts, rejection message,
+and `pickup_floor_check` failure stage. The same tab reconnects to the real
+MoveIt executor after task construction.
 It follows the currently attempted pair, renders the partial assembly,
 incoming part, and both selected grippers in `base_link`, and highlights
 whether MoveIt is planning the holder grasp, incoming-part pickup, or
@@ -346,6 +358,78 @@ the central shared workspace before the holder moves. A recovery failure is
 still fatal because the next candidate must never be planned from an unknown
 or partially reset state; its messages are saved in the failed plan artifact.
 
+### 2a. Run the resumable dual-assembly benchmark
+
+The default benchmark runs all four `plumbers_block` insertion steps at four
+front-of-robot pickup locations and eight incoming-part orientations: 128
+MoveIt-plus-Isaac cases. The assembled prefix remains upright at
+`(0.55, 0.0)` for every case. Negative-Y pickups assign `lbr_one` as inserter;
+positive-Y pickups assign `lbr_two`, and the opposite arm holds the assembly.
+
+Start with a small smoke slice:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py --limit-cases 4
+```
+
+Named filters make a single matrix cell reproducible without changing YAML:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py \
+  --parts 3 \
+  --placements right_near \
+  --orientations upright_yaw_0
+```
+
+Then run or resume the complete benchmark:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py
+```
+
+Each case has its own plan JSON, Isaac attempt JSON, combined log,
+browser-playable WebM scene recording, and terminal `case.json`. If planning
+fails before Isaac can record a frame, the case instead receives a
+`failure_scene.svg` rendered from the actual Fabrica meshes, assembled prefix,
+world placement, pickup orientation, and arm roles. The record and dashboard
+also name the failed phase, such as `Holder/base grasp`, `Incoming-part grasp`,
+or `Transport to pre-insertion`, and retain the actionable exception rather
+than the wrapper's final cleanup line. `events.jsonl`, `summary.json`,
+`summary.csv`, and the HTML dashboard are updated after a case starts and again
+when it finishes. Pressing Ctrl-C stops the current wrapper cleanly, records the
+case as interrupted, and leaves all prior results viewable. Running the same
+command resumes interrupted and pending cases while skipping completed cases.
+Use `--retry-failed` to rerun failures or `--no-resume` to start the event log
+again.
+
+Open the incremental dashboard at:
+
+```text
+artifacts/dual_assembly_benchmark/plumbers_block/index.html
+```
+
+The dashboard provides overall and grouped success rates, part/status filters,
+inline video playback or failure-scene stills, explicit failure phases, and
+links to each plan, attempt, and log. Both the benchmark and one-case simulator
+use static/dynamic contact friction `5.0/4.0` and a KUKA finger effort limit of
+`200`, so weak simulated contact is not the limiting factor. Finger motion is
+not commanded as one high-force step: it follows a three-second quintic close,
+latches on bilateral contact with the selected object, and then smoothly
+finishes the same three-second ramp to the configured high-force hold target;
+there is no instantaneous post-contact target jump. Arm and driven-finger implicit position drives
+use configuration-adaptive diagonal critical damping, recomputed from the
+current generalized inertia as `D = 2 sqrt(K I)` (`zeta = 1`). Edit
+`configs/dual_assembly_benchmark.yaml` to change placements, RPY orientations,
+physics, or case limits; incoming-part Z is still computed from the rotated mesh
+so it rests on the floor.
+
+For a completed legacy report, this command backfills failure-stage labels and
+scene stills without rerunning MoveIt or Isaac:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py --repair-failure-evidence
+```
+
 ### 3. Inspect or run MoveIt separately
 
 To keep MoveIt running for RViz or repeated planner calls:
@@ -363,8 +447,11 @@ python3 scripts/smoke_test_dual_lbr_moveit.py
 ```
 
 The shared MoveIt model contains `arm_one`, `arm_two`, and `both_arms` in one
-planning scene, so cross-arm collisions remain enabled. Physical role mapping
-is `lbr_one` at `Y=-0.42 m` as holder and `lbr_two` at `Y=+0.42 m` as inserter.
+planning scene, so cross-arm collisions remain enabled. The normal default maps
+`lbr_one` at `Y=-0.42 m` to holder and `lbr_two` at `Y=+0.42 m` to inserter.
+Simulation can pass `--inserter-arm auto` to swap those logical roles according
+to pickup Y; the saved task, debugger, MoveIt group, and Isaac scene retain the
+resolved physical-arm provenance.
 
 ### 4. Real dual-arm safety boundary
 
@@ -377,7 +464,24 @@ Without `--execute`, real mode performs only non-moving target IK checks:
 Real mode uses the same pose-dependent pickup-floor filter and retained-first,
 identity-fallback queue as simulation. It writes at most 256 candidates to the
 preflight task by default; use `--max-pair-attempts N` to override the bound for
-either mode.
+either mode. The collision-aware joint solutions selected during preflight are
+the exact joint targets sent to path planning during execution, including a
+solution found only by the known-start fallback seed. The ROS action reports
+success only after `inserter_preinsertion`; an intentionally earlier
+`stop_after` is returned as partial execution rather than a reached pose. When
+a later ranked candidate is selected, the action result pose comes from that
+candidate rather than the task's rank-1 compatibility fields.
+
+Real mode opens the same live browser debugger after the perception poses are
+resolved but before the pickup-floor filter runs. If every grasp is rejected,
+the page still reports the configured floor Z, filter counts, rejection reasons,
+and fatal stage. If candidates survive, the same tab reconnects after the task
+handoff, changes scene as exact IK rejects or selects ranked candidates, then
+follows holder approach/grasp, incoming pickup, and transport through the
+configured stop phase. Use `--debug-gui-port N` to override the stable real-mode
+port (`38825` by default). Direct wrapper runs can pass
+`--no-planning-debug-gui`; the action server can pass `--headless` (or set
+`grasp_assembly_action.headless: true`) to suppress it.
 
 Hardware execution requires the correctly configured hardware MoveIt stack,
 explicit `--execute`, confirmation unless `--yes` is supplied, and currently

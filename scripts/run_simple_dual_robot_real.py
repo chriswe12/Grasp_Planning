@@ -58,6 +58,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--execute-timeout-s", type=float, default=120.0)
     parser.add_argument("--gripper-timeout-s", type=float, default=10.0)
     parser.add_argument("--grasp-settle-time-s", type=float, default=0.5)
+    parser.add_argument(
+        "--debug-gui",
+        action="store_true",
+        help="Open the live dual-arm candidate and execution browser view.",
+    )
+    parser.add_argument("--debug-gui-port", type=int, default=0)
+    parser.add_argument(
+        "--no-debug-gui-open-browser",
+        action="store_false",
+        dest="debug_gui_open_browser",
+        help="Reuse an existing debug browser tab instead of opening another one.",
+    )
+    parser.set_defaults(debug_gui_open_browser=True)
     for role, robot in (("holder", "lbr_one"), ("inserter", "lbr_two")):
         parser.add_argument(
             f"--{role}-gripper-open-service",
@@ -100,6 +113,9 @@ def main() -> int:
         inserter_gripper_open_service=str(args.inserter_gripper_open_service),
         inserter_gripper_close_service=str(args.inserter_gripper_close_service),
         inserter_gripper_stop_service=str(args.inserter_gripper_stop_service),
+        debug_gui=bool(args.debug_gui),
+        debug_gui_port=int(args.debug_gui_port),
+        debug_gui_open_browser=bool(args.debug_gui_open_browser),
     )
     result = execute_dual_real_plan(
         plan_json=args.plan_json,

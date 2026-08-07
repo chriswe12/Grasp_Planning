@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
+    NoPoseFeasibleDualTasksError,
 )
 from grasp_planning.ros2.dual_real_grasp_executor import (
     MOTION_SEQUENCE,
@@ -16,6 +18,8 @@ from grasp_planning.ros2.dual_real_grasp_executor import (
     _work_surface_obstacle,
     load_and_validate_dual_plan,
 )
+from grasp_planning.start_poses import KUKA_MOVEIT_ARM_START_JOINT_VALUES
+from scripts import build_simple_dual_robot_task as task_builder
 from scripts.build_simple_dual_robot_task import (
     _include_nonretained_identity_fallbacks,
 )
@@ -76,6 +80,28 @@ class _FallbackIkCommander:
         if seed_joint_positions is None:
             return None, "live failed"
         return tuple(seed_joint_positions), "alternate ok"
+
+
+class _FallbackIkExecutionCommander(_Commander, _FallbackIkCommander):
+    def __init__(self) -> None:
+        _Commander.__init__(self)
+        _FallbackIkCommander.__init__(self)
+        self.joint_plans: list[tuple[str, tuple[float, ...]]] = []
+        self.executed: list[str] = []
+
+    def move_to_pose(self, target, *, label: str, execute: bool):
+        del target, label, execute
+        raise AssertionError("Execution must not recompute pose IK after preflight.")
+
+    def plan_to_joint_positions(self, joint_positions, *, label: str):
+        values = tuple(float(value) for value in joint_positions)
+        self.joint_plans.append((label, values))
+        return object(), "joint plan ok"
+
+    def execute_trajectory(self, trajectory, *, label: str):
+        del trajectory
+        self.executed.append(label)
+        return True, f"{label} executed"
 
 
 class _RankedIkCommander:
@@ -165,6 +191,48 @@ def test_load_and_validate_dual_plan_rejects_role_swap(tmp_path: Path) -> None:
         raise AssertionError("Expected mismatched role mapping to fail.")
 
 
+def test_ranked_plan_accepts_higher_score_after_retained_queue_boundary(
+    tmp_path: Path,
+) -> None:
+    retained = _plan_payload()
+    retained["candidate_rank"] = 1
+    retained["selection_score"] = 0.46
+
+    fallback = _plan_payload()
+    fallback["candidate_rank"] = 2
+    fallback["pair_id"] = "p002_h0007_i0_0496"
+    fallback["execution_candidate_id"] = "p002_h0007_i0_0496__tr_symmetric"
+    fallback["selection_score"] = 0.64
+
+    plan = dict(retained)
+    plan["ranked_pair_candidates"] = [retained, fallback]
+
+    loaded = load_and_validate_dual_plan(_write_plan(tmp_path, plan))
+
+    assert loaded["ranked_pair_candidates"][1]["selection_score"] == 0.64
+
+
+def test_ranked_plan_rejects_candidate_rank_that_disagrees_with_list_order(
+    tmp_path: Path,
+) -> None:
+    first = _plan_payload()
+    first["candidate_rank"] = 1
+
+    second = _plan_payload()
+    second["candidate_rank"] = 3
+    second["pair_id"] = "p002_h0001_i0_0003"
+
+    plan = dict(first)
+    plan["ranked_pair_candidates"] = [first, second]
+
+    try:
+        load_and_validate_dual_plan(_write_plan(tmp_path, plan))
+    except ValueError as exc:
+        assert "candidate_rank=3; expected 2" in str(exc)
+    else:
+        raise AssertionError("Expected mismatched explicit candidate rank to fail.")
+
+
 def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     tmp_path: Path,
 ) -> None:
@@ -172,6 +240,7 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     commanders = {"holder": _Commander(), "inserter": _Commander()}
     grippers = {"holder": _Gripper(), "inserter": _Gripper()}
     steps, record = _recorded_steps()
+    debug_updates = []
     config = DualRealExecutionConfig(
         execute=True,
         allow_objectless_planning=True,
@@ -184,6 +253,8 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
         grippers=grippers,
         config=config,
         record=record,
+        candidate_rank=4,
+        update_debug=lambda **entry: debug_updates.append(entry),
     )
 
     assert success is True
@@ -205,6 +276,10 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
         ("close", plan["grasps"]["inserter_pickup"]["jaw_width_m"]),
     ]
     assert steps[-1]["name"] == "inserter_preinsertion"
+    assert any(update["phase"] == "holder_pregrasp" and update["status"] == "planning" for update in debug_updates)
+    assert debug_updates[-1]["phase"] == "inserter_preinsertion"
+    assert debug_updates[-1]["status"] == "succeeded"
+    assert all(update["attempt_index"] == 4 for update in debug_updates)
 
 
 def test_execute_sequence_stops_before_holder_close_at_pregrasp(
@@ -329,6 +404,9 @@ def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
     assert 'ASSEMBLY_Z=""' in source
     assert 'COMMON_TASK_ARGS+=(--assembly-z "${ASSEMBLY_Z}")' in source
     assert 'MAX_PAIR_ATTEMPTS="256"' in source
+    assert 'PLANNING_DEBUG_GUI_PORT="${DUAL_REAL_PLANNING_DEBUG_GUI_PORT:-38825}"' in source
+    assert "TASK_BUILD_ARGS+=(--debug-gui --debug-gui-port" in source
+    assert "--no-debug-gui-open-browser" in source
 
     moveit_start = (Path(__file__).resolve().parents[1] / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
     assert "ros2 node list --no-daemon" in moveit_start
@@ -337,6 +415,92 @@ def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
 def test_real_task_adds_only_identity_fallbacks_without_a_fixed_pair() -> None:
     assert _include_nonretained_identity_fallbacks("") is True
     assert _include_nonretained_identity_fallbacks("p001_h0001_i0_0002") is False
+
+
+def test_real_task_debugger_starts_before_empty_pickup_floor_filter(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    events: list[tuple[str, object]] = []
+
+    class FakeDebugServer:
+        def __init__(self, *, port: int) -> None:
+            events.append(("init", port))
+
+        def start(self, *, open_browser: bool) -> str:
+            events.append(("start", open_browser))
+            return "http://127.0.0.1:38825/"
+
+        def update(self, **payload) -> None:
+            events.append(("update", payload))
+
+        def close(self) -> None:
+            events.append(("close", None))
+
+    args = SimpleNamespace(
+        artifact_root=tmp_path,
+        artifact_dir=tmp_path,
+        assembly="synthetic",
+        incoming_part_id="1",
+        step_id="step_001_part_1",
+        pair_id="",
+        max_pair_candidates=256,
+        assembly_x=0.55,
+        assembly_y=0.0,
+        assembly_z=-0.03,
+        assembly_yaw_deg=0.0,
+        pickup_x=0.55,
+        pickup_y=0.28,
+        pickup_roll_deg=0.0,
+        pickup_pitch_deg=0.0,
+        pickup_yaw_deg=0.0,
+        floor_z=-0.03,
+        transport_clearance_m=0.08,
+        output=tmp_path / "task.json",
+        debug_gui=True,
+        debug_gui_port=38825,
+        debug_gui_open_browser=True,
+    )
+    selection = SimpleNamespace(
+        artifact_dir=tmp_path,
+        step_id="step_001_part_1",
+    )
+
+    def reject_all(**_kwargs):
+        assert any(
+            event == "update" and payload["status"] == "planning"
+            for event, payload in events
+            if isinstance(payload, dict)
+        )
+        raise NoPoseFeasibleDualTasksError(
+            "all pickup grasps collide with the floor",
+            candidate_filter_diagnostics={
+                "pickup_floor_z_world_m": -0.03,
+                "pickup_grasps_checked": 783,
+                "pickup_grasps_accepted": 0,
+                "pickup_grasps_rejected": 783,
+            },
+        )
+
+    monkeypatch.setattr(task_builder, "_parse_args", lambda: args)
+    monkeypatch.setattr(task_builder, "resolve_dual_robot_step_selection", lambda **_kwargs: selection)
+    monkeypatch.setattr(task_builder, "DualRobotPlanningDebugServer", FakeDebugServer)
+    monkeypatch.setattr(task_builder, "load_simple_dual_robot_pair_tasks", reject_all)
+    monkeypatch.setattr(task_builder.time, "sleep", lambda _seconds: None)
+
+    try:
+        task_builder.main()
+    except NoPoseFeasibleDualTasksError:
+        pass
+    else:
+        raise AssertionError("Expected the synthetic pickup-floor rejection.")
+
+    updates = [payload for event, payload in events if event == "update"]
+    assert updates[0]["phase"] == "pickup_floor_check"
+    assert updates[0]["status"] == "planning"
+    assert updates[-1]["status"] == "fatal"
+    assert updates[-1]["candidate_counts"]["pickup_grasps_checked"] == 783
+    assert events[-1][0] == "close"
 
 
 def test_default_dual_work_surface_top_is_minus_thirty_mm() -> None:
@@ -377,6 +541,48 @@ def test_preflight_retries_ik_with_known_start_seed(tmp_path: Path) -> None:
         assert commander.seeds[1] is not None
 
 
+def test_fallback_preflight_joint_targets_are_reused_for_execution(
+    tmp_path: Path,
+) -> None:
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path))
+    commanders = {
+        "holder": _FallbackIkExecutionCommander(),
+        "inserter": _FallbackIkExecutionCommander(),
+    }
+    resolved_joint_targets: dict[str, tuple[float, ...]] = {}
+    _, record = _recorded_steps()
+
+    assert _preflight_targets(
+        plan=plan,
+        commanders=commanders,
+        frame_id="base_link",
+        record=record,
+        resolved_joint_targets=resolved_joint_targets,
+    )
+    success, status, last_completed = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers={"holder": _Gripper(), "inserter": _Gripper()},
+        config=DualRealExecutionConfig(
+            execute=True,
+            allow_objectless_planning=True,
+            stop_after="inserter_preinsertion",
+        ),
+        record=record,
+        preferred_joint_targets=resolved_joint_targets,
+    )
+
+    assert success is True
+    assert status == "stopped_at_inserter_preinsertion"
+    assert last_completed == "inserter_preinsertion"
+    assert set(resolved_joint_targets) == {name for _, name in MOTION_SEQUENCE}
+    for role, commander in commanders.items():
+        expected_labels = [name for target_role, name in MOTION_SEQUENCE if target_role == role]
+        assert [label for label, _ in commander.joint_plans] == expected_labels
+        assert commander.executed == expected_labels
+        assert all(joints == KUKA_MOVEIT_ARM_START_JOINT_VALUES for _, joints in commander.joint_plans)
+
+
 def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:
     first = _plan_payload()
     first["selection_score"] = 0.9
@@ -396,12 +602,14 @@ def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:
         "inserter": _RankedIkCommander(),
     }
     steps, record = _recorded_steps()
+    debug_updates = []
 
     selected, summary = _select_ranked_preflight_candidate(
         plan=plan,
         commanders=commanders,
         frame_id="base_link",
         record=record,
+        update_debug=lambda **entry: debug_updates.append(entry),
     )
 
     assert selected is not None
@@ -409,9 +617,16 @@ def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:
     assert summary["candidates_checked"] == 2
     assert summary["selected_rank"] == 2
     assert summary["selected_pair_id"] == "p002_h0001_i0_0003"
+    assert set(summary["selected_joint_targets"]) == {name for _, name in MOTION_SEQUENCE}
     assert commanders["holder"].calls == 2
     assert commanders["inserter"].calls == 7
     assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert [(update["attempt_index"], update["status"]) for update in debug_updates] == [
+        (1, "planning"),
+        (1, "failed"),
+        (2, "planning"),
+        (2, "succeeded"),
+    ]
     assert any(
         step["name"] == "candidate_preflight" and step["candidate_rank"] == 1 and step["ok"] is False for step in steps
     )

@@ -17,6 +17,7 @@ from grasp_planning.pipeline.dual_robot_pair_scoring import MovableFrame
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_HOLDER_PREGRASP_OFFSET_M,
     DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
+    NoPoseFeasibleDualTasksError,
     compose_source_pose_world,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
@@ -403,6 +404,7 @@ def test_source_pose_resting_on_floor_uses_the_mesh_lowest_point() -> None:
 def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separate() -> None:
     planner = (REPO_ROOT / "scripts/plan_simple_dual_robot_sim.py").read_text(encoding="utf-8")
     isaac_runner = (REPO_ROOT / "scripts/run_simple_dual_robot_sim_in_isaac.py").read_text(encoding="utf-8")
+    task_builder = (REPO_ROOT / "grasp_planning/pipeline/dual_robot_simple_sim.py").read_text(encoding="utf-8")
 
     assert '"object_collision_geometry_in_scene": False' in planner
     assert '"work_surface_collision_geometry_in_scene": True' in planner
@@ -412,12 +414,9 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
     assert 'parser.add_argument("--velocity-scale", type=float, default=0.35)' in planner
     assert 'parser.add_argument("--acceleration-scale", type=float, default=0.35)' in planner
     assert "KUKA_MOVEIT_ARM_START_JOINT_VALUES" in planner
-    assert '"planning_group": "arm_one"' in (REPO_ROOT / "grasp_planning/pipeline/dual_robot_simple_sim.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"planning_group": "arm_two"' in (REPO_ROOT / "grasp_planning/pipeline/dual_robot_simple_sim.py").read_text(
-        encoding="utf-8"
-    )
+    assert '"planning_group": (' in task_builder
+    assert 'self.holder_robot_name == "lbr_one"' in task_builder
+    assert 'self.inserter_robot_name == "lbr_one"' in task_builder
     assert "make_dual_kuka_assembly_scene_cfg" in isaac_runner
     assert "ground_height_m=floor_z_world_m" in isaac_runner
     assert "incoming_part.write_root_state_to_sim" in isaac_runner
@@ -473,6 +472,34 @@ def test_default_supported_layout_places_both_object_aabbs_on_lowered_floor() ->
     )
 
 
+def test_runtime_task_can_swap_holder_and_inserter_robot_assignments() -> None:
+    tasks = load_simple_dual_robot_pair_tasks(
+        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        step_id="step_001_part_0",
+        pickup_source_world_xy=(0.55, -0.26),
+        holder_robot_name="lbr_two",
+        inserter_robot_name="lbr_one",
+        holder_robot_base_world=simple_sim.DEFAULT_INSERTER_BASE_WORLD,
+        inserter_robot_base_world=simple_sim.DEFAULT_HOLDER_BASE_WORLD,
+        retained_only=True,
+    )
+
+    payload = tasks[0].to_payload()
+
+    assert payload["roles"]["holder"] == {
+        "robot": "lbr_two",
+        "planning_group": "arm_two",
+        "tcp_link": "lbr_two_gripper_tcp",
+    }
+    assert payload["roles"]["inserter"] == {
+        "robot": "lbr_one",
+        "planning_group": "arm_one",
+        "tcp_link": "lbr_one_gripper_tcp",
+    }
+    assert payload["layout"]["holder_base_world_m"] == [0.0, 0.42, 0.0]
+    assert payload["layout"]["inserter_base_world_m"] == [0.0, -0.42, 0.0]
+
+
 def test_pregrasp_aabb_pieces_exclude_selected_gripper_sweeps() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
         artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
@@ -525,6 +552,28 @@ def test_simple_dual_sim_filters_and_records_grounded_pickup_floor_clearance() -
     assert counts["pose_feasible_unique_inserter_grasps"] <= len(tasks)
     assert counts["stage3_retained_execution_candidates"] >= counts["stage3_retained_pairs"]
     assert all(task.inserter_candidate.grasp_id != "i0_2040" for task in tasks)
+
+
+def test_empty_pickup_floor_queue_preserves_filter_diagnostics() -> None:
+    try:
+        load_simple_dual_robot_pair_tasks(
+            artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+            step_id="step_001_part_0",
+            retained_only=False,
+            pickup_floor_clearance_margin_m=10.0,
+        )
+    except NoPoseFeasibleDualTasksError as exc:
+        counts = exc.candidate_filter_diagnostics
+    else:
+        raise AssertionError("Expected an impossible floor margin to empty the runtime queue.")
+
+    assert counts["pickup_floor_z_world_m"] == -0.030
+    assert counts["pickup_floor_clearance_margin_m"] == 10.0
+    assert counts["pickup_grasps_checked"] > 0
+    assert counts["pickup_grasps_accepted"] == 0
+    assert counts["pickup_grasps_rejected"] == counts["pickup_grasps_checked"]
+    assert counts["pose_feasible_execution_candidates"] == 0
+    assert counts["pickup_grasp_rejection_counts"]
 
 
 def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -> None:

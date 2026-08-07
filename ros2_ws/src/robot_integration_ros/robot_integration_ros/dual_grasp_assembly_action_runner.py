@@ -130,6 +130,68 @@ def _read_json_mapping(path: Path) -> dict[str, object]:
     return payload
 
 
+def _selected_real_task(
+    task: dict[str, object],
+    attempt: dict[str, object],
+) -> dict[str, object]:
+    """Resolve the task candidate that the real executor actually selected."""
+
+    raw_candidates = task.get("ranked_pair_candidates")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
+        return task
+    candidates = [dict(value) for value in raw_candidates if isinstance(value, dict)]
+    if not candidates:
+        raise ValueError("Dual task ranked_pair_candidates contains no candidate objects.")
+
+    raw_selection = attempt.get("pair_selection")
+    selection = dict(raw_selection) if isinstance(raw_selection, dict) else {}
+    selected_candidate_id = str(
+        selection.get(
+            "selected_execution_candidate_id",
+            attempt.get("execution_candidate_id", ""),
+        )
+    )
+    selected_pair_id = str(
+        selection.get(
+            "selected_pair_id",
+            attempt.get("pair_id", ""),
+        )
+    )
+    if selected_candidate_id:
+        matches = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("execution_candidate_id", "")) == selected_candidate_id
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                f"Dual task has multiple candidates with selected execution_candidate_id '{selected_candidate_id}'."
+            )
+    if selected_pair_id:
+        matches = [candidate for candidate in candidates if str(candidate.get("pair_id", "")) == selected_pair_id]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                "Selected pair_id is ambiguous across symmetry-transition candidates; "
+                "the execution_candidate_id is required."
+            )
+
+    selected_rank = selection.get("selected_rank")
+    if selected_rank is not None:
+        rank = int(selected_rank)
+        rank_matches = [
+            candidate
+            for index, candidate in enumerate(candidates, start=1)
+            if int(candidate.get("candidate_rank", index)) == rank
+        ]
+        if len(rank_matches) == 1:
+            return rank_matches[0]
+    raise ValueError("Could not resolve the candidate selected by the dual real executor.")
+
+
 class DualPipelineRunner:
     """Run one dual PITL/Isaac or real GraspAssembly goal at a time."""
 
@@ -496,10 +558,27 @@ class DualPipelineRunner:
                 orientation_xyzw,
             )
 
+        last_completed_phase = str(result.get("last_completed_phase", "")).strip()
+        if not last_completed_phase:
+            status = str(result.get("status", "")).strip()
+            if status.startswith("stopped_at_"):
+                last_completed_phase = status.removeprefix("stopped_at_")
+            elif status == "completed":
+                last_completed_phase = "inserter_preinsertion"
+        if last_completed_phase != "inserter_preinsertion":
+            reached = last_completed_phase or "no motion phase"
+            return DualPipelineOutcome(
+                False,
+                "PARTIAL_EXECUTION",
+                (f"Dual real execution stopped after '{reached}', before the incoming part reached pre-insertion."),
+            )
+
         task = _read_json_mapping(task_path)
-        objects = task.get("objects")
+        assert isinstance(attempt, dict)
+        selected_task = _selected_real_task(task, attempt)
+        objects = selected_task.get("objects")
         if not isinstance(objects, dict):
-            raise ValueError("Dual task is missing objects.")
+            raise ValueError("Selected dual task candidate is missing objects.")
         incoming = objects.get("incoming")
         if not isinstance(incoming, dict):
             raise ValueError("Dual task is missing incoming object.")
@@ -519,11 +598,7 @@ class DualPipelineRunner:
             (
                 "Dual real transport reached the commanded pre-insertion "
                 "target"
-                + (
-                    f" using ranked pair {attempt.get('pair_id')}."
-                    if isinstance(attempt, dict) and str(attempt.get("pair_id", ""))
-                    else "."
-                )
+                + (f" using ranked pair {attempt.get('pair_id')}." if str(attempt.get("pair_id", "")) else ".")
                 + " The returned pose is the commanded source-frame pose."
             ),
             frame_id,
@@ -701,6 +776,8 @@ class DualPipelineRunner:
             if self.headless or bool(action.get("headless", False)):
                 command.append("--headless")
         else:
+            if self.headless or bool(action.get("headless", False)):
+                command.append("--no-planning-debug-gui")
             command.extend(
                 (
                     "--task-output",

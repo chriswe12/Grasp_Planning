@@ -32,6 +32,16 @@ parser.add_argument(
     default=Path("artifacts/dual_grasp_planning/plumbers_block/simple_dual_robot_sim_attempt.json"),
 )
 parser.add_argument("--object-density-kg-m3", type=float, default=1240.0)
+parser.add_argument("--static-friction", type=float, default=5.0)
+parser.add_argument("--dynamic-friction", type=float, default=4.0)
+parser.add_argument("--gripper-effort-limit", type=float, default=200.0)
+parser.add_argument(
+    "--critical-damping-ratio",
+    "--arm-critical-damping-ratio",
+    dest="critical_damping_ratio",
+    type=float,
+    default=1.0,
+)
 parser.add_argument(
     "--unloaded-max-joint-speed-rad-s",
     type=float,
@@ -72,7 +82,8 @@ parser.add_argument(
     help="Maximum time to hold each final arm waypoint before declaring it unsettled.",
 )
 parser.add_argument("--grasp-settle-time-s", type=float, default=1.0)
-parser.add_argument("--gripper-close-duration-s", type=float, default=1.5)
+parser.add_argument("--gripper-close-duration-s", type=float, default=3.0)
+parser.add_argument("--gripper-contact-preload-m", type=float, default=0.0004)
 parser.add_argument(
     "--close-width",
     type=float,
@@ -90,7 +101,7 @@ parser.add_argument(
 parser.add_argument(
     "--finger-contact-min-force-n",
     type=float,
-    default=0.01,
+    default=0.25,
     help=(
         "Minimum filtered force required on each finger to accept bilateral "
         "contact with that gripper's selected object."
@@ -130,14 +141,32 @@ parser.add_argument(
 )
 parser.add_argument("--base-position-tolerance-m", type=float, default=0.025)
 parser.add_argument(
+    "--base-orientation-tolerance-rad",
+    type=float,
+    default=0.20,
+)
+parser.add_argument(
     "--incoming-position-tolerance-m",
     type=float,
     default=0.040,
+)
+parser.add_argument(
+    "--incoming-orientation-tolerance-rad",
+    type=float,
+    default=0.20,
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 if args_cli.object_density_kg_m3 <= 0.0:
     parser.error("--object-density-kg-m3 must be positive.")
+if args_cli.static_friction <= 0.0 or args_cli.dynamic_friction <= 0.0:
+    parser.error("--static-friction and --dynamic-friction must be positive.")
+if args_cli.gripper_effort_limit <= 0.0:
+    parser.error("--gripper-effort-limit must be positive.")
+if args_cli.critical_damping_ratio <= 0.0:
+    parser.error("--critical-damping-ratio must be positive.")
+if args_cli.gripper_contact_preload_m < 0.0:
+    parser.error("--gripper-contact-preload-m must be non-negative.")
 if args_cli.trajectory_waypoint_tolerance_rad <= 0.0:
     parser.error("--trajectory-waypoint-tolerance-rad must be positive.")
 if args_cli.contact_pose_tolerance_rad <= 0.0:
@@ -154,6 +183,10 @@ if args_cli.close_width < 0.0:
     parser.error("--close-width must be non-negative.")
 if args_cli.finger_contact_min_force_n < 0.0:
     parser.error("--finger-contact-min-force-n must be non-negative.")
+if not 0.0 < args_cli.base_orientation_tolerance_rad <= math.pi:
+    parser.error("--base-orientation-tolerance-rad must be in (0, pi].")
+if not 0.0 < args_cli.incoming_orientation_tolerance_rad <= math.pi:
+    parser.error("--incoming-orientation-tolerance-rad must be in (0, pi].")
 if args_cli.max_joint_speed_rad_s is not None and args_cli.max_joint_speed_rad_s <= 0.0:
     parser.error("--max-joint-speed-rad-s must be positive when provided.")
 if args_cli.record_video is not None:
@@ -177,6 +210,7 @@ from grasp_planning.envs.fr3_part_env import (  # noqa: E402
 )
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     quat_to_rotmat_xyzw,
+    rotmat_to_quat_xyzw,
 )
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import (  # noqa: E402
     TriangleMesh,
@@ -207,6 +241,11 @@ from grasp_planning.start_poses import (  # noqa: E402
     gripper_joint_target_from_width,
     kuka_moveit_to_isaac_joint_positions,
 )
+
+ROLE_ROBOT_NAMES = {
+    "holder": "lbr_one",
+    "inserter": "lbr_two",
+}
 from grasp_planning.video import OpenCvVideoWriter  # noqa: E402
 
 
@@ -413,11 +452,16 @@ def _convert_subassembly_to_usd(
     return str(Path(converter.usd_path).resolve())
 
 
-def _bind_high_friction_material(stage) -> int:
+def _bind_high_friction_material(
+    stage,
+    *,
+    static_friction: float,
+    dynamic_friction: float,
+) -> int:
     material_path = "/World/Looks/dual_grasp_high_friction"
     material_cfg = sim_utils.RigidBodyMaterialCfg(
-        static_friction=3.0,
-        dynamic_friction=2.5,
+        static_friction=float(static_friction),
+        dynamic_friction=float(dynamic_friction),
         restitution=0.0,
         friction_combine_mode="max",
         restitution_combine_mode="min",
@@ -446,7 +490,8 @@ def _trajectory(
     raw: dict[str, object],
     label: str,
 ) -> JointTrajectory:
-    expected_names = tuple(f"lbr_{'one' if 'holder' in label else 'two'}_A{index}" for index in range(1, 8))
+    role = "holder" if "holder" in label else "inserter"
+    expected_names = tuple(f"{ROLE_ROBOT_NAMES[role]}_A{index}" for index in range(1, 8))
     names = tuple(str(value) for value in raw["joint_names"])  # type: ignore[index]
     if names != expected_names:
         raise ValueError(f"{label} joint names do not match {expected_names}: {names}")
@@ -579,6 +624,12 @@ def _close_gripper(
         settle_duration_s=GRIPPER_CLOSE_SETTLE_DURATION_S,
         min_contact_motion_m=0.001,
         force_joint_state=False,
+        stop_on_contact=lambda: _filtered_bilateral_contact_matches_selected_object(
+            _finger_contact_snapshot(context.scene, role=contact_role),
+            minimum_force_n=float(args_cli.finger_contact_min_force_n),
+        ),
+        contact_preload_m=float(args_cli.gripper_contact_preload_m),
+        contact_hold_width_m=float(commanded_width_m),
         step_callback=step_callback,
     )
     status = str(diagnostics.get("gripper_close_status", "unknown"))
@@ -646,13 +697,31 @@ def _close_gripper(
     if status not in {
         "target_reached",
         "contact_stalled",
+        "contact_latched",
         "max_duration_elapsed",
     } or not bool(matched):
         raise RuntimeError(
             f"{label} did not establish selected-width contact: "
             f"status={status} matched={matched} diagnostics={diagnostics}"
         )
-    context.fixed_gripper_width = commanded_width_m
+    transport_hold_width_m = commanded_width_m
+    contact_hold_positions = diagnostics.get("gripper_close_contact_hold_joint_positions")
+    if (
+        isinstance(joint_names, list)
+        and isinstance(contact_hold_positions, list)
+        and "left_finger_joint" in joint_names
+        and len(contact_hold_positions) == len(joint_names)
+    ):
+        left_index = joint_names.index("left_finger_joint")
+        transport_hold_width_m = max(
+            0.0,
+            min(
+                KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+                KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * abs(float(contact_hold_positions[left_index])),
+            ),
+        )
+    diagnostics["transport_hold_width_m"] = float(transport_hold_width_m)
+    context.fixed_gripper_width = float(transport_hold_width_m)
     for _ in range(
         max(
             1,
@@ -732,6 +801,122 @@ def _distance(
     second: list[float] | tuple[float, ...],
 ) -> float:
     return float(np.linalg.norm(np.asarray(first, dtype=float) - np.asarray(second, dtype=float)))
+
+
+def _quaternion_distance_rad(
+    first: list[float] | tuple[float, ...],
+    second: list[float] | tuple[float, ...],
+) -> float:
+    first_array = np.asarray(first, dtype=float)
+    second_array = np.asarray(second, dtype=float)
+    first_array /= max(float(np.linalg.norm(first_array)), 1.0e-12)
+    second_array /= max(float(np.linalg.norm(second_array)), 1.0e-12)
+    cosine = float(np.clip(abs(np.dot(first_array, second_array)), 0.0, 1.0))
+    return float(2.0 * math.acos(cosine))
+
+
+def _pose_matrix(
+    position: tuple[float, float, float],
+    orientation_xyzw: tuple[float, float, float, float],
+) -> np.ndarray:
+    matrix = np.eye(4, dtype=float)
+    matrix[:3, :3] = quat_to_rotmat_xyzw(orientation_xyzw)
+    matrix[:3, 3] = np.asarray(position, dtype=float)
+    return matrix
+
+
+def _finite_symmetry_powers(raw_matrix: object) -> tuple[np.ndarray, ...]:
+    """Expand one finite source-frame symmetry without trusting an order tag."""
+
+    symmetry = np.asarray(raw_matrix, dtype=float)
+    identity = np.eye(4, dtype=float)
+    if symmetry.shape != (4, 4) or not np.all(np.isfinite(symmetry)):
+        return (identity,)
+    powers: list[np.ndarray] = []
+    seen: set[tuple[float, ...]] = set()
+    current = identity
+    for _ in range(16):
+        key = tuple(round(float(value), 8) for value in current.reshape(-1))
+        if key in seen:
+            break
+        seen.add(key)
+        powers.append(current)
+        current = current @ symmetry
+    return tuple(powers)
+
+
+def _expected_incoming_preinsertion_poses(
+    plan: dict[str, object],
+) -> tuple[dict[str, object], ...]:
+    """Return symmetry-valid incoming targets for the selected held-base pose."""
+
+    selected_objects = plan.get("objects")
+    if not isinstance(selected_objects, dict):
+        raise ValueError("Dual task is missing objects.")
+    selected_base = selected_objects.get("subassembly", selected_objects.get("base"))
+    if not isinstance(selected_base, dict):
+        raise ValueError("Dual task is missing the held base/subassembly.")
+    selected_base_position, selected_base_orientation = _pose(dict(selected_base["source_pose_world"]))
+
+    raw_ranked = plan.get("ranked_pair_candidates")
+    candidates = [plan]
+    if isinstance(raw_ranked, list):
+        candidates.extend(value for value in raw_ranked if isinstance(value, dict))
+
+    expected: list[dict[str, object]] = []
+    seen: set[tuple[float, ...]] = set()
+    for candidate in candidates:
+        candidate_objects = candidate.get("objects")
+        if not isinstance(candidate_objects, dict):
+            continue
+        candidate_base = candidate_objects.get(
+            "subassembly",
+            candidate_objects.get("base"),
+        )
+        incoming = candidate_objects.get("incoming")
+        if not isinstance(candidate_base, dict) or not isinstance(incoming, dict):
+            continue
+        candidate_base_position, candidate_base_orientation = _pose(dict(candidate_base["source_pose_world"]))
+        if _distance(candidate_base_position, selected_base_position) > 1.0e-7:
+            continue
+        if (
+            _quaternion_distance_rad(
+                candidate_base_orientation,
+                selected_base_orientation,
+            )
+            > 1.0e-7
+        ):
+            continue
+        position, orientation = _pose(dict(incoming["preinsertion_source_pose_world"]))
+        raw_transition = candidate.get("transition_symmetry")
+        transition = dict(raw_transition) if isinstance(raw_transition, dict) else {}
+        symmetry_powers = _finite_symmetry_powers(transition.get("incoming_symmetry_source_m", np.eye(4)))
+        expected_matrix = _pose_matrix(position, orientation)
+        for symmetry_power, symmetry_matrix in enumerate(symmetry_powers):
+            equivalent_matrix = expected_matrix @ symmetry_matrix
+            equivalent_position = tuple(float(value) for value in equivalent_matrix[:3, 3])
+            equivalent_orientation = rotmat_to_quat_xyzw(equivalent_matrix[:3, :3])
+            key = tuple(round(value, 9) for value in (*equivalent_position, *equivalent_orientation))
+            if key in seen:
+                continue
+            seen.add(key)
+            expected.append(
+                {
+                    "execution_candidate_id": str(
+                        candidate.get(
+                            "execution_candidate_id",
+                            candidate.get("pair_id", ""),
+                        )
+                    ),
+                    "transition_id": str(candidate.get("transition_id", "")),
+                    "symmetry_power": symmetry_power,
+                    "position_world_m": list(equivalent_position),
+                    "orientation_xyzw_world": list(equivalent_orientation),
+                }
+            )
+    if not expected:
+        raise ValueError("Dual task has no pre-insertion target for the selected held-base pose.")
+    return tuple(expected)
 
 
 def _motion_snapshot(
@@ -822,6 +1007,8 @@ def _write_attempt(
 
 
 def main() -> int:
+    global ROLE_ROBOT_NAMES
+
     main_started_at = time.perf_counter()
     plan_path = args_cli.plan_json.expanduser().resolve()
     holder_sequence: list[tuple[Path, dict[str, object]]] = []
@@ -839,12 +1026,33 @@ def main() -> int:
         plan = _read_json(plan_path)
     if plan.get("kind") != "dual_robot_simple_sim_task":
         raise ValueError(f"Unsupported plan kind in '{plan_path}': {plan.get('kind')}")
+    raw_roles = plan.get("roles")
+    roles = dict(raw_roles) if isinstance(raw_roles, dict) else {}
+    role_robot_names: dict[str, str] = {}
+    for role in ("holder", "inserter"):
+        raw_role = roles.get(role)
+        if not isinstance(raw_role, dict):
+            raise ValueError(f"Dual plan is missing role metadata for '{role}'.")
+        role_robot_names[role] = str(raw_role.get("robot", ""))
+    if set(role_robot_names.values()) != {"lbr_one", "lbr_two"}:
+        raise ValueError(f"Dual plan roles must assign lbr_one and lbr_two exactly once; got {role_robot_names}.")
+    ROLE_ROBOT_NAMES = role_robot_names
     objects = dict(plan["objects"])
     base_payload = dict(objects["base"])
     raw_subassembly = objects.get("subassembly")
     subassembly_payload = dict(raw_subassembly) if isinstance(raw_subassembly, dict) else None
     incoming_payload = dict(objects["incoming"])
     layout = dict(plan.get("layout", {}))
+    holder_robot_base_position = _vec(
+        layout.get("holder_base_world_m", (0.0, -0.42, 0.0)),
+        length=3,
+        field_name="layout.holder_base_world_m",
+    )
+    inserter_robot_base_position = _vec(
+        layout.get("inserter_base_world_m", (0.0, 0.42, 0.0)),
+        length=3,
+        field_name="layout.inserter_base_world_m",
+    )
     floor_z_world_m = float(
         layout.get(
             "pickup_floor_z_world_m",
@@ -879,7 +1087,7 @@ def main() -> int:
     )
     base_position, base_orientation = _pose(base_pose_payload)
     pickup_position, pickup_orientation = _pose(dict(incoming_payload["pickup_source_pose_world"]))
-    expected_preinsertion_position, _ = _pose(dict(incoming_payload["preinsertion_source_pose_world"]))
+    expected_preinsertion_poses = _expected_incoming_preinsertion_poses(plan)
 
     sim = sim_utils.SimulationContext(
         sim_utils.SimulationCfg(
@@ -915,7 +1123,10 @@ def main() -> int:
         incoming_part_position=pickup_position,
         incoming_part_orientation_xyzw=pickup_orientation,
         ground_height_m=floor_z_world_m,
+        holder_robot_base_position=holder_robot_base_position,
+        inserter_robot_base_position=inserter_robot_base_position,
         part_density_kg_m3=float(args_cli.object_density_kg_m3),
+        kuka_hand_effort_limit_sim=float(args_cli.gripper_effort_limit),
     )
     scene = InteractiveScene(scene_cfg)
     video_camera = None
@@ -938,7 +1149,11 @@ def main() -> int:
         )
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
-    bound_count = _bind_high_friction_material(omni.usd.get_context().get_stage())
+    bound_count = _bind_high_friction_material(
+        omni.usd.get_context().get_stage(),
+        static_friction=float(args_cli.static_friction),
+        dynamic_friction=float(args_cli.dynamic_friction),
+    )
     print(
         f"[DUAL-SIM-ISAAC] Bound high-friction material to {bound_count} scene roots.",
         flush=True,
@@ -964,12 +1179,21 @@ def main() -> int:
         scene=scene,
         sim=sim,
         fixed_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+        critical_damping_ratio=float(args_cli.critical_damping_ratio),
     )
     inserter_context = FR3MotionContext(
         robot=inserter_robot,
         scene=scene,
         sim=sim,
         fixed_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+        critical_damping_ratio=float(args_cli.critical_damping_ratio),
+    )
+    holder_damping = holder_context.refresh_critical_joint_damping(required=True)
+    inserter_damping = inserter_context.refresh_critical_joint_damping(required=True)
+    print(
+        "[DUAL-SIM-ISAAC] Applied configuration-adaptive critical damping "
+        f"zeta={float(args_cli.critical_damping_ratio):.3f} to both robots.",
+        flush=True,
     )
     pickup_root_state = torch.zeros(
         (1, 13),
@@ -995,10 +1219,13 @@ def main() -> int:
     def _pin_incoming_at_pickup() -> None:
         incoming_part.write_root_state_to_sim(pickup_root_state)
 
-    def _step_callback() -> None:
-        _pin_incoming_at_pickup()
+    def _capture_step_callback() -> None:
         if video_recorder is not None:
             video_recorder.capture()
+
+    def _pickup_step_callback() -> None:
+        _pin_incoming_at_pickup()
+        _capture_step_callback()
 
     initial_holder = _trajectory(
         context=holder_context,
@@ -1052,6 +1279,18 @@ def main() -> int:
                 if args_cli.max_joint_speed_rad_s is not None
                 else args_cli.loaded_max_joint_speed_rad_s
             ),
+        },
+        "contact_physics": {
+            "static_friction": float(args_cli.static_friction),
+            "dynamic_friction": float(args_cli.dynamic_friction),
+            "gripper_effort_limit": float(args_cli.gripper_effort_limit),
+            "finger_contact_min_force_n": float(args_cli.finger_contact_min_force_n),
+            "gripper_contact_preload_m": float(args_cli.gripper_contact_preload_m),
+            "gripper_close_duration_s": float(args_cli.gripper_close_duration_s),
+        },
+        "joint_drive_damping": {
+            "holder": holder_damping,
+            "inserter": inserter_damping,
         },
         "tracking_tolerances_rad": {
             "transit": float(args_cli.trajectory_waypoint_tolerance_rad),
@@ -1274,7 +1513,7 @@ def main() -> int:
             segments=tuple((label, trajectories[label]) for label in holder_labels),
             max_joint_speed_rad_s=unloaded_speed,
             waypoint_tolerance_rad=_tolerance_for_segment("holder_grasp"),
-            step_callback=_step_callback,
+            step_callback=_pickup_step_callback,
         )
         result["steps"].append(
             _step_record(
@@ -1294,7 +1533,7 @@ def main() -> int:
             ),
             label="holder",
             contact_role="holder",
-            step_callback=_step_callback,
+            step_callback=_pickup_step_callback,
         )
         result["holder_close"] = holder_close
         result["after_holder_close"] = {
@@ -1359,7 +1598,7 @@ def main() -> int:
             segments=tuple((label, trajectories[label]) for label in pickup_labels),
             max_joint_speed_rad_s=unloaded_speed,
             waypoint_tolerance_rad=_tolerance_for_segment("inserter_pickup_grasp"),
-            step_callback=_step_callback,
+            step_callback=_pickup_step_callback,
         )
         result["steps"].append(
             _step_record(
@@ -1381,7 +1620,7 @@ def main() -> int:
             ),
             label="inserter",
             contact_role="inserter",
-            step_callback=_step_callback,
+            step_callback=_pickup_step_callback,
         )
         result["inserter_close"] = inserter_close
         result["after_inserter_close"] = {
@@ -1410,7 +1649,7 @@ def main() -> int:
             segments=tuple((label, trajectories[label]) for label in transport_labels),
             max_joint_speed_rad_s=loaded_speed,
             waypoint_tolerance_rad=_tolerance_for_segment("inserter_preinsertion"),
-            step_callback=_step_callback,
+            step_callback=_capture_step_callback,
         )
         result["steps"].append(
             _step_record(
@@ -1452,23 +1691,81 @@ def main() -> int:
             initial_incoming_pose["position_world_m"],
             final_incoming_pose["position_world_m"],
         )
-        incoming_preinsertion_error = _distance(
-            final_incoming_pose["position_world_m"],
-            expected_preinsertion_position,
+        base_orientation_error = _quaternion_distance_rad(
+            final_base_pose["orientation_wxyz_world"],
+            (
+                base_orientation[3],
+                base_orientation[0],
+                base_orientation[1],
+                base_orientation[2],
+            ),
         )
+        incoming_pose_errors: list[dict[str, object]] = []
+        for expected_pose in expected_preinsertion_poses:
+            expected_orientation_xyzw = tuple(
+                float(value)
+                for value in expected_pose["orientation_xyzw_world"]  # type: ignore[union-attr]
+            )
+            position_error = _distance(
+                final_incoming_pose["position_world_m"],
+                expected_pose["position_world_m"],  # type: ignore[arg-type]
+            )
+            orientation_error = _quaternion_distance_rad(
+                final_incoming_pose["orientation_wxyz_world"],
+                (
+                    expected_orientation_xyzw[3],
+                    expected_orientation_xyzw[0],
+                    expected_orientation_xyzw[1],
+                    expected_orientation_xyzw[2],
+                ),
+            )
+            incoming_pose_errors.append(
+                {
+                    **expected_pose,
+                    "position_error_m": position_error,
+                    "orientation_error_rad": orientation_error,
+                }
+            )
+        incoming_position_tolerance = float(args_cli.incoming_position_tolerance_m)
+        incoming_orientation_tolerance = float(args_cli.incoming_orientation_tolerance_rad)
+        best_incoming_pose = min(
+            incoming_pose_errors,
+            key=lambda value: max(
+                float(value["position_error_m"]) / incoming_position_tolerance,
+                float(value["orientation_error_rad"]) / incoming_orientation_tolerance,
+            ),
+        )
+        incoming_preinsertion_error = float(best_incoming_pose["position_error_m"])
+        incoming_preinsertion_orientation_error = float(best_incoming_pose["orientation_error_rad"])
         result.update(
             {
                 "final_base_pose": final_base_pose,
                 "final_incoming_pose": final_incoming_pose,
-                "expected_incoming_preinsertion_position_world_m": list(expected_preinsertion_position),
+                "expected_base_orientation_xyzw_world": list(base_orientation),
+                "expected_incoming_preinsertion_position_world_m": list(
+                    expected_preinsertion_poses[0]["position_world_m"]  # type: ignore[arg-type]
+                ),
+                "expected_incoming_preinsertion_orientation_xyzw_world": list(
+                    expected_preinsertion_poses[0]["orientation_xyzw_world"]  # type: ignore[arg-type]
+                ),
+                "expected_incoming_preinsertion_poses": list(expected_preinsertion_poses),
+                "matched_incoming_preinsertion_pose": best_incoming_pose,
                 "base_displacement_m": base_displacement,
+                "base_orientation_error_rad": base_orientation_error,
                 "incoming_transport_distance_m": (incoming_transport_distance),
                 "incoming_preinsertion_position_error_m": (incoming_preinsertion_error),
+                "incoming_preinsertion_orientation_error_rad": (incoming_preinsertion_orientation_error),
             }
         )
         if base_displacement > float(args_cli.base_position_tolerance_m):
             raise RuntimeError(
                 f"Base moved {base_displacement:.4f} m; allowed {float(args_cli.base_position_tolerance_m):.4f} m."
+            )
+        if base_orientation_error > float(args_cli.base_orientation_tolerance_rad):
+            raise RuntimeError(
+                "Base rotated away from its held pose; "
+                f"error={base_orientation_error:.4f} rad, allowed="
+                f"{float(args_cli.base_orientation_tolerance_rad):.4f} rad."
             )
         if incoming_transport_distance < 0.15:
             raise RuntimeError(
@@ -1479,6 +1776,12 @@ def main() -> int:
                 "Incoming part did not reach the pre-insertion pose; "
                 f"error={incoming_preinsertion_error:.4f} m, allowed="
                 f"{float(args_cli.incoming_position_tolerance_m):.4f} m."
+            )
+        if incoming_preinsertion_orientation_error > incoming_orientation_tolerance:
+            raise RuntimeError(
+                "Incoming part did not reach a symmetry-equivalent pre-insertion orientation; "
+                f"error={incoming_preinsertion_orientation_error:.4f} rad, allowed="
+                f"{incoming_orientation_tolerance:.4f} rad."
             )
         result.update(
             {

@@ -9,6 +9,7 @@ from grasp_planning.pipeline import dual_robot_planning_debug as debug_module
 from grasp_planning.pipeline.dual_robot_planning_debug import (
     DualRobotPlanningDebugServer,
     dual_robot_planning_scene_payload,
+    dual_robot_planning_scene_payload_from_plan,
 )
 
 
@@ -61,6 +62,20 @@ def _debug_task(tmp_path):
         },
     }
     payload = {
+        "assembly": "synthetic",
+        "step_id": "step_001_part_1",
+        "incoming_part_id": "1",
+        "base_part_id": "0",
+        "pair_id": "pair_1",
+        "transition_id": "tr_opposite",
+        "execution_candidate_id": "pair_1__tr_opposite",
+        "selection_score": 0.8,
+        "transition_motion_score": 0.7,
+        "layout_proxy_components": {
+            "pickup_segments_cross_xy": False,
+            "transition_segments_cross_xy": True,
+            "crossing_penalty_applied": 0.25,
+        },
         "targets": targets,
         "grasps": {
             "holder": {"jaw_width_m": 0.04},
@@ -69,7 +84,51 @@ def _debug_task(tmp_path):
         "layout": {
             "holder_base_world_m": [0.0, -0.42, 0.0],
             "inserter_base_world_m": [0.0, 0.42, 0.0],
+            "pickup_floor_z_world_m": 0.0,
         },
+        "objects": {
+            "subassembly": {
+                "base_part_id": "0",
+                "mesh_scale": 1.0,
+                "source_pose_assembly": {
+                    "position_world_m": [1.0, 0.0, 0.0],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+                "source_pose_world": {
+                    "position_world_m": [0.5, -0.2, 0.1],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+                "parts": [
+                    {
+                        "part_id": "0",
+                        "mesh_path": str(subassembly_mesh),
+                        "mesh_scale": 1.0,
+                    }
+                ],
+            },
+            "incoming": {
+                "part_id": "1",
+                "mesh_path": str(incoming_mesh),
+                "mesh_scale": 1.0,
+                "source_pose_assembly": {
+                    "position_world_m": [2.0, 0.0, 0.0],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+                "pickup_source_pose_world": {
+                    "position_world_m": [0.6, 0.25, 0.05],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+                "preinsertion_source_pose_world": {
+                    "position_world_m": [0.6, 0.1, 0.05],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+                "final_source_pose_world": {
+                    "position_world_m": [0.6, 0.0, 0.05],
+                    "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                },
+            },
+        },
+        "transition_symmetry": {"is_identity": False},
     }
     return SimpleNamespace(
         assembly="synthetic",
@@ -126,6 +185,17 @@ def test_live_debug_scene_uses_world_frame_part_poses(tmp_path) -> None:
     assert np.isfinite(scene["gripper_floor_clearance_m"]["holder_grasp"])
 
 
+def test_live_debug_scene_can_be_rebuilt_from_serialized_real_task(tmp_path) -> None:
+    task = _debug_task(tmp_path)
+
+    scene = dual_robot_planning_scene_payload_from_plan(task.to_payload())
+
+    assert scene["execution_candidate_id"] == "pair_1__tr_opposite"
+    assert scene["incoming_poses"]["pickup_lift"]["position_world_m"] == [0.6, 0.25, 0.13]
+    assert scene["incoming_poses"]["preinsertion"]["position_world_m"] == [0.6, 0.1, 0.05]
+    assert scene["robot_bases_world_m"]["holder"] == [0.0, -0.42, 0.0]
+
+
 def test_live_debug_server_reports_candidate_and_phase(
     tmp_path,
     monkeypatch,
@@ -177,6 +247,7 @@ def test_live_debug_server_reports_candidate_and_phase(
 
     assert state["attempt_index"] == 5
     assert state["state_revision"] == 1
+    assert state["server_id"]
     assert state["pair_id"] == "pair_1"
     assert state["transition_id"] == "tr_opposite"
     assert state["phase"] == "inserter_preinsertion"
@@ -189,6 +260,7 @@ def test_live_debug_server_reports_candidate_and_phase(
     assert "3 · transition" in debug_module._LIVE_HTML
     assert "Candidate checks" in debug_module._LIVE_HTML
     assert 'id="pickup-counts"' in debug_module._LIVE_HTML
+    assert 'id="floor-plane"' in debug_module._LIVE_HTML
     assert 'id="stage3-counts"' in debug_module._LIVE_HTML
     assert 'id="fallback-counts"' in debug_module._LIVE_HTML
     assert 'id="queue-counts"' in debug_module._LIVE_HTML
@@ -203,6 +275,8 @@ def test_live_debug_server_reports_candidate_and_phase(
     assert "const projected=vertices.map(project)" in debug_module._LIVE_HTML
     assert "requestAnimationFrame" in debug_module._LIVE_HTML
     assert "nextLive.state_revision!==lastStateRevision" in debug_module._LIVE_HTML
+    assert "nextLive.server_id!==lastServerId" in debug_module._LIVE_HTML
+    assert 'p==="pickup_floor_check"' in debug_module._LIVE_HTML
     assert "setTimeout(poll,100)" in debug_module._LIVE_HTML
 
     server.update(

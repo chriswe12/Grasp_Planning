@@ -11,6 +11,27 @@ from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripp
 from .types import PoseCommand
 
 
+def critical_damping_from_stiffness_inertia(
+    stiffness: torch.Tensor,
+    inertia: torch.Tensor,
+    *,
+    damping_ratio: float = 1.0,
+) -> torch.Tensor:
+    """Return diagonal PD damping for the requested damping ratio.
+
+    Isaac's implicit joint drives are diagonal.  Using the current diagonal of
+    the generalized mass matrix makes ``D = 2 zeta sqrt(K I)`` configuration
+    adaptive while preserving the collision-checked position trajectory.
+    """
+
+    ratio = float(damping_ratio)
+    if ratio <= 0.0:
+        raise ValueError("Critical damping ratio must be positive.")
+    safe_stiffness = torch.clamp(stiffness.to(dtype=torch.float32), min=0.0)
+    safe_inertia = torch.clamp(inertia.to(dtype=torch.float32), min=1.0e-8)
+    return 2.0 * ratio * torch.sqrt(safe_stiffness * safe_inertia)
+
+
 def quat_xyzw_to_wxyz(quat_xyzw: torch.Tensor) -> torch.Tensor:
     """Convert quaternions from xyzw to wxyz convention."""
 
@@ -164,11 +185,26 @@ class FR3MotionContext:
     _EE_POSITION_CORRECTION_DAMPING = 0.05
     _EE_POSITION_CORRECTION_MAX_RAD = 0.10
 
-    def __init__(self, *, robot, scene, sim, fixed_gripper_width: float = 0.04) -> None:
+    def __init__(
+        self,
+        *,
+        robot,
+        scene,
+        sim,
+        fixed_gripper_width: float = 0.04,
+        critical_damping_ratio: float | None = None,
+    ) -> None:
         self.robot = robot
         self.scene = scene
         self.sim = sim
         self.fixed_gripper_width = float(fixed_gripper_width)
+        if critical_damping_ratio is not None and float(critical_damping_ratio) <= 0.0:
+            raise ValueError("critical_damping_ratio must be positive when provided.")
+        self.critical_damping_ratio = None if critical_damping_ratio is None else float(critical_damping_ratio)
+        self._critical_damping_diagnostics: dict[str, object] = {
+            "enabled": self.critical_damping_ratio is not None,
+            "damping_ratio": self.critical_damping_ratio,
+        }
         self.ee_body_name, self.ee_body_idx = self._resolve_ee_body()
         self.ee_to_tcp_offset = self._resolve_ee_to_tcp_offset(self.ee_body_name)
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
@@ -178,6 +214,53 @@ class FR3MotionContext:
             self.hand_joint_names,
             self.hand_joint_ids,
         )
+
+    def refresh_critical_joint_damping(self, *, required: bool = False) -> dict[str, object]:
+        """Apply configuration-adaptive diagonal critical damping to driven joints."""
+
+        if self.critical_damping_ratio is None:
+            return dict(self._critical_damping_diagnostics)
+        controlled_ids = torch.cat((self.arm_joint_ids, self.hand_command_joint_ids)).to(dtype=torch.long)
+        controlled_names = (*self.arm_joint_names, *self.hand_command_joint_names)
+        try:
+            mass_matrix = self.robot.root_physx_view.get_generalized_mass_matrices().to(
+                dtype=torch.float32,
+                device=self.device,
+            )
+            selected_mass = mass_matrix[:, controlled_ids, :][:, :, controlled_ids]
+            diagonal_inertia = torch.diagonal(selected_mass, dim1=-2, dim2=-1)
+            stiffness = self.robot.data.joint_stiffness[:, controlled_ids].to(dtype=torch.float32)
+            damping = critical_damping_from_stiffness_inertia(
+                stiffness,
+                diagonal_inertia,
+                damping_ratio=self.critical_damping_ratio,
+            )
+            self.robot.write_joint_damping_to_sim(damping, joint_ids=controlled_ids)
+        except (AttributeError, IndexError, RuntimeError, TypeError) as exc:
+            self._critical_damping_diagnostics = {
+                "enabled": True,
+                "applied": False,
+                "damping_ratio": self.critical_damping_ratio,
+                "error": str(exc),
+            }
+            if required:
+                raise RuntimeError(f"Could not configure critical joint damping: {exc}") from exc
+            return dict(self._critical_damping_diagnostics)
+        self._critical_damping_diagnostics = {
+            "enabled": True,
+            "applied": True,
+            "method": "configuration_adaptive_diagonal_generalized_inertia",
+            "formula": "D=2*zeta*sqrt(K*I)",
+            "damping_ratio": self.critical_damping_ratio,
+            "joint_names": list(controlled_names),
+            "stiffness": [float(value) for value in stiffness[0].tolist()],
+            "generalized_inertia_diagonal": [float(value) for value in diagonal_inertia[0].tolist()],
+            "damping": [float(value) for value in damping[0].tolist()],
+        }
+        return dict(self._critical_damping_diagnostics)
+
+    def critical_damping_diagnostics(self) -> dict[str, object]:
+        return dict(self._critical_damping_diagnostics)
 
     @property
     def device(self) -> str:
@@ -281,6 +364,7 @@ class FR3MotionContext:
         )
 
     def command_arm(self, q: torch.Tensor) -> None:
+        self.refresh_critical_joint_damping()
         self.robot.set_joint_position_target(q, joint_ids=self.arm_joint_ids)
 
     def command_arm_velocity(self, qd: torch.Tensor) -> None:

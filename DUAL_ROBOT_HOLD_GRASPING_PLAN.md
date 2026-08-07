@@ -308,7 +308,12 @@ The first exact-IK and simulation vertical slice is implemented by:
   - saves the exact per-arm MoveIt joint waypoints to
     `simple_dual_robot_sim_plan.json`;
 - [`grasp_planning/pipeline/dual_robot_planning_debug.py`](grasp_planning/pipeline/dual_robot_planning_debug.py)
-  - serves a localhost-only live browser debugger during visible simulation;
+  - serves a localhost-only live browser debugger during visible simulation
+    and guarded real planning;
+  - real task construction starts it before the actual-pose pickup-floor filter,
+    preserving counts and the terminal rejection reason even when no task can
+    be serialized, then hands the stable port to the real executor so one tab
+    follows the full run;
   - renders the partial assembly, incoming part, and selected holder/inserter
     grippers in the actual `base_link` world poses for the active candidate;
   - distinguishes holder grasp, incoming-part grasp, and transition stages and
@@ -354,8 +359,9 @@ The first exact-IK and simulation vertical slice is implemented by:
   - consumes the same saved dual task targets but replans each phase from the
     live shared MoveIt state instead of replaying mock joint trajectories;
   - applies the table, uses the same temporary AABB lifecycle for pregrasp
-    motion, preflights ranked pairs in strict combined-score order before any
-    motion, caches repeated holder/inserter grasp IK results, selects the first
+    motion, preflights pairs in the producer's ranked queue order (clear
+    corridors, retained Stage-3 executions, then score) before any motion,
+    caches repeated holder/inserter grasp IK results, selects the first
     pair whose complete target set passes, requires explicit acknowledgement
     of the omitted exact object meshes, and records selection plus execution
     phases in a real-attempt artifact;

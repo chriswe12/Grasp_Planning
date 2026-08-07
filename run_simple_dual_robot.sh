@@ -30,6 +30,7 @@ Common options:
   --pickup-roll-deg DEG         Default: 0
   --pickup-pitch-deg DEG        Default: 0
   --pickup-yaw-deg DEG          Default: 0
+  --inserter-arm NAME           lbr_one, lbr_two, or auto. Default: lbr_two
   --step-id ID                  Explicit compatibility override.
   --floor-z M                   Default: -0.030
   --plan-output PATH            Simulation MoveIt plan artifact.
@@ -40,16 +41,25 @@ Common options:
   --rviz
   --reuse-moveit               Reuse an already-running /lbr_dual_arm stack
   --keep-moveit                Leave a stack started by this script running
+  --no-planning-debug-gui      Do not open the live pair/phase browser view.
+                               It is enabled for visible sim and real runs.
+  --debug-gui-port N           Stable real-mode debugger port. Default: 38825
+                               (or DUAL_REAL_PLANNING_DEBUG_GUI_PORT).
 
 Simulation options:
   --headless
   --holder-only
-  --no-planning-debug-gui      Do not open the live pair/phase browser view.
-                               It is enabled for visible simulation by default.
   --skip-joint-space-ranking   Keep Stage-3 order without seeded MoveIt transition ranking.
   --joint-rank-candidates N    Candidates to pre-plan in joint space. Default: 8
   --record-video PATH
   --isaac-python PATH
+  --static-friction VALUE       Isaac contact friction. Default: 5.0
+  --dynamic-friction VALUE      Isaac contact friction. Default: 4.0
+  --gripper-effort-limit VALUE  Isaac finger effort limit. Default: 200
+  --critical-damping-ratio ZETA Configuration-adaptive joint damping. Default: 1.0
+  --gripper-close-duration-s S  Gentle quintic finger close duration. Default: 3.0
+  --finger-contact-min-force-n N Bilateral contact latch threshold. Default: 0.25
+  --gripper-contact-preload-m M Minimum inward preload after contact. Default: 0.0004
 
 Real options:
   --execute                     Without this, only non-moving target IK is checked
@@ -78,6 +88,7 @@ PICKUP_Y="0.28"
 PICKUP_ROLL="0.0"
 PICKUP_PITCH="0.0"
 PICKUP_YAW="0.0"
+INSERTER_ARM="lbr_two"
 STEP_ID=""
 FLOOR_Z="-0.030"
 PLAN_OUTPUT=""
@@ -90,10 +101,18 @@ KEEP_MOVEIT=0
 HEADLESS=0
 HOLDER_ONLY=0
 PLANNING_DEBUG_GUI=1
+PLANNING_DEBUG_GUI_PORT="${DUAL_REAL_PLANNING_DEBUG_GUI_PORT:-38825}"
 JOINT_SPACE_RANKING=1
 JOINT_RANK_CANDIDATES="8"
 RECORD_VIDEO=""
 ISAAC_PYTHON="${ISAAC_PYTHON:-/media/pdz/Elements1/IsaacLab/isaaclab.sh}"
+STATIC_FRICTION="5.0"
+DYNAMIC_FRICTION="4.0"
+GRIPPER_EFFORT_LIMIT="200.0"
+CRITICAL_DAMPING_RATIO="1.0"
+GRIPPER_CLOSE_DURATION="3.0"
+FINGER_CONTACT_MIN_FORCE="0.25"
+GRIPPER_CONTACT_PRELOAD="0.0004"
 EXECUTE_REAL=0
 ALLOW_OBJECTLESS=0
 STOP_AFTER="holder_pregrasp"
@@ -147,6 +166,7 @@ while [[ $# -gt 0 ]]; do
     --pickup-roll-deg) PICKUP_ROLL="${2:-}"; shift 2 ;;
     --pickup-pitch-deg) PICKUP_PITCH="${2:-}"; shift 2 ;;
     --pickup-yaw-deg) PICKUP_YAW="${2:-}"; shift 2 ;;
+    --inserter-arm) INSERTER_ARM="${2:-}"; shift 2 ;;
     --step-id) STEP_ID="${2:-}"; shift 2 ;;
     --floor-z) FLOOR_Z="${2:-}"; shift 2 ;;
     --plan-output) PLAN_OUTPUT="${2:-}"; shift 2 ;;
@@ -159,10 +179,18 @@ while [[ $# -gt 0 ]]; do
     --headless) HEADLESS=1; shift ;;
     --holder-only) HOLDER_ONLY=1; shift ;;
     --no-planning-debug-gui) PLANNING_DEBUG_GUI=0; shift ;;
+    --debug-gui-port) PLANNING_DEBUG_GUI_PORT="${2:-}"; shift 2 ;;
     --skip-joint-space-ranking) JOINT_SPACE_RANKING=0; shift ;;
     --joint-rank-candidates) JOINT_RANK_CANDIDATES="${2:-}"; shift 2 ;;
     --record-video) RECORD_VIDEO="${2:-}"; shift 2 ;;
     --isaac-python) ISAAC_PYTHON="${2:-}"; shift 2 ;;
+    --static-friction) STATIC_FRICTION="${2:-}"; shift 2 ;;
+    --dynamic-friction) DYNAMIC_FRICTION="${2:-}"; shift 2 ;;
+    --gripper-effort-limit) GRIPPER_EFFORT_LIMIT="${2:-}"; shift 2 ;;
+    --critical-damping-ratio) CRITICAL_DAMPING_RATIO="${2:-}"; shift 2 ;;
+    --gripper-close-duration-s) GRIPPER_CLOSE_DURATION="${2:-}"; shift 2 ;;
+    --finger-contact-min-force-n) FINGER_CONTACT_MIN_FORCE="${2:-}"; shift 2 ;;
+    --gripper-contact-preload-m) GRIPPER_CONTACT_PRELOAD="${2:-}"; shift 2 ;;
     --execute) EXECUTE_REAL=1; shift ;;
     --allow-objectless-planning) ALLOW_OBJECTLESS=1; shift ;;
     --stop-after) STOP_AFTER="${2:-}"; shift 2 ;;
@@ -309,6 +337,7 @@ if [[ "${MODE}" == "sim" ]]; then
     PLAN_ARGS+=(--skip-joint-space-ranking)
   fi
   PLAN_ARGS+=(--joint-rank-candidates "${JOINT_RANK_CANDIDATES}")
+  PLAN_ARGS+=(--inserter-arm "${INSERTER_ARM}")
   python3 scripts/plan_simple_dual_robot_sim.py \
     "${COMMON_TASK_ARGS[@]}" \
     --max-pair-attempts "${MAX_PAIR_ATTEMPTS}" \
@@ -321,6 +350,13 @@ if [[ "${MODE}" == "sim" ]]; then
   ISAAC_ARGS+=(
     --attempt-artifact
     "${ATTEMPT_OUTPUT:-${SELECTED_ARTIFACT_DIR}/simple_dual_robot_sim_attempt${OUTPUT_SUFFIX}.json}"
+    --static-friction "${STATIC_FRICTION}"
+    --dynamic-friction "${DYNAMIC_FRICTION}"
+    --gripper-effort-limit "${GRIPPER_EFFORT_LIMIT}"
+    --critical-damping-ratio "${CRITICAL_DAMPING_RATIO}"
+    --gripper-close-duration-s "${GRIPPER_CLOSE_DURATION}"
+    --finger-contact-min-force-n "${FINGER_CONTACT_MIN_FORCE}"
+    --gripper-contact-preload-m "${GRIPPER_CONTACT_PRELOAD}"
   )
   if [[ "${HEADLESS}" -eq 1 ]]; then
     ISAAC_ARGS+=(--headless)
@@ -336,10 +372,15 @@ if [[ "${MODE}" == "sim" ]]; then
 fi
 
 TASK_PATH="${TASK_OUTPUT:-${SELECTED_ARTIFACT_DIR}/simple_dual_robot_real_task${OUTPUT_SUFFIX}.json}"
-python3 scripts/build_simple_dual_robot_task.py \
-  "${COMMON_TASK_ARGS[@]}" \
-  --max-pair-candidates "${MAX_PAIR_ATTEMPTS}" \
+TASK_BUILD_ARGS=(
+  "${COMMON_TASK_ARGS[@]}"
+  --max-pair-candidates "${MAX_PAIR_ATTEMPTS}"
   --output "${TASK_PATH}"
+)
+if [[ "${PLANNING_DEBUG_GUI}" -eq 1 ]]; then
+  TASK_BUILD_ARGS+=(--debug-gui --debug-gui-port "${PLANNING_DEBUG_GUI_PORT}")
+fi
+python3 scripts/build_simple_dual_robot_task.py "${TASK_BUILD_ARGS[@]}"
 
 REAL_ARGS=(
   --plan-json "${TASK_PATH}"
@@ -358,5 +399,12 @@ if [[ "${SKIP_GRIPPERS}" -eq 1 ]]; then
 fi
 if [[ "${ASSUME_YES}" -eq 1 ]]; then
   REAL_ARGS+=(--yes)
+fi
+if [[ "${PLANNING_DEBUG_GUI}" -eq 1 ]]; then
+  REAL_ARGS+=(
+    --debug-gui
+    --debug-gui-port "${PLANNING_DEBUG_GUI_PORT}"
+    --no-debug-gui-open-browser
+  )
 fi
 python3 scripts/run_simple_dual_robot_real.py "${REAL_ARGS[@]}"

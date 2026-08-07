@@ -774,7 +774,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run dual PITL Isaac without its viewer.",
+        help="Run dual PITL/real mode without the Isaac or live-planner browser view.",
     )
     parser.add_argument(
         "--execute",

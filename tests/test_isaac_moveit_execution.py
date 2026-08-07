@@ -12,7 +12,7 @@ if importlib.util.find_spec("torch") is None:
     raise unittest.SkipTest("torch is not installed in this CI environment")
 
 from grasp_planning.planning import pick_execution
-from grasp_planning.planning.fr3_motion_context import FR3MotionContext
+from grasp_planning.planning.fr3_motion_context import FR3MotionContext, critical_damping_from_stiffness_inertia
 from grasp_planning.start_poses import (
     DEFAULT_KUKA_ARM_START_JOINT_POS,
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
@@ -88,6 +88,30 @@ class _PhaseCallbackExecutor:
 
 
 class IsaacMoveItExecutionTests(unittest.TestCase):
+    def test_critical_damping_uses_stiffness_and_generalized_inertia(self) -> None:
+        import torch
+
+        damping = critical_damping_from_stiffness_inertia(
+            torch.tensor([[4.0, 9.0]], dtype=torch.float32),
+            torch.tensor([[1.0, 4.0]], dtype=torch.float32),
+        )
+
+        self.assertEqual(damping.tolist(), [[4.0, 12.0]])
+
+    def test_dual_isaac_uses_plan_role_names_and_robot_base_positions(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "run_simple_dual_robot_sim_in_isaac.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("ROLE_ROBOT_NAMES[role]", source)
+        self.assertIn("holder_robot_base_position=holder_robot_base_position", source)
+        self.assertIn("inserter_robot_base_position=inserter_robot_base_position", source)
+        env_source = (Path(__file__).resolve().parents[1] / "grasp_planning" / "envs" / "fr3_part_env.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("kuka_hand_effort_limit_sim: float = 40.0", env_source)
+        self.assertIn("effort_limit_sim=float(kuka_hand_effort_limit_sim)", env_source)
+
     def test_kuka_gripper_width_maps_to_closing_joint_target(self) -> None:
         self.assertAlmostEqual(
             gripper_joint_target_from_width("left_finger_joint", KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M), 0.0
@@ -310,6 +334,120 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertIn("_finger_contact_snapshot", call_names)
         self.assertIn("_filtered_bilateral_contact_matches_selected_object", call_names)
 
+    def test_dual_isaac_unpins_incoming_part_before_loaded_transport(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_simple_dual_robot_sim_in_isaac.py"
+        parsed = ast.parse(script_path.read_text(encoding="utf-8"))
+        main_node = next(node for node in parsed.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        transport_call = next(
+            node
+            for node in ast.walk(main_node)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_execute_segments"
+            and any(
+                keyword.arg == "segments" and "transport_labels" in ast.unparse(keyword.value)
+                for keyword in node.keywords
+            )
+        )
+        callback = next(keyword.value for keyword in transport_call.keywords if keyword.arg == "step_callback")
+
+        self.assertEqual(ast.unparse(callback), "_capture_step_callback")
+        capture_node = next(
+            node
+            for node in main_node.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_capture_step_callback"
+        )
+        self.assertNotIn("_pin_incoming_at_pickup", ast.unparse(capture_node))
+
+    def test_dual_isaac_orientation_validation_keeps_same_base_symmetries(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_simple_dual_robot_sim_in_isaac.py"
+        parsed = ast.parse(script_path.read_text(encoding="utf-8"))
+        helper_names = {
+            "_vec",
+            "_pose",
+            "_distance",
+            "_quaternion_distance_rad",
+            "_pose_matrix",
+            "_finite_symmetry_powers",
+            "_expected_incoming_preinsertion_poses",
+        }
+        helper_nodes = [node for node in parsed.body if isinstance(node, ast.FunctionDef) and node.name in helper_names]
+        isolated_module = ast.Module(body=helper_nodes, type_ignores=[])
+        ast.fix_missing_locations(isolated_module)
+        from grasp_planning.grasping.fabrica_grasp_debug import (
+            quat_to_rotmat_xyzw,
+            rotmat_to_quat_xyzw,
+        )
+
+        namespace = {
+            "math": math,
+            "np": __import__("numpy"),
+            "quat_to_rotmat_xyzw": quat_to_rotmat_xyzw,
+            "rotmat_to_quat_xyzw": rotmat_to_quat_xyzw,
+        }
+        exec(compile(isolated_module, str(script_path), "exec"), namespace)
+
+        def candidate(candidate_id: str, base_x: float, orientation) -> dict[str, object]:
+            return {
+                "execution_candidate_id": candidate_id,
+                "objects": {
+                    "subassembly": {
+                        "source_pose_world": {
+                            "position_world_m": [base_x, 0.0, 0.0],
+                            "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+                        }
+                    },
+                    "incoming": {
+                        "preinsertion_source_pose_world": {
+                            "position_world_m": [0.5, 0.1, 0.1],
+                            "orientation_xyzw_world": list(orientation),
+                        }
+                    },
+                },
+            }
+
+        selected = candidate("selected", 0.5, (0.0, 0.0, 0.0, 1.0))
+        same_base_symmetry = candidate("symmetric", 0.5, (0.0, 0.0, 1.0, 0.0))
+        different_base = candidate("other_base", 0.7, (0.0, 1.0, 0.0, 0.0))
+        selected["ranked_pair_candidates"] = [
+            selected,
+            same_base_symmetry,
+            different_base,
+        ]
+
+        expected = namespace["_expected_incoming_preinsertion_poses"](selected)
+
+        self.assertEqual(
+            [pose["execution_candidate_id"] for pose in expected],
+            ["selected", "symmetric"],
+        )
+        selected_only = candidate("selected_only", 0.5, (0.0, 0.0, 0.0, 1.0))
+        selected_only["transition_symmetry"] = {
+            "incoming_symmetry_source_m": [
+                [-1.0, 0.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        }
+        selected_equivalents = namespace["_expected_incoming_preinsertion_poses"](selected_only)
+        self.assertEqual(len(selected_equivalents), 2)
+        self.assertEqual(
+            [pose["symmetry_power"] for pose in selected_equivalents],
+            [0, 1],
+        )
+        quaternion_distance = namespace["_quaternion_distance_rad"]
+        self.assertAlmostEqual(
+            quaternion_distance((1.0, 0.0, 0.0, 0.0), (math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5))),
+            math.pi / 2.0,
+        )
+
+        main_source = ast.unparse(
+            next(node for node in parsed.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        )
+        self.assertIn("base_orientation_error", main_source)
+        self.assertIn("incoming_preinsertion_orientation_error", main_source)
+
     def test_moveit_pick_allows_source_open_kuka_width_during_approach(self) -> None:
         _FakeExecutor.executions = []
         trajectories = {
@@ -420,6 +558,76 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         ):
             self.assertAlmostEqual(actual, expected)
         self.assertLessEqual(diagnostics["gripper_close_final_max_position_error"], 0.001)
+
+    def test_gripper_close_uses_gentle_ramp_and_latches_bilateral_contact(self) -> None:
+        import torch
+
+        class FakeSim:
+            def get_physics_dt(self) -> float:
+                return 0.1
+
+            def step(self) -> None:
+                pass
+
+        class FakeRobot:
+            joint_names = ["left_finger_joint", "right_finger_joint"]
+            device = "cpu"
+
+            def __init__(self) -> None:
+                self.data = SimpleNamespace(joint_pos=torch.tensor([[0.0, 0.0]], dtype=torch.float32))
+                self.hand_target = torch.tensor([[0.0]], dtype=torch.float32)
+                self.commanded_targets: list[float] = []
+
+            def set_joint_position_target(self, target, *, joint_ids) -> None:
+                if list(joint_ids) == [0]:
+                    self.hand_target = target.detach().cpu().clone()
+                    self.commanded_targets.append(float(target[0, 0]))
+
+        class FakeScene:
+            def __init__(self, robot: FakeRobot) -> None:
+                self.robot = robot
+
+            def write_data_to_sim(self) -> None:
+                pass
+
+            def update(self, physics_dt: float) -> None:
+                self.robot.data.joint_pos[:, [0]] = self.robot.hand_target
+                self.robot.data.joint_pos[:, [1]] = -self.robot.hand_target
+
+        robot = FakeRobot()
+        contact_checks = 0
+
+        def bilateral_contact() -> bool:
+            nonlocal contact_checks
+            contact_checks += 1
+            return contact_checks >= 2
+
+        diagnostics = pick_execution._command_gripper_width(
+            sim=FakeSim(),
+            scene=FakeScene(robot),
+            robot=robot,
+            width=0.0,
+            duration_s=0.4,
+            max_duration_s=1.0,
+            settle_duration_s=0.1,
+            stop_on_contact=bilateral_contact,
+            contact_preload_m=0.0004,
+            contact_hold_width_m=0.040,
+        )
+
+        self.assertEqual(diagnostics["gripper_close_target_profile"], "quintic_smoothstep")
+        self.assertEqual(diagnostics["gripper_close_status"], "contact_latched")
+        self.assertTrue(diagnostics["gripper_close_contact_latched"])
+        self.assertEqual(diagnostics["gripper_close_contact_latched_step"], 2)
+        self.assertLess(robot.commanded_targets[0], KUKA_Y_GRIPPER_TRAVEL_M)
+        self.assertLess(robot.commanded_targets[-1], KUKA_Y_GRIPPER_TRAVEL_M)
+        hold_target = diagnostics["gripper_close_contact_hold_joint_positions"][0]
+        self.assertAlmostEqual(
+            hold_target,
+            gripper_joint_target_from_width("left_finger_joint", 0.040) + 0.0004,
+            places=6,
+        )
+        self.assertAlmostEqual(robot.commanded_targets[-1], hold_target, places=6)
 
     def test_gripper_close_does_not_treat_stalled_fingers_as_closed(self) -> None:
         import torch

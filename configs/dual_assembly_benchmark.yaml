@@ -1,0 +1,65 @@
+benchmark:
+  assembly: plumbers_block
+  artifact_root: artifacts/dual_grasp_planning
+  output_dir: artifacts/dual_assembly_benchmark/plumbers_block
+  ros_domain_id: 0
+  isaac_python: /media/pdz/Elements1/IsaacLab/isaaclab.sh
+  max_pair_attempts: 256
+  joint_rank_candidates: 8
+
+# The assembled prefix stays upright at the midpoint between both robot bases.
+base:
+  position_world_m: [0.55, 0.0, -0.03]
+  floor_z_world_m: -0.03
+  yaw_deg: 0.0
+
+# Every pickup is in front of the robots (positive world X). Negative Y assigns
+# lbr_one as inserter; positive Y assigns lbr_two. The opposite arm holds.
+placements:
+  - id: left_near
+    x: 0.48
+    y: -0.26
+  - id: left_far
+    x: 0.62
+    y: -0.26
+  - id: right_near
+    x: 0.48
+    y: 0.26
+  - id: right_far
+    x: 0.62
+    y: 0.26
+
+# Z is computed per mesh/orientation so each incoming part rests on the floor.
+orientations:
+  - id: upright_yaw_0
+    rpy_deg: [0.0, 0.0, 0.0]
+  - id: upright_yaw_90
+    rpy_deg: [0.0, 0.0, 90.0]
+  - id: upright_yaw_180
+    rpy_deg: [0.0, 0.0, 180.0]
+  - id: upright_yaw_270
+    rpy_deg: [0.0, 0.0, 270.0]
+  - id: roll_90_yaw_0
+    rpy_deg: [90.0, 0.0, 0.0]
+  - id: roll_90_yaw_90
+    rpy_deg: [90.0, 0.0, 90.0]
+  - id: pitch_90_yaw_0
+    rpy_deg: [0.0, 90.0, 0.0]
+  - id: pitch_90_yaw_90
+    rpy_deg: [0.0, 90.0, 90.0]
+
+selection:
+  # Empty means every holder-active assembly step.
+  incoming_parts: []
+  limit_cases:
+
+# These are intentionally benchmark-specific and higher than the normal sim
+# defaults so contact strength is not the limiting factor in pickup trials.
+physics:
+  static_friction: 5.0
+  dynamic_friction: 4.0
+  gripper_effort_limit: 200.0
+  critical_damping_ratio: 1.0
+  gripper_close_duration_s: 3.0
+  finger_contact_min_force_n: 0.25
+  gripper_contact_preload_m: 0.0004

@@ -94,8 +94,15 @@ def _command_gripper_width(
     min_contact_motion_m: float = 0.001,
     settle_duration_s: float = 0.25,
     force_joint_state: bool = False,
+    stop_on_contact: Callable[[], bool] | None = None,
+    contact_preload_m: float = 0.0004,
+    contact_hold_width_m: float | None = None,
     step_callback: StepCallback | None = None,
 ) -> dict[str, object]:
+    if contact_preload_m < 0.0:
+        raise ValueError("contact_preload_m must be non-negative.")
+    if contact_hold_width_m is not None and contact_hold_width_m < 0.0:
+        raise ValueError("contact_hold_width_m must be non-negative when provided.")
     joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
     hand_joint_names = tuple(name for name in robot.joint_names if is_gripper_command_joint_name(name))
     if not hand_joint_names:
@@ -106,14 +113,14 @@ def _command_gripper_width(
     max_steps = max(1, int((duration_s if max_duration_s is None else max_duration_s) / physics_dt))
     max_steps = max(max_steps, min_steps)
     settle_steps_required = max(1, int(settle_duration_s / physics_dt))
-    hand_targets = torch.full(
+    final_hand_targets = torch.full(
         (1, len(hand_joint_ids)),
         0.0,
         dtype=torch.float32,
         device=robot.device,
     )
     for index, name in enumerate(hand_joint_names):
-        hand_targets[0, index] = gripper_joint_target_from_width(name, width)
+        final_hand_targets[0, index] = gripper_joint_target_from_width(name, width)
     last_hand_q = None
     stable_steps = 0
     close_status = "duration_elapsed"
@@ -124,13 +131,33 @@ def _command_gripper_width(
     saw_hand_state = False
     initial_hand_q = _hand_joint_positions(robot=robot, hand_joint_ids=hand_joint_ids)
     final_hand_q = initial_hand_q.clone() if initial_hand_q is not None else None
+    contact_hold_targets = None
+    contact_hold_start_targets = None
+    contact_hold_ramp_steps = 1
+    contact_latched_step = None
+    contact_confirmed_steps = 0
     for step_idx in range(1, max_steps + 1):
         if hold_context is not None and hold_arm_waypoint is not None:
             hold_context.command_arm(hold_arm_waypoint)
-        robot.set_joint_position_target(hand_targets, joint_ids=hand_joint_ids)
-        if force_joint_state and initial_hand_q is not None and hasattr(robot, "write_joint_state_to_sim"):
+        if initial_hand_q is None:
+            commanded_hand_targets = final_hand_targets
+        elif contact_hold_targets is not None:
+            assert contact_hold_start_targets is not None
+            contact_alpha = min(
+                1.0,
+                float(step_idx - int(contact_latched_step or step_idx)) / float(contact_hold_ramp_steps),
+            )
+            contact_smooth_alpha = contact_alpha**3 * (10.0 - 15.0 * contact_alpha + 6.0 * contact_alpha**2)
+            commanded_hand_targets = contact_hold_start_targets + contact_smooth_alpha * (
+                contact_hold_targets - contact_hold_start_targets
+            )
+        else:
             alpha = min(1.0, float(step_idx) / float(min_steps))
-            hand_q_cmd = ((1.0 - alpha) * initial_hand_q + alpha * hand_targets).clone()
+            smooth_alpha = alpha**3 * (10.0 - 15.0 * alpha + 6.0 * alpha**2)
+            commanded_hand_targets = initial_hand_q + smooth_alpha * (final_hand_targets - initial_hand_q)
+        robot.set_joint_position_target(commanded_hand_targets, joint_ids=hand_joint_ids)
+        if force_joint_state and initial_hand_q is not None and hasattr(robot, "write_joint_state_to_sim"):
+            hand_q_cmd = commanded_hand_targets.clone()
             hand_qd_cmd = torch.zeros_like(hand_q_cmd)
             robot.write_joint_state_to_sim(hand_q_cmd, hand_qd_cmd, joint_ids=hand_joint_ids)
         scene.write_data_to_sim()
@@ -144,24 +171,67 @@ def _command_gripper_width(
             continue
         final_hand_q = hand_q.clone()
         saw_hand_state = True
-        final_error = float(torch.max(torch.abs(hand_q - hand_targets)).item())
+        final_error = float(torch.max(torch.abs(hand_q - final_hand_targets)).item())
         if initial_hand_q is None:
             initial_hand_q = hand_q.clone()
+        contact_present = bool(stop_on_contact()) if stop_on_contact is not None else False
+        contact_latched_this_step = False
+        if contact_hold_targets is None and contact_present:
+            remaining = final_hand_targets - hand_q
+            preload = torch.minimum(
+                torch.abs(remaining),
+                torch.full_like(remaining, float(contact_preload_m)),
+            )
+            direction = torch.sign(remaining)
+            desired_progress = preload
+            if contact_hold_width_m is not None:
+                selected_width_targets = torch.full_like(final_hand_targets, 0.0)
+                for index, name in enumerate(hand_joint_names):
+                    selected_width_targets[0, index] = gripper_joint_target_from_width(
+                        name,
+                        float(contact_hold_width_m),
+                    )
+                selected_progress = torch.clamp(
+                    (selected_width_targets - hand_q) * direction + float(contact_preload_m),
+                    min=0.0,
+                )
+                desired_progress = torch.maximum(desired_progress, selected_progress)
+            desired_progress = torch.minimum(desired_progress, torch.abs(remaining))
+            contact_hold_start_targets = hand_q.clone()
+            contact_hold_targets = hand_q + direction * desired_progress
+            contact_latched_step = step_idx
+            contact_hold_ramp_steps = max(1, min_steps - step_idx)
+            contact_latched_this_step = True
         max_motion_since_start = max(
             max_motion_since_start,
             float(torch.max(torch.abs(hand_q - initial_hand_q)).item()),
         )
         if last_hand_q is not None:
             final_delta = float(torch.max(torch.abs(hand_q - last_hand_q)).item())
-        target_reached = final_error <= float(position_tolerance)
+        target_reached = contact_hold_targets is None and final_error <= float(position_tolerance)
         contact_stalled = (
             final_delta is not None
             and final_delta <= float(stall_delta_tolerance)
             and max_motion_since_start >= float(min_contact_motion_m)
         )
-        if step_idx >= min_steps and (target_reached or contact_stalled):
+        contact_ramp_complete = (
+            contact_latched_step is not None and step_idx - contact_latched_step >= contact_hold_ramp_steps
+        )
+        contact_held = (
+            contact_hold_targets is not None
+            and contact_present
+            and contact_ramp_complete
+            and not contact_latched_this_step
+        )
+        if contact_held:
+            contact_confirmed_steps += 1
+        else:
+            contact_confirmed_steps = 0
+        if contact_held or (step_idx >= min_steps and (target_reached or contact_stalled)):
             stable_steps += 1
-            close_status = "target_reached" if target_reached else "contact_stalled"
+            close_status = (
+                "contact_latched" if contact_held else "target_reached" if target_reached else "contact_stalled"
+            )
         else:
             stable_steps = 0
         last_hand_q = hand_q
@@ -183,7 +253,7 @@ def _command_gripper_width(
         "gripper_close_duration_s": float(steps_run * physics_dt),
         "gripper_close_target_width_m": float(width),
         "gripper_close_joint_names": list(hand_joint_names),
-        "gripper_close_target_joint_positions": [float(value) for value in hand_targets[0].tolist()],
+        "gripper_close_target_joint_positions": [float(value) for value in final_hand_targets[0].tolist()],
         "gripper_close_saw_hand_state": bool(saw_hand_state),
         "gripper_close_max_motion_since_start_m": float(max_motion_since_start),
         "gripper_close_forced_joint_state": bool(force_joint_state),
@@ -191,7 +261,19 @@ def _command_gripper_width(
         "gripper_close_contact_position_tolerance_m": float(contact_position_tolerance),
         "gripper_close_stall_delta_tolerance_m": float(stall_delta_tolerance),
         "gripper_close_min_contact_motion_m": float(min_contact_motion_m),
+        "gripper_close_target_profile": "quintic_smoothstep",
+        "gripper_close_contact_latched": contact_hold_targets is not None,
+        "gripper_close_contact_latched_step": contact_latched_step,
+        "gripper_close_contact_confirmed_steps": int(contact_confirmed_steps),
+        "gripper_close_contact_confirmation_duration_s": float(contact_confirmed_steps * physics_dt),
+        "gripper_close_contact_preload_m": float(contact_preload_m),
+        "gripper_close_contact_hold_width_m": (None if contact_hold_width_m is None else float(contact_hold_width_m)),
+        "gripper_close_contact_hold_ramp_steps": int(contact_hold_ramp_steps),
     }
+    if contact_hold_targets is not None:
+        diagnostics["gripper_close_contact_hold_joint_positions"] = [
+            float(value) for value in contact_hold_targets[0].tolist()
+        ]
     if initial_hand_q is not None:
         diagnostics["gripper_close_initial_joint_positions"] = [float(value) for value in initial_hand_q[0].tolist()]
     if final_hand_q is not None:

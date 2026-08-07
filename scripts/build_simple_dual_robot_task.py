@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.pipeline.dual_robot_pair_scoring import (  # noqa: E402
     MovableFrame,
+)
+from grasp_planning.pipeline.dual_robot_planning_debug import (  # noqa: E402
+    DualRobotPlanningDebugServer,
 )
 from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
@@ -81,6 +86,19 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
     )
+    parser.add_argument(
+        "--debug-gui",
+        action="store_true",
+        help="Open the live browser before pickup-pose floor filtering starts.",
+    )
+    parser.add_argument("--debug-gui-port", type=int, default=0)
+    parser.add_argument(
+        "--no-debug-gui-open-browser",
+        action="store_false",
+        dest="debug_gui_open_browser",
+        help="Serve debug state without opening another browser tab.",
+    )
+    parser.set_defaults(debug_gui_open_browser=True)
     return parser.parse_args()
 
 
@@ -96,39 +114,89 @@ def main() -> int:
         artifact_dir=args.artifact_dir,
         step_id=args.step_id,
     )
-    tasks = list(
-        load_simple_dual_robot_pair_tasks(
-            artifact_dir=selection.artifact_dir,
-            step_id=selection.step_id,
-            assembly_world=MovableFrame(
-                (
-                    float(args.assembly_x),
-                    float(args.assembly_y),
-                    assembly_z,
+    debug_server = None
+    if args.debug_gui:
+        try:
+            debug_server = DualRobotPlanningDebugServer(port=int(args.debug_gui_port))
+            debug_url = debug_server.start(open_browser=bool(args.debug_gui_open_browser))
+            atexit.register(debug_server.close)
+            debug_server.update(
+                attempt_index=0,
+                attempt_total=int(args.max_pair_candidates),
+                phase="pickup_floor_check",
+                status="planning",
+                message=(
+                    "Checking incoming-part grasps against the grounded pickup "
+                    f"pose and floor plane z={float(args.floor_z):.3f} m."
                 ),
-                float(args.assembly_yaw_deg),
-            ),
-            pickup_source_world_xy=(
-                float(args.pickup_x),
-                float(args.pickup_y),
-            ),
-            pickup_orientation_rpy_deg=(
-                float(args.pickup_roll_deg),
-                float(args.pickup_pitch_deg),
-                float(args.pickup_yaw_deg),
-            ),
-            pickup_floor_z_world_m=float(args.floor_z),
-            transport_clearance_m=float(args.transport_clearance_m),
-            retained_only=False,
-            include_nonretained_identity_fallbacks=(_include_nonretained_identity_fallbacks(str(args.pair_id))),
+                candidate_counts={
+                    "pickup_floor_z_world_m": float(args.floor_z),
+                    "pickup_grasps_checked": 0,
+                    "pickup_grasps_accepted": 0,
+                    "pickup_grasps_rejected": 0,
+                },
+            )
+            print(f"[DUAL-TASK] Live planning debugger: {debug_url}", flush=True)
+        except OSError as exc:
+            print(f"[DUAL-TASK] WARNING: Could not start live planning debugger: {exc}", flush=True)
+            debug_server = None
+
+    try:
+        tasks = list(
+            load_simple_dual_robot_pair_tasks(
+                artifact_dir=selection.artifact_dir,
+                step_id=selection.step_id,
+                assembly_world=MovableFrame(
+                    (
+                        float(args.assembly_x),
+                        float(args.assembly_y),
+                        assembly_z,
+                    ),
+                    float(args.assembly_yaw_deg),
+                ),
+                pickup_source_world_xy=(
+                    float(args.pickup_x),
+                    float(args.pickup_y),
+                ),
+                pickup_orientation_rpy_deg=(
+                    float(args.pickup_roll_deg),
+                    float(args.pickup_pitch_deg),
+                    float(args.pickup_yaw_deg),
+                ),
+                pickup_floor_z_world_m=float(args.floor_z),
+                transport_clearance_m=float(args.transport_clearance_m),
+                retained_only=False,
+                include_nonretained_identity_fallbacks=(_include_nonretained_identity_fallbacks(str(args.pair_id))),
+            )
         )
-    )
+    except Exception as exc:
+        if debug_server is not None:
+            debug_server.update(
+                phase="pickup_floor_check",
+                status="fatal",
+                message=str(exc),
+                candidate_counts=dict(getattr(exc, "candidate_filter_diagnostics", {})),
+            )
+            time.sleep(1.0)
+            debug_server.close()
+            atexit.unregister(debug_server.close)
+        raise
     if args.pair_id:
         tasks = [task for task in tasks if task.pair_id == str(args.pair_id)]
     tasks = tasks[: int(args.max_pair_candidates)]
     if not tasks:
         requested = str(args.pair_id) or "the ranked compatible set"
-        raise RuntimeError(f"No accepted dual task was found for {requested} at {selection.step_id}.")
+        exc = RuntimeError(f"No accepted dual task was found for {requested} at {selection.step_id}.")
+        if debug_server is not None:
+            debug_server.update(
+                phase="pickup_floor_check",
+                status="fatal",
+                message=str(exc),
+            )
+            time.sleep(1.0)
+            debug_server.close()
+            atexit.unregister(debug_server.close)
+        raise exc
 
     candidate_payloads: list[dict[str, object]] = []
     for rank, task in enumerate(tasks, start=1):
@@ -154,7 +222,7 @@ def main() -> int:
     payload = dict(candidate_payloads[0])
     payload["ranked_pair_candidates"] = candidate_payloads
     payload["real_pair_selection"] = {
-        "policy": "strict_score_order_collision_aware_ik_before_motion",
+        "policy": "producer_ranked_queue_collision_aware_ik_before_motion",
         "candidate_count": len(candidate_payloads),
         "maximum_candidate_count": int(args.max_pair_candidates),
         "fixed_pair_requested": bool(args.pair_id),
@@ -170,6 +238,21 @@ def main() -> int:
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if debug_server is not None:
+        debug_server.update(
+            task=tasks[0],
+            attempt_index=0,
+            attempt_total=len(tasks),
+            phase="pickup_floor_check",
+            status="succeeded",
+            message=(
+                f"Pickup-floor filtering retained {len(tasks)} candidate(s); "
+                "handing the ranked queue to real MoveIt preflight."
+            ),
+        )
+        time.sleep(0.25)
+        debug_server.close()
+        atexit.unregister(debug_server.close)
     print(
         f"[DUAL-TASK] pair={payload['pair_id']} score={payload['pair_score']:.4f} "
         f"candidates={len(candidate_payloads)} wrote={output}",

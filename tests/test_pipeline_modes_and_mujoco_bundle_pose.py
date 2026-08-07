@@ -42,6 +42,20 @@ from scripts import (
 
 
 class RunGraspPipelineModeTests(unittest.TestCase):
+    def test_empty_moveit_multi_ik_weights_select_legacy_unweighted_path(self) -> None:
+        self.assertEqual(
+            run_fabrica_grasp_in_mujoco._parse_optional_float_tuple(""),
+            (),
+        )
+        self.assertEqual(
+            run_fabrica_grasp_in_mujoco._parse_optional_float_tuple("  "),
+            (),
+        )
+        self.assertEqual(
+            run_fabrica_grasp_in_mujoco._parse_optional_float_tuple("1.0, 0.5"),
+            (1.0, 0.5),
+        )
+
     def test_temporary_stl_prefix_has_no_extra_extension_separator(self) -> None:
         mesh = TriangleMesh(
             vertices_obj=np.asarray(
