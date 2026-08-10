@@ -229,3 +229,19 @@ partial assembly: it moves incoming part 0 by about 2.532 mm. The opposite-side
 step-1 choices instead come from part 0's own validated finite symmetries. This
 is intentional; raising the partial-assembly tolerance would change the final
 placement and needs an explicit mating-level decision.
+
+**Why 2.532 mm specifically:** each part's Z180 symmetry axis is validated
+independently against its own mesh, and part 0's and part 2's axes do not sit
+at the same Y coordinate. `assets/obj/fabrica/plumbers_block/symmetries.json`
+records `object_z_bounds_center_order2_step1` at `center_obj_m` Y `= 0.0` for
+part 0 and Y `= 0.0012658` for part 2 (all four candidate centers - bounds
+center, area-weighted centroid, vertex mean, volumetric center of mass - agree
+per part, so this is not a center-convention bug). A 180 degree rotation
+doubles any perpendicular pivot offset, so applying part 2's axis to part 0
+lands `2 x 0.0012658 m = 0.0025316 m` away from part 0's own valid symmetric
+placement - over the 1 mm tolerance by design. The root cause is that part
+2's mesh is centered ~1.27 mm off the assembly's Y = 0 symmetry plane (a small
+CAD/mesh-authoring asymmetry, likely a feature near one Y edge), not a
+frame/origin bug in the symmetry code. Fixing it for real would mean
+re-centering part 2's mesh (or its accepted symmetry's pivot) to Y = 0, not
+adjusting tolerances or composition code.
