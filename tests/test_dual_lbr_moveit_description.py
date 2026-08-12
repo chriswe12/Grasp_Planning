@@ -164,20 +164,41 @@ def test_dual_launch_assets_and_wrapper_are_installed() -> None:
         "config/dual_lbr_controllers.yaml",
         "config/dual_lbr_initial_joint_positions.yaml",
         "config/dual_lbr_kinematics.yaml",
+        "config/dual_lbr_kinematics_pick_ik.yaml",
         "config/dual_lbr_moveit_controllers.yaml",
         "urdf/dual_iiwa7_y_gripper_moveit.urdf.xacro",
     ):
         assert f'"{installed_path}"' in setup_text
 
     assert 'robot_name="lbr_dual_arm"' in launch_text
+    assert 'default_value="kdl"' in launch_text
+    assert 'choices=["pick_ik", "kdl"]' in launch_text
     assert "dual_lbr_initial_joint_positions.yaml" in launch_text
     assert 'controller="lbr_one_joint_trajectory_controller"' in launch_text
     assert 'controller="lbr_two_joint_trajectory_controller"' in launch_text
     assert "dual_aligned_lbr_moveit.launch.py" in wrapper_text
     assert "--mode hardware" in wrapper_text
     assert "setsid ros2 launch" in wrapper_text
+    assert "--ik-solver must be 'pick_ik' or 'kdl'" in wrapper_text
     assert 'kill -TERM -- "-${process_group}"' in wrapper_text
     assert 'kill -KILL -- "-${process_group}"' in wrapper_text
+
+
+def test_dual_moveit_defaults_to_tuned_kdl_with_optional_global_pick_ik() -> None:
+    kdl = yaml.safe_load((PACKAGE_ROOT / "config/dual_lbr_kinematics.yaml").read_text(encoding="utf-8"))
+    pick_ik = yaml.safe_load((PACKAGE_ROOT / "config/dual_lbr_kinematics_pick_ik.yaml").read_text(encoding="utf-8"))
+    package_xml = (PACKAGE_ROOT / "package.xml").read_text(encoding="utf-8")
+
+    for group in ("arm_one", "arm_two"):
+        assert pick_ik[group]["kinematics_solver"] == "pick_ik/PickIkPlugin"
+        assert pick_ik[group]["mode"] == "global"
+        assert pick_ik[group]["position_threshold"] == 0.001
+        assert pick_ik[group]["orientation_threshold"] == 0.01
+        assert pick_ik[group]["memetic_num_threads"] == 4
+        assert kdl[group]["kinematics_solver"] == "kdl_kinematics_plugin/KDLKinematicsPlugin"
+        assert kdl[group]["kinematics_solver_search_resolution"] == 0.03
+
+    assert "<exec_depend>pick_ik</exec_depend>" in package_xml
 
 
 def test_dual_rviz_uses_one_stable_compound_group_motion_planning_display() -> None:

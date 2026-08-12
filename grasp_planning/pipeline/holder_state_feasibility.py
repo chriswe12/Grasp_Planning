@@ -13,6 +13,7 @@ import numpy as np
 from grasp_planning.grasping.collision import (
     BoxCollisionPrimitive,
     MeshCollisionPrimitive,
+    gripper_collision_check_gaps,
     make_gripper_collision_model,
     trimesh,
     trimesh_fcl_backend_available,
@@ -278,32 +279,67 @@ def _candidate_meshes_assembly(
     *,
     source_pose_assembly: ObjectWorldPose,
     planning: PlanningConfig,
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> tuple[object, ...]:
+    opening_meshes = _candidate_opening_meshes_assembly(
+        candidate,
+        source_pose_assembly=source_pose_assembly,
+        planning=planning,
+        model_cache=model_cache,
+    )
+    combined: list[object] = []
+    base_added = False
+    for meshes in opening_meshes:
+        for mesh_index, mesh in enumerate(meshes):
+            if mesh_index == 0:
+                if base_added:
+                    continue
+                base_added = True
+            combined.append(mesh)
+    return tuple(combined)
+
+
+def _candidate_opening_meshes_assembly(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose_assembly: ObjectWorldPose,
+    planning: PlanningConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+) -> tuple[tuple[object, ...], ...]:
+    """Return distinct contact and approach meshes without merging their fingers."""
+
     offset_key = (
         float(candidate.contact_patch_lateral_offset_m),
         float(candidate.contact_patch_approach_offset_m),
     )
-    model = model_cache.get(offset_key)
-    if model is None:
-        model = make_gripper_collision_model(
-            planning.gripper_collision_model,
-            contact_gap_m=planning.detailed_finger_contact_gap_m,
-            contact_patch_lateral_offset_m=offset_key[0],
-            contact_patch_approach_offset_m=offset_key[1],
+    models = model_cache.get(offset_key)
+    if models is None:
+        models = tuple(
+            make_gripper_collision_model(
+                planning.gripper_collision_model,
+                contact_gap_m=gap_m,
+                contact_patch_lateral_offset_m=offset_key[0],
+                contact_patch_approach_offset_m=offset_key[1],
+            )
+            for gap_m in gripper_collision_check_gaps(planning.detailed_finger_contact_gap_m)
         )
-        model_cache[offset_key] = model
+        model_cache[offset_key] = models
     candidate_obj = candidate.to_object_frame_candidate()
-    primitives_obj = model.primitives_for_grasp(
-        grasp_rotmat=quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj),
-        contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
-        contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
-        grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
-    )
-    return tuple(
-        _primitive_to_trimesh(transform_primitive_to_world(primitive, source_pose_assembly))
-        for primitive in primitives_obj
-    )
+    candidate_meshes: list[tuple[object, ...]] = []
+    for model in models:
+        primitives = model.primitives_for_grasp(
+            grasp_rotmat=quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj),
+            contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
+            contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+            grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
+        )
+        candidate_meshes.append(
+            tuple(
+                _primitive_to_trimesh(transform_primitive_to_world(primitive, source_pose_assembly))
+                for primitive in primitives
+            )
+        )
+    return tuple(candidate_meshes)
 
 
 def _translated_meshes(query_meshes: tuple[object, ...], translation_m: np.ndarray) -> tuple[object, ...]:
@@ -390,20 +426,32 @@ def _prepare_holder_candidate(
     base_manager,
     planning: PlanningConfig,
     config: HolderFeasibilityConfig,
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> _PreparedHolderCandidate:
-    gripper_meshes = _candidate_meshes_assembly(
+    opening_meshes = _candidate_opening_meshes_assembly(
         candidate,
         source_pose_assembly=source_pose_assembly,
         planning=planning,
         model_cache=model_cache,
     )
+    if not opening_meshes:
+        raise RuntimeError("Holder candidate produced no gripper collision geometry.")
+    contact_meshes = opening_meshes[0]
+    approach_meshes = opening_meshes[-1]
+    gripper_meshes = tuple(
+        [*contact_meshes, *approach_meshes[1:]]
+        if len(opening_meshes) > 1
+        else contact_meshes
+    )
     rotation_assembly_from_source = source_pose_assembly.rotation_world_from_object
     approach_axis_source = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)[:, 2]
     approach_axis_assembly = rotation_assembly_from_source @ approach_axis_source
     grasp_to_pregrasp = -approach_axis_assembly * config.pregrasp_offset_m
-    pregrasp_meshes = _translated_meshes(gripper_meshes, grasp_to_pregrasp)
-    approach_swept_meshes = _swept_meshes(gripper_meshes, grasp_to_pregrasp)
+    # The gripper is physically at the approach opening during pregrasp and
+    # the Cartesian approach. The selected contact state exists only at the
+    # final grasp pose.
+    pregrasp_meshes = _translated_meshes(approach_meshes, grasp_to_pregrasp)
+    approach_swept_meshes = _swept_meshes(approach_meshes, grasp_to_pregrasp)
 
     def prepared(
         *,
@@ -446,7 +494,12 @@ def _prepare_holder_candidate(
             ),
         )
 
-    base_query = _query_manager(base_manager, gripper_meshes)
+    # The contact-state fingertips are expected to touch their own grasped
+    # base. Checking that zero-gap mesh against the base makes FCL report the
+    # two intended contacts as collisions. The approach opening still checks
+    # the identical palm plus both fingers against the target, while the
+    # contact state remains active for the table and every unrelated object.
+    base_query = _query_manager(base_manager, approach_meshes)
     minimum_clearance = _minimum(minimum_clearance, base_query.minimum_distance_m)
     if base_query.collides:
         return prepared(
@@ -697,7 +750,7 @@ def evaluate_holder_state_feasibility(
     }
     candidates = tuple(holder_library.bundle.candidates)
     states: list[HolderStateFeasibility] = []
-    model_cache: dict[tuple[float, float], object] = {}
+    model_cache: dict[tuple[float, float], tuple[object, ...]] = {}
     base_manager = _manager_for_parts(
         part_meshes,
         (sequence.base_part_id,),

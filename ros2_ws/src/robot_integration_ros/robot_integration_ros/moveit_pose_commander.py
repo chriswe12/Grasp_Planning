@@ -12,7 +12,14 @@ try:
     from geometry_msgs.msg import Pose, PoseStamped
     from moveit_msgs.action import ExecuteTrajectory
     from moveit_msgs.msg import CollisionObject, Constraints, JointConstraint, MoveItErrorCodes, PlanningScene
-    from moveit_msgs.srv import ApplyPlanningScene, GetMotionPlan, GetPositionFK, GetPositionIK, QueryPlannerInterfaces
+    from moveit_msgs.srv import (
+        ApplyPlanningScene,
+        GetMotionPlan,
+        GetPositionFK,
+        GetPositionIK,
+        GetStateValidity,
+        QueryPlannerInterfaces,
+    )
     from rclpy.action import ActionClient
     from rclpy.node import Node
     from shape_msgs.msg import SolidPrimitive
@@ -30,6 +37,7 @@ except Exception:  # pragma: no cover - optional dependency path
     GetMotionPlan = None
     GetPositionFK = None
     GetPositionIK = None
+    GetStateValidity = None
     QueryPlannerInterfaces = None
     SolidPrimitive = None
     ActionClient = None
@@ -159,6 +167,7 @@ class MoveItPoseCommanderConfig:
     query_planner_interface_service_name: str = "/query_planner_interface"
     fk_service_name: str = "/compute_fk"
     apply_planning_scene_service_name: str = "/apply_planning_scene"
+    state_validity_service_name: str = "/check_state_validity"
     execute_action_name: str = "/execute_trajectory"
     pipeline_id: str = ""
     planner_id: str = ""
@@ -183,6 +192,7 @@ class MoveItPoseCommanderConfig:
             "query_planner_interface_service_name",
             "fk_service_name",
             "apply_planning_scene_service_name",
+            "state_validity_service_name",
             "execute_action_name",
         ):
             object.__setattr__(
@@ -202,6 +212,7 @@ class MoveItPoseCommander(Node):
             or GetPositionIK is None
             or GetMotionPlan is None
             or GetPositionFK is None
+            or GetStateValidity is None
             or QueryPlannerInterfaces is None
             or ApplyPlanningScene is None
             or ExecuteTrajectory is None
@@ -222,6 +233,10 @@ class MoveItPoseCommander(Node):
         self._apply_planning_scene_client = self.create_client(
             ApplyPlanningScene,
             config.apply_planning_scene_service_name,
+        )
+        self._state_validity_client = self.create_client(
+            GetStateValidity,
+            config.state_validity_service_name,
         )
         self._execute_client = ActionClient(self, ExecuteTrajectory, config.execute_action_name)
         self._active_goal_handle = None
@@ -301,6 +316,47 @@ class MoveItPoseCommander(Node):
         if not bool(getattr(response, "success", False)):
             return False, "MoveIt rejected the planning-scene update."
         return True, f"Applied {len(collision_objects)} planning-scene obstacle(s)."
+
+    def apply_planning_scene_robot_state(
+        self,
+        robot_state: Mapping[str, float],
+    ) -> tuple[bool, str]:
+        """Update passive or unreported joints in the shared MoveIt scene."""
+
+        state_items = tuple((str(name), float(value)) for name, value in robot_state.items())
+        if not state_items:
+            return True, "No planning-scene robot-state joints requested."
+        names = tuple(name for name, _value in state_items)
+        if len(names) != len(set(names)):
+            return False, "Planning-scene robot state contains duplicate joint names."
+        if PlanningScene is None or ApplyPlanningScene is None:
+            return False, "MoveIt planning-scene message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.robot_state.is_diff = True
+        scene.robot_state.joint_state.name = list(names)
+        scene.robot_state.joint_state.position = [value for _name, value in state_items]
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="planning-scene robot-state apply",
+            )
+        except Exception as exc:
+            return False, f"Planning-scene robot-state apply failed: {exc}"
+        if response is None:
+            return False, "Planning-scene robot-state apply response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the planning-scene robot-state update."
+        return True, f"Applied {len(state_items)} planning-scene robot-state joint(s)."
 
     def remove_planning_scene_obstacles(
         self,
@@ -438,11 +494,23 @@ class MoveItPoseCommander(Node):
         *,
         label: str,
         start_joint_positions: Sequence[float] | None = None,
+        start_robot_state: Mapping[str, float] | None = None,
     ):
-        joints, message = self.compute_ik(target, seed_joint_positions=start_joint_positions)
+        if start_joint_positions is not None and start_robot_state is not None:
+            return None, "Provide either start_joint_positions or start_robot_state, not both"
+        joints, message = self.compute_ik(
+            target,
+            seed_joint_positions=start_joint_positions,
+            seed_robot_state=start_robot_state,
+        )
         if joints is None:
             return None, message
-        return self.plan_to_joint_positions(joints, label=label, start_joint_positions=start_joint_positions)
+        return self.plan_to_joint_positions(
+            joints,
+            label=label,
+            start_joint_positions=start_joint_positions,
+            start_robot_state=start_robot_state,
+        )
 
     def get_current_pose(self, *, frame_id: str) -> PoseTarget:
         request = GetPositionFK.Request()
@@ -482,7 +550,11 @@ class MoveItPoseCommander(Node):
         target: PoseTarget,
         *,
         seed_joint_positions: Sequence[float] | None = None,
+        seed_robot_state: Mapping[str, float] | None = None,
+        avoid_collisions: bool | None = None,
     ) -> tuple[list[float] | None, str]:
+        if seed_joint_positions is not None and seed_robot_state is not None:
+            return None, "Provide either seed_joint_positions or seed_robot_state, not both"
         if seed_joint_positions is not None:
             seed_joint_positions = tuple(float(value) for value in seed_joint_positions)
             if len(seed_joint_positions) != len(self.config.joint_names):
@@ -490,17 +562,34 @@ class MoveItPoseCommander(Node):
                     None,
                     f"Expected {len(self.config.joint_names)} seed joint positions, got {len(seed_joint_positions)}",
                 )
+        complete_seed_items: tuple[tuple[str, float], ...] = ()
+        if seed_robot_state is not None:
+            complete_seed_items = tuple((str(name), float(value)) for name, value in seed_robot_state.items())
+            names = tuple(name for name, _value in complete_seed_items)
+            if len(names) != len(set(names)):
+                return None, "seed_robot_state contains duplicate joint names"
+            missing = [joint_name for joint_name in self.config.joint_names if joint_name not in names]
+            if missing:
+                return None, f"Complete IK seed is missing active-group joints: {missing}"
         request = GetPositionIK.Request()
         request.ik_request.group_name = self.config.planning_group
         request.ik_request.ik_link_name = self.config.pose_link
         request.ik_request.pose_stamped = self._pose_stamped(target)
-        request.ik_request.avoid_collisions = bool(self.config.avoid_collisions)
+        request.ik_request.avoid_collisions = bool(
+            self.config.avoid_collisions if avoid_collisions is None else avoid_collisions
+        )
         # With no explicit seed, make the empty RobotState a diff so MoveIt
         # resolves it against the current shared planning-scene state. A full
         # empty state otherwise produces conversion errors and can lose the
         # stationary second arm during dual-arm collision-aware IK.
         request.ik_request.robot_state.is_diff = True
-        if seed_joint_positions is not None:
+        if complete_seed_items:
+            # Merge a complete dual-arm hypothetical state into the shared
+            # scene so the inactive arm remains at the candidate state being
+            # validated. Unspecified gripper joints retain their scene values.
+            request.ik_request.robot_state.joint_state.name = [name for name, _value in complete_seed_items]
+            request.ik_request.robot_state.joint_state.position = [value for _name, value in complete_seed_items]
+        elif seed_joint_positions is not None:
             request.ik_request.robot_state.is_diff = False
             request.ik_request.robot_state.joint_state.name = list(self.config.joint_names)
             request.ik_request.robot_state.joint_state.position = list(seed_joint_positions)
@@ -527,13 +616,78 @@ class MoveItPoseCommander(Node):
 
         return [float(name_to_position[joint_name]) for joint_name in self.config.joint_names], "ok"
 
+    def check_state_validity(
+        self,
+        robot_state: Mapping[str, float],
+        *,
+        group_name: str = "",
+    ) -> tuple[dict[str, object] | None, str]:
+        """Return full-scene validity and exact MoveIt collision contacts."""
+
+        state_items = tuple((str(name), float(value)) for name, value in robot_state.items())
+        names = tuple(name for name, _value in state_items)
+        if not state_items:
+            return None, "State-validity robot_state must not be empty"
+        if len(names) != len(set(names)):
+            return None, "State-validity robot_state contains duplicate joint names"
+        if not self._state_validity_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return None, f"MoveIt state-validity service '{self.config.state_validity_service_name}' is unavailable."
+
+        request = GetStateValidity.Request()
+        request.robot_state.is_diff = True
+        request.robot_state.joint_state.name = [name for name, _value in state_items]
+        request.robot_state.joint_state.position = [value for _name, value in state_items]
+        request.group_name = str(group_name)
+        future = self._state_validity_client.call_async(request)
+        try:
+            response = self._wait_for_future(
+                future,
+                timeout_s=self.config.ik_timeout_s + 3.0,
+                label="state-validity request",
+            )
+        except Exception as exc:
+            return None, f"State-validity call failed: {exc}"
+        if response is None:
+            return None, "State-validity response was None"
+
+        contacts = []
+        for contact in response.contacts:
+            contacts.append(
+                {
+                    "body_1": str(contact.contact_body_1),
+                    "body_type_1": int(contact.body_type_1),
+                    "body_2": str(contact.contact_body_2),
+                    "body_type_2": int(contact.body_type_2),
+                    "depth_m": float(contact.depth),
+                    "position_world_m": [
+                        float(contact.position.x),
+                        float(contact.position.y),
+                        float(contact.position.z),
+                    ],
+                    "normal_world": [
+                        float(contact.normal.x),
+                        float(contact.normal.y),
+                        float(contact.normal.z),
+                    ],
+                }
+            )
+        return {
+            "valid": bool(response.valid),
+            "contacts": contacts,
+            "cost_source_count": len(response.cost_sources),
+            "constraint_result_count": len(response.constraint_result),
+        }, "ok"
+
     def plan_to_joint_positions(
         self,
         joint_positions: Sequence[float],
         *,
         label: str,
         start_joint_positions: Sequence[float] | None = None,
+        start_robot_state: Mapping[str, float] | None = None,
     ):
+        if start_joint_positions is not None and start_robot_state is not None:
+            return None, "Provide either start_joint_positions or start_robot_state, not both"
         joint_positions = tuple(float(value) for value in joint_positions)
         if len(joint_positions) != len(self.config.joint_names):
             return None, f"Expected {len(self.config.joint_names)} joint targets, got {len(joint_positions)}"
@@ -544,6 +698,15 @@ class MoveItPoseCommander(Node):
                     None,
                     f"Expected {len(self.config.joint_names)} start joint positions, got {len(start_joint_positions)}",
                 )
+        complete_start_items: tuple[tuple[str, float], ...] = ()
+        if start_robot_state is not None:
+            complete_start_items = tuple((str(name), float(value)) for name, value in start_robot_state.items())
+            names = tuple(name for name, _value in complete_start_items)
+            if len(names) != len(set(names)):
+                return None, "start_robot_state contains duplicate joint names"
+            missing = [joint_name for joint_name in self.config.joint_names if joint_name not in names]
+            if missing:
+                return None, f"Complete planning start state is missing active-group joints: {missing}"
 
         request = GetMotionPlan.Request()
         motion_request = request.motion_plan_request
@@ -553,7 +716,10 @@ class MoveItPoseCommander(Node):
         motion_request.max_velocity_scaling_factor = float(self.config.velocity_scale)
         motion_request.max_acceleration_scaling_factor = float(self.config.acceleration_scale)
         motion_request.start_state.is_diff = True
-        if start_joint_positions is not None:
+        if complete_start_items:
+            motion_request.start_state.joint_state.name = [name for name, _value in complete_start_items]
+            motion_request.start_state.joint_state.position = [value for _name, value in complete_start_items]
+        elif start_joint_positions is not None:
             motion_request.start_state.is_diff = False
             motion_request.start_state.joint_state.name = list(self.config.joint_names)
             motion_request.start_state.joint_state.position = list(start_joint_positions)

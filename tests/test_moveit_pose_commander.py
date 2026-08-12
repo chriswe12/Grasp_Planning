@@ -302,7 +302,7 @@ def test_compute_ik_without_seed_uses_current_planning_scene_as_diff() -> None:
     assert message == "ok"
 
 
-def test_compute_ik_with_seed_uses_explicit_complete_seed_state() -> None:
+def test_compute_ik_with_seed_uses_explicit_active_group_seed_state() -> None:
     commander = object.__new__(MoveItPoseCommander)
     commander._config = MoveItPoseCommanderConfig(
         planning_group="arm_two",
@@ -339,6 +339,129 @@ def test_compute_ik_with_seed_uses_explicit_complete_seed_state() -> None:
     assert request.ik_request.robot_state.joint_state.name == ["lbr_two_A1"]
     assert request.ik_request.robot_state.joint_state.position == [-0.4]
     assert joints == [-0.5]
+    assert message == "ok"
+
+
+def test_compute_ik_with_complete_dual_robot_seed_merges_full_state_as_diff() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_two",
+        pose_link="lbr_two_gripper_tcp",
+        joint_names=("lbr_two_A1",),
+    )
+    commander._ik_client = mock.Mock()
+    commander._ik_client.call_async.return_value = object()
+    commander._pose_stamped = lambda target: mock.Mock()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        error_code=SimpleNamespace(val=1),
+        solution=SimpleNamespace(
+            joint_state=SimpleNamespace(name=["lbr_two_A1"], position=[-0.5]),
+        ),
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.compute_ik.__globals__,
+        {"GetPositionIK": _FakeGetPositionIK, "MoveItErrorCodes": _FakeMoveItErrorCodes},
+    ):
+        joints, message = commander.compute_ik(
+            PoseTarget.from_quaternion(
+                x=0.4,
+                y=0.2,
+                z=0.5,
+                quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+            ),
+            seed_robot_state={"lbr_one_A1": 0.3, "lbr_two_A1": -0.4},
+        )
+
+    request = commander._ik_client.call_async.call_args.args[0]
+    assert request.ik_request.robot_state.is_diff is True
+    assert request.ik_request.robot_state.joint_state.name == ["lbr_one_A1", "lbr_two_A1"]
+    assert request.ik_request.robot_state.joint_state.position == [0.3, -0.4]
+    assert joints == [-0.5]
+    assert message == "ok"
+
+
+def test_compute_ik_can_disable_collision_rejection_per_request() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_one",
+        pose_link="lbr_one_gripper_tcp",
+        joint_names=("lbr_one_A1",),
+        avoid_collisions=True,
+    )
+    commander._ik_client = mock.Mock()
+    commander._ik_client.call_async.return_value = object()
+    commander._pose_stamped = lambda target: mock.Mock()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        error_code=SimpleNamespace(val=1),
+        solution=SimpleNamespace(joint_state=SimpleNamespace(name=["lbr_one_A1"], position=[0.2])),
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.compute_ik.__globals__,
+        {"GetPositionIK": _FakeGetPositionIK, "MoveItErrorCodes": _FakeMoveItErrorCodes},
+    ):
+        joints, message = commander.compute_ik(
+            PoseTarget.from_quaternion(
+                x=0.4,
+                y=-0.2,
+                z=0.5,
+                quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+            ),
+            seed_robot_state={"lbr_one_A1": 0.0, "lbr_two_A1": 0.1},
+            avoid_collisions=False,
+        )
+
+    request = commander._ik_client.call_async.call_args.args[0]
+    assert request.ik_request.avoid_collisions is False
+    assert joints == [0.2]
+    assert message == "ok"
+
+
+def test_check_state_validity_returns_exact_contacts() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_one",
+        joint_names=("lbr_one_A1",),
+    )
+    commander._state_validity_client = mock.Mock()
+    commander._state_validity_client.wait_for_service.return_value = True
+    commander._state_validity_client.call_async.return_value = object()
+    contact = SimpleNamespace(
+        contact_body_1="lbr_one_right_finger_link",
+        body_type_1=0,
+        contact_body_2="dual_sim_work_surface",
+        body_type_2=1,
+        depth=0.004,
+        position=SimpleNamespace(x=0.5, y=-0.2, z=-0.03),
+        normal=SimpleNamespace(x=0.0, y=0.0, z=1.0),
+    )
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        valid=False,
+        contacts=[contact],
+        cost_sources=[],
+        constraint_result=[],
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.check_state_validity.__globals__,
+        {"GetStateValidity": _FakeGetStateValidity},
+    ):
+        result, message = commander.check_state_validity(
+            {"lbr_one_A1": 0.2, "lbr_two_A1": -0.1},
+            group_name="",
+        )
+
+    request = commander._state_validity_client.call_async.call_args.args[0]
+    assert request.robot_state.is_diff is True
+    assert request.robot_state.joint_state.name == ["lbr_one_A1", "lbr_two_A1"]
+    assert result is not None
+    assert result["valid"] is False
+    assert result["contacts"][0]["body_1"] == "lbr_one_right_finger_link"
+    assert result["contacts"][0]["body_2"] == "dual_sim_work_surface"
+    assert result["contacts"][0]["depth_m"] == 0.004
     assert message == "ok"
 
 
@@ -430,6 +553,16 @@ class _FakeGetPositionIK:
                 ),
                 timeout=SimpleNamespace(sec=0, nanosec=0),
             )
+
+
+class _FakeGetStateValidity:
+    class Request:
+        def __init__(self) -> None:
+            self.robot_state = SimpleNamespace(
+                is_diff=False,
+                joint_state=SimpleNamespace(name=[], position=[]),
+            )
+            self.group_name = ""
 
 
 class _FakeCollisionObject:

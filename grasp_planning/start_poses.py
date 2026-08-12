@@ -34,6 +34,10 @@ DEFAULT_KUKA_ARM_START_JOINT_POS = {
 DEFAULT_HAND_OPEN_WIDTH = 0.04
 KUKA_Y_GRIPPER_TRAVEL_M = 0.04
 KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M = 0.084
+KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M = (
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * KUKA_Y_GRIPPER_TRAVEL_M
+)
+KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
 DEFAULT_HAND_START_JOINT_POS = {
     "panda_finger_joint.*": 0.04,
     "left_finger_joint": 0.0,
@@ -53,6 +57,66 @@ def gripper_joint_target_from_width(joint_name: str, width_m: float) -> float:
         close_distance = 0.5 * (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - float(width_m))
         return -max(0.0, min(KUKA_Y_GRIPPER_TRAVEL_M, close_distance))
     return float(width_m)
+
+
+def kuka_gripper_clamp_width(width_m: float) -> float:
+    """Clamp a physical jaw width to the modeled KUKA Y-gripper range."""
+
+    return max(
+        KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M,
+        min(KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M, float(width_m)),
+    )
+
+
+def kuka_gripper_approach_width(
+    jaw_width_m: float,
+    *,
+    clearance_per_finger_m: float = KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
+) -> float:
+    """Return the partially closed opening used before contact."""
+
+    if float(clearance_per_finger_m) < 0.0:
+        raise ValueError("clearance_per_finger_m must be non-negative.")
+    return kuka_gripper_clamp_width(float(jaw_width_m) + 2.0 * float(clearance_per_finger_m))
+
+
+def kuka_gripper_normalized_position_from_width(width_m: float) -> float:
+    """Map physical jaw width to controller position: 0=open, 1=closed."""
+
+    width = kuka_gripper_clamp_width(width_m)
+    span = KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M
+    return max(0.0, min(1.0, (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - width) / span))
+
+
+def kuka_gripper_width_from_normalized_position(position: float) -> float:
+    """Map normalized controller position to physical jaw width."""
+
+    normalized = max(0.0, min(1.0, float(position)))
+    span = KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M
+    return KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - normalized * span
+
+
+def kuka_moveit_gripper_driver_position_from_width(width_m: float) -> float:
+    """Return the MoveIt prismatic driver-joint position for a jaw width."""
+
+    return max(
+        0.0,
+        min(
+            KUKA_Y_GRIPPER_TRAVEL_M,
+            0.5 * (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - kuka_gripper_clamp_width(width_m)),
+        ),
+    )
+
+
+def kuka_moveit_gripper_state(robot_name: str, width_m: float) -> dict[str, float]:
+    """Return the passive driver joint needed to place one MoveIt gripper."""
+
+    robot = str(robot_name).strip()
+    if robot not in {"lbr_one", "lbr_two"}:
+        raise ValueError(f"Unsupported KUKA robot name {robot_name!r}.")
+    return {
+        f"{robot}_left_finger_joint": kuka_moveit_gripper_driver_position_from_width(width_m),
+    }
 
 
 def gripper_max_open_width(joint_name: str) -> float:
@@ -107,12 +171,20 @@ __all__ = [
     "KUKA_MOVEIT_ARM_START_JOINT_VALUES",
     "KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS",
     "DEFAULT_MOVEIT_ARM_JOINT_NAMES",
+    "KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M",
+    "KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M",
     "KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M",
     "KUKA_Y_GRIPPER_TRAVEL_M",
     "gripper_joint_target_from_width",
     "gripper_max_open_width",
     "is_gripper_command_joint_name",
     "is_gripper_joint_name",
+    "kuka_gripper_approach_width",
+    "kuka_gripper_clamp_width",
+    "kuka_gripper_normalized_position_from_width",
+    "kuka_gripper_width_from_normalized_position",
     "kuka_isaac_to_moveit_joint_positions",
+    "kuka_moveit_gripper_driver_position_from_width",
+    "kuka_moveit_gripper_state",
     "kuka_moveit_to_isaac_joint_positions",
 ]

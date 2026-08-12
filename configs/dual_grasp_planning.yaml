@@ -40,7 +40,8 @@ planning:
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
-  detailed_finger_contact_gap_m: 0.002
+  # Check both selected contact width and an approach width opened 5 mm per finger.
+  detailed_finger_contact_gap_m: 0.005
   gripper_collision_model: "kuka_y_gripper"
   contact_lateral_offsets_m: [-0.002916666666666667, 0.0, 0.002916666666666667]
   contact_approach_offsets_m: [-0.0030833333333333333, 0.0, 0.0030833333333333333]
@@ -57,8 +58,23 @@ holder_feasibility:
   incoming_path_samples: 21
 
 pair_planning:
+  # Stage-3 insertion filtering runs once per independent assembly step.
+  # 0 selects min(step_count, available CPU cores - 1).
+  stage3_worker_count: 0
+  # Stop exact FCL work once the score/diversity shortlist cannot change.
+  adaptive_inserter_shortlist: true
+  # Prefer corridors whose component AABBs prove separation. Exact FCL is a
+  # fallback only if those robust candidates cannot fill the shortlist.
+  prefer_aabb_clear_inserter_candidates: true
+  # Preserve pickup-pose coverage: score within each bucket, then round-robin
+  # signed approach axes and symmetry transforms before consuming another slot.
+  balance_inserter_approach_directions: true
+  balance_inserter_symmetry_transforms: true
+  # Full overnight-quality ranking. Fast builds may disable only this distance
+  # query; exact FCL collision rejection remains mandatory either way.
+  exact_pair_clearance_ranking: true
   max_holder_candidates_per_step: 80
-  max_inserter_candidates_per_step: 160
+  max_inserter_candidates_per_step: 512
   max_candidates_per_cluster: 5
   contact_position_bin_m: 0.025
   axis_bin_deg: 30.0

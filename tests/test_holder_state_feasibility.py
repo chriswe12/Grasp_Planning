@@ -234,6 +234,60 @@ class _SmallCubeGripper:
         )
 
 
+class HolderOpeningOwnershipTests(unittest.TestCase):
+    def test_intended_contact_state_is_not_queried_against_its_own_base(self) -> None:
+        candidate = _candidate("h_contact", (0.0, 0.0, 0.2), score=1.0)
+        contact_meshes = ("contact_base", "contact_left", "contact_right")
+        approach_meshes = ("approach_base", "approach_left", "approach_right")
+        queried_meshes: list[tuple[object, ...]] = []
+
+        def query(_manager, meshes):
+            queried_meshes.append(tuple(meshes))
+            return holder_state_feasibility._CollisionQuery(False, (), 0.1)
+
+        with (
+            mock.patch.object(
+                holder_state_feasibility,
+                "_candidate_opening_meshes_assembly",
+                return_value=(contact_meshes, approach_meshes),
+            ),
+            mock.patch.object(
+                holder_state_feasibility,
+                "_translated_meshes",
+                return_value=("pregrasp",),
+            ),
+            mock.patch.object(
+                holder_state_feasibility,
+                "_swept_meshes",
+                return_value=("approach_sweep",),
+            ),
+            mock.patch.object(
+                holder_state_feasibility,
+                "_minimum_table_clearance",
+                return_value=0.1,
+            ),
+            mock.patch.object(holder_state_feasibility, "_query_manager", side_effect=query),
+        ):
+            prepared = holder_state_feasibility._prepare_holder_candidate(
+                candidate,
+                table_z_m=0.0,
+                source_pose_assembly=ObjectWorldPose(
+                    position_world=(0.0, 0.0, 0.0),
+                    orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+                ),
+                base_manager=object(),
+                planning=PlanningConfig(gripper_collision_model="kuka_y_gripper"),
+                config=HolderFeasibilityConfig(),
+                model_cache={},
+            )
+
+        self.assertIsNone(prepared.static_failure)
+        self.assertEqual(queried_meshes[0], approach_meshes)
+        self.assertNotIn("contact_left", queried_meshes[0])
+        self.assertEqual(prepared.pregrasp_meshes, ("pregrasp",))
+        self.assertEqual(prepared.approach_swept_meshes, ("approach_sweep",))
+
+
 @unittest.skipUnless(trimesh_fcl_backend_available(), "python-fcl is unavailable")
 class HolderStateFeasibilityTests(unittest.TestCase):
     def _evaluate(self):

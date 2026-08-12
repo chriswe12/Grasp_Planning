@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -287,6 +288,156 @@ def _config(**overrides) -> DualGraspPairConfig:
     return DualGraspPairConfig(**defaults)
 
 
+class InserterShortlistDiversityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.source_pose = ObjectWorldPose(
+            position_world=(0.0, 0.0, 0.0),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+
+    def _oriented_candidate(
+        self,
+        grasp_id: str,
+        *,
+        orientation_xyzw: tuple[float, float, float, float],
+        score: float,
+        x: float,
+        symmetry: str = "identity",
+    ) -> SavedGraspCandidate:
+        return replace(
+            _candidate(grasp_id, (x, 0.0, 0.2), score=score),
+            grasp_orientation_xyzw_obj=orientation_xyzw,
+            metadata={"symmetry_pickup_name": symmetry},
+        )
+
+    def test_shortlist_covers_every_available_signed_approach_axis(self) -> None:
+        root_half = float(np.sqrt(0.5))
+        candidates = tuple(
+            self._oriented_candidate(
+                f"z_high_{index}",
+                orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                score=1.0 - index * 0.001,
+                x=index * 0.02,
+            )
+            for index in range(12)
+        ) + (
+            self._oriented_candidate(
+                "z_minus",
+                orientation_xyzw=(1.0, 0.0, 0.0, 0.0),
+                score=0.60,
+                x=0.30,
+            ),
+            self._oriented_candidate(
+                "x_plus",
+                orientation_xyzw=(0.0, root_half, 0.0, root_half),
+                score=0.59,
+                x=0.32,
+            ),
+            self._oriented_candidate(
+                "x_minus",
+                orientation_xyzw=(0.0, -root_half, 0.0, root_half),
+                score=0.58,
+                x=0.34,
+            ),
+            self._oriented_candidate(
+                "y_plus",
+                orientation_xyzw=(-root_half, 0.0, 0.0, root_half),
+                score=0.57,
+                x=0.36,
+            ),
+            self._oriented_candidate(
+                "y_minus",
+                orientation_xyzw=(root_half, 0.0, 0.0, root_half),
+                score=0.56,
+                x=0.38,
+            ),
+        )
+
+        selected = pair_planner._diverse_shortlist(
+            candidates,
+            source_pose_assembly=self.source_pose,
+            config=_config(max_candidates_per_cluster=5),
+            limit=6,
+            balance_approach_directions=True,
+        )
+
+        self.assertEqual(len(selected), 6)
+        self.assertEqual(
+            {
+                pair_planner._approach_direction_label(
+                    pair_planner._candidate_approach_direction_key(
+                        candidate,
+                        source_pose_assembly=self.source_pose,
+                    )
+                )
+                for candidate in selected
+            },
+            {"+x", "-x", "+y", "-y", "+z", "-z"},
+        )
+
+    def test_shortlist_round_robins_symmetries_inside_direction(self) -> None:
+        candidates = tuple(
+            self._oriented_candidate(
+                f"identity_{index}",
+                orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                score=1.0 - index * 0.01,
+                x=index * 0.02,
+            )
+            for index in range(3)
+        ) + tuple(
+            self._oriented_candidate(
+                f"symmetric_{index}",
+                orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                score=0.60 - index * 0.01,
+                x=0.10 + index * 0.02,
+                symmetry="object_half_turn",
+            )
+            for index in range(3)
+        )
+
+        selected = pair_planner._diverse_shortlist(
+            candidates,
+            source_pose_assembly=self.source_pose,
+            config=_config(max_candidates_per_cluster=5),
+            limit=4,
+            balance_approach_directions=True,
+            balance_symmetry_transforms=True,
+        )
+
+        self.assertEqual(
+            [pair_planner._candidate_symmetry_key(candidate) for candidate in selected],
+            ["identity", "object_half_turn", "identity", "object_half_turn"],
+        )
+
+    def test_pair_budget_covers_inserters_before_repeating_one(self) -> None:
+        holders = tuple(
+            _candidate(f"h{index}", (index * 0.1, 0.0, 0.2), score=1.0 - index * 0.1)
+            for index in range(3)
+        )
+        inserters = tuple(
+            _candidate(f"i{index}", (index * 0.1, 0.1, 0.2), score=1.0 - index * 0.1)
+            for index in range(4)
+        )
+
+        combinations = pair_planner._balanced_pair_combinations(
+            holders,
+            inserters,
+            config=_config(max_pair_checks=6),
+        )
+
+        self.assertEqual(
+            [(holder.grasp_id, inserter.grasp_id) for holder, inserter in combinations],
+            [
+                ("h0", "i0"),
+                ("h0", "i1"),
+                ("h0", "i2"),
+                ("h0", "i3"),
+                ("h1", "i0"),
+                ("h1", "i1"),
+            ],
+        )
+
+
 @unittest.skipUnless(trimesh_fcl_backend_available(), "python-fcl is unavailable")
 class DualGraspPairPlannerTests(unittest.TestCase):
     def _plan(self, *, config: DualGraspPairConfig | None = None):
@@ -512,6 +663,60 @@ class DualGraspPairPlannerTests(unittest.TestCase):
 
         self.assertEqual(retained, ("i1_best", "i2_best", "i3_best"))
 
+    def test_pair_retention_balances_inserter_approach_directions(self) -> None:
+        def evaluation(
+            pair_id: str,
+            inserter_id: str,
+            score: float,
+        ) -> pair_planner.DualGraspPairEvaluation:
+            return pair_planner.DualGraspPairEvaluation(
+                pair_id=pair_id,
+                holder_grasp_id=f"h_{pair_id}",
+                inserter_grasp_id=inserter_id,
+                status="accepted",
+                reason="accepted",
+                score=score,
+                holder_score=score,
+                inserter_score=score,
+                clearance_score=1.0,
+                minimum_clearance_m=0.01,
+                collision_check="synthetic",
+            )
+
+        root_half = float(np.sqrt(0.5))
+        inserters = {
+            "z1": _candidate("z1", (0.0, 0.0, 0.2), score=0.99),
+            "z2": _candidate("z2", (0.1, 0.0, 0.2), score=0.98),
+            "z3": _candidate("z3", (0.2, 0.0, 0.2), score=0.97),
+            "x1": replace(
+                _candidate("x1", (0.3, 0.0, 0.2), score=0.70),
+                grasp_orientation_xyzw_obj=(0.0, root_half, 0.0, root_half),
+            ),
+            "y1": replace(
+                _candidate("y1", (0.4, 0.0, 0.2), score=0.60),
+                grasp_orientation_xyzw_obj=(-root_half, 0.0, 0.0, root_half),
+            ),
+        }
+        source_pose = ObjectWorldPose(
+            position_world=(0.0, 0.0, 0.0),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+
+        retained = pair_planner._retain_diverse_pairs(
+            (
+                evaluation("pair_z1", "z1", 0.99),
+                evaluation("pair_z2", "z2", 0.98),
+                evaluation("pair_z3", "z3", 0.97),
+                evaluation("pair_x1", "x1", 0.70),
+                evaluation("pair_y1", "y1", 0.60),
+            ),
+            config=_config(max_accepted_pairs=3),
+            inserters_by_id=inserters,
+            inserter_source_pose_assembly=source_pose,
+        )
+
+        self.assertEqual(retained, ("pair_z1", "pair_x1", "pair_y1"))
+
     def test_execution_candidate_retention_round_robins_corridors(self) -> None:
         def candidate(
             pair_id: str,
@@ -710,6 +915,7 @@ class InserterUnaryFilteringTests(unittest.TestCase):
             )
             table = _candidate("g0001", (0.2, 0.0, 0.005), score=1.0)
             clear = _candidate("g0002", (0.2, 0.2, 0.2), score=0.9)
+            lower_clear = _candidate("g0003", (0.2, 0.4, 0.2), score=0.8)
             pose = ObjectWorldPose(
                 position_world=(0.0, 0.0, 0.0),
                 orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
@@ -720,7 +926,7 @@ class InserterUnaryFilteringTests(unittest.TestCase):
                     mesh_scale=1.0,
                     source_frame_origin_obj_world=pose.position_world,
                     source_frame_orientation_xyzw_obj_world=(pose.orientation_xyzw_world),
-                    candidates=(table, clear),
+                    candidates=(table, clear, lower_clear),
                     metadata={"stage1_cache_key": "fixture"},
                 ),
                 target_mesh_local=TriangleMesh(
@@ -730,8 +936,8 @@ class InserterUnaryFilteringTests(unittest.TestCase):
                 target_pose_in_obj_world=pose,
                 obstacle_mesh_world=None,
                 collision_backend_name="fixture",
-                raw_candidate_count=2,
-                raw_candidates=(table, clear),
+                raw_candidate_count=3,
+                raw_candidates=(table, clear, lower_clear),
             )
             with (
                 mock.patch(
@@ -742,19 +948,28 @@ class InserterUnaryFilteringTests(unittest.TestCase):
                     "grasp_planning.pipeline.dual_grasp_pair_planner.make_gripper_collision_model",
                     return_value=_SmallCubeGripper(),
                 ),
-            ):
-                library = generate_inserter_grasp_library(
-                    sequence=_sequence(parts=parts),
-                    step=_step(),
-                    planning=_planning(),
-                    config=_config(),
-                )
+                ):
+                with mock.patch(
+                    "grasp_planning.pipeline.dual_grasp_pair_planner._candidate_primitives_assembly",
+                    wraps=pair_planner._candidate_primitives_assembly,
+                ) as candidate_primitives:
+                    library = generate_inserter_grasp_library(
+                        sequence=_sequence(parts=parts),
+                        step=_step(),
+                        planning=_planning(),
+                        config=_config(max_inserter_candidates_per_step=1),
+                    )
             by_id = {status.grasp_id: status for status in library.candidate_statuses}
             self.assertEqual(
                 by_id["i0_0001"].reason,
                 "inserter_table_collision",
             )
             self.assertEqual(by_id["i0_0002"].status, "accepted")
+            self.assertEqual(
+                by_id["i0_0003"].reason,
+                "not_evaluated_shortlist_complete",
+            )
+            self.assertEqual(candidate_primitives.call_count, 2)
             self.assertEqual(
                 [candidate.grasp_id for candidate in library.bundle.candidates],
                 ["i0_0002"],

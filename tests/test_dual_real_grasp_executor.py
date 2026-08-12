@@ -18,7 +18,10 @@ from grasp_planning.ros2.dual_real_grasp_executor import (
     _work_surface_obstacle,
     load_and_validate_dual_plan,
 )
-from grasp_planning.start_poses import KUKA_MOVEIT_ARM_START_JOINT_VALUES
+from grasp_planning.start_poses import (
+    KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+    kuka_gripper_approach_width,
+)
 from scripts import build_simple_dual_robot_task as task_builder
 from scripts.build_simple_dual_robot_task import (
     _include_nonretained_identity_fallbacks,
@@ -268,11 +271,11 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
         (target_name, True) for role, target_name in MOTION_SEQUENCE if role == "inserter"
     ]
     assert grippers["holder"].calls == [
-        ("open", 0.06),
+        ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
         ("close", plan["grasps"]["holder"]["jaw_width_m"]),
     ]
     assert grippers["inserter"].calls == [
-        ("open", 0.06),
+        ("open", kuka_gripper_approach_width(plan["grasps"]["inserter_pickup"]["jaw_width_m"])),
         ("close", plan["grasps"]["inserter_pickup"]["jaw_width_m"]),
     ]
     assert steps[-1]["name"] == "inserter_preinsertion"
@@ -307,8 +310,12 @@ def test_execute_sequence_stops_before_holder_close_at_pregrasp(
     assert status == "stopped_at_holder_pregrasp"
     assert last_completed == "holder_pregrasp"
     assert commanders["inserter"].calls == []
-    assert grippers["holder"].calls == [("open", 0.06)]
-    assert grippers["inserter"].calls == [("open", 0.06)]
+    assert grippers["holder"].calls == [
+        ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"]))
+    ]
+    assert grippers["inserter"].calls == [
+        ("open", kuka_gripper_approach_width(plan["grasps"]["inserter_pickup"]["jaw_width_m"]))
+    ]
 
 
 def test_execute_sequence_uses_aabbs_only_for_pregrasp_transit(
@@ -534,7 +541,8 @@ def test_preflight_retries_ik_with_known_start_seed(tmp_path: Path) -> None:
         )
         is True
     )
-    assert all("alternate IK succeeded" in step["message"] for step in steps)
+    target_steps = [step for step in steps if not step["name"].endswith("_gripper_state")]
+    assert all("alternate IK succeeded" in step["message"] for step in target_steps)
     for commander in commanders.values():
         assert len(commander.seeds) >= 2
         assert commander.seeds[0] is None

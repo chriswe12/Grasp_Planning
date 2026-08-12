@@ -17,6 +17,7 @@ import numpy as np
 from grasp_planning.grasping.fabrica_grasp_debug import quat_to_rotmat_xyzw
 from grasp_planning.grasping.mesh_io import load_triangle_mesh
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+from grasp_planning.start_poses import kuka_gripper_approach_width
 
 from .holder_state_debug_html import _gripper_payload
 
@@ -172,16 +173,36 @@ def dual_robot_planning_scene_payload(task: Any) -> dict[str, object]:
     inserter_grasp = dict(dict(task_payload["grasps"])["inserter_pickup"])
     gripper = _gripper_payload()
     floor_z_world_m = float(task.pickup_floor_z_world_m)
+    jaw_widths_m = {
+        "holder": float(holder_grasp["jaw_width_m"]),
+        "inserter": float(inserter_grasp["jaw_width_m"]),
+    }
+    approach_widths_m = {
+        "holder": float(
+            holder_grasp.get(
+                "open_width_m",
+                kuka_gripper_approach_width(holder_grasp["jaw_width_m"]),
+            )
+        ),
+        "inserter": float(
+            inserter_grasp.get(
+                "open_width_m",
+                kuka_gripper_approach_width(inserter_grasp["jaw_width_m"]),
+            )
+        ),
+    }
     gripper_floor_clearance_m = {
-        name: _visual_gripper_floor_clearance_m(
-            gripper=gripper,
-            target=dict(target_payload),
-            jaw_width_m=(
-                float(holder_grasp["jaw_width_m"])
-                if name.startswith("holder_")
-                else float(inserter_grasp["jaw_width_m"])
-            ),
-            floor_z_world_m=floor_z_world_m,
+        name: min(
+            _visual_gripper_floor_clearance_m(
+                gripper=gripper,
+                target=dict(target_payload),
+                jaw_width_m=width_m,
+                floor_z_world_m=floor_z_world_m,
+            )
+            for width_m in (
+                jaw_widths_m["holder" if name.startswith("holder_") else "inserter"],
+                approach_widths_m["holder" if name.startswith("holder_") else "inserter"],
+            )
         )
         for name, target_payload in targets.items()
         if name.startswith(("holder_", "inserter_"))
@@ -209,10 +230,8 @@ def dual_robot_planning_scene_payload(task: Any) -> dict[str, object]:
             "final": final_pose,
         },
         "targets": targets,
-        "jaw_widths_m": {
-            "holder": float(holder_grasp["jaw_width_m"]),
-            "inserter": float(inserter_grasp["jaw_width_m"]),
-        },
+        "jaw_widths_m": jaw_widths_m,
+        "approach_widths_m": approach_widths_m,
         "gripper": gripper,
         "gripper_floor_clearance_m": gripper_floor_clearance_m,
         "robot_bases_world_m": {
@@ -359,12 +378,12 @@ function label(point,text,color){const p=project(point);ctx.font="700 16px ui-mo
 function drawMesh(vertices,faces,color,alpha=.55){const projected=vertices.map(project),records=faces.map(f=>{const p=[projected[f[0]],projected[f[1]],projected[f[2]]];return{p,d:(p[0][2]+p[1][2]+p[2][2])/3}}).sort((a,b)=>a.d-b.d);ctx.globalAlpha=alpha;records.forEach(r=>{ctx.beginPath();ctx.moveTo(r.p[0][0],r.p[0][1]);ctx.lineTo(r.p[1][0],r.p[1][1]);ctx.lineTo(r.p[2][0],r.p[2][1]);ctx.closePath();ctx.fillStyle=color;ctx.fill();ctx.strokeStyle="#0d101388";ctx.lineWidth=.35;ctx.stroke()});ctx.globalAlpha=1}
 function compWorld(comp,target,shift=0){const q=target.orientation_xyzw,center=target.position,jaw=target.jaw_width/2,offset=qrot(scene.gripper.tcp_to_grasp_center_m,q),origin=sub(center,offset);return comp.vertices.map(v=>add(origin,qrot([v[0],v[1]+shift,v[2]],q)))}
 function drawGripper(target,color,alpha=.75){if(!target)return;const clearance=scene.gripper_floor_clearance_m?.[target.label],actualColor=Number.isFinite(clearance)&&clearance<0?"#ff5964":color,g=scene.gripper,h=target.jaw_width/2,items=[[g.base,0],[g.left_finger,-h-g.left_fingertip_inner_y],[g.right_finger,h-g.right_fingertip_inner_y]];items.forEach(([comp,shift])=>drawMesh(compWorld(comp,target,shift),comp.faces,actualColor,alpha));label(target.position,target.label,actualColor)}
-function target(name,role){const t=scene.targets[name];if(!t)return null;return{position:t.position_world_m,orientation_xyzw:t.orientation_xyzw_world,jaw_width:scene.jaw_widths_m[role],label:name}}
+function target(name,role){const t=scene.targets[name];if(!t)return null;const approach=name.endsWith("pregrasp");return{position:t.position_world_m,orientation_xyzw:t.orientation_xyzw_world,jaw_width:approach?(scene.approach_widths_m?.[role]??scene.jaw_widths_m[role]):scene.jaw_widths_m[role],label:name}}
 function stage(){const p=live?.phase||"";if(p.startsWith("holder_"))return"holder";if(p==="pickup_floor_check"||p==="inserter_pickup_pregrasp"||p==="inserter_pickup_grasp")return"inserter";if(p==="joint_space_ranking"||p.startsWith("inserter_")||p==="transition")return"transition";return p==="complete"?"transition":""}
 function render(){if(!scene)return;const incomingVertices=transformedIncoming();frameBounds=bounds(incomingVertices);ctx.clearRect(0,0,canvas.width,canvas.height);const f=scene.floor_z_world_m;const table=[[.05,-.72,f],[1.45,-.72,f],[1.45,.72,f],[.05,.72,f]];ctx.globalAlpha=.18;ctx.fillStyle="#4d94d8";ctx.beginPath();table.map(project).forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fill();ctx.globalAlpha=1;line([0,0,f],[.18,0,f],"#f05a62",3);line([0,0,f],[0,.18,f],"#49cf86",3);line([0,0,f],[0,0,f+.18],"#559cff",3);scene.subassembly_parts.forEach(p=>drawMesh(p.vertices_world_m,p.faces,p.is_base?"#31c49a":"#85969c",.64));drawMesh(incomingVertices,scene.incoming.faces,"#ff842c",.75);const bases=scene.robot_bases_world_m;Object.entries(bases).forEach(([role,p])=>{const q=[p[0],p[1],f];ctx.fillStyle=role==="holder"?"#efb64d":"#a98bfa";const s=project(q);ctx.beginPath();ctx.arc(s[0],s[1],13,0,Math.PI*2);ctx.fill();label(q,role+" base",ctx.fillStyle)});const phase=live?.phase||"";const holderName=phase==="holder_pregrasp"?"holder_pregrasp":"holder_grasp";let inserterName="inserter_pickup_grasp";if(phase==="ik_preflight"||phase==="joint_space_ranking")inserterName="inserter_preinsertion";else if(phase.startsWith("inserter_"))inserterName=phase;drawGripper(target(holderName,"holder"),"#efb64d",stage()==="holder"?.95:.62);drawGripper(target(inserterName,"inserter"),"#a98bfa",stage()==="inserter"||stage()==="transition"?.95:.45);const holderTarget=scene.targets.holder_grasp.position_world_m,inserterTarget=scene.targets.inserter_preinsertion.position_world_m;line(bases.holder,holderTarget,"#efb64d",2,[5,6]);line(bases.inserter,inserterTarget,"#a98bfa",2,[5,6]);const path=["inserter_pickup_lift","inserter_above_preinsertion","inserter_preinsertion"].map(n=>scene.targets[n].position_world_m);line(path[0],path[1],"#a98bfa",2,[9,6]);line(path[1],path[2],"#a98bfa",2,[9,6])}
 function scheduleRender(){if(renderQueued)return;renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;render()})}
 function count(c,key){return Number.isFinite(Number(c[key]))?Number(c[key]):0}
-function updatePanel(){if(!live)return;$("attempt").textContent=`${live.attempt_index||0} / ${live.attempt_total||0}`;$("pair").textContent=live.pair_id||"-";$("transition").textContent=live.transition_id||"-";$("target").textContent=live.phase||"-";$("score").textContent=scene?scene.selection_score.toFixed(5):"-";const cross=scene?.layout_proxy_components||{};$("crossing").textContent=scene?(cross.transition_segments_cross_xy?"INSERT CROSSED":cross.pickup_segments_cross_xy?"pickup crossed":"clear"):"-";$("crossing").style.color=(cross.transition_segments_cross_xy||cross.pickup_segments_cross_xy)?"var(--bad)":"var(--ok)";const holderClearance=scene?.gripper_floor_clearance_m?.holder_grasp,$holderFloor=$("holder-floor");$holderFloor.textContent=Number.isFinite(holderClearance)?`${(1000*holderClearance).toFixed(1)} mm`:"-";$holderFloor.style.color=Number.isFinite(holderClearance)&&holderClearance<0?"var(--bad)":"var(--ok)";const c=live.candidate_counts||{},floorZ=Number(c.pickup_floor_z_world_m);$("floor-plane").textContent=Number.isFinite(floorZ)?`z = ${floorZ.toFixed(3)} m`:"-";$("pickup-counts").textContent=`${count(c,"pickup_grasps_accepted")} / ${count(c,"pickup_grasps_checked")} accepted`;$("stage3-counts").textContent=`${count(c,"stage3_retained_execution_candidates")} executions · ${count(c,"stage3_retained_pairs")} pairs`;$("fallback-counts").textContent=`${count(c,"pose_feasible_retained_execution_candidates")} retained · ${count(c,"pose_feasible_validated_transition_fallback_candidates")} sym · ${count(c,"pose_feasible_identity_fallback_candidates")} identity`;$("queue-counts").textContent=`${count(c,"planner_queue_execution_candidates")} executions · ${count(c,"planner_queue_noncrossing_execution_candidates")} clear · ${count(c,"planner_queue_crossed_execution_candidates")} crossed · ${count(c,"planner_queue_unique_holder_grasps")} H · ${count(c,"planner_queue_unique_inserter_grasps")} I`;$("joint-counts").textContent=`${count(c,"joint_rank_candidates_planned")} planned / ${count(c,"joint_rank_candidates_checked")} checked`;$("ik-counts").textContent=`${count(c,"exact_ik_pair_tasks_checked")} pairs · ${count(c,"exact_ik_holder_grasps_checked")} H · ${count(c,"exact_ik_inserter_grasps_checked")} I`;$("message").textContent=live.message||"";const badge=$("status");badge.textContent=live.status||"waiting";badge.className=`badge ${live.status==="failed"||live.status==="fatal"?"bad":live.status==="succeeded"||live.status==="complete"?"ok":""}`;const active=stage(),order=["holder","inserter","transition"];order.forEach((name,i)=>{const el=$("stage-"+name);el.className=name===active?"active":active&&order.indexOf(active)>i?"done":""});$("history").replaceChildren(...(live.history||[]).slice().reverse().map(e=>{const d=document.createElement("div");d.className=`event ${e.status||""}`;d.textContent=`${e.attempt_index||0} · ${e.phase||"-"} · ${e.status||""}${e.message?" · "+e.message:""}`;return d}))}
+function updatePanel(){if(!live)return;$("attempt").textContent=`${live.attempt_index||0} / ${live.attempt_total||0}`;$("pair").textContent=live.pair_id||"-";$("transition").textContent=live.transition_id||"-";$("target").textContent=live.phase||"-";$("score").textContent=scene?scene.selection_score.toFixed(5):"-";const cross=scene?.layout_proxy_components||{};$("crossing").textContent=scene?(cross.transition_segments_cross_xy?"INSERT CROSSED":cross.pickup_segments_cross_xy?"pickup crossed":"clear"):"-";$("crossing").style.color=(cross.transition_segments_cross_xy||cross.pickup_segments_cross_xy)?"var(--bad)":"var(--ok)";const holderClearance=scene?.gripper_floor_clearance_m?.holder_grasp,$holderFloor=$("holder-floor");$holderFloor.textContent=Number.isFinite(holderClearance)?`${(1000*holderClearance).toFixed(1)} mm`:"-";$holderFloor.style.color=Number.isFinite(holderClearance)&&holderClearance<0?"var(--bad)":"var(--ok)";const c=live.candidate_counts||{},floorZ=Number(c.pickup_floor_z_world_m);$("floor-plane").textContent=Number.isFinite(floorZ)?`z = ${floorZ.toFixed(3)} m`:"-";$("pickup-counts").textContent=`${count(c,"pickup_grasps_accepted")} / ${count(c,"pickup_grasps_checked")} accepted`;$("stage3-counts").textContent=`${count(c,"stage3_retained_execution_candidates")} executions · ${count(c,"stage3_retained_pairs")} pairs`;$("fallback-counts").textContent=`${count(c,"pose_feasible_retained_execution_candidates")} retained · ${count(c,"pose_feasible_validated_transition_fallback_candidates")} sym · ${count(c,"pose_feasible_identity_fallback_candidates")} identity`;$("queue-counts").textContent=`${count(c,"planner_queue_execution_candidates")} executions · ${count(c,"planner_queue_noncrossing_execution_candidates")} clear · ${count(c,"planner_queue_crossed_execution_candidates")} crossed · ${count(c,"planner_queue_unique_holder_grasps")} H · ${count(c,"planner_queue_unique_inserter_grasps")} I`;$("joint-counts").textContent=`${count(c,"joint_rank_candidates_planned")} planned / ${count(c,"joint_rank_candidates_checked")} checked`;$("ik-counts").textContent=`${count(c,"exact_ik_pair_tasks_checked")} pairs · ${count(c,"exact_ik_holder_grasps_checked")} H · ${count(c,"exact_ik_inserter_grasps_checked")} I · ${count(c,"exact_ik_seed_calls")} IK calls + ${count(c,"exact_ik_kinematic_cache_hits")} cached · ${count(c,"exact_ik_state_validity_requests")} states · ${count(c,"exact_ik_solutions_found")} solutions`;$("message").textContent=live.message||"";const badge=$("status");badge.textContent=live.status||"waiting";badge.className=`badge ${live.status==="failed"||live.status==="fatal"?"bad":live.status==="succeeded"||live.status==="complete"?"ok":""}`;const active=stage(),order=["holder","inserter","transition"];order.forEach((name,i)=>{const el=$("stage-"+name);el.className=name===active?"active":active&&order.indexOf(active)>i?"done":""});$("history").replaceChildren(...(live.history||[]).slice().reverse().map(e=>{const d=document.createElement("div");d.className=`event ${e.status||""}`;d.textContent=`${e.attempt_index||0} · ${e.phase||"-"} · ${e.status||""}${e.message?" · "+e.message:""}`;return d}))}
 async function poll(){try{const r=await fetch(`/state.json?t=${Date.now()}`,{cache:"no-store"});if(!r.ok)throw Error(r.status);const nextLive=await r.json(),serverChanged=nextLive.server_id!==lastServerId;if(serverChanged){lastServerId=nextLive.server_id;lastRevision=-1;lastStateRevision=-1}const sceneChanged=nextLive.scene_revision!==lastRevision;if(sceneChanged){if(nextLive.scene_revision>0){const s=await fetch(`/scene.json?t=${Date.now()}`,{cache:"no-store"});if(!s.ok)throw Error(s.status);scene=await s.json()}else scene=null;lastRevision=nextLive.scene_revision}const stateChanged=nextLive.state_revision!==lastStateRevision;live=nextLive;if(stateChanged){lastStateRevision=live.state_revision;updatePanel()}const visualKey=`${live.server_id}|${live.scene_revision}|${live.phase}|${live.status}`;if(sceneChanged||visualKey!==lastVisualKey){lastVisualKey=visualKey;scheduleRender()}}catch(e){if(!live||!["complete","failed","fatal"].includes(live.status)){const b=$("status");b.textContent="planner disconnected";b.className="badge bad"}}setTimeout(poll,100)}
 canvas.onpointerdown=e=>{view.drag=true;view.x=e.clientX;view.y=e.clientY;canvas.setPointerCapture(e.pointerId)};canvas.onpointermove=e=>{if(!view.drag)return;view.yaw+=(e.clientX-view.x)*.006;view.pitch=Math.max(-1.35,Math.min(1.35,view.pitch+(e.clientY-view.y)*.006));view.x=e.clientX;view.y=e.clientY;scheduleRender()};canvas.onpointerup=canvas.onpointercancel=()=>view.drag=false;canvas.onwheel=e=>{e.preventDefault();view.zoom=Math.max(.35,Math.min(4,view.zoom*Math.exp(-e.deltaY*.001)));scheduleRender()};poll();
 </script></body></html>"""

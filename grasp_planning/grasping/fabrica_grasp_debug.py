@@ -24,6 +24,7 @@ from .collision import (
     _place_kuka_y_left_finger_for_grasp,
     _place_kuka_y_right_finger_for_grasp,
     make_gripper_collision_model,
+    make_gripper_collision_models,
     normalize_gripper_collision_model_name,
 )
 from .finger_geometry import finger_box_corners
@@ -1297,7 +1298,7 @@ def filter_grasps_against_assembly(
     ).build_scene(obstacle_mesh_world)
     obstacle_vertices_world = np.asarray(obstacle_mesh_world.vertices_obj, dtype=float)
     obstacle_bounds_world = (obstacle_vertices_world.min(axis=0), obstacle_vertices_world.max(axis=0))
-    collision_models: dict[tuple[float, float], GripperCollisionModel] = {}
+    collision_models: dict[tuple[float, float], tuple[GripperCollisionModel, ...]] = {}
     kept: list[SavedGraspCandidate] = []
     for candidate in candidates:
         for lateral_offset_m, approach_offset_m in _ordered_contact_offset_pairs(
@@ -1306,32 +1307,32 @@ def filter_grasps_against_assembly(
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
             key = (float(lateral_offset_m), float(approach_offset_m))
-            collision_model = collision_models.get(key)
-            if collision_model is None:
-                collision_model = make_gripper_collision_model(
+            candidate_models = collision_models.get(key)
+            if candidate_models is None:
+                candidate_models = make_gripper_collision_models(
                     model_name,
-                    contact_gap_m=contact_gap_m,
+                    approach_gap_m=contact_gap_m,
                     contact_patch_lateral_offset_m=lateral_offset_m,
                     contact_patch_approach_offset_m=approach_offset_m,
                 )
-                collision_models[key] = collision_model
-            if _assembly_collision_free_for_offset(
-                _candidate_with_contact_offset(
-                    candidate,
-                    lateral_offset_m=lateral_offset_m,
-                    approach_offset_m=approach_offset_m,
-                ),
-                object_pose_world=object_pose_world,
-                obstacle_scene=obstacle_scene,
-                obstacle_bounds_world=obstacle_bounds_world,
-                collision_model=collision_model,
+                collision_models[key] = candidate_models
+            offset_candidate = _candidate_with_contact_offset(
+                candidate,
+                lateral_offset_m=lateral_offset_m,
+                approach_offset_m=approach_offset_m,
+            )
+            if all(
+                _assembly_collision_free_for_offset(
+                    offset_candidate,
+                    object_pose_world=object_pose_world,
+                    obstacle_scene=obstacle_scene,
+                    obstacle_bounds_world=obstacle_bounds_world,
+                    collision_model=collision_model,
+                )
+                for collision_model in candidate_models
             ):
                 kept.append(
-                    _candidate_with_contact_offset(
-                        candidate,
-                        lateral_offset_m=lateral_offset_m,
-                        approach_offset_m=approach_offset_m,
-                    )
+                    offset_candidate
                 )
                 break
     return kept
@@ -1353,7 +1354,7 @@ def evaluate_grasps_against_ground(
     ground_constraint = HalfSpaceWorldConstraint(
         offset_world=-(float(floor_z_world_m) + float(floor_clearance_margin_m))
     )
-    evaluators: dict[tuple[float, float], WorldCollisionConstraintEvaluator] = {}
+    evaluators: dict[tuple[float, float], tuple[WorldCollisionConstraintEvaluator, ...]] = {}
     for candidate in candidates:
         accepted_candidate: SavedGraspCandidate | None = None
         used_refinement = False
@@ -1363,26 +1364,30 @@ def evaluate_grasps_against_ground(
             contact_approach_offsets_m=contact_approach_offsets_m,
         ):
             key = (float(lateral_offset_m), float(approach_offset_m))
-            evaluator = evaluators.get(key)
-            if evaluator is None:
-                evaluator = WorldCollisionConstraintEvaluator(
-                    make_gripper_collision_model(
+            candidate_evaluators = evaluators.get(key)
+            if candidate_evaluators is None:
+                candidate_evaluators = tuple(
+                    WorldCollisionConstraintEvaluator(model)
+                    for model in make_gripper_collision_models(
                         model_name,
-                        contact_gap_m=contact_gap_m,
+                        approach_gap_m=contact_gap_m,
                         contact_patch_lateral_offset_m=lateral_offset_m,
                         contact_patch_approach_offset_m=approach_offset_m,
                     )
                 )
-                evaluators[key] = evaluator
+                evaluators[key] = candidate_evaluators
             offset_candidate = _candidate_with_contact_offset(
                 candidate,
                 lateral_offset_m=lateral_offset_m,
                 approach_offset_m=approach_offset_m,
             )
-            if evaluator.is_grasp_above_plane(
-                offset_candidate.to_object_frame_candidate(),
-                object_pose_world=object_pose_world,
-                plane_constraint=ground_constraint,
+            if all(
+                evaluator.is_grasp_above_plane(
+                    offset_candidate.to_object_frame_candidate(),
+                    object_pose_world=object_pose_world,
+                    plane_constraint=ground_constraint,
+                )
+                for evaluator in candidate_evaluators
             ):
                 accepted_candidate = offset_candidate
                 used_refinement = (
@@ -1553,6 +1558,8 @@ def candidate_payload(
     contact_gap_m: float,
     object_pose_world: ObjectWorldPose | None = None,
     gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    pregrasp_offset_m: float | None = None,
+    pregrasp_width_clearance_m: float = 0.0,
 ) -> list[dict[str, object]]:
     status_list = list(candidate_statuses)
     status_list.sort(
@@ -1570,6 +1577,30 @@ def candidate_payload(
         center = np.asarray(candidate.grasp_position_obj, dtype=float)
         rotation = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
         closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
+        pregrasp_position = (
+            None
+            if pregrasp_offset_m is None
+            else center - rotation[:, 2] * float(pregrasp_offset_m)
+        )
+        grasp_position_display = _display_point(
+            candidate.grasp_position_obj,
+            object_pose_world=object_pose_world,
+        )
+        pregrasp_position_display = (
+            None
+            if pregrasp_position is None
+            else _display_point(pregrasp_position, object_pose_world=object_pose_world)
+        )
+        pregrasp_translation_display = (
+            None
+            if pregrasp_position_display is None
+            else fmt_vec(
+                (
+                    np.asarray(pregrasp_position_display, dtype=float)
+                    - np.asarray(grasp_position_display, dtype=float)
+                ).tolist()
+            )
+        )
         geometry = gripper_collision_geometry(
             gripper_collision_model=gripper_collision_model,
             grasp_rotmat=rotation,
@@ -1586,7 +1617,15 @@ def candidate_payload(
                 "grasp_id": entry.grasp.grasp_id,
                 "status": entry.status,
                 "reason": entry.reason,
-                "grasp_position_obj": _display_point(candidate.grasp_position_obj, object_pose_world=object_pose_world),
+                "grasp_position_obj": grasp_position_display,
+                "pregrasp_position_obj": pregrasp_position_display,
+                "pregrasp_translation_obj": pregrasp_translation_display,
+                "pregrasp_offset_m": None if pregrasp_offset_m is None else round(float(pregrasp_offset_m), 6),
+                "pregrasp_gripper_width_m": (
+                    None
+                    if pregrasp_offset_m is None
+                    else round(float(candidate.jaw_width + pregrasp_width_clearance_m), 6)
+                ),
                 "grasp_orientation_xyzw_obj": fmt_vec(candidate.grasp_orientation_xyzw_obj),
                 "contact_point_a_obj": _display_point(
                     candidate.contact_point_a_obj, object_pose_world=object_pose_world
@@ -1714,6 +1753,10 @@ def write_debug_html(
     max_mesh_edges: int | None = None,
     max_obstacle_edges: int | None = None,
     gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    pregrasp_offset_m: float | None = None,
+    pregrasp_width_clearance_m: float = 0.0,
+    scene_label: str = "Object Frame",
+    scene_overlays: dict[str, object] | None = None,
 ) -> None:
     mesh_vertices_display = (
         [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()]
@@ -1748,6 +1791,7 @@ def write_debug_html(
         ground_plane
         if ground_plane is None or display_object_pose_world is None
         else {
+            **ground_plane,
             "corners_obj": [
                 _display_point(point, object_pose_world=display_object_pose_world)
                 for point in ground_plane["corners_obj"]
@@ -1766,12 +1810,16 @@ def write_debug_html(
         "obstacle_edge_count_original": obstacle_edge_count_original,
         "obstacle_bounds_obj": obstacle_bounds_display,
         "ground_plane_overlay": ground_plane_display,
+        "scene_label": str(scene_label),
+        "scene_overlays": scene_overlays or {},
         "metadata_lines": metadata_lines or [],
         "candidates": candidate_payload(
             candidate_statuses,
             contact_gap_m=contact_gap_m,
             object_pose_world=display_object_pose_world,
             gripper_collision_model=gripper_collision_model,
+            pregrasp_offset_m=pregrasp_offset_m,
+            pregrasp_width_clearance_m=pregrasp_width_clearance_m,
         ),
     }
     data_json = json.dumps(data, indent=2)
@@ -1864,6 +1912,7 @@ def write_debug_html(
         <button id="prevBtn" type="button">Prev</button>
         <button id="nextBtn" type="button">Next</button>
         <button id="meshModeBtn" type="button">Solid Mesh</button>
+        <button id="viewModeBtn" type="button">Focus Candidate</button>
         <button id="acceptedOnlyBtn" type="button">Accepted Only: Off</button>
       </div>
       <div id="graspList" class="list"></div>
@@ -1871,7 +1920,7 @@ def write_debug_html(
     <main class="main">
       <div class="cards">
         <section class="card">
-          <h2>Object Frame</h2>
+          <h2 id="sceneHeading">Object Frame</h2>
           <svg id="scene" viewBox="0 0 960 760"></svg>
           <div class="legend">
             <span><i class="swatch" style="background: var(--mesh)"></i>Target mesh</span>
@@ -1881,6 +1930,7 @@ def write_debug_html(
             <span><i class="swatch" style="background: var(--rejected)"></i>Rejected</span>
             <span><i class="swatch" style="background: var(--franka)"></i>Gripper finger boxes</span>
             <span><i class="swatch" style="background: var(--hand)"></i>Gripper mesh</span>
+            <span><i class="swatch" style="background: #0891b2"></i>Pregrasp ghost</span>
             <span><i class="swatch" style="background: #0f766e"></i>3x3 contact grid</span>
           </div>
           <p class="caption">Left drag rotates, middle drag pans, scroll zooms, and arrow keys switch candidates.</p>
@@ -1898,13 +1948,16 @@ def write_debug_html(
     const subtitle = document.getElementById("subtitle");
     const graspList = document.getElementById("graspList");
     const scene = document.getElementById("scene");
+    const sceneHeading = document.getElementById("sceneHeading");
     const details = document.getElementById("details");
     const prevBtn = document.getElementById("prevBtn");
     const nextBtn = document.getElementById("nextBtn");
     const meshModeBtn = document.getElementById("meshModeBtn");
+    const viewModeBtn = document.getElementById("viewModeBtn");
     const acceptedOnlyBtn = document.getElementById("acceptedOnlyBtn");
     title.textContent = data.title;
     subtitle.textContent = data.subtitle;
+    sceneHeading.textContent = data.scene_label || "Object Frame";
     const state = {
       selectedIndex: 0,
       yaw: -0.82,
@@ -1918,27 +1971,57 @@ def write_debug_html(
       lastPointerY: 0,
       pointerId: null,
       meshRenderMode: "wireframe",
+      viewMode: new URLSearchParams(window.location.search).get("view") === "focus" ? "focus" : "world",
       acceptedOnly: false,
     };
+    viewModeBtn.textContent = state.viewMode === "world" ? "Focus Candidate" : "Show World Scene";
     function visibleCandidates() {
       return state.acceptedOnly ? data.candidates.filter((candidate) => candidate.status === "accepted") : data.candidates;
     }
-    const points = [
+    const worldPoints = [
       ...data.vertices_obj,
       ...data.obstacle_vertices_obj,
       ...(data.obstacle_bounds_obj || []),
       ...(data.ground_plane_overlay ? data.ground_plane_overlay.corners_obj : []),
-      ...data.candidates.flatMap((candidate) => [candidate.grasp_position_obj, candidate.contact_point_a_obj, candidate.contact_point_b_obj, ...candidate.franka_hand_vertices_obj, ...candidate.franka_left_boxes.flatMap((box) => box.corners), ...candidate.franka_right_boxes.flatMap((box) => box.corners)]),
+      ...((data.scene_overlays && data.scene_overlays.markers) || []).map((marker) => marker.position),
+      ...((data.scene_overlays && data.scene_overlays.lines) || []).flatMap((line) => [line.start, line.end]),
+      ...data.candidates.flatMap((candidate) => [candidate.grasp_position_obj, ...(candidate.pregrasp_position_obj ? [candidate.pregrasp_position_obj] : []), candidate.contact_point_a_obj, candidate.contact_point_b_obj, ...candidate.franka_hand_vertices_obj, ...candidate.franka_left_boxes.flatMap((box) => box.corners), ...candidate.franka_right_boxes.flatMap((box) => box.corners)]),
     ];
-    const bounds = points.reduce((acc, point) => {
+    function pointBounds(points) {
+      return points.reduce((acc, point) => {
       point.forEach((value, axis) => { acc.min[axis] = Math.min(acc.min[axis], value); acc.max[axis] = Math.max(acc.max[axis], value); });
       return acc;
-    }, { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
-    const center = bounds.min.map((value, axis) => 0.5 * (value + bounds.max[axis]));
-    const extent = Math.max(...bounds.max.map((value, axis) => value - bounds.min[axis]), 0.18);
-    const baseScale = 520 / extent;
+      }, { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+    }
+    const worldBounds = pointBounds(worldPoints);
+    let frameCenter = worldBounds.min.map((value, axis) => 0.5 * (value + worldBounds.max[axis]));
+    let frameExtent = Math.max(...worldBounds.max.map((value, axis) => value - worldBounds.min[axis]), 0.18);
+    let baseScale = 520 / frameExtent;
+    function applySceneFrame(candidate) {
+      if (state.viewMode === "world") {
+        frameCenter = worldBounds.min.map((value, axis) => 0.5 * (value + worldBounds.max[axis]));
+        frameExtent = Math.max(...worldBounds.max.map((value, axis) => value - worldBounds.min[axis]), 0.18);
+      } else {
+        const delta = candidate.pregrasp_translation_obj || [0, 0, 0];
+        const focusPoints = [
+          ...data.vertices_obj,
+          candidate.grasp_position_obj,
+          ...(candidate.pregrasp_position_obj ? [candidate.pregrasp_position_obj] : []),
+          candidate.contact_point_a_obj,
+          candidate.contact_point_b_obj,
+          ...candidate.franka_hand_vertices_obj,
+          ...candidate.franka_hand_vertices_obj.map((point) => point.map((value, axis) => value + delta[axis])),
+          ...candidate.franka_left_boxes.flatMap((box) => box.corners),
+          ...candidate.franka_right_boxes.flatMap((box) => box.corners),
+        ];
+        const focusBounds = pointBounds(focusPoints);
+        frameCenter = focusBounds.min.map((value, axis) => 0.5 * (value + focusBounds.max[axis]));
+        frameExtent = Math.max(...focusBounds.max.map((value, axis) => value - focusBounds.min[axis]), 0.18);
+      }
+      baseScale = 520 / frameExtent;
+    }
     function rotate(point) {
-      const shifted = point.map((value, axis) => value - center[axis]);
+      const shifted = point.map((value, axis) => value - frameCenter[axis]);
       const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
       const x1 = cy * shifted[0] + sy * shifted[1];
       const y1 = -sy * shifted[0] + cy * shifted[1];
@@ -1986,9 +2069,9 @@ def write_debug_html(
       const node = addSvg("text", { x: p.x + dx, y: p.y + dy, fill, "font-size": 15, "font-family": "IBM Plex Mono, monospace", "font-weight": 600 });
       node.textContent = text;
     }
-    function drawBox(corners, color) {
+    function drawBox(corners, color, options = {}) {
       const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
-      edges.forEach(([s,e]) => drawLine(corners[s], corners[e], { stroke: color, strokeWidth: 1.8, opacity: 0.8 }));
+      edges.forEach(([s,e]) => drawLine(corners[s], corners[e], { stroke: color, strokeWidth: options.strokeWidth || 1.8, opacity: options.opacity ?? 0.8, dash: options.dash || "" }));
     }
     function shadeColor(hex, factor) {
       const clean = hex.replace("#", "");
@@ -2029,7 +2112,11 @@ def write_debug_html(
       }
       drawMeshEdges(data.vertices_obj, data.edges, "#4f6b5f", 2.0, 0.8);
     }
-    function drawHandMesh(candidate) {
+    function drawHandMesh(candidate, options = {}) {
+      const handColor = options.color || "#8f5a12";
+      const fillOpacity = options.fillOpacity ?? 0.045;
+      const lineOpacity = options.lineOpacity ?? 0.72;
+      const lineDash = options.dash || "";
       const vertices = candidate.franka_hand_vertices_obj || [];
       const faces = candidate.franka_hand_faces || [];
       const edgeMap = new Map();
@@ -2050,7 +2137,7 @@ def write_debug_html(
         .filter((record) => record.normal[2] > 0)
         .sort((a, b) => a.depth - b.depth)
         .forEach((record) => {
-          drawPolygon(record.points, { fill: "#8f5a12", fillOpacity: 0.045, stroke: "none" });
+          drawPolygon(record.points, { fill: handColor, fillOpacity, stroke: "none" });
         });
       faceRecords.forEach((record) => {
         [[0, 1], [1, 2], [2, 0]].forEach(([a, b]) => {
@@ -2071,7 +2158,51 @@ def write_debug_html(
           draw = (a[2] >= 0 && b[2] < 0) || (a[2] < 0 && b[2] >= 0) || dot < 0.82;
         }
         if (draw) {
-          drawLine(vertices[entry.start], vertices[entry.end], { stroke: "#8f5a12", strokeWidth: 1.25, opacity: 0.72 });
+          drawLine(vertices[entry.start], vertices[entry.end], { stroke: handColor, strokeWidth: 1.25, opacity: lineOpacity, dash: lineDash });
+        }
+      });
+    }
+    function translatedGeometry(candidate, delta) {
+      const move = (point) => point.map((value, axis) => value + delta[axis]);
+      return {
+        ...candidate,
+        franka_left_boxes: candidate.franka_left_boxes.map((box) => ({ ...box, corners: box.corners.map(move) })),
+        franka_right_boxes: candidate.franka_right_boxes.map((box) => ({ ...box, corners: box.corners.map(move) })),
+        franka_hand_origin_obj: move(candidate.franka_hand_origin_obj),
+        franka_hand_reference_obj: move(candidate.franka_hand_reference_obj),
+        franka_hand_vertices_obj: candidate.franka_hand_vertices_obj.map(move),
+        franka_left_tip_anchor_obj: move(candidate.franka_left_tip_anchor_obj),
+        franka_right_tip_anchor_obj: move(candidate.franka_right_tip_anchor_obj),
+        franka_left_contact_grid_obj: candidate.franka_left_contact_grid_obj.map(move),
+        franka_right_contact_grid_obj: candidate.franka_right_contact_grid_obj.map(move),
+      };
+    }
+    function drawSceneOverlays(candidate) {
+      const overlays = data.scene_overlays || {};
+      if (overlays.axes) {
+        const origin = overlays.axes.origin;
+        const length = Number(overlays.axes.length_m || 0.18);
+        const axisSpecs = [
+          { delta: [length, 0, 0], color: "#dc2626", label: "+X" },
+          { delta: [0, length, 0], color: "#16a34a", label: "+Y" },
+          { delta: [0, 0, length], color: "#2563eb", label: "+Z" },
+        ];
+        drawPoint(origin, { fill: "#111827", radius: 4 });
+        axisSpecs.forEach((axis) => {
+          const end = origin.map((value, index) => value + axis.delta[index]);
+          drawLine(origin, end, { stroke: axis.color, strokeWidth: 3, opacity: 0.95 });
+          drawLabel(end, axis.label, axis.color, 5, -5);
+        });
+      }
+      (overlays.lines || []).forEach((line) => {
+        drawLine(line.start, line.end, { stroke: line.color || "#64748b", strokeWidth: line.width || 2, opacity: line.opacity ?? 0.75, dash: line.dash || "6 5" });
+      });
+      (overlays.markers || []).forEach((marker) => {
+        const color = marker.color || "#334155";
+        drawPoint(marker.position, { fill: color, radius: marker.radius || 7, opacity: marker.opacity ?? 1.0 });
+        drawLabel(marker.position, marker.label || "marker", color, marker.dx || 8, marker.dy || -8);
+        if (candidate.pregrasp_position_obj && marker.connect_to_pregrasp) {
+          drawLine(marker.position, candidate.pregrasp_position_obj, { stroke: color, strokeWidth: 1.5, opacity: 0.48, dash: "7 6" });
         }
       });
     }
@@ -2100,6 +2231,7 @@ def write_debug_html(
       });
     }
     function renderScene(candidate) {
+      applySceneFrame(candidate);
       scene.replaceChildren();
       const defs = addSvg("defs", {});
       const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
@@ -2115,10 +2247,20 @@ def write_debug_html(
         const corners = data.ground_plane_overlay.corners_obj;
         drawPolygon(corners, { fill: "#2563eb", fillOpacity: 0.16, stroke: "#2563eb", strokeWidth: 2, strokeOpacity: 0.75 });
         for (let i = 0; i < corners.length; i += 1) drawLine(corners[i], corners[(i + 1) % corners.length], { stroke: "#2563eb", strokeWidth: 2, opacity: 0.9, dash: "10 6" });
-        drawLabel(corners[0], "z=0 plane", "#2563eb", 10, -8);
+        drawLabel(corners[0], data.ground_plane_overlay.label || "ground plane", "#2563eb", 10, -8);
       }
+      drawSceneOverlays(candidate);
       drawMeshEdges(data.obstacle_vertices_obj, data.obstacle_edges, "#64748b", 1.4, 0.45);
       drawTargetMesh();
+      if (candidate.pregrasp_position_obj && candidate.pregrasp_translation_obj) {
+        const pregrasp = translatedGeometry(candidate, candidate.pregrasp_translation_obj);
+        pregrasp.franka_left_boxes.forEach((box) => drawBox(box.corners, "#0891b2", { opacity: 0.42, dash: "5 4" }));
+        pregrasp.franka_right_boxes.forEach((box) => drawBox(box.corners, "#0891b2", { opacity: 0.42, dash: "5 4" }));
+        drawHandMesh(pregrasp, { color: "#0891b2", fillOpacity: 0.018, lineOpacity: 0.38, dash: "5 4" });
+        drawLine(candidate.pregrasp_position_obj, candidate.grasp_position_obj, { stroke: "#0891b2", strokeWidth: 3, opacity: 0.9, dash: "9 5", markerEnd: "url(#arrow)" });
+        drawPoint(candidate.pregrasp_position_obj, { fill: "#0891b2", radius: 7 });
+        drawLabel(candidate.pregrasp_position_obj, "pregrasp", "#0891b2");
+      }
       candidate.franka_left_boxes.forEach((box) => drawBox(box.corners, "#d97706"));
       candidate.franka_right_boxes.forEach((box) => drawBox(box.corners, "#d97706"));
       drawHandMesh(candidate);
@@ -2153,6 +2295,9 @@ def write_debug_html(
         `contact_offset_x: ${candidate.contact_patch_lateral_offset_m.toFixed(6)} m`,
         `contact_offset_z: ${candidate.contact_patch_approach_offset_m.toFixed(6)} m`,
         `grasp_position:   (${candidate.grasp_position_obj.join(", ")})`,
+        `pregrasp_position:${candidate.pregrasp_position_obj ? ` (${candidate.pregrasp_position_obj.join(", ")})` : " n/a"}`,
+        `pregrasp_offset:  ${candidate.pregrasp_offset_m === null ? "n/a" : `${candidate.pregrasp_offset_m.toFixed(6)} m`}`,
+        `pregrasp_width:   ${candidate.pregrasp_gripper_width_m === null ? "n/a" : `${candidate.pregrasp_gripper_width_m.toFixed(6)} m`}`,
         `contact_a:        (${candidate.contact_point_a_obj.join(", ")})`,
         `contact_b:        (${candidate.contact_point_b_obj.join(", ")})`,
       ].join("\\n");
@@ -2172,6 +2317,19 @@ def write_debug_html(
       renderList();
       renderScene(candidate);
       renderDetails(candidate);
+      if (window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: "fabrica-grasp-selection",
+            graspId: candidate.grasp_id,
+            status: candidate.status,
+            index: state.selectedIndex,
+            total: candidates.length,
+            viewMode: state.viewMode,
+          },
+          "*",
+        );
+      }
     }
     let sceneRenderPending = false;
     function renderCurrentScene() {
@@ -2193,27 +2351,38 @@ def write_debug_html(
         renderCurrentScene();
       });
     }
-    window.addEventListener("keydown", (event) => {
+    function stepCandidate(delta) {
       const candidates = visibleCandidates();
-      if (candidates.length === 0) return;
-      if (event.key === "ArrowUp" || event.key === "ArrowLeft") { event.preventDefault(); state.selectedIndex = (state.selectedIndex - 1 + candidates.length) % candidates.length; render(); }
-      if (event.key === "ArrowDown" || event.key === "ArrowRight") { event.preventDefault(); state.selectedIndex = (state.selectedIndex + 1) % candidates.length; render(); }
+      if (candidates.length === 0) return false;
+      state.selectedIndex = (state.selectedIndex + delta + candidates.length) % candidates.length;
+      render();
+      return true;
+    }
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") { if (stepCandidate(-1)) event.preventDefault(); }
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") { if (stepCandidate(1)) event.preventDefault(); }
+    });
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "fabrica-grasp-step") return;
+      stepCandidate(Number(event.data.delta) < 0 ? -1 : 1);
     });
     prevBtn.addEventListener("click", () => {
-      const candidates = visibleCandidates();
-      if (candidates.length === 0) return;
-      state.selectedIndex = (state.selectedIndex - 1 + candidates.length) % candidates.length;
-      render();
+      stepCandidate(-1);
     });
     nextBtn.addEventListener("click", () => {
-      const candidates = visibleCandidates();
-      if (candidates.length === 0) return;
-      state.selectedIndex = (state.selectedIndex + 1) % candidates.length;
-      render();
+      stepCandidate(1);
     });
     meshModeBtn.addEventListener("click", () => {
       state.meshRenderMode = state.meshRenderMode === "wireframe" ? "solid" : "wireframe";
       meshModeBtn.textContent = state.meshRenderMode === "wireframe" ? "Solid Mesh" : "Wireframe Mesh";
+      renderCurrentScene();
+    });
+    viewModeBtn.addEventListener("click", () => {
+      state.viewMode = state.viewMode === "world" ? "focus" : "world";
+      state.zoom = 1.0;
+      state.panX = 0;
+      state.panY = 0;
+      viewModeBtn.textContent = state.viewMode === "world" ? "Focus Candidate" : "Show World Scene";
       renderCurrentScene();
     });
     acceptedOnlyBtn.addEventListener("click", () => {

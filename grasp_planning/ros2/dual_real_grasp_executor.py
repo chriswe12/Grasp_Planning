@@ -17,10 +17,15 @@ from grasp_planning.ros2.moveit_pose_commander import (
     PoseTarget,
     rclpy,
 )
-from grasp_planning.ros2.trigger_service_gripper_client import (
-    TriggerServiceGripperClient,
+from grasp_planning.ros2.normalized_position_gripper_client import (
+    NormalizedPositionGripperClient,
 )
-from grasp_planning.start_poses import KUKA_MOVEIT_ARM_START_JOINT_VALUES
+from grasp_planning.start_poses import (
+    KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    kuka_gripper_approach_width,
+    kuka_moveit_gripper_state,
+)
 
 ROLE_SPECS = {
     "holder": {
@@ -83,9 +88,14 @@ class DualRealExecutionConfig:
     holder_gripper_open_service: str = "/lbr_one/gripper_controller/open"
     holder_gripper_close_service: str = "/lbr_one/gripper_controller/close"
     holder_gripper_stop_service: str = "/lbr_one/gripper_controller/stop"
+    holder_gripper_position_command_topic: str = "/lbr_one/gripper_controller/position_command"
+    holder_gripper_position_feedback_topic: str = "/lbr_one/gripper_controller/position"
     inserter_gripper_open_service: str = "/lbr_two/gripper_controller/open"
     inserter_gripper_close_service: str = "/lbr_two/gripper_controller/close"
     inserter_gripper_stop_service: str = "/lbr_two/gripper_controller/stop"
+    inserter_gripper_position_command_topic: str = "/lbr_two/gripper_controller/position_command"
+    inserter_gripper_position_feedback_topic: str = "/lbr_two/gripper_controller/position"
+    gripper_position_feedback_tolerance: float = 0.02
     debug_gui: bool = False
     debug_gui_port: int = 0
     debug_gui_open_browser: bool = True
@@ -310,14 +320,86 @@ def _make_gripper(
     config: DualRealExecutionConfig,
 ):
     prefix = "holder" if role == "holder" else "inserter"
-    return TriggerServiceGripperClient(
+    return NormalizedPositionGripperClient(
         commander,
+        position_command_topic=str(getattr(config, f"{prefix}_gripper_position_command_topic")),
+        position_feedback_topic=str(getattr(config, f"{prefix}_gripper_position_feedback_topic")),
         open_service_name=str(getattr(config, f"{prefix}_gripper_open_service")),
-        close_service_name=str(getattr(config, f"{prefix}_gripper_close_service")),
         stop_service_name=str(getattr(config, f"{prefix}_gripper_stop_service")),
         timeout_s=float(config.gripper_timeout_s),
+        feedback_tolerance=float(config.gripper_position_feedback_tolerance),
         grasp_settle_time_s=float(config.grasp_settle_time_s),
     )
+
+
+def _grasp_payload_for_role(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
+    grasps = plan.get("grasps")
+    if not isinstance(grasps, dict):
+        raise ValueError("Dual plan is missing grasps.")
+    key = "holder" if role == "holder" else "inserter_pickup"
+    grasp = grasps.get(key)
+    if not isinstance(grasp, dict):
+        raise ValueError(f"Dual plan is missing grasp '{key}'.")
+    return grasp
+
+
+def _gripper_width_for_role(plan: Mapping[str, object], role: str, *, contact: bool) -> float:
+    grasp = _grasp_payload_for_role(plan, role)
+    jaw_width = float(grasp["jaw_width_m"])
+    return jaw_width if contact else kuka_gripper_approach_width(jaw_width)
+
+
+def _moveit_gripper_state_for_plan(
+    plan: Mapping[str, object],
+    *,
+    contact_roles: frozenset[str] = frozenset(),
+) -> dict[str, float]:
+    roles = plan.get("roles")
+    if not isinstance(roles, dict):
+        raise ValueError("Dual plan is missing roles.")
+    state: dict[str, float] = {}
+    for role in ("holder", "inserter"):
+        role_payload = roles.get(role)
+        if not isinstance(role_payload, dict):
+            raise ValueError(f"Dual plan is missing role '{role}'.")
+        state.update(
+            kuka_moveit_gripper_state(
+                str(role_payload["robot"]),
+                _gripper_width_for_role(plan, role, contact=role in contact_roles),
+            )
+        )
+    return state
+
+
+def _apply_moveit_gripper_state(commander, state: Mapping[str, float]) -> tuple[bool, str]:
+    apply_state = getattr(commander, "apply_planning_scene_robot_state", None)
+    if not callable(apply_state):
+        return True, "Planning-scene robot-state API is unavailable in this test adapter."
+    return apply_state(state)
+
+
+def _command_gripper_width(
+    gripper,
+    width_m: float,
+    *,
+    approach: bool,
+) -> tuple[bool, str]:
+    command_width = getattr(gripper, "command_width", None)
+    if callable(command_width):
+        return command_width(
+            width_m,
+            wait_for_feedback=bool(approach),
+            settle_after_command=not bool(approach),
+        )
+    legacy = getattr(gripper, "open" if approach else "close")
+    return legacy(width=width_m)
+
+
+def _initialize_gripper_open(gripper) -> tuple[bool, str]:
+    initialize_open = getattr(gripper, "initialize_open", None)
+    if callable(initialize_open):
+        return initialize_open()
+    return gripper.open(width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
 
 
 def _stop_grippers(grippers: Mapping[str, object], *, reason: str) -> None:
@@ -381,20 +463,52 @@ def _preflight_targets(
     pair_id: str = "",
     stop_after: str = "inserter_preinsertion",
     resolved_joint_targets: dict[str, tuple[float, ...]] | None = None,
+    initial_contact_roles: frozenset[str] = frozenset(),
 ) -> bool:
     targets = plan["targets"]
     assert isinstance(targets, dict)
     success = True
+    contact_roles = set(initial_contact_roles)
     for role, target_name in _motion_sequence_through(stop_after):
         if role_filter is not None and role != role_filter:
+            continue
+        finger_state = _moveit_gripper_state_for_plan(
+            plan,
+            contact_roles=frozenset(contact_roles),
+        )
+        state_ok, state_message = _apply_moveit_gripper_state(commanders["holder"], finger_state)
+        record(
+            name=f"preflight_{target_name}_gripper_state",
+            role="shared",
+            ok=state_ok,
+            message=state_message,
+        )
+        if not state_ok:
+            success = False
+            if stop_on_failure:
+                break
             continue
         target = _target_from_payload(targets[target_name], frame_id=frame_id)
         joints, message = commanders[role].compute_ik(target)
         if joints is None:
-            fallback_joints, fallback_message = commanders[role].compute_ik(
-                target,
-                seed_joint_positions=KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+            fallback_seed_state = dict(finger_state)
+            fallback_seed_state.update(
+                zip(ROLE_SPECS[role]["joint_names"], KUKA_MOVEIT_ARM_START_JOINT_VALUES)
             )
+            try:
+                fallback_joints, fallback_message = commanders[role].compute_ik(
+                    target,
+                    seed_robot_state=fallback_seed_state,
+                )
+            except TypeError as exc:
+                if "seed_robot_state" not in str(exc):
+                    raise
+                # Compatibility for lightweight test adapters and older sourced
+                # ROS workspaces; production uses the complete state above.
+                fallback_joints, fallback_message = commanders[role].compute_ik(
+                    target,
+                    seed_joint_positions=KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+                )
             if fallback_joints is not None:
                 joints = fallback_joints
                 message = f"live-state IK failed ({message}); start-seeded alternate IK succeeded"
@@ -403,6 +517,40 @@ def _preflight_targets(
         ok = joints is not None
         if joints is not None and resolved_joint_targets is not None:
             resolved_joint_targets[target_name] = tuple(float(value) for value in joints)
+        close_role = GRIPPER_CLOSE_AFTER.get(target_name)
+        if ok and close_role is not None:
+            contact_roles.add(close_role)
+            closed_finger_state = _moveit_gripper_state_for_plan(
+                plan,
+                contact_roles=frozenset(contact_roles),
+            )
+            candidate_state = dict(closed_finger_state)
+            candidate_state.update(
+                (str(name), float(value))
+                for name, value in zip(ROLE_SPECS[role]["joint_names"], joints)
+            )
+            check_validity = getattr(commanders[role], "check_state_validity", None)
+            if callable(check_validity):
+                validity, validity_message = check_validity(candidate_state, group_name="")
+                closed_ok = validity is not None and bool(validity["valid"])
+            else:
+                validity = {"valid": True, "contacts": []}
+                validity_message = "State-validity API is unavailable in this test adapter."
+                closed_ok = True
+            if not closed_ok:
+                contacts = [] if validity is None else validity.get("contacts", [])
+                message = (
+                    f"{message}; post-grasp closed state invalid: {validity_message}; contacts={contacts}"
+                )
+                ok = False
+            else:
+                closed_ok, closed_message = _apply_moveit_gripper_state(
+                    commanders["holder"],
+                    closed_finger_state,
+                )
+                if not closed_ok:
+                    message = f"{message}; could not apply post-grasp finger state: {closed_message}"
+                    ok = False
         record_args: dict[str, object] = {
             "name": f"preflight_{target_name}",
             "role": role,
@@ -558,6 +706,7 @@ def _select_ranked_preflight_candidate(
                     pair_id=pair_id,
                     stop_after=stop_after,
                     resolved_joint_targets=role_joint_targets,
+                    initial_contact_roles=(frozenset({"holder"}) if role == "inserter" else frozenset()),
                 )
                 failure = "" if role_ok else "target IK failed"
                 role_cache[cache_key] = (
@@ -655,6 +804,7 @@ def _execute_sequence(
     targets = plan["targets"]
     assert isinstance(targets, dict)
     last_completed = ""
+    contact_roles: set[str] = set()
 
     for role in ("holder", "inserter"):
         if role not in grippers:
@@ -666,10 +816,15 @@ def _execute_sequence(
                 attempt_index=candidate_rank,
                 phase=debug_phase,
                 status="planning",
-                message=f"Opening the {role} gripper before approach.",
+                message=f"Commanding the candidate-specific {role} approach opening.",
             )
-        ok, message = grippers[role].open(width=0.06)
-        record(name=f"open_{role}_gripper", role=role, ok=ok, message=message)
+        approach_width = _gripper_width_for_role(plan, role, contact=False)
+        ok, message = _command_gripper_width(
+            grippers[role],
+            approach_width,
+            approach=True,
+        )
+        record(name=f"position_{role}_gripper_for_approach", role=role, ok=ok, message=message)
         if not ok:
             if update_debug is not None:
                 update_debug(
@@ -679,7 +834,18 @@ def _execute_sequence(
                     status="failed",
                     message=message,
                 )
-            return False, f"{role}_gripper_open_failed", last_completed
+            return False, f"{role}_gripper_approach_position_failed", last_completed
+
+    approach_state = _moveit_gripper_state_for_plan(plan)
+    state_ok, state_message = _apply_moveit_gripper_state(commanders["holder"], approach_state)
+    record(
+        name="apply_approach_gripper_state",
+        role="shared",
+        ok=state_ok,
+        message=state_message,
+    )
+    if not state_ok:
+        return False, "approach_gripper_moveit_state_failed", last_completed
 
     for role, target_name in MOTION_SEQUENCE:
         if update_debug is not None:
@@ -780,15 +946,14 @@ def _execute_sequence(
 
         close_role = GRIPPER_CLOSE_AFTER.get(target_name)
         if close_role is not None and close_role in grippers:
-            grasps = plan["grasps"]
-            assert isinstance(grasps, dict)
-            grasp_key = "holder" if close_role == "holder" else "inserter_pickup"
-            raw_grasp = grasps[grasp_key]
-            assert isinstance(raw_grasp, dict)
-            width = float(raw_grasp["jaw_width_m"])
-            ok, message = grippers[close_role].close(width=width)
+            width = _gripper_width_for_role(plan, close_role, contact=True)
+            ok, message = _command_gripper_width(
+                grippers[close_role],
+                width,
+                approach=False,
+            )
             record(
-                name=f"close_{close_role}_gripper",
+                name=f"position_{close_role}_gripper_for_contact",
                 role=close_role,
                 ok=ok,
                 message=message,
@@ -803,6 +968,20 @@ def _execute_sequence(
                         message=message,
                     )
                 return False, f"{close_role}_gripper_close_failed", last_completed
+            contact_roles.add(close_role)
+            closed_state = _moveit_gripper_state_for_plan(
+                plan,
+                contact_roles=frozenset(contact_roles),
+            )
+            state_ok, state_message = _apply_moveit_gripper_state(commanders["holder"], closed_state)
+            record(
+                name=f"apply_{close_role}_contact_gripper_state",
+                role="shared",
+                ok=state_ok,
+                message=state_message,
+            )
+            if not state_ok:
+                return False, f"{close_role}_gripper_moveit_state_failed", last_completed
 
         if target_name == config.stop_after:
             return True, f"stopped_at_{target_name}", last_completed
@@ -1101,8 +1280,17 @@ def execute_dual_real_plan(
                     name=f"wait_for_{role}_gripper",
                     role=role,
                     ok=True,
-                    message="Open/close/stop Trigger services are available.",
+                    message="Normalized position topics and open/stop Trigger services are configured.",
                 )
+                home_ok, home_message = _initialize_gripper_open(gripper)
+                _record(
+                    name=f"initialize_{role}_gripper_open_zero",
+                    role=role,
+                    ok=home_ok,
+                    message=home_message,
+                )
+                if not home_ok:
+                    raise RuntimeError(f"Could not establish the {role} gripper open zero: {home_message}")
 
         success, status, last_completed = _execute_sequence(
             plan=execution_plan,

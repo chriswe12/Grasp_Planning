@@ -14,6 +14,7 @@ group and trajectory controller.
 Options:
   --lbr-ws PATH               LBR ROS2 workspace. Default: /home/pdz/lbr-stack
   --mode MODE                 mock or hardware. Default: mock
+  --ik-solver NAME            kdl or pick_ik. Default: kdl
   --rviz                      Launch the dual-arm RViz configuration.
   --robot-namespace NAME      Shared ROS namespace. Default: lbr_dual_arm
   --ros-domain-id ID          Force the ROS domain for this stack.
@@ -31,6 +32,7 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LBR_WS="/home/pdz/lbr-stack"
 MODE="mock"
+IK_SOLVER="kdl"
 RVIZ=0
 ROBOT_NAMESPACE="lbr_dual_arm"
 ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
@@ -102,6 +104,10 @@ while [[ $# -gt 0 ]]; do
       MODE="${2:-}"
       shift 2
       ;;
+    --ik-solver)
+      IK_SOLVER="${2:-}"
+      shift 2
+      ;;
     --rviz)
       RVIZ=1
       shift
@@ -142,6 +148,10 @@ if [[ "${MODE}" != "mock" && "${MODE}" != "hardware" ]]; then
   echo "[DUAL-LBR-MOVEIT] --mode must be 'mock' or 'hardware'." >&2
   exit 1
 fi
+if [[ "${IK_SOLVER}" != "pick_ik" && "${IK_SOLVER}" != "kdl" ]]; then
+  echo "[DUAL-LBR-MOVEIT] --ik-solver must be 'pick_ik' or 'kdl'." >&2
+  exit 1
+fi
 
 source_if_exists "/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
 source_if_exists "${LBR_WS}/install/setup.bash"
@@ -166,6 +176,12 @@ if ! ros2 pkg prefix robot_integration_ros >/dev/null 2>&1; then
   echo "[DUAL-LBR-MOVEIT] Build it first with: cd ros2_ws && colcon build --packages-select robot_integration_ros --symlink-install" >&2
   exit 1
 fi
+if [[ "${IK_SOLVER}" == "pick_ik" ]] && ! ros2 pkg prefix pick_ik >/dev/null 2>&1; then
+  echo "[DUAL-LBR-MOVEIT] pick_ik is unavailable after sourcing ROS." >&2
+  echo "[DUAL-LBR-MOVEIT] Install it with: sudo apt install ros-${ROS_DISTRO:-humble}-pick-ik" >&2
+  echo "[DUAL-LBR-MOVEIT] Or use the tuned fallback: --ik-solver kdl" >&2
+  exit 1
+fi
 
 if [[ "${CHECK_ROS_GRAPH}" -eq 1 ]]; then
   # Bypass the long-lived ros2cli daemon here. Its cached graph can retain a
@@ -182,9 +198,10 @@ fi
 
 trap cleanup EXIT INT TERM
 
-echo "[DUAL-LBR-MOVEIT] Starting both iiwa7/Y-gripper arms in ${MODE} mode on ROS domain ${ROS_DOMAIN_ID}."
+echo "[DUAL-LBR-MOVEIT] Starting both iiwa7/Y-gripper arms in ${MODE} mode with ${IK_SOLVER} on ROS domain ${ROS_DOMAIN_ID}."
 setsid ros2 launch robot_integration_ros dual_aligned_lbr_moveit.launch.py \
   mode:="${MODE}" \
+  ik_solver:="${IK_SOLVER}" \
   robot_namespace:="${ROBOT_NAMESPACE}" \
   rviz:="$([[ "${RVIZ}" -eq 1 ]] && printf true || printf false)" &
 launch_pid="$!"
