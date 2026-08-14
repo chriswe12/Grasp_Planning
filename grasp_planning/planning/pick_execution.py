@@ -468,6 +468,8 @@ def execute_pick_from_moveit_joint_trajectories(
     postclose_hold_s: float = 0.0,
     selected_gripper_width_m: float | None = None,
     step_callback: StepCallback | None = None,
+    pregrasp_observation_callback: StepCallback | None = None,
+    grasp_observation_callback: StepCallback | None = None,
 ) -> PickExecutionResult:
     """Execute MoveIt-planned direct-pick joint waypoints inside Isaac."""
 
@@ -558,6 +560,8 @@ def execute_pick_from_moveit_joint_trajectories(
             f"MoveIt pregrasp execution failed: {detail}",
             diagnostics=moveit_diagnostics,
         )
+    if pregrasp_observation_callback is not None:
+        pregrasp_observation_callback()
     if pregrasp_only:
         return PickExecutionResult(True, "ok", "MoveIt pregrasp trajectory executed.", diagnostics=moveit_diagnostics)
 
@@ -599,6 +603,8 @@ def execute_pick_from_moveit_joint_trajectories(
             f"final_error={preclose_hold_diagnostics.get('grasp_preclose_hold_final_error_rad', 'n/a')}.",
             flush=True,
         )
+    if grasp_observation_callback is not None:
+        grasp_observation_callback()
 
     gripper_close_diagnostics = _command_gripper_width(
         sim=sim,

@@ -290,6 +290,7 @@ def _mujoco_execution_config(payload: dict[str, object]) -> MujocoPipelineConfig
 
 def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
     raw = dict(payload.get("isaac_execution", {}))
+    d405 = dict(raw.get("d405_wrist_camera", {}))
     tcp_to_grasp_offset = None
     if raw.get("tcp_to_grasp_offset") not in ("", None):
         tcp_to_grasp_offset = _tuple_floats(raw["tcp_to_grasp_offset"], expected_len=3)
@@ -316,6 +317,40 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         raise ValueError("isaac_execution.grasp_rank must be >= 1.")
     if str(raw.get("grasp_id", "")) and grasp_rank != IsaacPipelineConfig.grasp_rank:
         raise ValueError("isaac_execution.grasp_id and grasp_rank are mutually exclusive.")
+    curriculum_num_envs = int(raw.get("curriculum_num_envs", 1))
+    curriculum_writer_workers = int(raw.get("curriculum_writer_workers", 1))
+    curriculum_sample_hz = float(raw.get("curriculum_sample_hz", 10.0))
+    curriculum_episode_offset = int(raw.get("curriculum_episode_offset", 0))
+    curriculum_ee_position_noise_grasp_m = _tuple_floats(
+        raw.get(
+            "curriculum_ee_position_noise_grasp_m",
+            IsaacPipelineConfig.curriculum_ee_position_noise_grasp_m,
+        ),
+        expected_len=3,
+    )
+    curriculum_ee_rotation_noise_deg = _tuple_floats(
+        raw.get(
+            "curriculum_ee_rotation_noise_deg",
+            IsaacPipelineConfig.curriculum_ee_rotation_noise_deg,
+        ),
+        expected_len=3,
+    )
+    if curriculum_num_envs < 1:
+        raise ValueError("isaac_execution.curriculum_num_envs must be >= 1.")
+    if curriculum_episode_offset < 0:
+        raise ValueError("isaac_execution.curriculum_episode_offset must be >= 0.")
+    if curriculum_writer_workers < 1:
+        raise ValueError("isaac_execution.curriculum_writer_workers must be >= 1.")
+    if curriculum_sample_hz <= 0.0:
+        raise ValueError("isaac_execution.curriculum_sample_hz must be > 0.")
+    if any(value < 0.0 for value in curriculum_ee_position_noise_grasp_m):
+        raise ValueError(
+            "isaac_execution.curriculum_ee_position_noise_grasp_m values must be nonnegative."
+        )
+    if any(value < 0.0 for value in curriculum_ee_rotation_noise_deg):
+        raise ValueError(
+            "isaac_execution.curriculum_ee_rotation_noise_deg values must be nonnegative."
+        )
     return IsaacPipelineConfig(
         enabled=bool(raw.get("enabled", False)),
         python_executable=str(raw.get("python_executable", "")),
@@ -337,6 +372,30 @@ def _isaac_execution_config(payload: dict[str, object]) -> IsaacPipelineConfig:
         pregrasp_only=bool(raw.get("pregrasp_only", False)),
         run_seconds=float(raw.get("run_seconds", 0.0)),
         headless=bool(raw.get("headless", False)),
+        d405_wrist_camera_enabled=bool(d405.get("enabled", False)),
+        d405_width=int(d405.get("width", IsaacPipelineConfig.d405_width)),
+        d405_height=int(d405.get("height", IsaacPipelineConfig.d405_height)),
+        d405_fx=float(d405.get("fx", IsaacPipelineConfig.d405_fx)),
+        d405_fy=float(d405.get("fy", IsaacPipelineConfig.d405_fy)),
+        d405_cx=float(d405.get("cx", IsaacPipelineConfig.d405_cx)),
+        d405_cy=float(d405.get("cy", IsaacPipelineConfig.d405_cy)),
+        d405_privileged_mask_enabled=bool(d405.get("privileged_mask_enabled", True)),
+        record_video=str(raw.get("record_video", "")),
+        visual_servo_goal_image=str(raw.get("visual_servo_goal_image", "")),
+        visual_servo_comparison_video=str(raw.get("visual_servo_comparison_video", "")),
+        curriculum_dataset_dir=str(raw.get("curriculum_dataset_dir", "")),
+        curriculum_episodes=int(raw.get("curriculum_episodes", 0)),
+        curriculum_seed=int(raw.get("curriculum_seed", 0)),
+        curriculum_episode_offset=curriculum_episode_offset,
+        curriculum_num_envs=curriculum_num_envs,
+        curriculum_writer_workers=curriculum_writer_workers,
+        curriculum_sample_hz=curriculum_sample_hz,
+        curriculum_ee_position_noise_grasp_m=curriculum_ee_position_noise_grasp_m,
+        curriculum_ee_rotation_noise_deg=curriculum_ee_rotation_noise_deg,
+        curriculum_video=str(raw.get("curriculum_video", "")),
+        video_fps=float(raw.get("video_fps", IsaacPipelineConfig.video_fps)),
+        video_width=int(raw.get("video_width", IsaacPipelineConfig.video_width)),
+        video_height=int(raw.get("video_height", IsaacPipelineConfig.video_height)),
         moveit_frame_id=str(raw.get("moveit_frame_id", "base")),
         moveit_target_position_signs=_tuple_floats(
             raw.get("moveit_target_position_signs", IsaacPipelineConfig.moveit_target_position_signs),
@@ -1015,6 +1074,79 @@ def _run_isaac_execution(
         command.append("--pregrasp-only")
     if headless or isaac_execution.headless:
         command.append("--headless")
+    if isaac_execution.d405_wrist_camera_enabled:
+        command.extend(
+            [
+                "--enable-d405-wrist-camera",
+                "--d405-width",
+                str(isaac_execution.d405_width),
+                "--d405-height",
+                str(isaac_execution.d405_height),
+                "--d405-fx",
+                str(isaac_execution.d405_fx),
+                "--d405-fy",
+                str(isaac_execution.d405_fy),
+                "--d405-cx",
+                str(isaac_execution.d405_cx),
+                "--d405-cy",
+                str(isaac_execution.d405_cy),
+            ]
+        )
+        if not isaac_execution.d405_privileged_mask_enabled:
+            command.append("--d405-disable-privileged-mask")
+    if isaac_execution.record_video:
+        command.extend(
+            [
+                "--record-video",
+                isaac_execution.record_video,
+                "--video-fps",
+                str(isaac_execution.video_fps),
+                "--video-width",
+                str(isaac_execution.video_width),
+                "--video-height",
+                str(isaac_execution.video_height),
+            ]
+        )
+    if isaac_execution.visual_servo_goal_image:
+        command.extend(["--visual-servo-goal-image", isaac_execution.visual_servo_goal_image])
+    if isaac_execution.visual_servo_comparison_video:
+        command.extend(
+            [
+                "--visual-servo-comparison-video",
+                isaac_execution.visual_servo_comparison_video,
+            ]
+        )
+    if isaac_execution.curriculum_dataset_dir:
+        command.extend(
+            [
+                "--curriculum-dataset-dir",
+                isaac_execution.curriculum_dataset_dir,
+                "--curriculum-episodes",
+                str(isaac_execution.curriculum_episodes),
+                "--curriculum-seed",
+                str(isaac_execution.curriculum_seed),
+                "--curriculum-episode-offset",
+                str(isaac_execution.curriculum_episode_offset),
+                "--curriculum-num-envs",
+                str(isaac_execution.curriculum_num_envs),
+                "--curriculum-writer-workers",
+                str(isaac_execution.curriculum_writer_workers),
+                "--curriculum-sample-hz",
+                str(isaac_execution.curriculum_sample_hz),
+                "--curriculum-ee-position-noise-grasp-m",
+                *(
+                    str(value)
+                    for value in isaac_execution.curriculum_ee_position_noise_grasp_m
+                ),
+                "--curriculum-ee-rotation-noise-deg",
+                *(
+                    str(value)
+                    for value in isaac_execution.curriculum_ee_rotation_noise_deg
+                ),
+            ]
+        )
+        if isaac_execution.curriculum_video:
+            command.extend(["--curriculum-video", isaac_execution.curriculum_video])
     if moveit_plan_json is not None:
         command.extend(["--moveit-plan-json", str(moveit_plan_json)])
     command.extend(

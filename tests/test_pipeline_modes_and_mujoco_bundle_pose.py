@@ -809,6 +809,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
                     "gripper_close_max_duration_s": 10.0,
                     "postclose_hold_s": 1.0,
                     "moveit_allow_collisions": True,
+                    "curriculum_num_envs": 16,
+                    "curriculum_writer_workers": 4,
                 }
             }
         )
@@ -841,6 +843,8 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertAlmostEqual(config.gripper_close_max_duration_s, 10.0)
         self.assertAlmostEqual(config.postclose_hold_s, 1.0)
         self.assertTrue(config.moveit_allow_collisions)
+        self.assertEqual(config.curriculum_num_envs, 16)
+        self.assertEqual(config.curriculum_writer_workers, 4)
 
     def test_run_isaac_execution_passes_moveit_controller_config(self) -> None:
         cfg = run_grasp_pipeline.IsaacPipelineConfig(

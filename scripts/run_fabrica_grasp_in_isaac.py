@@ -191,6 +191,119 @@ parser.add_argument(
     help="Optional JSON artifact for the selected attempt.",
 )
 parser.add_argument("--record-video", type=Path, default=None, help="Optional MP4/AVI path for Isaac RGB video.")
+parser.add_argument(
+    "--visual-servo-goal-image",
+    type=Path,
+    default=None,
+    help="Save the wrist RGB view at the planned grasp waypoint before gripper closure.",
+)
+parser.add_argument(
+    "--visual-servo-comparison-video",
+    type=Path,
+    default=None,
+    help="After execution, write a side-by-side live-versus-goal wrist-camera video.",
+)
+parser.add_argument(
+    "--curriculum-dataset-dir",
+    type=Path,
+    default=None,
+    help="Generate first-curriculum pregrasp-to-grasp expert episodes instead of closing/lifting.",
+)
+parser.add_argument("--curriculum-episodes", type=int, default=0, help="Number of curriculum episodes to generate.")
+parser.add_argument("--curriculum-seed", type=int, default=0, help="Curriculum perturbation seed.")
+parser.add_argument(
+    "--curriculum-episode-offset",
+    type=int,
+    default=0,
+    help="First output episode index, for appendable multi-run dataset generation.",
+)
+parser.add_argument("--curriculum-num-envs", type=int, default=1, help="Parallel Isaac environments for curriculum.")
+parser.add_argument("--curriculum-writer-workers", type=int, default=1, help="Parallel NPZ writer threads.")
+parser.add_argument(
+    "--curriculum-sample-hz",
+    type=float,
+    default=10.0,
+    help="Saved RGB-D/label rate; the expert controller continues running at its full policy rate.",
+)
+parser.add_argument(
+    "--curriculum-fixed-object-offset-xy-m",
+    type=float,
+    nargs=2,
+    default=None,
+    metavar=("DX", "DY"),
+    help="Debug override for a deterministic object XY offset in every curriculum environment.",
+)
+parser.add_argument(
+    "--curriculum-randomize-object-pose",
+    action="store_true",
+    help="Randomize object XY/yaw during curriculum generation; fixed object pose is the default.",
+)
+parser.add_argument(
+    "--curriculum-fixed-object-yaw-deg",
+    type=float,
+    default=None,
+    help="Debug override for a deterministic object yaw perturbation in every curriculum environment.",
+)
+parser.add_argument(
+    "--curriculum-fixed-ee-offset-grasp-m",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("DX", "DY", "DZ"),
+    help="Deterministic initial TCP position offset, expressed in the target grasp frame.",
+)
+parser.add_argument(
+    "--curriculum-fixed-ee-rotation-deg",
+    type=float,
+    nargs=3,
+    default=None,
+    metavar=("RX", "RY", "RZ"),
+    help="Deterministic initial local TCP XYZ rotation offset in degrees.",
+)
+parser.add_argument(
+    "--curriculum-ee-position-noise-grasp-m",
+    type=float,
+    nargs=3,
+    default=(0.0, 0.0, 0.0),
+    metavar=("X", "Y", "Z"),
+    help="Uniform random initial TCP position half-ranges in the target grasp frame.",
+)
+parser.add_argument(
+    "--curriculum-ee-rotation-noise-deg",
+    type=float,
+    nargs=3,
+    default=(0.0, 0.0, 0.0),
+    metavar=("RX", "RY", "RZ"),
+    help="Uniform random initial local TCP XYZ rotation half-ranges in degrees.",
+)
+parser.add_argument(
+    "--curriculum-video",
+    type=Path,
+    default=None,
+    help="Record the first actual Isaac curriculum rollout from the wrist camera.",
+)
+parser.add_argument(
+    "--visual-servo-policy-checkpoint",
+    type=Path,
+    default=None,
+    help="Run the learned residual policy in the actual Isaac curriculum rollout.",
+)
+parser.add_argument(
+    "--enable-d405-wrist-camera",
+    action="store_true",
+    help="Attach the calibrated RealSense D405 left optical camera to the robot link7 prim.",
+)
+parser.add_argument("--d405-width", type=int, default=848, help="D405 observation width.")
+parser.add_argument("--d405-height", type=int, default=480, help="D405 observation height.")
+parser.add_argument("--d405-fx", type=float, default=470.900, help="D405 focal length fx in pixels (nominal placeholder).")
+parser.add_argument("--d405-fy", type=float, default=432.971, help="D405 focal length fy in pixels (nominal placeholder).")
+parser.add_argument("--d405-cx", type=float, default=423.5, help="D405 principal point cx (nominal placeholder).")
+parser.add_argument("--d405-cy", type=float, default=239.5, help="D405 principal point cy (nominal placeholder).")
+parser.add_argument(
+    "--d405-disable-privileged-mask",
+    action="store_true",
+    help="Do not request Isaac semantic segmentation for the target part.",
+)
 parser.add_argument("--video-fps", type=float, default=30.0, help="Recorded video frame rate.")
 parser.add_argument("--video-width", type=int, default=960, help="Recorded video width in pixels.")
 parser.add_argument("--video-height", type=int, default=540, help="Recorded video height in pixels.")
@@ -200,7 +313,7 @@ parser.add_argument(
     nargs=3,
     default=(1.6, -1.2, 1.0),
     metavar=("X", "Y", "Z"),
-    help="Isaac recording camera eye position.",
+    help="Deprecated compatibility option; wrist-camera video ignores this world-space eye position.",
 )
 parser.add_argument(
     "--video-camera-target",
@@ -208,7 +321,7 @@ parser.add_argument(
     nargs=3,
     default=(0.35, 0.0, 0.3),
     metavar=("X", "Y", "Z"),
-    help="Isaac recording camera look-at target.",
+    help="Deprecated compatibility option; wrist-camera video ignores this world-space target.",
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -218,8 +331,35 @@ if args_cli.object_mass_kg is not None and args_cli.object_mass_kg <= 0.0:
     parser.error("--object-mass-kg must be > 0.")
 if args_cli.object_density_kg_m3 is not None and args_cli.object_density_kg_m3 <= 0.0:
     parser.error("--object-density-kg-m3 must be > 0.")
-if args_cli.record_video is not None:
+if (
+    args_cli.record_video is not None
+    or args_cli.visual_servo_goal_image is not None
+    or args_cli.visual_servo_comparison_video is not None
+    or args_cli.curriculum_dataset_dir is not None
+    or args_cli.curriculum_video is not None
+    or args_cli.enable_d405_wrist_camera
+):
     args_cli.enable_cameras = True
+if args_cli.visual_servo_comparison_video is not None and args_cli.record_video is None:
+    parser.error("--visual-servo-comparison-video requires --record-video.")
+if args_cli.visual_servo_comparison_video is not None and args_cli.visual_servo_goal_image is None:
+    parser.error("--visual-servo-comparison-video requires --visual-servo-goal-image.")
+if args_cli.curriculum_dataset_dir is not None and args_cli.curriculum_episodes <= 0:
+    parser.error("--curriculum-dataset-dir requires --curriculum-episodes > 0.")
+if args_cli.curriculum_video is not None and args_cli.curriculum_dataset_dir is None:
+    parser.error("--curriculum-video requires --curriculum-dataset-dir.")
+if args_cli.curriculum_num_envs <= 0:
+    parser.error("--curriculum-num-envs must be > 0.")
+if args_cli.curriculum_episode_offset < 0:
+    parser.error("--curriculum-episode-offset must be >= 0.")
+if args_cli.curriculum_writer_workers <= 0:
+    parser.error("--curriculum-writer-workers must be > 0.")
+if args_cli.curriculum_sample_hz <= 0.0:
+    parser.error("--curriculum-sample-hz must be > 0.")
+if any(value < 0.0 for value in args_cli.curriculum_ee_position_noise_grasp_m):
+    parser.error("--curriculum-ee-position-noise-grasp-m values must be nonnegative.")
+if any(value < 0.0 for value in args_cli.curriculum_ee_rotation_noise_deg):
+    parser.error("--curriculum-ee-rotation-noise-deg values must be nonnegative.")
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -227,12 +367,15 @@ simulation_app = app_launcher.app
 import isaaclab.sim as sim_utils  # noqa: E402
 import omni.usd  # noqa: E402
 import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
-from isaaclab.sensors.camera import Camera, CameraCfg  # noqa: E402
+from isaaclab.sensors.camera import Camera  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 from isaaclab.sim.schemas import schemas_cfg  # noqa: E402
 from isaaclab.sim.utils import bind_physics_material  # noqa: E402
 from isaacsim.storage.native import get_assets_root_path  # noqa: E402
+from pxr import Gf, Sdf, UsdGeom  # noqa: E402
 
 from grasp_planning import (  # noqa: E402
     accepted_grasps,
@@ -245,20 +388,45 @@ from grasp_planning import (  # noqa: E402
     select_first_feasible_grasp,
 )
 from grasp_planning.controllers.fr3_pick_controller import FR3PickController  # noqa: E402
+from grasp_planning.d405_wrist_camera import D405_VISUAL_SERVO_OBSERVATION_PROFILE  # noqa: E402
 from grasp_planning.envs import (  # noqa: E402
     DEFAULT_PART_DENSITY_KG_M3,
     ISAAC_MIN_CONTACT_OFFSET_M,
+    D405WristCameraConfig,
+    make_d405_wrist_camera_cfg,
     make_fr3_part_scene_cfg,
 )
 from grasp_planning.envs.franka_collisions import expose_franka_mesh_collisions  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import load_stl_mesh  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
+from grasp_planning.isaac_visual_materials import apply_visual_servo_materials  # noqa: E402
+from grasp_planning.isaac_visual_scene import make_visual_servo_render_cfg  # noqa: E402
 from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_stl  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
     drive_robot_to_start_pose,
     execute_pick_from_moveit_joint_trajectories,
 )
+from grasp_planning.planning.types import PoseCommand  # noqa: E402
+from grasp_planning.rl.visual_servo_curriculum import (  # noqa: E402
+    VisualServoCurriculumConfig,
+    alignment_funnel_expert_twist,
+    interpolate_pose,
+    pose_error_twist,
+    precision_docking_expert_twist,
+    smooth_trajectory_progress,
+    write_episode_npz,
+)
+from grasp_planning.rl.visual_servo_dataset import (  # noqa: E402
+    ANGULAR_ACTION_SCALE_RAD_S,
+    DEPTH_MAX_M,
+    DEPTH_MIN_M,
+    LINEAR_ACTION_SCALE_M_S,
+    camera_twist_to_world,
+    normalize_twist,
+    world_twist_to_camera,
+)
+from grasp_planning.rl.visual_servo_policy import ResidualVisualServoPolicy  # noqa: E402
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommander,
     MoveItPoseCommanderConfig,
@@ -273,6 +441,40 @@ from grasp_planning.start_poses import (  # noqa: E402
     kuka_moveit_to_isaac_joint_positions,
 )
 from grasp_planning.video import OpenCvVideoWriter  # noqa: E402
+
+
+def _set_debug_display_color(prim, color: tuple[float, float, float]) -> None:
+    """Author a constant viewport color on non-physical debug geometry."""
+
+    primvars = UsdGeom.PrimvarsAPI(prim)
+    display_color = primvars.CreatePrimvar(
+        "displayColor",
+        Sdf.ValueTypeNames.Color3fArray,
+        UsdGeom.Tokens.constant,
+    )
+    display_color.Set([Gf.Vec3f(*color)])
+
+
+def _add_d405_debug_housing(camera_prim_path: str) -> str:
+    """Add a visible, non-colliding D405-sized housing behind the optical frame."""
+
+    stage = omni.usd.get_context().get_stage()
+    housing_path = f"{camera_prim_path.rstrip('/')}/DebugHousing"
+    housing = UsdGeom.Cube.Define(stage, housing_path)
+    housing.CreateSizeAttr(1.0)
+    # Approximate 42 x 42 x 23 mm D405 envelope. The camera prim uses the
+    # OpenGL convention internally, so +Z is behind the -Z viewing direction.
+    xform = UsdGeom.Xformable(housing)
+    xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.0115))
+    xform.AddScaleOp().Set(Gf.Vec3d(0.042, 0.042, 0.023))
+    _set_debug_display_color(housing.GetPrim(), (1.0, 0.25, 0.02))
+    return housing_path
+
+
+def _apply_matte_pla_materials() -> dict[str, object]:
+    """Compatibility wrapper for the shared RL/execution material profile."""
+
+    return apply_visual_servo_materials()
 
 
 class GraspSelectionFailure(RuntimeError):
@@ -705,11 +907,6 @@ class IsaacVideoRecorder:
     def frame_count(self) -> int:
         return int(self._writer.frame_count)
 
-    def set_view(self, *, eye: tuple[float, float, float], target: tuple[float, float, float]) -> None:
-        eye_tensor = torch.tensor([eye], dtype=torch.float32, device=self._sim.device)
-        target_tensor = torch.tensor([target], dtype=torch.float32, device=self._sim.device)
-        self._camera.set_world_poses_from_view(eye_tensor, target_tensor)
-
     def capture(self, *, force: bool = False) -> None:
         physics_dt = float(self._sim.get_physics_dt())
         self._elapsed_s += physics_dt
@@ -733,24 +930,1345 @@ class IsaacVideoRecorder:
         self._writer.close()
 
 
-def _make_video_camera() -> Camera | None:
-    if args_cli.record_video is None:
-        return None
-    sim_utils.create_prim("/World/ExecutionBenchmarkVideo", "Xform")
-    camera_cfg = CameraCfg(
-        prim_path="/World/ExecutionBenchmarkVideo/CameraSensor",
-        update_period=0.0,
-        height=int(args_cli.video_height),
-        width=int(args_cli.video_width),
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
-            focus_distance=400.0,
-            horizontal_aperture=20.955,
-            clipping_range=(0.05, 1.0e5),
+def _camera_rgb_frame(camera: Camera, *, physics_dt: float) -> np.ndarray:
+    camera.update(dt=float(physics_dt))
+    raw_rgb = camera.data.output.get("rgb")
+    if raw_rgb is None:
+        raise RuntimeError("D405 camera did not produce an RGB observation.")
+    frame = raw_rgb[0]
+    if hasattr(frame, "detach"):
+        frame = frame.detach().cpu().numpy()
+    frame = np.asarray(frame)[..., :3]
+    if frame.dtype != np.uint8:
+        if np.issubdtype(frame.dtype, np.floating):
+            frame = np.clip(frame, 0.0, 1.0) * 255.0
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+    return frame
+
+
+def _write_rgb_image(path: Path, frame_rgb: np.ndarray) -> None:
+    import cv2
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame_bgr = cv2.cvtColor(np.asarray(frame_rgb), cv2.COLOR_RGB2BGR)
+    if not cv2.imwrite(str(path), frame_bgr):
+        raise RuntimeError(f"Could not write visual-servo goal image to '{path}'.")
+
+
+def _write_live_goal_comparison_video(
+    *,
+    live_video_path: Path,
+    goal_image_path: Path,
+    output_path: Path,
+    fps: float,
+    start_frame: int = 0,
+    end_frame: int | None = None,
+) -> int:
+    import cv2
+
+    goal_bgr = cv2.imread(str(goal_image_path), cv2.IMREAD_COLOR)
+    if goal_bgr is None:
+        raise RuntimeError(f"Could not read goal image '{goal_image_path}'.")
+    capture = cv2.VideoCapture(str(live_video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not read live wrist video '{live_video_path}'.")
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    goal_bgr = cv2.resize(goal_bgr, (width, height), interpolation=cv2.INTER_AREA)
+    writer = OpenCvVideoWriter(output_path, fps=float(fps), width=2 * width, height=height)
+    frame_count = 0
+    source_frame_index = 0
+    try:
+        while True:
+            ok, live_bgr = capture.read()
+            if not ok:
+                break
+            if source_frame_index < int(start_frame):
+                source_frame_index += 1
+                continue
+            if end_frame is not None and source_frame_index > int(end_frame):
+                break
+            cv2.putText(live_bgr, "LIVE / SCRIPTED APPROACH", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (30, 30, 255), 2)
+            goal_labeled = goal_bgr.copy()
+            cv2.putText(goal_labeled, "GOAL / PLANNED GRASP", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (30, 180, 30), 2)
+            comparison_rgb = cv2.cvtColor(np.concatenate((live_bgr, goal_labeled), axis=1), cv2.COLOR_BGR2RGB)
+            writer.append_rgb(comparison_rgb)
+            frame_count += 1
+            source_frame_index += 1
+    finally:
+        capture.release()
+        writer.close()
+    return frame_count
+
+
+def _curriculum_camera_observation(camera: Camera, *, physics_dt: float) -> dict[str, np.ndarray]:
+    import cv2
+
+    camera.update(dt=float(physics_dt))
+    output = camera.data.output
+
+    def _numpy(name: str) -> np.ndarray:
+        value = output.get(name)
+        if value is None:
+            raise RuntimeError(f"D405 curriculum observation is missing '{name}'.")
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        return np.asarray(value)
+
+    rgb = _numpy("rgb")[..., :3]
+    if rgb.dtype != np.uint8:
+        if np.issubdtype(rgb.dtype, np.floating):
+            rgb = np.clip(rgb, 0.0, 1.0) * 255.0
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+    depth = _numpy("distance_to_image_plane").astype(np.float32)
+    mask = _numpy("semantic_segmentation")
+    if mask.ndim == 4:
+        mask = mask[..., 0]
+    # Only the part is authored with a semantic class.  Replicator may assign
+    # different integer IDs between runs, so identify the unlabelled background
+    # as the modal ID instead of baking in a numeric target ID.
+    width, height = 256, 144
+    resized_rgb = []
+    resized_depth = []
+    resized_masks = []
+    for env_index in range(rgb.shape[0]):
+        semantic_ids, semantic_counts = np.unique(mask[env_index], return_counts=True)
+        background_id = semantic_ids[int(np.argmax(semantic_counts))]
+        binary_mask = (mask[env_index] != background_id).astype(np.uint8)
+        resized_rgb.append(cv2.resize(rgb[env_index], (width, height), interpolation=cv2.INTER_AREA))
+        resized_depth.append(
+            np.nan_to_num(
+                cv2.resize(
+                    depth[env_index],
+                    (width, height),
+                    interpolation=cv2.INTER_NEAREST,
+                ).astype(np.float32),
+                nan=0.50,
+                posinf=0.50,
+                neginf=0.04,
+            )
+        )
+        resized_masks.append(
+            cv2.resize(binary_mask, (width, height), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+        )
+    return {
+        "rgb": np.stack(resized_rgb),
+        "depth": np.stack(resized_depth),
+        "object_mask": np.stack(resized_masks),
+    }
+
+
+def _yaw_quaternion_xyzw(yaw_rad: float) -> np.ndarray:
+    return np.array([0.0, 0.0, np.sin(0.5 * yaw_rad), np.cos(0.5 * yaw_rad)], dtype=np.float64)
+
+
+def _quat_multiply_xyzw(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return np.array(
+        [
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+            lw * rw - lx * rx - ly * ry - lz * rz,
+        ]
+    )
+
+
+def _euler_xyz_quaternion_xyzw(rotation_xyz_rad: np.ndarray) -> np.ndarray:
+    """Return the quaternion for intrinsic local XYZ rotations."""
+
+    rx, ry, rz = 0.5 * np.asarray(rotation_xyz_rad, dtype=np.float64)
+    qx = np.array([np.sin(rx), 0.0, 0.0, np.cos(rx)], dtype=np.float64)
+    qy = np.array([0.0, np.sin(ry), 0.0, np.cos(ry)], dtype=np.float64)
+    qz = np.array([0.0, 0.0, np.sin(rz), np.cos(rz)], dtype=np.float64)
+    quaternion = _quat_multiply_xyzw(_quat_multiply_xyzw(qx, qy), qz)
+    return quaternion / np.linalg.norm(quaternion)
+
+
+def _rotate_vector_by_quaternion_xyzw(
+    vector: np.ndarray, quaternion_xyzw: np.ndarray
+) -> np.ndarray:
+    quaternion = np.asarray(quaternion_xyzw, dtype=np.float64)
+    quaternion = quaternion / np.linalg.norm(quaternion)
+    vector_quaternion = np.array([*np.asarray(vector, dtype=np.float64), 0.0])
+    conjugate = np.array([-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3]])
+    return _quat_multiply_xyzw(
+        _quat_multiply_xyzw(quaternion, vector_quaternion), conjugate
+    )[:3]
+
+
+def _rotate_z(vector: np.ndarray, yaw_rad: float) -> np.ndarray:
+    cosine, sine = np.cos(yaw_rad), np.sin(yaw_rad)
+    rotation = np.array([[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]])
+    return rotation @ np.asarray(vector, dtype=np.float64)
+
+
+def _integrate_world_twist_pose(
+    position_world: np.ndarray,
+    orientation_xyzw_world: np.ndarray,
+    twist_world: np.ndarray,
+    dt_s: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a small world-frame TCP twist into the next absolute IK target."""
+
+    twist = np.asarray(twist_world, dtype=np.float64)
+    rotation_vector = twist[3:] * float(dt_s)
+    angle = float(np.linalg.norm(rotation_vector))
+    if angle <= 1.0e-12:
+        delta_quaternion = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    else:
+        delta_quaternion = np.concatenate(
+            (rotation_vector * (np.sin(0.5 * angle) / angle), [np.cos(0.5 * angle)])
+        )
+    next_orientation = _quat_multiply_xyzw(
+        delta_quaternion, np.asarray(orientation_xyzw_world, dtype=np.float64)
+    )
+    next_orientation /= np.linalg.norm(next_orientation)
+    return (
+        np.asarray(position_world, dtype=np.float64) + twist[:3] * float(dt_s),
+        next_orientation,
+    )
+
+
+def _measured_world_twist(
+    previous_position_world: np.ndarray,
+    previous_orientation_xyzw_world: np.ndarray,
+    current_position_world: np.ndarray,
+    current_orientation_xyzw_world: np.ndarray,
+    dt_s: float,
+) -> np.ndarray:
+    """Estimate world-frame linear/angular TCP velocity between policy frames."""
+
+    dt = float(dt_s)
+    linear = (
+        np.asarray(current_position_world, dtype=np.float64)
+        - np.asarray(previous_position_world, dtype=np.float64)
+    ) / dt
+    previous_quaternion = np.asarray(
+        previous_orientation_xyzw_world, dtype=np.float64
+    )
+    delta_quaternion = _quat_multiply_xyzw(
+        np.asarray(current_orientation_xyzw_world, dtype=np.float64),
+        np.array(
+            [
+                -previous_quaternion[0],
+                -previous_quaternion[1],
+                -previous_quaternion[2],
+                previous_quaternion[3],
+            ],
+            dtype=np.float64,
         ),
     )
-    return Camera(cfg=camera_cfg)
+    if delta_quaternion[3] < 0.0:
+        delta_quaternion = -delta_quaternion
+    vector_norm = float(np.linalg.norm(delta_quaternion[:3]))
+    if vector_norm <= 1.0e-12:
+        angular = 2.0 * delta_quaternion[:3] / dt
+    else:
+        angle = 2.0 * np.arctan2(vector_norm, float(delta_quaternion[3]))
+        angular = delta_quaternion[:3] * (angle / (vector_norm * dt))
+    return np.concatenate((linear, angular))
+
+
+def _limit_position_command_lead(
+    command_position_world: np.ndarray,
+    measured_position_world: np.ndarray,
+    *,
+    max_lead_m: float,
+) -> np.ndarray:
+    """Bound Cartesian target accumulation ahead of the physical TCP."""
+
+    command = np.asarray(command_position_world, dtype=np.float64)
+    measured = np.asarray(measured_position_world, dtype=np.float64)
+    lead = command - measured
+    lead_norm = float(np.linalg.norm(lead))
+    if lead_norm <= float(max_lead_m):
+        return command
+    return measured + lead * (float(max_lead_m) / lead_norm)
+
+
+def _curriculum_dls_joint_velocity(context: FR3MotionContext, twist_world: np.ndarray, damping: float) -> torch.Tensor:
+    from isaaclab.utils.math import matrix_from_quat, quat_inv
+
+    jacobian = context.robot.root_physx_view.get_jacobians()[
+        :, context.ee_jacobi_body_idx, :, context.arm_joint_ids
+    ].clone()
+    root_quat_w = context.robot.data.root_pose_w[:, 3:7]
+    world_to_base = matrix_from_quat(quat_inv(root_quat_w))
+    jacobian[:, :3, :] = torch.bmm(world_to_base, jacobian[:, :3, :])
+    jacobian[:, 3:, :] = torch.bmm(world_to_base, jacobian[:, 3:, :])
+    twist_w = torch.as_tensor(
+        np.asarray(twist_world, dtype=np.float32)[None, :],
+        dtype=torch.float32,
+        device=context.device,
+    )
+    twist_b = torch.cat(
+        (
+            torch.bmm(world_to_base, twist_w[:, :3].unsqueeze(-1)).squeeze(-1),
+            torch.bmm(world_to_base, twist_w[:, 3:].unsqueeze(-1)).squeeze(-1),
+        ),
+        dim=1,
+    )
+    identity = torch.eye(6, dtype=torch.float32, device=context.device).unsqueeze(0)
+    solve = torch.linalg.solve(
+        torch.bmm(jacobian, jacobian.transpose(1, 2)) + float(damping) ** 2 * identity,
+        twist_b.unsqueeze(-1),
+    )
+    return torch.bmm(jacobian.transpose(1, 2), solve).squeeze(-1)
+
+
+def _run_first_curriculum(
+    *,
+    sim,
+    scene,
+    wrist_camera: Camera,
+    moveit_joint_trajectories,
+    selected_grasp,
+    selected_world_grasp,
+    object_pose_world,
+    open_gripper_width: float,
+) -> dict[str, object]:
+    """Generate perturbed privileged-expert episodes for one part and one grasp."""
+
+    config = VisualServoCurriculumConfig()
+    rng = np.random.default_rng(
+        np.random.SeedSequence(
+            [
+                int(args_cli.curriculum_seed),
+                int(args_cli.curriculum_episode_offset),
+            ]
+        )
+    )
+    context = FR3MotionContext(
+        robot=scene["robot"],
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=float(open_gripper_width),
+    )
+    expert_ik = DifferentialIKController(
+        DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
+        num_envs=1,
+        device=context.device,
+    )
+    pregrasp_q = torch.tensor(
+        [moveit_joint_trajectories["pregrasp"][-1]], dtype=torch.float32, device=context.device
+    )
+    grasp_q = torch.tensor([moveit_joint_trajectories["grasp"][-1]], dtype=torch.float32, device=context.device)
+    part = scene["part"]
+    nominal_object_position = np.asarray(object_pose_world.position_world, dtype=np.float64)
+    nominal_object_quaternion = np.asarray(object_pose_world.orientation_xyzw_world, dtype=np.float64)
+    nominal_pregrasp_position = np.asarray(selected_world_grasp.pregrasp_position_w, dtype=np.float64)
+    nominal_grasp_position = np.asarray(selected_world_grasp.position_w, dtype=np.float64)
+    nominal_grasp_quaternion = np.asarray(selected_world_grasp.orientation_xyzw, dtype=np.float64)
+
+    # Render a single fixed goal observation at the nominal open-gripper grasp.
+    context.reset_joint_state(grasp_q, q_hand=context.get_hand_q(), steps=5)
+    goal_observation = _curriculum_camera_observation(wrist_camera, physics_dt=context.physics_dt)
+    summary = {"episodes": [], "grasp_id": selected_grasp.grasp_id}
+    policy_substeps = max(1, int(round(config.policy_dt_s / context.physics_dt)))
+    nominal_velocity = (nominal_grasp_position - nominal_pregrasp_position) / config.approach_duration_s
+    approach_nominal_twist = np.concatenate((nominal_velocity, np.zeros(3, dtype=np.float64)))
+
+    for episode_index in range(int(args_cli.curriculum_episodes)):
+        dx, dy = rng.uniform(-config.object_translation_xy_m, config.object_translation_xy_m, size=2)
+        yaw = np.deg2rad(rng.uniform(-config.object_yaw_deg, config.object_yaw_deg))
+        object_position = nominal_object_position + np.array([dx, dy, 0.0])
+        object_quaternion = _quat_multiply_xyzw(_yaw_quaternion_xyzw(yaw), nominal_object_quaternion)
+        root_pose = torch.tensor(
+            [[*object_position, object_quaternion[3], *object_quaternion[:3]]],
+            dtype=torch.float32,
+            device=part.device,
+        )
+        part.write_root_pose_to_sim(root_pose)
+        if hasattr(part, "write_root_velocity_to_sim"):
+            part.write_root_velocity_to_sim(torch.zeros((1, 6), dtype=torch.float32, device=part.device))
+
+        perturb_q = pregrasp_q + torch.tensor(
+            rng.uniform(
+                -config.initial_joint_noise_rad,
+                config.initial_joint_noise_rad,
+                size=tuple(pregrasp_q.shape),
+            ),
+            dtype=torch.float32,
+            device=context.device,
+        )
+        context.reset_joint_state(perturb_q, q_hand=context.get_hand_q(), steps=5)
+
+        pregrasp_position = object_position + _rotate_z(
+            nominal_pregrasp_position - nominal_object_position, yaw
+        )
+        grasp_position = object_position + _rotate_z(nominal_grasp_position - nominal_object_position, yaw)
+        grasp_quaternion = _quat_multiply_xyzw(_yaw_quaternion_xyzw(yaw), nominal_grasp_quaternion)
+        buffers: dict[str, list[np.ndarray]] = {
+            name: []
+            for name in (
+                "rgb_live",
+                "depth_live",
+                "object_mask",
+                "joint_positions",
+                "nominal_twist",
+                "expert_twist",
+                "expert_residual_twist",
+                "pose_error",
+                "trajectory_progress",
+                "funnel_half_width_m",
+                "funnel_transverse_error_m",
+                "funnel_approach_scale",
+                "funnel_near_phase",
+            )
+        }
+        for step_index in range(config.step_count):
+            elapsed_s = step_index * config.policy_dt_s
+            progress, progress_rate = smooth_trajectory_progress(
+                elapsed_s, config.approach_duration_s
+            )
+            nominal_twist = approach_nominal_twist * (
+                progress_rate * config.approach_duration_s
+            )
+            target_position, target_quaternion = interpolate_pose(
+                pregrasp_position,
+                grasp_quaternion,
+                grasp_position,
+                grasp_quaternion,
+                progress,
+            )
+            target_tcp_position, target_tcp_quaternion = context.grasp_pose_to_tcp_pose(
+                tuple(float(value) for value in target_position),
+                tuple(float(value) for value in target_quaternion),
+            )
+            current_position_t, current_quaternion_w = context.get_tcp_pose_w()
+            current_position = current_position_t[0].detach().cpu().numpy()
+            current_quaternion_w = current_quaternion_w[0].detach().cpu().numpy()
+            current_quaternion = np.array(
+                [current_quaternion_w[1], current_quaternion_w[2], current_quaternion_w[3], current_quaternion_w[0]]
+            )
+            error = pose_error_twist(
+                current_position,
+                current_quaternion,
+                np.asarray(target_tcp_position),
+                np.asarray(target_tcp_quaternion),
+            )
+            full_twist, residual_twist, funnel = alignment_funnel_expert_twist(
+                nominal_twist=nominal_twist,
+                pose_error=error,
+                grasp_orientation_xyzw=grasp_quaternion,
+                trajectory_progress=progress,
+                config=config,
+            )
+            observation = _curriculum_camera_observation(wrist_camera, physics_dt=context.physics_dt)
+            buffers["rgb_live"].append(observation["rgb"])
+            buffers["depth_live"].append(observation["depth"])
+            buffers["object_mask"].append(observation["object_mask"])
+            buffers["joint_positions"].append(context.get_arm_q()[0].detach().cpu().numpy())
+            buffers["nominal_twist"].append(nominal_twist.astype(np.float32))
+            buffers["expert_twist"].append(full_twist.astype(np.float32))
+            buffers["expert_residual_twist"].append(residual_twist.astype(np.float32))
+            buffers["pose_error"].append(error.astype(np.float32))
+            buffers["trajectory_progress"].append(np.array(progress, dtype=np.float32))
+            buffers["funnel_half_width_m"].append(
+                np.array(funnel["funnel_half_width_m"], dtype=np.float32)
+            )
+            buffers["funnel_transverse_error_m"].append(
+                np.array(funnel["transverse_error_m"], dtype=np.float32)
+            )
+            buffers["funnel_approach_scale"].append(
+                np.array(funnel["approach_scale"], dtype=np.float32)
+            )
+            buffers["funnel_near_phase"].append(
+                np.array(funnel["near_phase"], dtype=np.float32)
+            )
+
+            command_position, command_quaternion = _integrate_world_twist_pose(
+                current_position,
+                current_quaternion,
+                full_twist,
+                config.policy_dt_s,
+            )
+            command_grasp_position, command_grasp_quaternion = (
+                context.tcp_pose_to_grasp_pose(
+                    tuple(float(value) for value in command_position),
+                    tuple(float(value) for value in command_quaternion),
+                )
+            )
+            target_command = PoseCommand(
+                position_w=command_grasp_position,
+                orientation_xyzw=command_grasp_quaternion,
+            )
+            for _ in range(policy_substeps):
+                context.command_pose_via_differential_ik(expert_ik, target_command)
+                context.command_fixed_gripper()
+                scene.write_data_to_sim()
+                sim.step()
+                scene.update(context.physics_dt)
+
+        final_position_t, final_quaternion_w = context.get_tcp_pose_w()
+        final_quaternion_w = final_quaternion_w[0].detach().cpu().numpy()
+        final_error = pose_error_twist(
+            final_position_t[0].detach().cpu().numpy(),
+            np.array([final_quaternion_w[1], final_quaternion_w[2], final_quaternion_w[3], final_quaternion_w[0]]),
+            np.asarray(
+                context.grasp_pose_to_tcp_pose(
+                    tuple(float(value) for value in grasp_position),
+                    tuple(float(value) for value in grasp_quaternion),
+                )[0]
+            ),
+            np.asarray(
+                context.grasp_pose_to_tcp_pose(
+                    tuple(float(value) for value in grasp_position),
+                    tuple(float(value) for value in grasp_quaternion),
+                )[1]
+            ),
+        )
+        success = bool(
+            np.linalg.norm(final_error[:3]) <= config.success_position_tolerance_m
+            and np.linalg.norm(final_error[3:]) <= np.deg2rad(config.success_rotation_tolerance_deg)
+        )
+        arrays = {name: np.stack(values) for name, values in buffers.items()}
+        arrays.update(
+            {
+                "rgb_goal": goal_observation["rgb"],
+                "depth_goal": goal_observation["depth"],
+                "goal_object_mask": goal_observation["object_mask"],
+            }
+        )
+        npz_path, _ = write_episode_npz(
+            args_cli.curriculum_dataset_dir,
+            episode_index=episode_index,
+            arrays=arrays,
+            metadata={
+                "success": success,
+                "final_position_error_m": float(np.linalg.norm(final_error[:3])),
+                "final_rotation_error_deg": float(np.rad2deg(np.linalg.norm(final_error[3:]))),
+                "object_perturbation": {"dx_m": float(dx), "dy_m": float(dy), "yaw_deg": float(np.rad2deg(yaw))},
+                "grasp_id": selected_grasp.grasp_id,
+                "action_frame": "world",
+                "action_semantics": "end_effector_twist",
+            },
+            config=config,
+        )
+        episode_summary = {
+            "episode": episode_index,
+            "success": success,
+            "final_position_error_m": float(np.linalg.norm(final_error[:3])),
+            "final_rotation_error_deg": float(np.rad2deg(np.linalg.norm(final_error[3:]))),
+            "path": str(npz_path),
+        }
+        summary["episodes"].append(episode_summary)
+        print(f"[CURRICULUM]: {episode_summary}", flush=True)
+
+    summary["success_count"] = sum(bool(item["success"]) for item in summary["episodes"])
+    summary_path = Path(args_cli.curriculum_dataset_dir) / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return summary
+
+
+def _run_batched_first_curriculum(
+    *,
+    sim,
+    scene,
+    wrist_camera: Camera,
+    moveit_joint_trajectories,
+    selected_grasp,
+    selected_world_grasp,
+    object_pose_world,
+    open_gripper_width: float,
+) -> dict[str, object]:
+    """Generate curriculum episodes with cloned robots, parts, cameras, and batched DLS."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    config = VisualServoCurriculumConfig()
+    rng = np.random.default_rng(
+        np.random.SeedSequence(
+            [
+                int(args_cli.curriculum_seed),
+                int(args_cli.curriculum_episode_offset),
+            ]
+        )
+    )
+    context = FR3MotionContext(
+        robot=scene["robot"],
+        scene=scene,
+        sim=sim,
+        fixed_gripper_width=float(open_gripper_width),
+    )
+    env_count = int(scene.num_envs)
+    expert_ik = DifferentialIKController(
+        DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
+        num_envs=env_count,
+        device=context.device,
+    )
+    pregrasp_q = torch.tensor(
+        [moveit_joint_trajectories["pregrasp"][-1]], dtype=torch.float32, device=context.device
+    ).repeat(env_count, 1)
+    grasp_q = torch.tensor(
+        [moveit_joint_trajectories["grasp"][-1]], dtype=torch.float32, device=context.device
+    ).repeat(env_count, 1)
+    part = scene["part"]
+    env_origins = scene.env_origins.detach().cpu().numpy().astype(np.float64)
+    nominal_object_position = np.asarray(object_pose_world.position_world, dtype=np.float64)
+    nominal_object_quaternion = np.asarray(object_pose_world.orientation_xyzw_world, dtype=np.float64)
+    nominal_pregrasp_position = np.asarray(selected_world_grasp.pregrasp_position_w, dtype=np.float64)
+    nominal_grasp_position = np.asarray(selected_world_grasp.position_w, dtype=np.float64)
+    nominal_grasp_quaternion = np.asarray(selected_world_grasp.orientation_xyzw, dtype=np.float64)
+    nominal_positions_w = nominal_object_position[None, :] + env_origins
+    nominal_quaternions = np.repeat(nominal_object_quaternion[None, :], env_count, axis=0)
+
+    def _write_part_poses(positions_w: np.ndarray, quaternions_xyzw: np.ndarray) -> None:
+        root_pose = np.concatenate(
+            (positions_w, quaternions_xyzw[:, 3:4], quaternions_xyzw[:, :3]), axis=1
+        )
+        part.write_root_pose_to_sim(torch.as_tensor(root_pose, dtype=torch.float32, device=part.device))
+        if hasattr(part, "write_root_velocity_to_sim"):
+            part.write_root_velocity_to_sim(
+                torch.zeros((env_count, 6), dtype=torch.float32, device=part.device)
+            )
+
+    nominal_grasp_positions_w = nominal_grasp_position[None, :] + env_origins
+    nominal_grasp_quaternions = np.repeat(
+        nominal_grasp_quaternion[None, :], env_count, axis=0
+    )
+    _write_part_poses(nominal_positions_w, nominal_quaternions)
+    context.reset_joint_state(grasp_q, q_hand=context.get_hand_q(), steps=5)
+    goal_position_t = torch.as_tensor(
+        nominal_grasp_positions_w, dtype=torch.float32, device=context.device
+    )
+    goal_quaternion_t = torch.as_tensor(
+        nominal_grasp_quaternions, dtype=torch.float32, device=context.device
+    )
+    goal_convergence_steps = max(1, int(round(1.0 / context.physics_dt)))
+    for _ in range(goal_convergence_steps):
+        context.command_pose_batch_via_differential_ik(
+            expert_ik, goal_position_t, goal_quaternion_t
+        )
+        context.command_fixed_gripper()
+        scene.write_data_to_sim()
+        sim.step()
+        scene.update(context.physics_dt)
+        _write_part_poses(nominal_positions_w, nominal_quaternions)
+    goal_tcp_position_t, goal_tcp_quaternion_w_t = context.get_tcp_pose_w()
+    goal_tcp_positions_w = goal_tcp_position_t.detach().cpu().numpy()
+    goal_tcp_quaternions_wxyz = goal_tcp_quaternion_w_t.detach().cpu().numpy()
+    goal_tcp_quaternions_xyzw = goal_tcp_quaternions_wxyz[:, (1, 2, 3, 0)]
+    goal_part_pose_w = part.data.root_pose_w.detach().cpu().numpy()
+    goal_observation = _curriculum_camera_observation(wrist_camera, physics_dt=context.physics_dt)
+    if int(goal_observation["rgb"].shape[0]) != env_count:
+        raise RuntimeError(
+            f"Batched D405 returned {goal_observation['rgb'].shape[0]} images for {env_count} environments."
+        )
+
+    learned_policy = None
+    policy_goal_rgbd = None
+    policy_downsample = None
+    if args_cli.visual_servo_policy_checkpoint is not None:
+        checkpoint = torch.load(
+            args_cli.visual_servo_policy_checkpoint,
+            map_location=context.device,
+            weights_only=False,
+        )
+        learned_policy = ResidualVisualServoPolicy().to(context.device)
+        learned_policy.load_state_dict(checkpoint["model_state_dict"])
+        learned_policy.eval()
+        cache_dir_raw = checkpoint.get("training_config", {}).get(
+            "training_cache_dir"
+        )
+        if not cache_dir_raw:
+            raise ValueError(
+                "Policy checkpoint lacks training_cache_dir; exact image preprocessing "
+                "cannot be verified."
+            )
+        cache_manifest_path = Path(cache_dir_raw) / "manifest.json"
+        if not cache_manifest_path.exists():
+            raise FileNotFoundError(
+                f"Training cache manifest is unavailable: {cache_manifest_path}"
+            )
+        cache_manifest = json.loads(cache_manifest_path.read_text(encoding="utf-8"))
+        if cache_manifest.get("resampling") != "area":
+            raise ValueError(
+                "Policy training cache must use area resampling; rebuild it with "
+                "scripts/build_visual_servo_training_cache.py."
+            )
+        if (
+            cache_manifest.get("observation_profile")
+            != D405_VISUAL_SERVO_OBSERVATION_PROFILE
+        ):
+            raise ValueError(
+                "Policy training cache observation profile does not match the "
+                f"current pipeline ({D405_VISUAL_SERVO_OBSERVATION_PROFILE})."
+            )
+        source_shape = tuple(int(value) for value in cache_manifest["source_image_shape"])
+        expected_shape = tuple(int(value) for value in cache_manifest["image_shape"])
+        observed_shape = tuple(int(value) for value in goal_observation["rgb"].shape[1:3])
+        if observed_shape != source_shape:
+            raise ValueError(
+                f"Isaac policy image shape {observed_shape} does not match training source "
+                f"shape {source_shape}."
+            )
+        policy_downsample = int(cache_manifest["downsample"])
+        if (
+            source_shape[0] // policy_downsample,
+            source_shape[1] // policy_downsample,
+        ) != expected_shape:
+            raise ValueError(
+                f"Training cache downsample={policy_downsample} does not produce "
+                f"the declared shape {expected_shape} from {source_shape}."
+            )
+
+        def _policy_rgbd(observation: dict[str, np.ndarray]) -> torch.Tensor:
+            rgb = torch.as_tensor(
+                observation["rgb"], dtype=torch.float32, device=context.device
+            ).permute(0, 3, 1, 2).div_(255.0)
+            rgb = F.interpolate(rgb, size=expected_shape, mode="area")
+            depth = torch.as_tensor(
+                observation["depth"], dtype=torch.float32, device=context.device
+            ).unsqueeze(1)
+            depth = F.interpolate(depth, size=expected_shape, mode="area")
+            depth = (
+                depth.sub_(DEPTH_MIN_M)
+                .div_(DEPTH_MAX_M - DEPTH_MIN_M)
+                .clamp_(0.0, 1.0)
+            )
+            rgbd = torch.cat((rgb, depth), dim=1)
+            if tuple(rgbd.shape[-2:]) != expected_shape:
+                raise RuntimeError(
+                    f"Policy RGB-D shape {tuple(rgbd.shape[-2:])} != {expected_shape}."
+                )
+            return rgbd
+
+        policy_goal_rgbd = _policy_rgbd(goal_observation)
+        print(
+            f"[POLICY]: loaded {args_cli.visual_servo_policy_checkpoint} "
+            f"epoch={checkpoint.get('epoch')} input_rgbd={tuple(policy_goal_rgbd.shape)} "
+            f"downsample={policy_downsample}",
+            flush=True,
+        )
+
+    summary = {"episodes": [], "grasp_id": selected_grasp.grasp_id, "parallel_envs": env_count}
+    policy_substeps = max(1, int(round(config.policy_dt_s / context.physics_dt)))
+    sample_stride = max(
+        1, int(round(config.policy_hz / float(args_cli.curriculum_sample_hz)))
+    )
+    effective_sample_hz = config.policy_hz / sample_stride
+    summary["sample_hz"] = effective_sample_hz
+    nominal_velocity = (nominal_grasp_position - nominal_pregrasp_position) / config.approach_duration_s
+    approach_nominal_twist = np.concatenate((nominal_velocity, np.zeros(3, dtype=np.float64)))
+    output_dir = Path(args_cli.curriculum_dataset_dir)
+    total_episodes = int(args_cli.curriculum_episodes)
+    curriculum_video_recorder = None
+
+    with ThreadPoolExecutor(max_workers=int(args_cli.curriculum_writer_workers)) as writer_pool:
+        for batch_start in range(0, total_episodes, env_count):
+            valid_count = min(env_count, total_episodes - batch_start)
+            if args_cli.curriculum_randomize_object_pose:
+                dx_dy = rng.uniform(
+                    -config.object_translation_xy_m,
+                    config.object_translation_xy_m,
+                    size=(env_count, 2),
+                )
+                yaws = np.deg2rad(
+                    rng.uniform(-config.object_yaw_deg, config.object_yaw_deg, size=env_count)
+                )
+            else:
+                dx_dy = np.zeros((env_count, 2), dtype=np.float64)
+                yaws = np.zeros(env_count, dtype=np.float64)
+            if args_cli.curriculum_fixed_object_offset_xy_m is not None:
+                dx_dy[:] = np.asarray(
+                    args_cli.curriculum_fixed_object_offset_xy_m, dtype=np.float64
+                )
+            if args_cli.curriculum_fixed_object_yaw_deg is not None:
+                yaws[:] = np.deg2rad(
+                    float(args_cli.curriculum_fixed_object_yaw_deg)
+                )
+            object_positions_w = nominal_positions_w.copy()
+            object_positions_w[:, :2] += dx_dy
+            object_quaternions = np.stack(
+                [
+                    _quat_multiply_xyzw(_yaw_quaternion_xyzw(float(yaw)), nominal_object_quaternion)
+                    for yaw in yaws
+                ]
+            )
+            _write_part_poses(object_positions_w, object_quaternions)
+            perturb_q = pregrasp_q + torch.as_tensor(
+                rng.uniform(
+                    -config.initial_joint_noise_rad,
+                    config.initial_joint_noise_rad,
+                    size=tuple(pregrasp_q.shape),
+                ),
+                dtype=torch.float32,
+                device=context.device,
+            )
+            context.reset_joint_state(perturb_q, q_hand=context.get_hand_q(), steps=5)
+            _write_part_poses(object_positions_w, object_quaternions)
+
+            pregrasp_positions_w = np.stack(
+                [
+                    object_positions_w[index]
+                    + _rotate_z(
+                        nominal_pregrasp_position - nominal_object_position, float(yaws[index])
+                    )
+                    for index in range(env_count)
+                ]
+            )
+            grasp_positions_w = np.stack(
+                [
+                    object_positions_w[index]
+                    + _rotate_z(nominal_grasp_position - nominal_object_position, float(yaws[index]))
+                    for index in range(env_count)
+                ]
+            )
+            grasp_quaternions = np.stack(
+                [
+                    _quat_multiply_xyzw(
+                        _yaw_quaternion_xyzw(float(yaw)), nominal_grasp_quaternion
+                    )
+                    for yaw in yaws
+                ]
+            )
+            position_noise_half_ranges = np.asarray(
+                args_cli.curriculum_ee_position_noise_grasp_m, dtype=np.float64
+            )
+            rotation_noise_half_ranges_deg = np.asarray(
+                args_cli.curriculum_ee_rotation_noise_deg, dtype=np.float64
+            )
+            ee_position_offsets_grasp_m = rng.uniform(
+                -position_noise_half_ranges,
+                position_noise_half_ranges,
+                size=(env_count, 3),
+            )
+            ee_rotation_offsets_deg = rng.uniform(
+                -rotation_noise_half_ranges_deg,
+                rotation_noise_half_ranges_deg,
+                size=(env_count, 3),
+            )
+            if args_cli.curriculum_fixed_ee_offset_grasp_m is not None:
+                ee_position_offsets_grasp_m[:] = np.asarray(
+                    args_cli.curriculum_fixed_ee_offset_grasp_m, dtype=np.float64
+                )
+            if args_cli.curriculum_fixed_ee_rotation_deg is not None:
+                ee_rotation_offsets_deg[:] = np.asarray(
+                    args_cli.curriculum_fixed_ee_rotation_deg, dtype=np.float64
+                )
+            apply_cartesian_ee_perturbation = bool(
+                np.any(ee_position_offsets_grasp_m)
+                or np.any(ee_rotation_offsets_deg)
+            )
+            if apply_cartesian_ee_perturbation:
+                nominal_pregrasp_tcp_poses = [
+                    context.grasp_pose_to_tcp_pose(
+                        tuple(float(value) for value in pregrasp_positions_w[index]),
+                        tuple(float(value) for value in grasp_quaternions[index]),
+                    )
+                    for index in range(env_count)
+                ]
+                stressed_tcp_poses = [
+                    (
+                        np.asarray(nominal_pregrasp_tcp_poses[index][0])
+                        + _rotate_vector_by_quaternion_xyzw(
+                            ee_position_offsets_grasp_m[index],
+                            grasp_quaternions[index],
+                        ),
+                        _quat_multiply_xyzw(
+                            np.asarray(nominal_pregrasp_tcp_poses[index][1]),
+                            _euler_xyz_quaternion_xyzw(
+                                np.deg2rad(ee_rotation_offsets_deg[index])
+                            ),
+                        ),
+                    )
+                    for index in range(env_count)
+                ]
+                stressed_grasp_poses = [
+                    context.tcp_pose_to_grasp_pose(
+                        tuple(float(value) for value in position),
+                        tuple(float(value) for value in quaternion),
+                    )
+                    for position, quaternion in stressed_tcp_poses
+                ]
+                stress_position_t = torch.as_tensor(
+                    np.stack([pose[0] for pose in stressed_grasp_poses]),
+                    dtype=torch.float32,
+                    device=context.device,
+                )
+                stress_quaternion_t = torch.as_tensor(
+                    np.stack([pose[1] for pose in stressed_grasp_poses]),
+                    dtype=torch.float32,
+                    device=context.device,
+                )
+                stress_convergence_steps = max(
+                    1, int(round(1.5 / context.physics_dt))
+                )
+                for _ in range(stress_convergence_steps):
+                    context.command_pose_batch_via_differential_ik(
+                        expert_ik, stress_position_t, stress_quaternion_t
+                    )
+                    context.command_fixed_gripper()
+                    scene.write_data_to_sim()
+                    sim.step()
+                    scene.update(context.physics_dt)
+                    _write_part_poses(object_positions_w, object_quaternions)
+            if batch_start == 0 and args_cli.curriculum_video is not None:
+                curriculum_video_recorder = IsaacVideoRecorder(
+                    camera=wrist_camera,
+                    sim=sim,
+                    output_path=args_cli.curriculum_video,
+                    fps=float(args_cli.video_fps),
+                    width=int(args_cli.video_width),
+                    height=int(args_cli.video_height),
+                )
+                curriculum_video_recorder.capture(force=True)
+            command_position_t, command_quaternion_w_t = context.get_tcp_pose_w()
+            command_positions_w = command_position_t.detach().cpu().numpy()
+            command_quaternions_wxyz = command_quaternion_w_t.detach().cpu().numpy()
+            command_quaternions_xyzw = command_quaternions_wxyz[:, (1, 2, 3, 0)]
+            previous_positions_w = command_positions_w.copy()
+            previous_quaternions_xyzw = command_quaternions_xyzw.copy()
+            buffers: dict[str, list[np.ndarray]] = {
+                name: []
+                for name in (
+                    "rgb_live",
+                    "depth_live",
+                    "object_mask",
+                    "joint_positions",
+                    "tcp_position_w",
+                    "tcp_orientation_xyzw_w",
+                    "object_position_w",
+                    "object_orientation_xyzw_w",
+                    "nominal_twist",
+                    "expert_twist",
+                    "expert_residual_twist",
+                    "pose_error",
+                    "trajectory_progress",
+                    "funnel_half_width_m",
+                    "funnel_transverse_error_m",
+                    "funnel_approach_scale",
+                    "funnel_near_phase",
+                    "measured_tcp_twist",
+                    "controller_stage",
+                )
+            }
+            phase_elapsed_s = np.zeros(env_count, dtype=np.float64)
+            precision_active = np.zeros(env_count, dtype=bool)
+            precision_step_counts = np.zeros(env_count, dtype=np.int32)
+            required_precision_steps = max(
+                1, int(round(config.precision_duration_s * config.policy_hz))
+            )
+            maximum_step_count = config.step_count + int(
+                round(
+                    (
+                        config.capture_duration_s
+                        + config.approach_duration_s
+                        + config.settle_duration_s
+                    )
+                    * config.policy_hz
+                )
+            )
+            for step_index in range(maximum_step_count):
+                if np.all(
+                    precision_step_counts[:valid_count] >= required_precision_steps
+                ):
+                    break
+                progress_and_rates = [
+                    smooth_trajectory_progress(
+                        phase_elapsed_s[index], config.approach_duration_s
+                    )
+                    for index in range(env_count)
+                ]
+                progresses = np.asarray(
+                    [item[0] for item in progress_and_rates], dtype=np.float64
+                )
+                precision_active |= progresses >= config.precision_start_progress
+                precision_step_counts += precision_active.astype(np.int32)
+                effective_progresses = np.where(precision_active, 1.0, progresses)
+                progress_rates = np.asarray(
+                    [item[1] for item in progress_and_rates], dtype=np.float64
+                )
+                nominal_twists = (
+                    approach_nominal_twist[None, :]
+                    * (progress_rates * config.approach_duration_s)[:, None]
+                )
+                nominal_twists[precision_active] = 0.0
+                target_positions_w = (
+                    pregrasp_positions_w
+                    + effective_progresses[:, None]
+                    * (grasp_positions_w - pregrasp_positions_w)
+                )
+                target_tcp_poses = [
+                    context.grasp_pose_to_tcp_pose(
+                        tuple(float(value) for value in target_positions_w[index]),
+                        tuple(float(value) for value in grasp_quaternions[index]),
+                    )
+                    for index in range(env_count)
+                ]
+                target_tcp_positions_w = np.asarray(
+                    [item[0] for item in target_tcp_poses], dtype=np.float64
+                )
+                target_tcp_quaternions = np.asarray(
+                    [item[1] for item in target_tcp_poses], dtype=np.float64
+                )
+                current_position_t, current_quaternion_w_t = context.get_tcp_pose_w()
+                current_positions_w = current_position_t.detach().cpu().numpy()
+                current_quaternions_wxyz = current_quaternion_w_t.detach().cpu().numpy()
+                current_quaternions_xyzw = current_quaternions_wxyz[:, (1, 2, 3, 0)]
+                measured_twists = np.stack(
+                    [
+                        _measured_world_twist(
+                            previous_positions_w[index],
+                            previous_quaternions_xyzw[index],
+                            current_positions_w[index],
+                            current_quaternions_xyzw[index],
+                            config.policy_dt_s,
+                        )
+                        for index in range(env_count)
+                    ]
+                )
+                previous_positions_w = current_positions_w.copy()
+                previous_quaternions_xyzw = current_quaternions_xyzw.copy()
+                errors = np.stack(
+                    [
+                        pose_error_twist(
+                            current_positions_w[index],
+                            current_quaternions_xyzw[index],
+                            target_tcp_positions_w[index],
+                            target_tcp_quaternions[index],
+                        )
+                        for index in range(env_count)
+                    ]
+                )
+                actions = []
+                for index in range(env_count):
+                    if precision_active[index]:
+                        full_twist, precision_debug = precision_docking_expert_twist(
+                            pose_error=errors[index],
+                            measured_twist=measured_twists[index],
+                            config=config,
+                        )
+                        actions.append(
+                            (
+                                full_twist,
+                                full_twist.copy(),
+                                {
+                                    "near_phase": 1.0,
+                                    "funnel_half_width_m": config.funnel_near_half_width_m,
+                                    "transverse_error_m": precision_debug["position_error_m"],
+                                    "approach_scale": 1.0,
+                                },
+                            )
+                        )
+                    else:
+                        actions.append(
+                            alignment_funnel_expert_twist(
+                                nominal_twist=nominal_twists[index],
+                                pose_error=errors[index],
+                                grasp_orientation_xyzw=grasp_quaternions[index],
+                                trajectory_progress=progresses[index],
+                                config=config,
+                                measured_twist=measured_twists[index],
+                            )
+                        )
+                if learned_policy is not None:
+                    policy_observation = _curriculum_camera_observation(
+                        wrist_camera, physics_dt=context.physics_dt
+                    )
+                    nominal_camera = world_twist_to_camera(
+                        nominal_twists, current_quaternions_xyzw
+                    ).astype(np.float32)
+                    with torch.inference_mode(), torch.autocast(
+                        device_type="cuda", dtype=torch.float16
+                    ):
+                        predicted_normalized = learned_policy(
+                            live_rgbd=_policy_rgbd(policy_observation),
+                            goal_rgbd=policy_goal_rgbd,
+                            joint_positions=context.get_arm_q(),
+                            progress=torch.as_tensor(
+                                effective_progresses[:, None],
+                                dtype=torch.float32,
+                                device=context.device,
+                            ),
+                            nominal_twist_camera=torch.as_tensor(
+                                normalize_twist(nominal_camera),
+                                dtype=torch.float32,
+                                device=context.device,
+                            ),
+                        )
+                    action_scale = np.asarray(
+                        [LINEAR_ACTION_SCALE_M_S] * 3
+                        + [ANGULAR_ACTION_SCALE_RAD_S] * 3,
+                        dtype=np.float32,
+                    )
+                    residual_camera = (
+                        predicted_normalized.float().cpu().numpy() * action_scale
+                    )
+                    residual_world = camera_twist_to_world(
+                        residual_camera, current_quaternions_xyzw
+                    )
+                    full_twists = nominal_twists + residual_world
+                    residual_twists = residual_world
+                    funnel_diagnostics = [
+                        {
+                            "near_phase": float(precision_active[index]),
+                            "funnel_half_width_m": config.funnel_near_half_width_m,
+                            "transverse_error_m": float(
+                                np.linalg.norm(errors[index, :3])
+                            ),
+                            "approach_scale": (
+                                0.0 if precision_active[index] else 1.0
+                            ),
+                        }
+                        for index in range(env_count)
+                    ]
+                else:
+                    full_twists = np.stack([action[0] for action in actions])
+                    residual_twists = np.stack([action[1] for action in actions])
+                    funnel_diagnostics = [action[2] for action in actions]
+                phase_elapsed_s = np.minimum(
+                    config.approach_duration_s,
+                    phase_elapsed_s
+                    + config.policy_dt_s
+                    * np.asarray(
+                        [
+                            0.0 if precision_active[index] else item["approach_scale"]
+                            for index, item in enumerate(funnel_diagnostics)
+                        ],
+                        dtype=np.float64,
+                    ),
+                )
+                record_sample = (
+                    step_index % sample_stride == 0
+                    or np.all(
+                        precision_step_counts[:valid_count]
+                        >= required_precision_steps
+                    )
+                )
+                if record_sample:
+                    observation = _curriculum_camera_observation(
+                        wrist_camera, physics_dt=context.physics_dt
+                    )
+                    part_pose_w = part.data.root_pose_w.detach().cpu().numpy()
+                    buffers["rgb_live"].append(observation["rgb"])
+                    buffers["depth_live"].append(observation["depth"])
+                    buffers["object_mask"].append(observation["object_mask"])
+                    buffers["joint_positions"].append(
+                        context.get_arm_q().detach().cpu().numpy()
+                    )
+                    buffers["tcp_position_w"].append(
+                        current_positions_w.astype(np.float32)
+                    )
+                    buffers["tcp_orientation_xyzw_w"].append(
+                        current_quaternions_xyzw.astype(np.float32)
+                    )
+                    buffers["object_position_w"].append(
+                        part_pose_w[:, :3].astype(np.float32)
+                    )
+                    buffers["object_orientation_xyzw_w"].append(
+                        part_pose_w[:, (4, 5, 6, 3)].astype(np.float32)
+                    )
+                    buffers["nominal_twist"].append(
+                        nominal_twists.astype(np.float32)
+                    )
+                    buffers["expert_twist"].append(full_twists.astype(np.float32))
+                    buffers["expert_residual_twist"].append(
+                        residual_twists.astype(np.float32)
+                    )
+                    buffers["pose_error"].append(errors.astype(np.float32))
+                    buffers["trajectory_progress"].append(
+                        effective_progresses.astype(np.float32)
+                    )
+                    buffers["measured_tcp_twist"].append(
+                        measured_twists.astype(np.float32)
+                    )
+                    buffers["controller_stage"].append(
+                        precision_active.astype(np.int8)
+                    )
+                    for name, key in (
+                        ("funnel_half_width_m", "funnel_half_width_m"),
+                        ("funnel_transverse_error_m", "transverse_error_m"),
+                        ("funnel_approach_scale", "approach_scale"),
+                        ("funnel_near_phase", "near_phase"),
+                    ):
+                        buffers[name].append(
+                            np.asarray(
+                                [item[key] for item in funnel_diagnostics],
+                                dtype=np.float32,
+                            )
+                        )
+
+                integrated_commands = [
+                    _integrate_world_twist_pose(
+                        command_positions_w[index],
+                        command_quaternions_xyzw[index],
+                        full_twists[index],
+                        config.policy_dt_s,
+                    )
+                    for index in range(env_count)
+                ]
+                command_positions_w = np.stack(
+                    [
+                        _limit_position_command_lead(
+                            item[0],
+                            current_positions_w[index],
+                            max_lead_m=(
+                                config.precision_max_command_lead_m
+                                if precision_active[index]
+                                else 0.006
+                            ),
+                        )
+                        for index, item in enumerate(integrated_commands)
+                    ]
+                )
+                command_quaternions_xyzw = np.stack(
+                    [item[1] for item in integrated_commands]
+                )
+                integrated_grasp_commands = [
+                    context.tcp_pose_to_grasp_pose(
+                        tuple(float(value) for value in item[0]),
+                        tuple(float(value) for value in item[1]),
+                    )
+                    for item in integrated_commands
+                ]
+                target_position_t = torch.as_tensor(
+                    np.stack([item[0] for item in integrated_grasp_commands]),
+                    dtype=torch.float32,
+                    device=context.device,
+                )
+                target_quaternion_t = torch.as_tensor(
+                    np.stack([item[1] for item in integrated_grasp_commands]),
+                    dtype=torch.float32,
+                    device=context.device,
+                )
+                for _ in range(policy_substeps):
+                    context.command_pose_batch_via_differential_ik(
+                        expert_ik, target_position_t, target_quaternion_t
+                    )
+                    context.command_fixed_gripper()
+                    scene.write_data_to_sim()
+                    sim.step()
+                    scene.update(context.physics_dt)
+                    _write_part_poses(object_positions_w, object_quaternions)
+                    if curriculum_video_recorder is not None:
+                        curriculum_video_recorder.capture()
+
+            final_position_t, final_quaternion_w_t = context.get_tcp_pose_w()
+            final_positions_w = final_position_t.detach().cpu().numpy()
+            final_quaternions_wxyz = final_quaternion_w_t.detach().cpu().numpy()
+            final_quaternions_xyzw = final_quaternions_wxyz[:, (1, 2, 3, 0)]
+            final_errors = np.stack(
+                [
+                    pose_error_twist(
+                        final_positions_w[index],
+                        final_quaternions_xyzw[index],
+                        np.asarray(
+                            context.grasp_pose_to_tcp_pose(
+                                tuple(float(value) for value in grasp_positions_w[index]),
+                                tuple(float(value) for value in grasp_quaternions[index]),
+                            )[0]
+                        ),
+                        np.asarray(
+                            context.grasp_pose_to_tcp_pose(
+                                tuple(float(value) for value in grasp_positions_w[index]),
+                                tuple(float(value) for value in grasp_quaternions[index]),
+                            )[1]
+                        ),
+                    )
+                    for index in range(env_count)
+                ]
+            )
+            stacked = {name: np.stack(values, axis=0) for name, values in buffers.items()}
+            futures = []
+            episode_summaries = []
+            for env_index in range(valid_count):
+                episode_index = (
+                    int(args_cli.curriculum_episode_offset)
+                    + batch_start
+                    + env_index
+                )
+                final_error = final_errors[env_index]
+                success = bool(
+                    np.linalg.norm(final_error[:3]) <= config.success_position_tolerance_m
+                    and np.linalg.norm(final_error[3:])
+                    <= np.deg2rad(config.success_rotation_tolerance_deg)
+                )
+                arrays = {name: values[:, env_index].copy() for name, values in stacked.items()}
+                arrays.update(
+                    {
+                        "rgb_goal": goal_observation["rgb"][env_index].copy(),
+                        "depth_goal": goal_observation["depth"][env_index].copy(),
+                        "goal_object_mask": goal_observation["object_mask"][env_index].copy(),
+                        "goal_tcp_position_w": goal_tcp_positions_w[env_index].copy(),
+                        "goal_tcp_orientation_xyzw_w": goal_tcp_quaternions_xyzw[env_index].copy(),
+                        "goal_object_position_w": goal_part_pose_w[env_index, :3].copy(),
+                        "goal_object_orientation_xyzw_w": goal_part_pose_w[
+                            env_index, (4, 5, 6, 3)
+                        ].copy(),
+                    }
+                )
+                metadata = {
+                    "success": success,
+                    "final_position_error_m": float(np.linalg.norm(final_error[:3])),
+                    "final_rotation_error_deg": float(
+                        np.rad2deg(np.linalg.norm(final_error[3:]))
+                    ),
+                    "object_perturbation": {
+                        "dx_m": float(dx_dy[env_index, 0]),
+                        "dy_m": float(dx_dy[env_index, 1]),
+                        "yaw_deg": float(np.rad2deg(yaws[env_index])),
+                    },
+                    "initial_ee_stress": {
+                        "offset_grasp_m": ee_position_offsets_grasp_m[
+                            env_index
+                        ].tolist(),
+                        "rotation_xyz_deg": ee_rotation_offsets_deg[
+                            env_index
+                        ].tolist(),
+                    },
+                    "grasp_id": selected_grasp.grasp_id,
+                    "action_frame": "world",
+                    "action_semantics": "end_effector_twist",
+                    "controller": (
+                        "learned_policy"
+                        if learned_policy is not None
+                        else "privileged_expert"
+                    ),
+                    "parallel_env_index": env_index,
+                    "parallel_env_count": env_count,
+                    "collection_sample_hz": effective_sample_hz,
+                }
+                futures.append(
+                    writer_pool.submit(
+                        write_episode_npz,
+                        output_dir,
+                        episode_index=episode_index,
+                        arrays=arrays,
+                        metadata=metadata,
+                        config=config,
+                    )
+                )
+                episode_summaries.append(
+                    {
+                        "episode": episode_index,
+                        "success": success,
+                        "final_position_error_m": metadata["final_position_error_m"],
+                        "final_rotation_error_deg": metadata["final_rotation_error_deg"],
+                    }
+                )
+            for future, episode_summary in zip(futures, episode_summaries, strict=True):
+                npz_path, _ = future.result()
+                episode_summary["path"] = str(npz_path)
+                summary["episodes"].append(episode_summary)
+                print(f"[CURRICULUM]: {episode_summary}", flush=True)
+            print(
+                f"[CURRICULUM]: completed batch {batch_start // env_count + 1} "
+                f"({batch_start + valid_count}/{total_episodes} episodes)",
+                flush=True,
+            )
+            if curriculum_video_recorder is not None:
+                curriculum_video_recorder.capture(force=True)
+                curriculum_video_recorder.close()
+                curriculum_video_recorder = None
+
+    summary["success_count"] = sum(bool(item["success"]) for item in summary["episodes"])
+    summary_path = output_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return summary
 
 
 def resolve_part_usd_path(*, bundle, mesh_local) -> str:
@@ -812,6 +2330,7 @@ def build_scene(
     sim_cfg = sim_utils.SimulationCfg(
         dt=0.01,
         device=args_cli.device,
+        render=make_visual_servo_render_cfg(),
         physx=sim_utils.PhysxCfg(
             solver_type=1,
             max_position_iteration_count=192,
@@ -834,6 +2353,21 @@ def build_scene(
     print("[INFO]: Building Franka Panda + part scene config...", flush=True)
     fr3_usd_path = resolve_fr3_usd_path()
     print(f"[INFO]: Isaac robot USD: {fr3_usd_path}", flush=True)
+    wrist_camera_config = D405WristCameraConfig(
+        enabled=bool(
+            args_cli.enable_d405_wrist_camera
+            or args_cli.record_video is not None
+            or args_cli.visual_servo_goal_image is not None
+            or args_cli.visual_servo_comparison_video is not None
+        ),
+        width=int(args_cli.d405_width),
+        height=int(args_cli.d405_height),
+        fx=float(args_cli.d405_fx),
+        fy=float(args_cli.d405_fy),
+        cx=float(args_cli.d405_cx),
+        cy=float(args_cli.d405_cy),
+        include_privileged_mask=not bool(args_cli.d405_disable_privileged_mask),
+    )
     scene_cfg = make_fr3_part_scene_cfg(
         fr3_asset_path=fr3_usd_path,
         part_usd_path=part_usd_path,
@@ -844,12 +2378,52 @@ def build_scene(
         robot_base_position=ROBOT_BASE_POSITION,
         robot_base_orientation_xyzw=ROBOT_BASE_ORIENTATION_XYZW,
     )
+    curriculum_env_count = (
+        min(int(args_cli.curriculum_num_envs), int(args_cli.curriculum_episodes))
+        if args_cli.curriculum_dataset_dir is not None
+        else 1
+    )
+    scene_cfg.num_envs = curriculum_env_count
     print("[INFO]: Creating interactive scene...", flush=True)
     scene = InteractiveScene(scene_cfg)
-    video_camera = _make_video_camera()
     print("[INFO]: Waiting for stage assets to finish loading...", flush=True)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
+    wrist_camera = None
+    if wrist_camera_config.enabled:
+        stage = omni.usd.get_context().get_stage()
+        link7_paths = [
+            str(prim.GetPath())
+            for prim in stage.Traverse()
+            if str(prim.GetPath()).endswith("/link7") and "/Robot/" in str(prim.GetPath())
+        ]
+        if len(link7_paths) != curriculum_env_count:
+            raise RuntimeError(
+                f"Expected {curriculum_env_count} loaded robot link7 prims, found {link7_paths}."
+            )
+        wrist_camera = Camera(
+            cfg=make_d405_wrist_camera_cfg(
+                parent_prim_path="/World/envs/env_.*/Robot/link7",
+                wrist_camera=wrist_camera_config,
+            )
+        )
+        debug_housing_paths = []
+        if curriculum_env_count == 1:
+            debug_housing_paths.append(
+                _add_d405_debug_housing(f"{link7_paths[0]}/D405LeftCamera")
+            )
+        debug_text = (
+            f" with visible debug housing at {debug_housing_paths[0]}"
+            if debug_housing_paths
+            else " (debug housings disabled for batched collection)"
+        )
+        print(
+            f"[INFO]: Attached D405 wrist camera under {len(link7_paths)} cloned link7 prims"
+            f"{debug_text}.",
+            flush=True,
+        )
+    material_bindings = _apply_matte_pla_materials()
+    print(f"[INFO]: Applied matte PLA visual materials: {material_bindings}.", flush=True)
     if _is_generated_kuka_y_gripper_usd(fr3_usd_path):
         print(
             "[INFO]: Skipping Franka visual mesh collision exposure for generated KUKA/Y-gripper USD; "
@@ -880,7 +2454,14 @@ def build_scene(
     stage = omni.usd.get_context().get_stage()
     bound_contact_material_count = _bind_high_friction_contact_material(
         stage,
-        root_paths=("/World/envs/env_0/Robot", "/World/envs/env_0/Part"),
+        root_paths=tuple(
+            path
+            for env_index in range(curriculum_env_count)
+            for path in (
+                f"/World/envs/env_{env_index}/Robot",
+                f"/World/envs/env_{env_index}/Part",
+            )
+        ),
     )
     print(
         "[INFO]: Bound high-friction Isaac contact material "
@@ -893,7 +2474,7 @@ def build_scene(
     scene.reset()
     _write_kuka_configured_start_state(scene)
     print("[INFO]: Scene ready.", flush=True)
-    return sim, scene, video_camera
+    return sim, scene, wrist_camera
 
 
 def _write_attempt_artifact(
@@ -1111,23 +2692,19 @@ def run() -> None:
         flush=True,
     )
 
-    sim, scene, video_camera = build_scene(
+    sim, scene, wrist_camera = build_scene(
         object_pose_world=object_pose_world, part_usd_path=args_cli.resolved_part_usd
     )
     physics_dt = sim.get_physics_dt()
     video_recorder = None
-    if video_camera is not None:
+    if wrist_camera is not None and args_cli.record_video is not None:
         video_recorder = IsaacVideoRecorder(
-            camera=video_camera,
+            camera=wrist_camera,
             sim=sim,
             output_path=args_cli.record_video,
             fps=float(args_cli.video_fps),
             width=int(args_cli.video_width),
             height=int(args_cli.video_height),
-        )
-        video_recorder.set_view(
-            eye=tuple(float(value) for value in args_cli.video_camera_eye),
-            target=tuple(float(value) for value in args_cli.video_camera_target),
         )
         video_recorder.capture(force=True)
 
@@ -1227,6 +2804,75 @@ def run() -> None:
         flush=True,
     )
     _print_moveit_joint_trajectory_summary(moveit_joint_trajectories)
+    if args_cli.curriculum_dataset_dir is not None:
+        if wrist_camera is None:
+            raise RuntimeError("Curriculum generation requires the D405 wrist camera.")
+        curriculum_summary = _run_batched_first_curriculum(
+            sim=sim,
+            scene=scene,
+            wrist_camera=wrist_camera,
+            moveit_joint_trajectories=moveit_joint_trajectories,
+            selected_grasp=selected_grasp,
+            selected_world_grasp=selected_world_grasp,
+            object_pose_world=object_pose_world,
+            open_gripper_width=approach_open_gripper_width,
+        )
+        if video_recorder is not None:
+            video_recorder.close()
+        print(f"[INFO]: First curriculum generation complete: {curriculum_summary}.", flush=True)
+        return
+
+    goal_image_path = args_cli.visual_servo_goal_image
+    visual_servo_start_frame = 0
+    visual_servo_end_frame = None
+
+    def _mark_visual_servo_pregrasp() -> None:
+        nonlocal visual_servo_start_frame
+        if video_recorder is not None:
+            video_recorder.capture(force=True)
+            visual_servo_start_frame = max(0, video_recorder.frame_count - 1)
+        print(
+            f"[INFO]: Visual-servo demonstration starts at pregrasp frame "
+            f"{visual_servo_start_frame}.",
+            flush=True,
+        )
+
+    def _capture_visual_servo_goal() -> None:
+        nonlocal visual_servo_end_frame
+        if goal_image_path is None:
+            return
+        if wrist_camera is None:
+            raise RuntimeError("Visual-servo goal rendering requires the D405 wrist camera.")
+        goal_rgb = _camera_rgb_frame(wrist_camera, physics_dt=physics_dt)
+        _write_rgb_image(goal_image_path, goal_rgb)
+        if video_recorder is not None:
+            video_recorder.capture(force=True)
+            visual_servo_end_frame = max(visual_servo_start_frame, video_recorder.frame_count - 1)
+        metadata_path = goal_image_path.with_suffix(".json")
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "image": str(goal_image_path),
+                    "observation": "D405 RGB at planned grasp waypoint before gripper closure",
+                    "robot_phase": "grasp",
+                    "gripper_state": "open",
+                    "visual_servo_approach_start_phase": "pregrasp",
+                    "selected_grasp_id": selected_grasp.grasp_id,
+                    "object_pose_world": {
+                        "position": list(object_pose_world.position_world),
+                        "orientation_xyzw": list(object_pose_world.orientation_xyzw_world),
+                    },
+                    "moveit_grasp_joint_waypoint": list(moveit_joint_trajectories["grasp"][-1]),
+                    "privileged_training_label_only": True,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"[INFO]: Rendered visual-servo goal image to {goal_image_path}.", flush=True)
+
     execution_result = execute_pick_from_moveit_joint_trajectories(
         sim=sim,
         scene=scene,
@@ -1244,6 +2890,8 @@ def run() -> None:
         postclose_hold_s=float(args_cli.postclose_hold_s),
         selected_gripper_width_m=float(selected_world_grasp.jaw_width),
         step_callback=_record_step,
+        pregrasp_observation_callback=_mark_visual_servo_pregrasp,
+        grasp_observation_callback=_capture_visual_servo_goal,
     )
     if video_recorder is not None:
         video_recorder.capture(force=True)
@@ -1258,6 +2906,22 @@ def run() -> None:
     )
     if video_recorder is not None:
         video_recorder.close()
+    if args_cli.visual_servo_comparison_video is not None:
+        if goal_image_path is None:
+            raise RuntimeError("Comparison video requires --visual-servo-goal-image.")
+        comparison_frame_count = _write_live_goal_comparison_video(
+            live_video_path=args_cli.record_video,
+            goal_image_path=goal_image_path,
+            output_path=args_cli.visual_servo_comparison_video,
+            fps=float(args_cli.video_fps),
+            start_frame=visual_servo_start_frame,
+            end_frame=visual_servo_end_frame,
+        )
+        print(
+            f"[INFO]: Wrote visual-servo comparison video to "
+            f"{args_cli.visual_servo_comparison_video} ({comparison_frame_count} frames).",
+            flush=True,
+        )
 
     print(
         "[INFO]: Fabrica Isaac pickup attempt "

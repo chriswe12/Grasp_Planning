@@ -21,6 +21,7 @@ from grasp_planning.start_poses import (
     gripper_max_open_width,
     kuka_isaac_to_moveit_joint_positions,
     kuka_moveit_to_isaac_joint_positions,
+    kuka_y_gripper_approach_width_from_jaw_width,
 )
 
 
@@ -101,6 +102,12 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(gripper_joint_target_from_width("panda_finger_joint1", 0.035), 0.035)
         self.assertAlmostEqual(gripper_max_open_width("left_finger_joint"), KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
         self.assertAlmostEqual(gripper_max_open_width("panda_finger_joint1"), 0.04)
+        self.assertAlmostEqual(
+            kuka_y_gripper_approach_width_from_jaw_width(0.042889),
+            0.052889,
+        )
+        with self.assertRaisesRegex(ValueError, "physical opening"):
+            kuka_y_gripper_approach_width_from_jaw_width(0.075)
 
     def test_kuka_moveit_joint_positions_are_converted_to_generated_usd_coordinates(self) -> None:
         self.assertEqual(

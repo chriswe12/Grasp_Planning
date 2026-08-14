@@ -20,6 +20,11 @@ htmlcov/
 
 artifacts/
 .cache/
+/.worktrees/
+/isaac_rl/
+/logs/
+/outputs/
+/euler/euler.env
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/

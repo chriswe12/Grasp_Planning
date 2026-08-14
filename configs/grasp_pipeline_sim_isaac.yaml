@@ -1,14 +1,14 @@
 geometry:
-  target_mesh_path: "obj/fabrica/beam/2.obj"
+  target_mesh_path: "obj/fabrica/plumbers_block/0.obj"
   mesh_scale: 0.01
-  assembly_glob: "obj/fabrica/beam/*.obj"
+  assembly_glob: "obj/fabrica/plumbers_block/*.obj"
 
 planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
   num_surface_samples: 256
   min_jaw_width: 0.002
-  max_jaw_width: 0.09
+  max_jaw_width: 0.084
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
@@ -54,7 +54,7 @@ isaac_execution:
   part_usd: ""  # optional; runner generates a bundle-local USD by default
   fr3_usd: "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
   controller: "moveit"
-  grasp_id: ""
+  grasp_id: "g1973"
   pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
   contact_gap_m: 0.002
@@ -68,6 +68,38 @@ isaac_execution:
   pregrasp_only: false
   run_seconds: 0.0
   headless: false
+  d405_wrist_camera:
+    enabled: true
+    # Nominal 848x480 pinhole values derived from the published 84x58 degree FOV.
+    # Replace these with the factory intrinsics for the deployed stream.
+    width: 848
+    height: 480
+    fx: 470.900
+    fy: 432.971
+    cx: 423.5
+    cy: 239.5
+    # Isaac-only training label. A deployed actor must not require this channel.
+    privileged_mask_enabled: true
+  record_video: "artifacts/plumbers_block_0_d405_wrist.mp4"
+  visual_servo_goal_image: "artifacts/plumbers_block_0_visual_servo_goal.png"
+  visual_servo_comparison_video: "artifacts/plumbers_block_0_pregrasp_to_goal.mp4"
+  curriculum_dataset_dir: "artifacts/curriculum_one_100_parallel"
+  curriculum_episodes: 100
+  curriculum_seed: 7
+  # Increase by curriculum_episodes when appending a later collection chunk.
+  curriculum_episode_offset: 0
+  curriculum_num_envs: 16
+  curriculum_writer_workers: 4
+  # Run the expert at 30 Hz, but save less-correlated RGB-D labels at 10 Hz.
+  curriculum_sample_hz: 10.0
+  # Initial TCP perturbations for expert demonstrations. Translation is in the
+  # target grasp frame; rotation is an intrinsic local XYZ offset.
+  curriculum_ee_position_noise_grasp_m: [0.035, 0.035, 0.020]
+  curriculum_ee_rotation_noise_deg: [20.0, 20.0, 25.0]
+  curriculum_video: "artifacts/curriculum_funnel_isaac_wrist.mp4"
+  video_fps: 30.0
+  video_width: 848
+  video_height: 480
   moveit_frame_id: "lbr_link_0"
   moveit_target_position_signs: [1.0, 1.0, 1.0]
   moveit_planning_group: "arm"
@@ -99,7 +131,7 @@ isaac_execution:
 
 ros2:
   pose_base_topic: "/perception/fp/pose_base/fused/assembly"
-  assembly_name: "beam"
-  part_id: 2
+  assembly_name: "plumbers_block"
+  part_id: 0
   frame_id: "world"
   timeout_s: 10.0

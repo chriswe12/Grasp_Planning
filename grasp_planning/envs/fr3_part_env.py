@@ -8,7 +8,16 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors.camera import CameraCfg
 from isaaclab.utils import configclass
+
+from grasp_planning.d405_wrist_camera import D405WristCameraConfig, camera_pose_in_link7
+from grasp_planning.isaac_visual_scene import (
+    VISUAL_SERVO_GROUND_COLOR,
+    VISUAL_SERVO_KEY_ROTATION_WXYZ,
+    make_visual_servo_dome_light_cfg,
+    make_visual_servo_key_light_cfg,
+)
 
 from .fr3_cube_env import (
     DEFAULT_ARM_START_JOINT_POS,
@@ -218,12 +227,21 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
 
     ground = AssetBaseCfg(
         prim_path="/World/GroundPlane",
-        spawn=sim_utils.GroundPlaneCfg(func=_spawn_local_ground_plane),
+        spawn=sim_utils.GroundPlaneCfg(
+            func=_spawn_local_ground_plane,
+            color=VISUAL_SERVO_GROUND_COLOR,
+        ),
     )
 
     dome_light = AssetBaseCfg(
         prim_path="/World/DomeLight",
-        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.9, 0.9, 0.9)),
+        spawn=make_visual_servo_dome_light_cfg(),
+    )
+
+    key_light = AssetBaseCfg(
+        prim_path="/World/VisualServoKeyLight",
+        spawn=make_visual_servo_key_light_cfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(rot=VISUAL_SERVO_KEY_ROTATION_WXYZ),
     )
 
     robot = ArticulationCfg(
@@ -266,6 +284,7 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Part",
         spawn=sim_utils.UsdFileCfg(
             usd_path="",
+            semantic_tags=[("class", "target_part")],
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -278,6 +297,11 @@ class FR3PartSceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
     )
+
+    # Keep sensors after their parent assets: InteractiveScene instantiates entries
+    # in config declaration order, so link7 must exist before this camera spawns.
+    wrist_camera: CameraCfg | None = None
+    overview_camera: CameraCfg | None = None
 
 
 def make_fr3_part_scene_cfg(
@@ -292,6 +316,7 @@ def make_fr3_part_scene_cfg(
     robot_base_orientation_xyzw: tuple[float, float, float, float] = DEFAULT_ROBOT_CFG.base_rot,
     kuka_arm_actuator_profile: str = KUKA_ARM_ACTUATOR_PROFILE_DEFAULT,
     kuka_arm_damping_override: float | None = None,
+    wrist_camera: D405WristCameraConfig | None = None,
 ) -> FR3PartSceneCfg:
     """Build a configured scene for a single Franka Panda and rigid part."""
 
@@ -330,4 +355,86 @@ def make_fr3_part_scene_cfg(
     # Isaac Lab initial-state quaternions are wxyz, while pipeline world poses are xyzw.
     x, y, z, w = part_orientation_xyzw
     scene_cfg.part.init_state.rot = (w, x, y, z)
+    if wrist_camera is not None and wrist_camera.enabled:
+        camera_position, camera_orientation_wxyz = camera_pose_in_link7(wrist_camera)
+        camera_data_types = ["rgb", "distance_to_image_plane"]
+        if wrist_camera.include_privileged_mask:
+            camera_data_types.append("semantic_segmentation")
+        scene_cfg.wrist_camera = CameraCfg(
+            prim_path=(
+                "{ENV_REGEX_NS}/Robot/"
+                f"{wrist_camera.parent_prim_path.strip('/')}/D405LeftCamera"
+            ),
+            update_period=float(wrist_camera.update_period_s),
+            height=int(wrist_camera.height),
+            width=int(wrist_camera.width),
+            data_types=camera_data_types,
+            semantic_filter=["class"],
+            colorize_semantic_segmentation=False,
+            spawn=sim_utils.PinholeCameraCfg.from_intrinsic_matrix(
+                intrinsic_matrix=wrist_camera.intrinsic_matrix_row_major,
+                width=int(wrist_camera.width),
+                height=int(wrist_camera.height),
+                clipping_range=tuple(float(value) for value in wrist_camera.clipping_range_m),
+            ),
+            offset=CameraCfg.OffsetCfg(
+                pos=camera_position,
+                rot=camera_orientation_wxyz,
+                convention="ros",
+            ),
+        )
     return scene_cfg
+
+
+def make_d405_wrist_camera_cfg(
+    *, parent_prim_path: str, wrist_camera: D405WristCameraConfig
+) -> CameraCfg:
+    """Build a D405 sensor after the referenced robot USD has loaded."""
+
+    camera_position, camera_orientation_wxyz = camera_pose_in_link7(wrist_camera)
+    camera_data_types = ["rgb", "distance_to_image_plane"]
+    if wrist_camera.include_privileged_mask:
+        camera_data_types.append("semantic_segmentation")
+    return CameraCfg(
+        prim_path=f"{parent_prim_path.rstrip('/')}/D405LeftCamera",
+        update_period=float(wrist_camera.update_period_s),
+        height=int(wrist_camera.height),
+        width=int(wrist_camera.width),
+        data_types=camera_data_types,
+        semantic_filter=["class"],
+        colorize_semantic_segmentation=False,
+        spawn=sim_utils.PinholeCameraCfg.from_intrinsic_matrix(
+            intrinsic_matrix=wrist_camera.intrinsic_matrix_row_major,
+            width=int(wrist_camera.width),
+            height=int(wrist_camera.height),
+            clipping_range=tuple(float(value) for value in wrist_camera.clipping_range_m),
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=camera_position,
+            rot=camera_orientation_wxyz,
+            convention="ros",
+        ),
+    )
+
+
+def make_robot_overview_camera_cfg(
+    *,
+    width: int = 640,
+    height: int = 480,
+    prim_path: str = "{ENV_REGEX_NS}/OverviewCamera",
+) -> CameraCfg:
+    """Build a fixed perspective camera intended to show the complete robot."""
+
+    return CameraCfg(
+        prim_path=prim_path,
+        update_period=0.0,
+        height=int(height),
+        width=int(width),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0,
+            focus_distance=2.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.05, 100.0),
+        ),
+    )

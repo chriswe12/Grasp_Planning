@@ -6,7 +6,12 @@ import re
 
 import torch
 
-from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripper_command_joint_name
+from grasp_planning.start_poses import (
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    KUKA_Y_GRIPPER_TRAVEL_M,
+    gripper_max_open_width,
+    is_gripper_command_joint_name,
+)
 
 from .types import PoseCommand
 
@@ -163,12 +168,12 @@ class FR3MotionContext:
     _EE_POSITION_CORRECTION_GAIN = 2.0
     _EE_POSITION_CORRECTION_DAMPING = 0.05
     _EE_POSITION_CORRECTION_MAX_RAD = 0.10
+    _DIFFERENTIAL_IK_MAX_JOINT_SPEED_RAD_S = 2.5
 
     def __init__(self, *, robot, scene, sim, fixed_gripper_width: float = 0.04) -> None:
         self.robot = robot
         self.scene = scene
         self.sim = sim
-        self.fixed_gripper_width = float(fixed_gripper_width)
         self.ee_body_name, self.ee_body_idx = self._resolve_ee_body()
         self.ee_to_tcp_offset = self._resolve_ee_to_tcp_offset(self.ee_body_name)
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
@@ -178,6 +183,16 @@ class FR3MotionContext:
             self.hand_joint_names,
             self.hand_joint_ids,
         )
+        robot_data = getattr(self.robot, "data", None)
+        joint_pos = getattr(robot_data, "joint_pos", None)
+        environment_count = 1 if joint_pos is None else int(joint_pos.shape[0])
+        self._fixed_gripper_widths = torch.full(
+            (environment_count,),
+            float(fixed_gripper_width),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        self._validate_gripper_widths(self._fixed_gripper_widths)
 
     @property
     def device(self) -> str:
@@ -189,6 +204,9 @@ class FR3MotionContext:
 
     def get_arm_q(self) -> torch.Tensor:
         return self.robot.data.joint_pos[:, self.arm_joint_ids].clone()
+
+    def get_arm_qd(self) -> torch.Tensor:
+        return self.robot.data.joint_vel[:, self.arm_joint_ids].clone()
 
     def get_hand_q(self) -> torch.Tensor:
         if self.hand_joint_ids.numel() == 0:
@@ -280,6 +298,9 @@ class FR3MotionContext:
     def command_arm(self, q: torch.Tensor) -> None:
         self.robot.set_joint_position_target(q, joint_ids=self.arm_joint_ids)
 
+    def command_arm_velocity(self, qd: torch.Tensor) -> None:
+        self.robot.set_joint_velocity_target(qd, joint_ids=self.arm_joint_ids)
+
     def reset_joint_state(
         self,
         q_arm: torch.Tensor,
@@ -303,18 +324,133 @@ class FR3MotionContext:
             self.sim.step()
             self.scene.update(self.physics_dt)
 
-    def command_fixed_gripper(self) -> None:
+    @property
+    def fixed_gripper_widths(self) -> torch.Tensor:
+        """Return the per-environment aperture currently held by the gripper."""
+
+        return self._fixed_gripper_widths.clone()
+
+    @property
+    def fixed_gripper_width(self) -> float:
+        """Backward-compatible scalar aperture for single-width execution paths."""
+
+        first = self._fixed_gripper_widths[0]
+        if not bool(torch.allclose(self._fixed_gripper_widths, first.expand_as(self._fixed_gripper_widths))):
+            raise ValueError(
+                "The cloned environments currently use different gripper apertures; "
+                "read fixed_gripper_widths instead."
+            )
+        return float(first.item())
+
+    @fixed_gripper_width.setter
+    def fixed_gripper_width(self, width: float) -> None:
+        self.set_fixed_gripper_widths(float(width))
+
+    def _normalize_env_ids(self, env_ids=None) -> torch.Tensor:
+        if env_ids is None:
+            return torch.arange(
+                self._fixed_gripper_widths.shape[0],
+                dtype=torch.long,
+                device=self.device,
+            )
+        resolved = torch.as_tensor(env_ids, dtype=torch.long, device=self.device).flatten()
+        if resolved.numel() == 0:
+            return resolved
+        if bool(torch.any(resolved < 0)) or bool(
+            torch.any(resolved >= self._fixed_gripper_widths.shape[0])
+        ):
+            raise IndexError("Gripper environment index is outside the articulation batch.")
+        return resolved
+
+    def _validate_gripper_widths(self, widths: torch.Tensor) -> None:
+        if not bool(torch.all(torch.isfinite(widths))) or bool(torch.any(widths < 0.0)):
+            raise ValueError("Gripper apertures must be finite and non-negative.")
+        if not self.hand_joint_names:
+            return
+        maximum = min(gripper_max_open_width(name) for name in self.hand_joint_names)
+        if bool(torch.any(widths > float(maximum) + 1.0e-7)):
+            raise ValueError(
+                f"Gripper aperture exceeds the {float(maximum):.6f} m physical opening."
+            )
+
+    def set_fixed_gripper_widths(self, widths, *, env_ids=None) -> None:
+        """Set one scalar or one aperture per selected cloned environment."""
+
+        resolved_env_ids = self._normalize_env_ids(env_ids)
+        values = torch.as_tensor(widths, dtype=torch.float32, device=self.device).flatten()
+        if values.numel() == 1 and resolved_env_ids.numel() != 1:
+            values = values.expand(resolved_env_ids.numel())
+        if values.numel() != resolved_env_ids.numel():
+            raise ValueError(
+                "Expected one gripper aperture or one value per selected environment, "
+                f"got {values.numel()} values for {resolved_env_ids.numel()} environments."
+            )
+        self._validate_gripper_widths(values)
+        self._fixed_gripper_widths[resolved_env_ids] = values
+
+    @staticmethod
+    def _joint_targets_from_widths(
+        joint_names: tuple[str, ...], widths: torch.Tensor
+    ) -> torch.Tensor:
+        targets = torch.zeros(
+            (widths.shape[0], len(joint_names)),
+            dtype=torch.float32,
+            device=widths.device,
+        )
+        for index, name in enumerate(joint_names):
+            if name in {"left_finger_joint", "right_finger_joint"}:
+                close_distance = 0.5 * (
+                    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - widths
+                )
+                close_distance = close_distance.clamp(
+                    min=0.0, max=KUKA_Y_GRIPPER_TRAVEL_M
+                )
+                targets[:, index] = (
+                    -close_distance if name == "right_finger_joint" else close_distance
+                )
+            else:
+                targets[:, index] = widths
+        return targets
+
+    def command_fixed_gripper(self, *, env_ids=None) -> None:
         if self.hand_command_joint_ids.numel() == 0:
             return
-        targets = torch.full(
-            (1, int(self.hand_command_joint_ids.numel())),
-            0.0,
-            dtype=torch.float32,
-            device=self.device,
+        resolved_env_ids = self._normalize_env_ids(env_ids)
+        if resolved_env_ids.numel() == 0:
+            return
+        targets = self._joint_targets_from_widths(
+            self.hand_command_joint_names,
+            self._fixed_gripper_widths[resolved_env_ids],
         )
-        for index, name in enumerate(self.hand_command_joint_names):
-            targets[0, index] = gripper_joint_target_from_width(name, self.fixed_gripper_width)
-        self.robot.set_joint_position_target(targets, joint_ids=self.hand_command_joint_ids)
+        self.robot.set_joint_position_target(
+            targets,
+            joint_ids=self.hand_command_joint_ids,
+            env_ids=resolved_env_ids,
+        )
+
+    def write_fixed_gripper_state(self, *, env_ids=None) -> None:
+        """Hard-write the held aperture so reset observations never see stale fingers."""
+
+        if self.hand_joint_ids.numel() == 0:
+            return
+        resolved_env_ids = self._normalize_env_ids(env_ids)
+        if resolved_env_ids.numel() == 0:
+            return
+        targets = self._joint_targets_from_widths(
+            self.hand_joint_names,
+            self._fixed_gripper_widths[resolved_env_ids],
+        )
+        self.robot.write_joint_state_to_sim(
+            targets,
+            torch.zeros_like(targets),
+            joint_ids=self.hand_joint_ids,
+            env_ids=resolved_env_ids,
+        )
+        self.robot.set_joint_position_target(
+            targets,
+            joint_ids=self.hand_joint_ids,
+            env_ids=resolved_env_ids,
+        )
 
     def step_sim(self, steps: int = 1) -> None:
         for _ in range(max(1, int(steps))):
@@ -388,14 +524,80 @@ class FR3MotionContext:
         jacobian[:, 3:, :] = torch.bmm(base_rot, jacobian[:, 3:, :])
         joint_pos = self.robot.data.joint_pos[:, self.arm_joint_ids]
         joint_pos_des = ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
-        joint_pos_cmd = self.compute_ee_position_corrected_arm_command(
-            q_target=joint_pos_des,
-            jacobian_pos_b=jacobian[:, :3, :],
-            current_tcp_position_b=ee_pos_b,
-            target_tcp_position_b=desired_pos_b,
-        )
+        joint_pos_cmd = self.bounded_differential_ik_arm_command(joint_pos_des)
         self.command_arm(joint_pos_cmd)
+        self.command_arm_velocity(torch.zeros_like(joint_pos_cmd))
         return joint_pos_cmd
+
+    def command_pose_batch_via_differential_ik(
+        self,
+        ik_controller,
+        target_position_w: torch.Tensor,
+        target_orientation_xyzw: torch.Tensor,
+    ) -> torch.Tensor:
+        """Command one absolute world-frame pose per cloned environment."""
+
+        from isaaclab.utils.math import matrix_from_quat, quat_apply, quat_inv, quat_mul, subtract_frame_transforms
+
+        desired_grasp_position_w = target_position_w.to(dtype=torch.float32, device=self.device)
+        desired_grasp_quat_w = quat_xyzw_to_wxyz(
+            target_orientation_xyzw.to(dtype=torch.float32, device=self.device)
+        )
+        env_count = int(desired_grasp_position_w.shape[0])
+        grasp_to_tcp_quat_w = torch.tensor(
+            [self._GRASP_TO_TCP_QUAT_WXYZ], dtype=torch.float32, device=self.device
+        ).expand(env_count, -1)
+        tcp_to_grasp_center_b = torch.tensor(
+            [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self.device
+        ).expand(env_count, -1)
+        desired_tcp_quat_w = quat_mul(desired_grasp_quat_w, grasp_to_tcp_quat_w)
+        desired_tcp_position_w = desired_grasp_position_w - quat_apply(
+            desired_tcp_quat_w, tcp_to_grasp_center_b
+        )
+        desired_ee_position_w = self._tcp_position_to_ee_position_w(
+            desired_tcp_position_w, desired_tcp_quat_w
+        )
+
+        ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
+        ee_pos_w = ee_pose_w[:, :3]
+        ee_quat_w = ee_pose_w[:, 3:7]
+        root_pose_w = self.robot.data.root_pose_w
+        root_pos_w = root_pose_w[:, :3]
+        root_quat_w = root_pose_w[:, 3:7]
+        ee_pos_b, ee_quat_b = subtract_frame_transforms(
+            root_pos_w, root_quat_w, ee_pos_w, ee_quat_w
+        )
+        desired_pos_b, desired_quat_b = subtract_frame_transforms(
+            root_pos_w,
+            root_quat_w,
+            desired_ee_position_w,
+            desired_tcp_quat_w,
+        )
+        ik_controller.set_command(torch.cat((desired_pos_b, desired_quat_b), dim=1))
+
+        jacobian = self.robot.root_physx_view.get_jacobians()[
+            :, self.ee_jacobi_body_idx, :, self.arm_joint_ids
+        ]
+        base_rot = matrix_from_quat(quat_inv(root_quat_w))
+        jacobian[:, :3, :] = torch.bmm(base_rot, jacobian[:, :3, :])
+        jacobian[:, 3:, :] = torch.bmm(base_rot, jacobian[:, 3:, :])
+        joint_pos = self.robot.data.joint_pos[:, self.arm_joint_ids]
+        joint_pos_des = ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+        joint_pos_cmd = self.bounded_differential_ik_arm_command(joint_pos_des)
+        self.command_arm(joint_pos_cmd)
+        self.command_arm_velocity(torch.zeros_like(joint_pos_cmd))
+        return joint_pos_cmd
+
+    def bounded_differential_ik_arm_command(self, q_target: torch.Tensor) -> torch.Tensor:
+        """Clamp an IK target to joint limits and a per-step joint-speed bound."""
+
+        current_q = self.get_arm_q()
+        max_delta = self._DIFFERENTIAL_IK_MAX_JOINT_SPEED_RAD_S * self.physics_dt
+        q_cmd = current_q + torch.clamp(q_target - current_q, min=-max_delta, max=max_delta)
+        lower, upper = self.get_joint_limits()
+        if self.joint_limits_are_usable(lower, upper):
+            q_cmd = torch.max(torch.min(q_cmd, upper), lower)
+        return q_cmd
 
     def compute_ee_position_corrected_arm_command(
         self,
