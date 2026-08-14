@@ -16,6 +16,7 @@ from grasp_planning.pipeline.transition_symmetry import (
     compile_step_transition_symmetries,
     expand_grasp_candidates_by_symmetry,
     load_assembly_symmetry_records,
+    transform_grasp_candidate_by_source_symmetry,
 )
 
 
@@ -157,6 +158,32 @@ def test_pickup_grasp_symmetry_preserves_parent_and_transforms_geometry(
     assert transformed.metadata["symmetry_pickup_parent_grasp_id"] == "g0001"
     assert transformed.metadata["symmetry_pickup_name"] == "z180"
     assert expansion["symmetry_pickup_derived_candidate_count"] == 1
+
+
+def test_source_symmetry_transform_round_trips_translated_rotation() -> None:
+    symmetry = np.diag((-1.0, -1.0, 1.0, 1.0))
+    symmetry[:3, 3] = (0.4, -0.2, 0.0)
+    transformed = transform_grasp_candidate_by_source_symmetry(
+        _candidate(),
+        symmetry_name="translated_z180",
+        matrix_source=symmetry,
+    )
+    restored = transform_grasp_candidate_by_source_symmetry(
+        transformed,
+        symmetry_name="inverse_translated_z180",
+        matrix_source=np.linalg.inv(symmetry),
+    )
+
+    original = _candidate()
+    assert np.allclose(restored.grasp_position_obj, original.grasp_position_obj)
+    assert np.allclose(restored.contact_point_a_obj, original.contact_point_a_obj)
+    assert np.allclose(restored.contact_point_b_obj, original.contact_point_b_obj)
+    assert np.allclose(restored.contact_normal_a_obj, original.contact_normal_a_obj)
+    assert np.allclose(restored.contact_normal_b_obj, original.contact_normal_b_obj)
+    assert np.allclose(
+        np.abs(np.dot(restored.grasp_orientation_xyzw_obj, original.grasp_orientation_xyzw_obj)),
+        1.0,
+    )
 
 
 def test_partial_assembly_symmetry_creates_opposite_preinsertion_corridor(

@@ -238,6 +238,125 @@ def test_remove_planning_scene_obstacles_sends_remove_operations() -> None:
     assert all(value.header.frame_id == "base_link" for value in objects)
 
 
+def test_apply_and_remove_attached_collision_box_uses_robot_state_diff() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(moveit_namespace="/lbr_dual_arm")
+    commander._apply_planning_scene_client = mock.Mock()
+    commander._apply_planning_scene_client.wait_for_service.return_value = True
+    commander._apply_planning_scene_client.call_async.return_value = object()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(success=True)
+    obstacle = {
+        "id": "incoming_part",
+        "type": "box",
+        "link_name": "lbr_two_gripper_tcp",
+        "frame_id": "lbr_two_gripper_tcp",
+        "touch_links": ["lbr_two_left_finger_link", "lbr_two_right_finger_link"],
+        "size_m": [0.04, 0.08, 0.05],
+        "xyz": [0.0, 0.0, 0.03],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    message_types = {
+        "AttachedCollisionObject": _FakeAttachedCollisionObject,
+        "CollisionObject": _FakeCollisionObject,
+        "PlanningScene": _FakePlanningScene,
+        "ApplyPlanningScene": _FakeApplyPlanningScene,
+        "Pose": _FakePose,
+        "SolidPrimitive": _FakeSolidPrimitive,
+    }
+
+    with mock.patch.dict(
+        MoveItPoseCommander.apply_planning_scene_attached_obstacles.__globals__,
+        message_types,
+    ):
+        ok, message = commander.apply_planning_scene_attached_obstacles(
+            [obstacle],
+            default_frame_id="base_link",
+        )
+
+    apply_request = commander._apply_planning_scene_client.call_async.call_args.args[0]
+    attached = apply_request.scene.robot_state.attached_collision_objects[0]
+    assert ok is True
+    assert message == "Attached 1 planning-scene obstacle(s)."
+    assert apply_request.scene.robot_state.is_diff is True
+    assert attached.link_name == "lbr_two_gripper_tcp"
+    assert attached.object.id == "incoming_part"
+    assert attached.object.operation == _FakeCollisionObject.ADD
+    assert attached.touch_links == ["lbr_two_left_finger_link", "lbr_two_right_finger_link"]
+
+    with mock.patch.dict(
+        MoveItPoseCommander.remove_planning_scene_attached_obstacles.__globals__,
+        message_types,
+    ):
+        ok, message = commander.remove_planning_scene_attached_obstacles(
+            [obstacle],
+            default_frame_id="base_link",
+        )
+
+    cleanup_requests = [
+        call.args[0]
+        for call in commander._apply_planning_scene_client.call_async.call_args_list[-2:]
+    ]
+    remove_request, world_remove_request = cleanup_requests
+    removed = remove_request.scene.robot_state.attached_collision_objects[0]
+    assert ok is True
+    assert message == "Detached and removed 1 planning-scene obstacle(s) from the world."
+    assert removed.object.id == "incoming_part"
+    assert removed.object.operation == _FakeCollisionObject.REMOVE
+    world_removed = world_remove_request.scene.world.collision_objects
+    assert [value.id for value in world_removed] == ["incoming_part"]
+    assert all(value.operation == _FakeCollisionObject.REMOVE for value in world_removed)
+
+
+def test_attached_collision_cleanup_leaves_no_attached_or_world_copy() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(moveit_namespace="/lbr_dual_arm")
+    commander._apply_planning_scene_client = _StatefulPlanningSceneClient(
+        world_ids={"incoming_part"}
+    )
+    commander._wait_for_future = (
+        lambda future, *, timeout_s, label: SimpleNamespace(success=True)
+    )
+    obstacle = {
+        "id": "incoming_part",
+        "type": "box",
+        "link_name": "lbr_two_gripper_tcp",
+        "frame_id": "lbr_two_gripper_tcp",
+        "touch_links": ["lbr_two_left_finger_link", "lbr_two_right_finger_link"],
+        "size_m": [0.04, 0.08, 0.05],
+        "xyz": [0.0, 0.0, 0.03],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    message_types = {
+        "AttachedCollisionObject": _FakeAttachedCollisionObject,
+        "CollisionObject": _FakeCollisionObject,
+        "PlanningScene": _FakePlanningScene,
+        "ApplyPlanningScene": _FakeApplyPlanningScene,
+        "Pose": _FakePose,
+        "SolidPrimitive": _FakeSolidPrimitive,
+    }
+
+    with mock.patch.dict(
+        MoveItPoseCommander.apply_planning_scene_attached_obstacles.__globals__,
+        message_types,
+    ):
+        attach_ok, _message = commander.apply_planning_scene_attached_obstacles(
+            [obstacle],
+            default_frame_id="base_link",
+        )
+        assert attach_ok
+        assert commander._apply_planning_scene_client.attached_ids == {"incoming_part"}
+        assert commander._apply_planning_scene_client.world_ids == set()
+
+        cleanup_ok, _message = commander.remove_planning_scene_attached_obstacles(
+            [obstacle],
+            default_frame_id="base_link",
+        )
+
+    assert cleanup_ok
+    assert commander._apply_planning_scene_client.attached_ids == set()
+    assert commander._apply_planning_scene_client.world_ids == set()
+
+
 def test_commander_config_from_args_accepts_lbr_moveit_settings() -> None:
     args = Namespace(
         planning_group="arm",
@@ -566,21 +685,80 @@ class _FakeGetStateValidity:
 
 
 class _FakeCollisionObject:
+    ADD = 0
     REMOVE = 1
 
     def __init__(self) -> None:
         self.header = SimpleNamespace(frame_id="")
         self.id = ""
         self.operation = -1
+        self.primitives = []
+        self.primitive_poses = []
+
+
+class _FakeAttachedCollisionObject:
+    def __init__(self) -> None:
+        self.link_name = ""
+        self.touch_links = []
+        self.object = None
+
+
+class _FakePose:
+    def __init__(self) -> None:
+        self.position = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        self.orientation = SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+
+
+class _FakeSolidPrimitive:
+    BOX = 1
+
+    def __init__(self) -> None:
+        self.type = 0
+        self.dimensions = []
 
 
 class _FakePlanningScene:
     def __init__(self) -> None:
         self.is_diff = False
         self.world = SimpleNamespace(collision_objects=[])
+        self.robot_state = SimpleNamespace(
+            is_diff=False,
+            attached_collision_objects=[],
+            joint_state=SimpleNamespace(name=[], position=[]),
+        )
 
 
 class _FakeApplyPlanningScene:
     class Request:
         def __init__(self) -> None:
             self.scene = None
+
+
+class _StatefulPlanningSceneClient:
+    """Model MoveIt's detach-to-world behavior for cleanup regression tests."""
+
+    def __init__(self, *, world_ids: set[str]) -> None:
+        self.world_ids = set(world_ids)
+        self.attached_ids: set[str] = set()
+        self.requests = []
+
+    def wait_for_service(self, *, timeout_sec: float) -> bool:
+        del timeout_sec
+        return True
+
+    def call_async(self, request):
+        self.requests.append(request)
+        for attached in request.scene.robot_state.attached_collision_objects:
+            obstacle_id = str(attached.object.id)
+            if attached.object.operation == _FakeCollisionObject.ADD:
+                self.world_ids.discard(obstacle_id)
+                self.attached_ids.add(obstacle_id)
+            elif attached.object.operation == _FakeCollisionObject.REMOVE:
+                self.attached_ids.discard(obstacle_id)
+                # This is the behavior that caused the benchmark leak: a
+                # detach restores the collision object to the world.
+                self.world_ids.add(obstacle_id)
+        for collision_object in request.scene.world.collision_objects:
+            if collision_object.operation == _FakeCollisionObject.REMOVE:
+                self.world_ids.discard(str(collision_object.id))
+        return object()

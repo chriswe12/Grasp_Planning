@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import scripts.plan_simple_dual_robot_sim as planner
 from scripts.plan_simple_dual_robot_sim import (
     IK_PREFLIGHT_TARGETS,
     _complete_dual_arm_start_state,
@@ -12,11 +13,15 @@ from scripts.plan_simple_dual_robot_sim import (
     _ik_preflight_pair,
     _ik_search_targets,
     _inserter_diverse_task_prefix,
+    _is_retryable_pickup_kinematic_failure,
+    _iter_exact_ik_feasible_candidates,
     _new_ik_preflight_state,
     _plan_and_execute,
     _pregrasp_aabb_obstacles_for_target,
     _rank_tasks_by_inserter_joint_path,
     _reset_active_roles,
+    _runtime_ik_screen_queue,
+    _validated_joint_target_sequence,
 )
 
 
@@ -134,6 +139,7 @@ def test_collision_diagnostic_preflight_records_exact_contact_pair() -> None:
         "dual_sim_work_surface <-> lbr_one_left_finger_link": 1,
     }
     assert diagnostics["invalid_states"] == 1
+    assert state["pair_records"][0]["failure_kind"] == "state_collision"
 
 
 class _ResetCommander:
@@ -223,6 +229,7 @@ def test_lazy_preflight_stops_on_failure_and_reuses_grasp_cache() -> None:
     assert "1 seed evaluation(s), 1 IK request(s)" in first_failure
     assert holder.calls == 1
     assert inserter.calls == 0
+    assert state["pair_records"][0]["failure_kind"] == "kinematic_no_ik"
 
     second_ok, second_failure, second_targets = _ik_preflight_pair(
         _task("pair_2", "holder_bad", "inserter_2", 0.8),
@@ -266,7 +273,153 @@ def test_lazy_preflight_stops_on_failure_and_reuses_grasp_cache() -> None:
     assert state["inserter_grasps_checked"] == 1
     assert state["inserter_grasps_feasible"] == 1
     assert [record["pair_id"] for record in state["pair_records"]] == ["pair_1", "pair_2", "pair_3"]
+    assert [record["candidate_rank"] for record in state["pair_records"]] == [1, 2, 3]
     assert state["pair_records"][1]["roles"]["holder"]["cache_hit"]
+
+
+def test_preflight_does_not_detach_when_inserter_failed_before_attachment(
+    monkeypatch,
+) -> None:
+    class AttachmentTrackingCommander(_FakeCommander):
+        def __init__(self, *, fail_first: bool = False) -> None:
+            super().__init__(fail_first=fail_first)
+            self.attach_calls = 0
+            self.remove_calls = 0
+
+        def apply_planning_scene_attached_obstacles(self, obstacles, *, default_frame_id):
+            del obstacles, default_frame_id
+            self.attach_calls += 1
+            return True, "attached"
+
+        def remove_planning_scene_attached_obstacles(self, obstacles, *, default_frame_id):
+            del obstacles, default_frame_id
+            self.remove_calls += 1
+            return False, "synthetic nonexistent object"
+
+    task = _task("pair_1", "holder_1", "inserter_1", 0.9)
+    targets = task.to_payload()["targets"]
+    task.to_payload = lambda: {"targets": targets, "objects": {}}
+    monkeypatch.setattr(planner, "simple_dual_robot_pregrasp_aabb_obstacles", lambda _task: {})
+    monkeypatch.setattr(
+        planner,
+        "simple_dual_robot_attached_collision_objects",
+        lambda _task: {
+            "incoming": {
+                "id": "incoming",
+                "link_name": "lbr_two_gripper_tcp",
+            }
+        },
+    )
+    inserter = AttachmentTrackingCommander(fail_first=True)
+
+    ok, failure, _joint_targets = _ik_preflight_pair(
+        task,
+        commanders={"holder": _FakeCommander(), "inserter": inserter},
+        feasible_cache={"holder": {}, "inserter": {}},
+        state=_new_ik_preflight_state(pair_task_count=1),
+        rank=1,
+        ik_candidate_count=1,
+        ik_beam_width=1,
+    )
+
+    assert not ok
+    assert "inserter_pickup_pregrasp" in failure
+    assert inserter.attach_calls == 0
+    assert inserter.remove_calls == 0
+
+
+def test_preflight_detaches_once_after_post_pickup_failure(monkeypatch) -> None:
+    class AttachmentTrackingCommander(_FakeCommander):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attach_calls = 0
+            self.remove_calls = 0
+
+        def compute_ik(
+            self,
+            target,
+            *,
+            seed_joint_positions=None,
+            seed_robot_state=None,
+            avoid_collisions=None,
+        ):
+            if abs(float(target.x) - 0.7) < 1.0e-9:
+                return None, "synthetic post-pickup no IK"
+            return super().compute_ik(
+                target,
+                seed_joint_positions=seed_joint_positions,
+                seed_robot_state=seed_robot_state,
+                avoid_collisions=avoid_collisions,
+            )
+
+        def apply_planning_scene_attached_obstacles(self, obstacles, *, default_frame_id):
+            del obstacles, default_frame_id
+            self.attach_calls += 1
+            return True, "attached"
+
+        def remove_planning_scene_attached_obstacles(self, obstacles, *, default_frame_id):
+            del obstacles, default_frame_id
+            self.remove_calls += 1
+            return True, "detached"
+
+    task = _task("pair_1", "holder_1", "inserter_1", 0.9)
+    targets = task.to_payload()["targets"]
+    targets["inserter_pickup_lift"]["position_world_m"] = [0.7, 0.0, 0.2]
+    task.to_payload = lambda: {"targets": targets, "objects": {}}
+    monkeypatch.setattr(planner, "simple_dual_robot_pregrasp_aabb_obstacles", lambda _task: {})
+    monkeypatch.setattr(
+        planner,
+        "simple_dual_robot_attached_collision_objects",
+        lambda _task: {
+            "incoming": {
+                "id": "incoming",
+                "link_name": "lbr_two_gripper_tcp",
+            }
+        },
+    )
+    inserter = AttachmentTrackingCommander()
+
+    ok, failure, _joint_targets = _ik_preflight_pair(
+        task,
+        commanders={"holder": _FakeCommander(), "inserter": inserter},
+        feasible_cache={"holder": {}, "inserter": {}},
+        state=_new_ik_preflight_state(pair_task_count=1),
+        rank=1,
+        ik_candidate_count=1,
+        ik_beam_width=1,
+    )
+
+    assert not ok
+    assert "inserter_pickup_lift" in failure
+    assert inserter.attach_calls == 1
+    assert inserter.remove_calls == 1
+
+
+def test_pickup_offset_retry_requires_pure_pickup_kinematic_no_ik() -> None:
+    retryable = {
+        "failure_kind": "kinematic_no_ik",
+        "failure": (
+            "inserter grasp incoming failed "
+            "inserter_pickup_pregrasp: IK failed with code=-31"
+        ),
+    }
+
+    assert _is_retryable_pickup_kinematic_failure(retryable)
+    assert not _is_retryable_pickup_kinematic_failure(
+        {**retryable, "failure_kind": "state_collision"}
+    )
+    assert not _is_retryable_pickup_kinematic_failure(
+        {
+            **retryable,
+            "failure": "inserter grasp incoming failed inserter_pickup_lift: IK failed",
+        }
+    )
+    assert not _is_retryable_pickup_kinematic_failure(
+        {
+            **retryable,
+            "failure": "holder grasp base failed holder_pregrasp: IK failed",
+        }
+    )
 
 
 def test_exact_ik_seeds_include_bounded_a7_and_shoulder_branches() -> None:
@@ -308,7 +461,131 @@ def test_runtime_queue_visits_unique_inserter_pickups_before_pair_repeats() -> N
     assert [task.pair_id for task in selected] == ["pair_a1", "pair_b1", "pair_c1", "pair_a2"]
 
 
-def test_pickup_approach_ik_targets_interpolate_and_only_publish_endpoint() -> None:
+def test_runtime_ik_screen_queue_preserves_full_diverse_pool_before_path_limit() -> None:
+    tasks = [
+        _task(f"pair_a{index}", f"holder_{index}", "inserter_a", 1.0 - index / 1000.0)
+        for index in range(300)
+    ]
+    tasks.extend(
+        [
+            _task("pair_b", "holder_b", "inserter_b", 0.2),
+            _task("pair_c", "holder_c", "inserter_c", 0.1),
+        ]
+    )
+
+    queued = _runtime_ik_screen_queue(tasks, holder_only=False)
+
+    assert len(queued) == 302
+    assert [task.inserter_candidate.grasp_id for task in queued[:3]] == [
+        "inserter_a",
+        "inserter_b",
+        "inserter_c",
+    ]
+    assert {id(task) for task in queued} == {id(task) for task in tasks}
+
+
+def test_holder_only_ik_screen_queue_deduplicates_without_applying_path_limit() -> None:
+    tasks = [
+        _task("pair_a1", "holder_a", "inserter_1", 1.0),
+        _task("pair_a2", "holder_a", "inserter_2", 0.9),
+        _task("pair_b1", "holder_b", "inserter_1", 0.8),
+    ]
+
+    queued = _runtime_ik_screen_queue(tasks, holder_only=True)
+
+    assert [task.pair_id for task in queued] == ["pair_a1", "pair_b1"]
+
+
+def test_exact_ik_screen_is_lazy_and_reaches_candidates_beyond_legacy_prefix() -> None:
+    tasks = [
+        _task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0)
+        for index in range(8)
+    ]
+    screened: list[str] = []
+
+    def evaluate(task, candidate_rank):
+        screened.append(task.pair_id)
+        feasible = candidate_rank in {5, 7}
+        return feasible, "" if feasible else "synthetic no IK", ({"holder_grasp": (0.0,) * 7} if feasible else {})
+
+    selected = iter(
+        _iter_exact_ik_feasible_candidates(
+            tasks,
+            path_candidate_limit=2,
+            ik_screen_candidate_limit=0,
+            evaluate=evaluate,
+        )
+    )
+
+    first = next(selected)
+    assert screened == [f"pair_{index}" for index in range(5)]
+    assert first.task.pair_id == "pair_4"
+    assert first.screen_rank == 5
+    assert first.candidate_rank == 5
+    assert first.joint_targets == {"holder_grasp": (0.0,) * 7}
+
+    # The second candidate is not screened until the caller resumes after its
+    # first path attempt. This guards time-to-first-path, not just final order.
+    second = next(selected)
+    assert screened == [f"pair_{index}" for index in range(7)]
+    assert second.task.pair_id == "pair_6"
+    assert second.screen_rank == 7
+    assert second.candidate_rank == 7
+    with pytest.raises(StopIteration):
+        next(selected)
+
+
+def test_exact_ik_screen_limit_is_explicit_and_does_not_count_failures_as_path_attempts() -> None:
+    tasks = [
+        _task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0)
+        for index in range(6)
+    ]
+
+    screened: list[int] = []
+
+    def evaluate(task, rank):
+        del task
+        screened.append(rank)
+        return (
+            rank == 2,
+            "" if rank == 2 else "synthetic no IK",
+            {"holder_grasp": (float(rank),) * 7} if rank == 2 else {},
+        )
+
+    selected = list(
+        _iter_exact_ik_feasible_candidates(
+            tasks,
+            path_candidate_limit=3,
+            ik_screen_candidate_limit=4,
+            evaluate=evaluate,
+        )
+    )
+
+    assert len(selected) == 1
+    assert selected[0].candidate_rank == 2
+    assert screened == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize(
+    ("path_limit", "screen_limit", "message"),
+    [
+        (0, 0, "path_candidate_limit must be at least 1"),
+        (1, -1, "ik_screen_candidate_limit must be non-negative"),
+    ],
+)
+def test_exact_ik_screen_rejects_invalid_limits(path_limit: int, screen_limit: int, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        list(
+            _iter_exact_ik_feasible_candidates(
+                [],
+                path_candidate_limit=path_limit,
+                ik_screen_candidate_limit=screen_limit,
+                evaluate=lambda _task, _rank: (False, "", {}),
+            )
+        )
+
+
+def test_pickup_approach_ik_targets_interpolate_and_publish_complete_chain() -> None:
     targets = _task("pair", "holder", "inserter", 1.0).to_payload()["targets"]
     targets["inserter_pickup_pregrasp"]["position_world_m"] = [0.4, -0.2, 0.12]
     targets["inserter_pickup_grasp"]["position_world_m"] = [0.4, -0.2, 0.02]
@@ -322,7 +599,13 @@ def test_pickup_approach_ik_targets_interpolate_and_only_publish_endpoint() -> N
     assert len(search_targets) == 7
     approach = search_targets[1:6]
     assert [target.pose.z for target in approach] == pytest.approx([0.10, 0.08, 0.06, 0.04, 0.02])
-    assert [target.result_target_name for target in approach] == [None, None, None, None, "inserter_pickup_grasp"]
+    assert [target.result_target_name for target in approach] == [
+        "inserter_pickup_grasp__approach_01_of_05",
+        "inserter_pickup_grasp__approach_02_of_05",
+        "inserter_pickup_grasp__approach_03_of_05",
+        "inserter_pickup_grasp__approach_04_of_05",
+        "inserter_pickup_grasp",
+    ]
     assert all(target.pose.frame_id == "base_link" for target in approach)
 
 
@@ -652,6 +935,7 @@ def test_inserter_preflight_cache_includes_solved_holder_state() -> None:
 class _ValidatedTargetExecutionCommander:
     def __init__(self) -> None:
         self.joint_targets: list[tuple[float, ...]] = []
+        self.execution_labels: list[str] = []
 
     def plan_to_joint_positions(self, joint_positions, *, label: str):
         del label
@@ -669,6 +953,7 @@ class _ValidatedTargetExecutionCommander:
         raise AssertionError("A validated preflight target must not recompute pose IK.")
 
     def execute_trajectory(self, _trajectory, *, label: str):
+        self.execution_labels.append(label)
         return True, f"{label}: execution complete"
 
 
@@ -690,6 +975,105 @@ def test_plan_and_execute_reuses_validated_preflight_joint_target() -> None:
     }
     assert message == "holder_grasp: execution complete"
     assert commander.joint_targets == [expected]
+
+
+def test_plan_and_execute_uses_every_validated_pickup_approach_joint_target() -> None:
+    commander = _ValidatedTargetExecutionCommander()
+    joint_targets = {
+        "inserter_pickup_pregrasp": (0.0,) * 7,
+        "inserter_pickup_grasp__approach_01_of_05": (0.1,) * 7,
+        "inserter_pickup_grasp__approach_02_of_05": (0.2,) * 7,
+        "inserter_pickup_grasp__approach_03_of_05": (0.3,) * 7,
+        "inserter_pickup_grasp__approach_04_of_05": (0.4,) * 7,
+        "inserter_pickup_grasp": (0.5,) * 7,
+    }
+    sequence = _validated_joint_target_sequence(
+        joint_targets,
+        target_name="inserter_pickup_grasp",
+    )
+
+    trajectory, message = _plan_and_execute(
+        commander,
+        target=SimpleNamespace(),
+        label="pair_inserter_pickup_grasp",
+        expected_joint_names=tuple(f"joint_{index}" for index in range(7)),
+        preferred_joint_sequence=sequence,
+    )
+
+    assert commander.joint_targets == [(value,) * 7 for value in (0.1, 0.2, 0.3, 0.4, 0.5)]
+    assert commander.execution_labels == [
+        "pair_inserter_pickup_grasp__validated_segment_01_of_05",
+        "pair_inserter_pickup_grasp__validated_segment_02_of_05",
+        "pair_inserter_pickup_grasp__validated_segment_03_of_05",
+        "pair_inserter_pickup_grasp__validated_segment_04_of_05",
+        "pair_inserter_pickup_grasp",
+    ]
+    assert trajectory is not None
+    assert trajectory["waypoints"] == [[value] * 7 for value in (0.1, 0.2, 0.3, 0.4, 0.5)]
+    assert [segment["target"] for segment in trajectory["validated_joint_segments"]] == [
+        "inserter_pickup_grasp__approach_01_of_05",
+        "inserter_pickup_grasp__approach_02_of_05",
+        "inserter_pickup_grasp__approach_03_of_05",
+        "inserter_pickup_grasp__approach_04_of_05",
+        "inserter_pickup_grasp",
+    ]
+    assert message.startswith("executed 5 validated joint segments;")
+
+
+def test_validated_pickup_approach_sequence_uses_numeric_order_beyond_99_steps() -> None:
+    joint_targets = {
+        f"inserter_pickup_grasp__approach_{index:02d}_of_101": (float(index),) * 7
+        for index in range(1, 101)
+    }
+    joint_targets["inserter_pickup_grasp"] = (101.0,) * 7
+
+    sequence = _validated_joint_target_sequence(
+        joint_targets,
+        target_name="inserter_pickup_grasp",
+    )
+
+    assert [joints[0] for _name, joints in sequence] == list(
+        map(float, range(1, 102))
+    )
+    assert sequence[98][0].endswith("approach_99_of_101")
+    assert sequence[99][0].endswith("approach_100_of_101")
+    assert sequence[-1][0] == "inserter_pickup_grasp"
+
+
+def test_preflight_returns_and_serializes_every_pickup_approach_joint_target() -> None:
+    task = _task("pair_1", "holder_1", "inserter_1", 0.9)
+    targets = task.to_payload()["targets"]
+    targets["inserter_pickup_pregrasp"]["position_world_m"] = [0.4, -0.2, 0.12]
+    targets["inserter_pickup_grasp"]["position_world_m"] = [0.4, -0.2, 0.02]
+    state = _new_ik_preflight_state(pair_task_count=1, pickup_approach_ik_steps=5)
+
+    ok, failure, joint_targets = _ik_preflight_pair(
+        task,
+        commanders={
+            "holder": _StateTrackingCommander(0.25),
+            "inserter": _StateTrackingCommander(-0.4),
+        },
+        feasible_cache={"holder": {}, "inserter": {}},
+        state=state,
+        rank=1,
+        pickup_approach_ik_steps=5,
+    )
+
+    expected_approach_names = [
+        f"inserter_pickup_grasp__approach_{index:02d}_of_05"
+        for index in range(1, 5)
+    ]
+    assert ok
+    assert failure == ""
+    assert list(joint_targets).index(expected_approach_names[0]) < list(joint_targets).index(
+        "inserter_pickup_grasp"
+    )
+    assert all(name in joint_targets for name in expected_approach_names)
+    pair_record = state["pair_records"][0]
+    assert pair_record["validated_joint_target_order"] == list(joint_targets)
+    assert pair_record["validated_joint_targets"]["inserter_pickup_grasp"] == pytest.approx(
+        list(joint_targets["inserter_pickup_grasp"])
+    )
 
 
 def test_joint_space_ranking_prefers_cheaper_transition_and_supplies_a7_seeds(
@@ -886,7 +1270,7 @@ def test_joint_space_ranking_keeps_planned_noncrossing_transition_first(
 
     assert [task.transition_id for task in ranked] == ["tr_clear", "tr_crossed"]
     assert diagnostics["primary_sort"] == (
-        "strict_noncrossing_phase_then_preplan_status_then_transition_joint_path_cost"
+        "strict_noncrossing_phase_then_successful_preplans_then_stable_producer_fallback"
     )
 
 
@@ -944,6 +1328,74 @@ def test_joint_space_ranking_keeps_unranked_clear_before_planned_crossed(
     )
 
     assert [task.transition_id for task in ranked] == ["tr_clear", "tr_crossed"]
+
+
+def test_joint_space_ranking_does_not_demote_failed_preplan_behind_unchecked_pool(
+    monkeypatch,
+) -> None:
+    def fake_plan(
+        _commander,
+        *,
+        targets,
+        labels,
+        start_joint_positions,
+        joint_names,
+        config,
+        label_prefix,
+    ):
+        del targets, joint_names, config
+        if "inserter_first" in label_prefix:
+            raise RuntimeError("bounded pre-rank missed this IK branch")
+        trajectories = {label: ((0.0,) * 7,) for label in labels}
+        return SimpleNamespace(
+            trajectories=trajectories,
+            joint_path_cost=0.1,
+            terminal_joint_positions=tuple(float(value) for value in start_joint_positions),
+            diagnostics=(),
+        )
+
+    monkeypatch.setattr(
+        "scripts.plan_simple_dual_robot_sim.plan_pose_sequence_multi_ik",
+        fake_plan,
+    )
+    producer_first = _task(
+        "first",
+        "holder_first",
+        "inserter_first",
+        0.99,
+        transition_id="tr_first",
+    )
+    planned_second = _task(
+        "second",
+        "holder_second",
+        "inserter_second",
+        0.90,
+        transition_id="tr_second",
+    )
+    unchecked_third = _task(
+        "third",
+        "holder_third",
+        "inserter_third",
+        0.80,
+        transition_id="tr_third",
+    )
+
+    ranked, diagnostics, _preferred = _rank_tasks_by_inserter_joint_path(
+        [producer_first, planned_second, unchecked_third],
+        commander=object(),
+        candidate_limit=2,
+        ik_candidate_count=2,
+        beam_width=1,
+    )
+
+    # A successful pre-plan may be promoted, but the weaker pre-rank failure
+    # remains ahead of the untouched producer fallback instead of moving last.
+    assert [task.transition_id for task in ranked] == [
+        "tr_second",
+        "tr_first",
+        "tr_third",
+    ]
+    assert diagnostics["candidate_count_failed"] == 1
 
 
 def test_pregrasp_aabb_schedule_avoids_intended_grasp_contacts() -> None:

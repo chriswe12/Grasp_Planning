@@ -11,7 +11,14 @@ try:
     import rclpy
     from geometry_msgs.msg import Pose, PoseStamped
     from moveit_msgs.action import ExecuteTrajectory
-    from moveit_msgs.msg import CollisionObject, Constraints, JointConstraint, MoveItErrorCodes, PlanningScene
+    from moveit_msgs.msg import (
+        AttachedCollisionObject,
+        CollisionObject,
+        Constraints,
+        JointConstraint,
+        MoveItErrorCodes,
+        PlanningScene,
+    )
     from moveit_msgs.srv import (
         ApplyPlanningScene,
         GetMotionPlan,
@@ -28,6 +35,7 @@ except Exception:  # pragma: no cover - optional dependency path
     Pose = None
     PoseStamped = None
     ApplyPlanningScene = None
+    AttachedCollisionObject = None
     CollisionObject = None
     ExecuteTrajectory = None
     Constraints = None
@@ -357,6 +365,140 @@ class MoveItPoseCommander(Node):
         if not bool(getattr(response, "success", False)):
             return False, "MoveIt rejected the planning-scene robot-state update."
         return True, f"Applied {len(state_items)} planning-scene robot-state joint(s)."
+
+    def apply_planning_scene_attached_obstacles(
+        self,
+        obstacles: Sequence[Mapping[str, object]],
+        *,
+        default_frame_id: str,
+    ) -> tuple[bool, str]:
+        """Attach collision boxes to robot links for loaded-path planning."""
+
+        if not obstacles:
+            return True, "No attached planning-scene obstacles configured."
+        if AttachedCollisionObject is None or PlanningScene is None or ApplyPlanningScene is None:
+            return False, "MoveIt attached-collision message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        attached_objects = []
+        try:
+            for obstacle in obstacles:
+                link_name = str(obstacle.get("link_name", "")).strip()
+                if not link_name:
+                    raise ValueError("Each attached collision object requires a non-empty link_name.")
+                collision_object = self._collision_object_from_obstacle_spec(
+                    obstacle,
+                    default_frame_id=link_name or default_frame_id,
+                )
+                attached = AttachedCollisionObject()
+                attached.link_name = link_name
+                attached.touch_links = [str(value) for value in obstacle.get("touch_links", ())]
+                attached.object = collision_object
+                attached_objects.append(attached)
+        except Exception as exc:
+            return False, f"Invalid attached planning-scene obstacle config: {exc}"
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.robot_state.is_diff = True
+        scene.robot_state.attached_collision_objects = attached_objects
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="attached planning-scene apply",
+            )
+        except Exception as exc:
+            return False, f"Attached planning-scene apply failed: {exc}"
+        if response is None:
+            return False, "Attached planning-scene apply response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the attached planning-scene update."
+        return True, f"Attached {len(attached_objects)} planning-scene obstacle(s)."
+
+    def remove_planning_scene_attached_obstacles(
+        self,
+        obstacles: Sequence[Mapping[str, object]],
+        *,
+        default_frame_id: str,
+    ) -> tuple[bool, str]:
+        """Detach collision objects and remove the world copies MoveIt restores.
+
+        An attached-object ``REMOVE`` is a detach operation in MoveIt.  The
+        detached object can therefore reappear in the world collision set and
+        poison the next planning attempt unless the world object with the same
+        id is removed explicitly after the detach succeeds.
+        """
+
+        if not obstacles:
+            return True, "No attached planning-scene obstacles requested for removal."
+        if (
+            AttachedCollisionObject is None
+            or CollisionObject is None
+            or PlanningScene is None
+            or ApplyPlanningScene is None
+        ):
+            return False, "MoveIt attached-collision message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        attached_objects = []
+        obstacle_ids = []
+        for obstacle in obstacles:
+            obstacle_id = str(obstacle.get("id", "")).strip()
+            link_name = str(obstacle.get("link_name", "")).strip()
+            if not obstacle_id or not link_name:
+                return False, "Attached collision-object removal requires id and link_name."
+            obstacle_ids.append(obstacle_id)
+            attached = AttachedCollisionObject()
+            attached.link_name = link_name
+            attached.object = CollisionObject()
+            attached.object.header.frame_id = str(obstacle.get("frame_id", default_frame_id) or default_frame_id)
+            attached.object.id = obstacle_id
+            attached.object.operation = CollisionObject.REMOVE
+            attached_objects.append(attached)
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.robot_state.is_diff = True
+        scene.robot_state.attached_collision_objects = attached_objects
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="attached planning-scene removal",
+            )
+        except Exception as exc:
+            return False, f"Attached planning-scene removal failed: {exc}"
+        if response is None:
+            return False, "Attached planning-scene removal response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the attached planning-scene removal."
+        world_ok, world_message = self.remove_planning_scene_obstacles(
+            obstacle_ids,
+            default_frame_id=default_frame_id,
+        )
+        if not world_ok:
+            return (
+                False,
+                f"Detached {len(attached_objects)} planning-scene obstacle(s), "
+                f"but could not remove their world copies: {world_message}",
+            )
+        return (
+            True,
+            f"Detached and removed {len(attached_objects)} planning-scene obstacle(s) from the world.",
+        )
 
     def remove_planning_scene_obstacles(
         self,

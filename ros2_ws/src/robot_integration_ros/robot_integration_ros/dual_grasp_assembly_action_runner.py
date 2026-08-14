@@ -622,17 +622,6 @@ class DualPipelineRunner:
                 "EXECUTION_DISABLED",
                 "Dual real server was started without --execute.",
             )
-        if self.mode == "real" and not self.allow_objectless_planning:
-            return DualPipelineOutcome(
-                False,
-                "OBJECTLESS_PLANNING_NOT_ACKNOWLEDGED",
-                (
-                    "Current dual MoveIt execution omits Fabrica object meshes. "
-                    "Restart the server with --allow-objectless-planning only "
-                    "after checking the physical placement and paths."
-                ),
-            )
-
         goal = DualRobotGraspGoal.from_request(request)
         validation_error = self.validate(request)
         if validation_error is not None:
@@ -783,12 +772,13 @@ class DualPipelineRunner:
                     "--task-output",
                     str(task_path),
                     "--execute",
-                    "--allow-objectless-planning",
                     "--stop-after",
                     self.stop_after,
                     "--yes",
                 )
             )
+            if self.allow_objectless_planning:
+                command.append("--allow-objectless-planning")
 
         publish_feedback("PLANNING", 0.0)
         return_code, output_lines, cancelled = self._run_process(

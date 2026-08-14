@@ -13,6 +13,7 @@ import shutil
 import signal
 import statistics
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,19 +29,27 @@ FAILURE_STAGE_ORDER = {
     "setup": 0,
     "planning": 1,
     "incoming_grasp_planning": 2,
-    "moveit_candidate_planning": 3,
-    "execution_start": 4,
-    "holder_base_grasp": 5,
-    "incoming_part_grasp": 6,
-    "transition": 7,
-    "execution_validation": 8,
-    "success": 9,
-    "pending": 10,
+    "exact_ik_preflight": 3,
+    "complete_state_collision": 4,
+    "joint_path_planning": 5,
+    "fallback_pose_ik": 6,
+    "moveit_candidate_planning": 7,
+    "execution_start": 8,
+    "holder_base_grasp": 9,
+    "incoming_part_grasp": 10,
+    "transition": 11,
+    "execution_validation": 12,
+    "success": 13,
+    "pending": 14,
 }
 FAILURE_STAGE_LABELS = {
     "setup": "MoveIt/Isaac setup",
     "planning": "Grasp/transition planning",
     "incoming_grasp_planning": "Incoming-part grasp planning",
+    "exact_ik_preflight": "Exact IK preflight (no solution)",
+    "complete_state_collision": "Complete-state collision rejection",
+    "joint_path_planning": "Joint-space path planning",
+    "fallback_pose_ik": "Fallback pose IK",
     "moveit_candidate_planning": "MoveIt candidate planning",
     "execution_start": "Isaac execution startup",
     "holder_base_grasp": "Holder/base grasp",
@@ -50,6 +59,22 @@ FAILURE_STAGE_LABELS = {
     "success": "Successful",
     "pending": "Not completed",
 }
+
+MOVEIT_FAILURE_KIND_LABELS = {
+    key: FAILURE_STAGE_LABELS[key]
+    for key in (
+        "exact_ik_preflight",
+        "complete_state_collision",
+        "joint_path_planning",
+        "fallback_pose_ik",
+    )
+}
+MOVEIT_FAILURE_KIND_PRIORITY = (
+    "joint_path_planning",
+    "fallback_pose_ik",
+    "complete_state_collision",
+    "exact_ik_preflight",
+)
 
 
 def _read_mapping(path: Path) -> dict[str, object]:
@@ -322,16 +347,26 @@ def _command(
 ) -> list[str]:
     benchmark = dict(payload.get("benchmark", {}) or {})
     physics = dict(payload.get("physics", {}) or {})
+    pickup_pregrasp_offsets = benchmark.get(
+        "pickup_pregrasp_offsets_m",
+        (0.10, 0.075, 0.05, 0.025),
+    )
+    if not isinstance(pickup_pregrasp_offsets, (list, tuple)) or not pickup_pregrasp_offsets:
+        raise ValueError("benchmark.pickup_pregrasp_offsets_m must be a non-empty list.")
     command = [
         str(REPO_ROOT / "run_simple_dual_robot.sh"),
         "--mode",
         "sim",
         "--assembly",
         str(spec["assembly"]),
+        "--artifact-root",
+        str(_artifact_dir(payload, spec).parent),
         "--incoming-part-id",
         str(spec["incoming_part_id"]),
         "--max-pair-attempts",
         str(benchmark.get("max_pair_attempts", 256)),
+        "--max-ik-screen-candidates",
+        str(benchmark.get("max_ik_screen_candidates", 0)),
         "--joint-rank-candidates",
         str(benchmark.get("joint_rank_candidates", 8)),
         "--ik-solver",
@@ -346,6 +381,8 @@ def _command(
         str(benchmark.get("exact_ik_seed_perturbation_rad", 0.60)),
         "--pickup-approach-ik-steps",
         str(benchmark.get("pickup_approach_ik_steps", 5)),
+        "--pickup-pregrasp-offsets-m",
+        ",".join(str(float(value)) for value in pickup_pregrasp_offsets),
         "--planning-time-s",
         str(benchmark.get("planning_time_s", 15.0)),
         "--planning-attempts",
@@ -426,6 +463,115 @@ def _attempt_result(path: Path) -> dict[str, object]:
         return {}
     result = payload.get("result")
     return dict(result) if isinstance(result, dict) else {}
+
+
+def _split_preferred_joint_failure(message: str) -> tuple[str, str]:
+    """Split the authoritative joint-plan failure from its pose fallback."""
+
+    normalized = message.lower()
+    prefix = "preferred joint target failed ("
+    start = normalized.find(prefix)
+    if start < 0:
+        return message.strip(), ""
+    delimiter = "); pose fallback:"
+    end = normalized.find(delimiter, start + len(prefix))
+    if end < 0:
+        return message.strip(), ""
+    target = message[:start].rstrip(" :")
+    primary = message[start + len(prefix) : end].strip()
+    if target:
+        primary = f"{target}: {primary}"
+    fallback = message[end + len(delimiter) :].strip()
+    return primary, fallback
+
+
+def _classify_moveit_failure_message(
+    message: str,
+    *,
+    ik_preflight: bool = False,
+) -> dict[str, str]:
+    """Classify one failed candidate without promoting a fallback over its cause."""
+
+    primary_message, fallback_message = _split_preferred_joint_failure(message)
+    normalized = primary_message.lower()
+    fallback_normalized = fallback_message.lower()
+    if any(
+        token in normalized
+        for token in (
+            "kinematic ik state is invalid",
+            "collision-disabled ik state is invalid",
+            "post-grasp closed state is invalid",
+            "complete-state collision",
+            "complete state collision",
+        )
+    ):
+        kind = "complete_state_collision"
+    elif "planning failed with code" in normalized or "failed to plan" in normalized:
+        kind = "joint_path_planning"
+    elif ik_preflight or primary_message.lower().lstrip().startswith("ik_preflight:"):
+        kind = "exact_ik_preflight"
+    elif "ik failed" in normalized:
+        kind = "fallback_pose_ik"
+    else:
+        kind = ""
+    fallback_kind = "fallback_pose_ik" if "ik failed" in fallback_normalized else ""
+    return {
+        "kind": kind,
+        "primary_message": primary_message,
+        "fallback_kind": fallback_kind,
+        "fallback_message": fallback_message,
+    }
+
+
+def _moveit_failure_summary(payload: Mapping[str, object]) -> dict[str, object]:
+    """Summarize primary and fallback MoveIt failures from candidate attempts."""
+
+    moveit = dict(payload.get("moveit", {}) or {})
+    raw_attempts = payload.get("attempts", moveit.get("attempts", []))
+    attempts = [dict(value) for value in raw_attempts if isinstance(value, Mapping)] if isinstance(raw_attempts, list) else []
+    primary_counts: dict[str, int] = {}
+    fallback_counts: dict[str, int] = {}
+    classified: list[dict[str, str]] = []
+    for attempt in attempts:
+        failure = str(attempt.get("failure", "")).strip()
+        if not failure:
+            continue
+        ik_preflight = failure.lower().lstrip().startswith("ik_preflight:")
+        detail = _classify_moveit_failure_message(failure, ik_preflight=ik_preflight)
+        kind = detail["kind"]
+        if kind:
+            primary_counts[kind] = int(primary_counts.get(kind, 0)) + 1
+            classified.append(detail)
+        fallback_kind = detail["fallback_kind"]
+        if fallback_kind:
+            fallback_counts[fallback_kind] = int(fallback_counts.get(fallback_kind, 0)) + 1
+
+    # A successful plan can contain rejected candidates before its selected
+    # candidate. Those diagnostics are useful counts, but they are not the case
+    # failure and must not override a later Isaac/execution failure.
+    plan_failed = str(payload.get("kind", "")) == "dual_robot_simple_sim_plan_failure"
+    if not plan_failed or not primary_counts:
+        return {
+            "moveit_failure_kind": "",
+            "moveit_failure_label": "",
+            "moveit_primary_failure_message": "",
+            "moveit_fallback_failure_kind": "",
+            "moveit_fallback_failure_message": "",
+            "moveit_failure_kind_counts": primary_counts,
+            "moveit_fallback_failure_kind_counts": fallback_counts,
+        }
+
+    root_kind = next(kind for kind in MOVEIT_FAILURE_KIND_PRIORITY if kind in primary_counts)
+    representative = next(detail for detail in classified if detail["kind"] == root_kind)
+    return {
+        "moveit_failure_kind": root_kind,
+        "moveit_failure_label": MOVEIT_FAILURE_KIND_LABELS[root_kind],
+        "moveit_primary_failure_message": representative["primary_message"],
+        "moveit_fallback_failure_kind": representative["fallback_kind"],
+        "moveit_fallback_failure_message": representative["fallback_message"],
+        "moveit_failure_kind_counts": primary_counts,
+        "moveit_fallback_failure_kind_counts": fallback_counts,
+    }
 
 
 def _plan_summary(path: Path) -> dict[str, object]:
@@ -509,6 +655,7 @@ def _plan_summary(path: Path) -> dict[str, object]:
         "ik_collision_diagnostics": collision_diagnostics,
         "ik_target_diagnostics": target_diagnostics,
         "ik_failure_target_counts": failure_target_counts,
+        **_moveit_failure_summary(payload),
     }
 
 
@@ -607,6 +754,27 @@ def _aggregate_ik_diagnostics(records: list[dict[str, object]]) -> dict[str, obj
     return aggregate
 
 
+def _aggregate_moveit_failure_taxonomy(records: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    """Aggregate case-level causes separately from per-attempt fallbacks."""
+
+    case_kind_counts: dict[str, int] = {}
+    attempt_kind_counts: dict[str, int] = {}
+    fallback_kind_counts: dict[str, int] = {}
+    for record in records:
+        if bool(record.get("success", False)):
+            continue
+        kind = str(record.get("moveit_failure_kind", "")).strip()
+        if kind:
+            case_kind_counts[kind] = int(case_kind_counts.get(kind, 0)) + 1
+        _merge_count_mapping(attempt_kind_counts, record.get("moveit_failure_kind_counts"))
+        _merge_count_mapping(fallback_kind_counts, record.get("moveit_fallback_failure_kind_counts"))
+    return {
+        "case_kind_counts": case_kind_counts,
+        "attempt_kind_counts": attempt_kind_counts,
+        "fallback_kind_counts": fallback_kind_counts,
+    }
+
+
 def _meaningful_log_failure(path: Path, *, returncode: int | None = None) -> str:
     """Return the last actionable failure instead of runner cleanup output."""
 
@@ -638,11 +806,14 @@ def _failure_phase(
     *,
     attempt_result: Mapping[str, object] | None = None,
     has_plan: bool = False,
+    moveit_failure_kind: str = "",
 ) -> tuple[str, str]:
     """Classify a failure into the user-visible assembly phase."""
 
     normalized = message.lower()
     result = dict(attempt_result or {})
+    if moveit_failure_kind in MOVEIT_FAILURE_KIND_LABELS:
+        return moveit_failure_kind, MOVEIT_FAILURE_KIND_LABELS[moveit_failure_kind]
     if any(
         token in normalized
         for token in (
@@ -697,7 +868,16 @@ def _failure_phase(
         )
     ):
         return "transition", "Transport to pre-insertion"
-    if any(token in normalized for token in ("moveit stack", "service unavailable", "failed to connect", "ros domain")):
+    if any(
+        token in normalized
+        for token in (
+            "moveit stack",
+            "pass --reuse-moveit",
+            "service unavailable",
+            "failed to connect",
+            "ros domain",
+        )
+    ):
         return "setup", "MoveIt/Isaac setup"
 
     if result:
@@ -711,6 +891,15 @@ def _failure_phase(
     if has_plan:
         return "execution_start", "Isaac execution startup"
     return "planning", "Grasp/transition planning"
+
+
+def _is_existing_stack_ownership_conflict(message: object) -> bool:
+    """Return true only for the wrapper's explicit do-not-reuse conflict."""
+
+    normalized = str(message).lower()
+    return "a dual moveit stack already exists" in normalized or (
+        "stop it first" in normalized and "pass --reuse-moveit" in normalized
+    )
 
 
 def _quaternion_rotation_matrix(raw_xyzw: object) -> np.ndarray:
@@ -950,22 +1139,162 @@ def _render_failure_scene(
     _atomic_write_text(path, "\n".join(svg) + "\n")
 
 
-def _terminate_process_group(process: subprocess.Popen[str], *, timeout_s: float = 30.0) -> None:
-    if process.poll() is not None:
-        return
+def _process_start_time_ticks(pid: int) -> int | None:
+    """Return Linux's stable process start token for PID-reuse protection."""
+
     try:
-        os.killpg(process.pid, signal.SIGINT)
-        process.wait(timeout=timeout_s)
-        return
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
+        stat = Path(f"/proc/{int(pid)}/stat").read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    closing_parenthesis = stat.rfind(")")
+    if closing_parenthesis < 0:
+        return None
+    # Fields after ``comm`` start at proc-stat field 3 (state), so starttime
+    # field 22 is index 19 in this tail. Splitting after the final parenthesis
+    # remains correct when the command name itself contains spaces.
+    tail = stat[closing_parenthesis + 1 :].split()
+    if len(tail) <= 19:
+        return None
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=10.0)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5.0)
+        return int(tail[19])
+    except ValueError:
+        return None
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(int(process_group_id), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _read_owned_process_group(path: Path) -> tuple[int, int] | None:
+    """Read a child-written ``PGID STARTTIME`` ownership handoff."""
+
+    try:
+        fields = path.read_text(encoding="utf-8").split()
+    except (FileNotFoundError, OSError):
+        return None
+    if len(fields) != 2:
+        return None
+    try:
+        process_group_id, start_time_ticks = (int(value) for value in fields)
+    except ValueError:
+        return None
+    if process_group_id <= 1 or start_time_ticks <= 0:
+        return None
+    return process_group_id, start_time_ticks
+
+
+def _owned_process_group_is_current(
+    process_group_id: int,
+    *,
+    expected_start_time_ticks: int | None,
+) -> bool:
+    """Validate one exact process group without name-based process matching."""
+
+    process_group_id = int(process_group_id)
+    if process_group_id <= 1 or process_group_id == os.getpgrp():
+        return False
+    if not _process_group_exists(process_group_id):
+        return False
+    current_start_time = _process_start_time_ticks(process_group_id)
+    if current_start_time is None:
+        # A process group can remain alive after its leader exits. Such a group
+        # cannot be reused while any old member remains, so the private handoff
+        # still identifies it unambiguously.
+        return True
+    if expected_start_time_ticks is not None and current_start_time != int(
+        expected_start_time_ticks
+    ):
+        return False
+    try:
+        return os.getpgid(process_group_id) == process_group_id
+    except ProcessLookupError:
+        return _process_group_exists(process_group_id)
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[str],
+    *,
+    owned_process_group_files: Iterable[Path] = (),
+    process_group_start_time_ticks: int | None = None,
+    timeout_s: float = 30.0,
+    term_timeout_s: float = 10.0,
+    kill_timeout_s: float = 5.0,
+) -> None:
+    """Stop the active case and every explicitly handed-off nested group.
+
+    ``run_simple_dual_robot.sh`` starts MoveIt through a nested ``setsid``
+    launch. Waiting only for the outer wrapper PID is insufficient: the wrapper
+    can exit while that nested ROS process group remains alive. The start
+    script therefore writes the exact launch PGID and its Linux start token to
+    a caller-owned handoff file. This function never uses process names or a
+    broad ``pkill``; it signals only the outer case group and those validated
+    handoffs.
+    """
+
+    group_tokens: dict[int, int | None] = {}
+    outer_start_time = process_group_start_time_ticks
+    if outer_start_time is None and process.poll() is None:
+        outer_start_time = _process_start_time_ticks(process.pid)
+    group_tokens[int(process.pid)] = outer_start_time
+    handoff_paths = tuple(Path(path) for path in owned_process_group_files)
+
+    def refresh_handoffs() -> None:
+        for handoff_path in handoff_paths:
+            token = _read_owned_process_group(handoff_path)
+            if token is None:
+                continue
+            process_group_id, start_time_ticks = token
+            group_tokens[process_group_id] = start_time_ticks
+
+    def live_owned_groups() -> tuple[int, ...]:
+        refresh_handoffs()
+        return tuple(
+            process_group_id
+            for process_group_id, expected_start_time in group_tokens.items()
+            if _owned_process_group_is_current(
+                process_group_id,
+                expected_start_time_ticks=expected_start_time,
+            )
+        )
+
+    def signal_and_wait(sig: signal.Signals, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        signaled: set[int] = set()
+        while True:
+            live_groups = live_owned_groups()
+            for process_group_id in live_groups:
+                if process_group_id in signaled:
+                    continue
+                try:
+                    os.killpg(process_group_id, sig)
+                except ProcessLookupError:
+                    pass
+                signaled.add(process_group_id)
+            if process.poll() is not None and not live_owned_groups():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+    if process.poll() is not None and not live_owned_groups():
+        return
+    if signal_and_wait(signal.SIGINT, timeout_s):
+        return
+    if signal_and_wait(signal.SIGTERM, term_timeout_s):
+        return
+    if signal_and_wait(signal.SIGKILL, kill_timeout_s):
+        return
+    survivors = ", ".join(str(value) for value in live_owned_groups()) or "unknown"
+    raise RuntimeError(
+        "Active benchmark case cleanup could not terminate owned process "
+        f"group(s): {survivors}."
+    )
 
 
 def _run_case(
@@ -990,9 +1319,16 @@ def _run_case(
     )
     started_at = time.time()
     interrupted = False
-    with paths["log"].open("w", encoding="utf-8") as log:
+    with paths["log"].open("w", encoding="utf-8") as log, tempfile.TemporaryDirectory(
+        prefix="dual-assembly-benchmark-case-"
+    ) as runtime_dir:
         log.write(f"$ {' '.join(command)}\n")
         log.flush()
+        moveit_process_group_file = Path(runtime_dir) / "moveit-process-group"
+        case_environment = dict(os.environ)
+        case_environment["DUAL_MOVEIT_PROCESS_GROUP_FILE"] = str(
+            moveit_process_group_file
+        )
         process = subprocess.Popen(
             command,
             cwd=REPO_ROOT,
@@ -1001,7 +1337,9 @@ def _run_case(
             text=True,
             bufsize=1,
             start_new_session=True,
+            env=case_environment,
         )
+        process_group_start_time_ticks = _process_start_time_ticks(process.pid)
         try:
             assert process.stdout is not None
             for line in process.stdout:
@@ -1012,8 +1350,21 @@ def _run_case(
         except KeyboardInterrupt:
             interrupted = True
             print("\n[DUAL-BENCH] Interrupt received; stopping the active case cleanly...", flush=True)
-            _terminate_process_group(process)
+            _terminate_process_group(
+                process,
+                owned_process_group_files=(moveit_process_group_file,),
+                process_group_start_time_ticks=process_group_start_time_ticks,
+            )
             returncode = int(process.returncode if process.returncode is not None else 130)
+        else:
+            # Verify normal wrapper teardown too. If the wrapper exited before
+            # its nested launch, this cleans that exact handed-off group before
+            # the next benchmark case can observe a stale MoveIt stack.
+            _terminate_process_group(
+                process,
+                owned_process_group_files=(moveit_process_group_file,),
+                process_group_start_time_ticks=process_group_start_time_ticks,
+            )
 
     attempt_result = _attempt_result(paths["attempt"])
     plan_summary = _plan_summary(paths["plan"])
@@ -1044,6 +1395,7 @@ def _run_case(
             message,
             attempt_result=attempt_result,
             has_plan=paths["plan"].is_file(),
+            moveit_failure_kind=str(plan_summary.get("moveit_failure_kind", "")),
         )
     )
     image_path = ""
@@ -1085,6 +1437,8 @@ def _run_case(
         "ik_collision_diagnostics_enabled": bool(ik_collision_diagnostics),
         "failure_stage": failure_stage,
         "failure_phase_label": failure_phase_label,
+        "failure_substage": str(plan_summary.get("moveit_failure_kind", "")),
+        "failure_substage_label": str(plan_summary.get("moveit_failure_label", "")),
         "result_status": str(attempt_result.get("status", "")),
         "message": message,
         "returncode": returncode,
@@ -1287,11 +1641,13 @@ def _repair_failure_evidence(
             continue
         paths = _case_paths(output_dir, spec)
         attempt_result = _attempt_result(paths["attempt"])
+        plan_summary = _plan_summary(paths["plan"])
         message = str(attempt_result.get("message", "")) if attempt_result else _meaningful_log_failure(paths["log"])
         failure_stage, failure_phase_label = _failure_phase(
             message,
             attempt_result=attempt_result,
             has_plan=paths["plan"].is_file(),
+            moveit_failure_kind=str(plan_summary.get("moveit_failure_kind", "")),
         )
         raw_video = str(record.get("video_path", ""))
         video_exists = bool(raw_video) and Path(raw_video).is_file() and Path(raw_video).stat().st_size > 0
@@ -1313,9 +1669,12 @@ def _repair_failure_evidence(
                 image_error = str(exc)
         updated = {
             **record,
+            **plan_summary,
             "message": message,
             "failure_stage": failure_stage,
             "failure_phase_label": failure_phase_label,
+            "failure_substage": str(plan_summary.get("moveit_failure_kind", "")),
+            "failure_substage_label": str(plan_summary.get("moveit_failure_label", "")),
             "image_path": image_path,
             "image_error": image_error,
         }
@@ -1334,6 +1693,9 @@ def _friendly_id(value: object) -> str:
 def _failure_key(record: Mapping[str, object]) -> str:
     if bool(record.get("success", False)):
         return "success"
+    substage = str(record.get("failure_substage", record.get("moveit_failure_kind", ""))).strip()
+    if substage:
+        return substage
     stage = str(record.get("failure_stage", "")).strip()
     if stage:
         return stage
@@ -1342,7 +1704,11 @@ def _failure_key(record: Mapping[str, object]) -> str:
 
 def _failure_label(record: Mapping[str, object]) -> str:
     key = _failure_key(record)
-    configured = str(record.get("failure_phase_label", "")).strip()
+    configured = str(
+        record.get("failure_substage_label", "")
+        or record.get("moveit_failure_label", "")
+        or record.get("failure_phase_label", "")
+    ).strip()
     return configured or FAILURE_STAGE_LABELS.get(key, _friendly_id(key))
 
 
@@ -1526,6 +1892,10 @@ def _failure_stage_icon_svg(stage: str, label: str) -> str:
         "setup": 0,
         "planning": 0,
         "incoming_grasp_planning": 0,
+        "exact_ik_preflight": 0,
+        "complete_state_collision": 0,
+        "joint_path_planning": 0,
+        "fallback_pose_ik": 0,
         "moveit_candidate_planning": 0,
         "execution_start": 1,
         "holder_base_grasp": 2,
@@ -1841,10 +2211,14 @@ def _write_html(
             )
         else:
             media_html = '<div class="no-video">No recording or scene image</div>'
-        message = str(record.get("message", ""))
+        message = str(record.get("moveit_primary_failure_message", "") or record.get("message", ""))
+        fallback_message = str(record.get("moveit_fallback_failure_message", "")).strip()
         failure_key = _failure_key(record)
         failure_label = _failure_label(record)
         failure_row = f"<dt>failed at</dt><dd>{html.escape(failure_label)}</dd>" if status != "success" else ""
+        fallback_row = (
+            f"<dt>fallback diagnostic</dt><dd>{html.escape(fallback_message)}</dd>" if fallback_message else ""
+        )
         failure_callout = (
             f'<div class="failure-callout">Failed at: {html.escape(failure_label)}</div>' if status == "failed" else ""
         )
@@ -1889,6 +2263,10 @@ def _write_html(
                 "orientation_id",
                 "failure_stage",
                 "failure_phase_label",
+                "failure_substage",
+                "failure_substage_label",
+                "moveit_primary_failure_message",
+                "moveit_fallback_failure_message",
                 "holder_arm",
                 "inserter_arm",
                 "pair_id",
@@ -1930,7 +2308,7 @@ def _write_html(
             f"{float(record.get('pickup_pitch_deg', 0.0)):.0f}, "
             f"{float(record.get('pickup_yaw_deg', 0.0)):.0f})°</dd>"
             f"<dt>pair</dt><dd>{html.escape(str(record.get('pair_id', '')))}</dd>"
-            f"{ik_rows}{failure_row}<dt>time</dt><dd>{float(record.get('duration_s', 0.0)):.1f} s</dd></dl>"
+            f"{ik_rows}{failure_row}{fallback_row}<dt>time</dt><dd>{float(record.get('duration_s', 0.0)):.1f} s</dd></dl>"
             f'<p class="message">{html.escape(message)}</p><div class="links">{links}</div></div></article>'
         )
     part_options = _select_options((part, f"Part {part}") for part in part_order)
@@ -2019,6 +2397,12 @@ def _write_csv(path: Path, specs: tuple[dict[str, object], ...], latest: Mapping
         "success",
         "failure_stage",
         "failure_phase_label",
+        "failure_substage",
+        "failure_substage_label",
+        "moveit_failure_kind",
+        "moveit_primary_failure_message",
+        "moveit_fallback_failure_kind",
+        "moveit_fallback_failure_message",
         "result_status",
         "duration_s",
         "pair_id",
@@ -2069,6 +2453,7 @@ def _refresh_outputs(
         "failed_count": sum(str(record.get("status")) == "failed" for record in terminal),
         "interrupted_count": sum(str(record.get("status")) == "interrupted" for record in terminal),
         "ik_collision_diagnostics": _aggregate_ik_diagnostics(terminal),
+        "moveit_failure_taxonomy": _aggregate_moveit_failure_taxonomy(terminal),
         "records": records,
     }
     _atomic_write_json(output_dir / "summary.json", summary)
@@ -2079,6 +2464,12 @@ def _refresh_outputs(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=None,
+        help="Override benchmark.artifact_root for case generation and every execution command.",
+    )
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--parts", nargs="*", default=None)
     parser.add_argument("--placements", nargs="*", default=None)
@@ -2144,6 +2535,11 @@ def main() -> int:
         args.planning_only = True
     config_path = args.config.expanduser().resolve()
     payload = _read_mapping(config_path)
+    if args.artifact_root is not None:
+        payload = dict(payload)
+        benchmark = dict(payload.get("benchmark", {}) or {})
+        benchmark["artifact_root"] = str(args.artifact_root.expanduser())
+        payload["benchmark"] = benchmark
     output_dir = _output_dir(payload, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     selected_parts = None if args.parts is None else {str(value) for value in args.parts}
@@ -2276,6 +2672,14 @@ def main() -> int:
             f"[DUAL-BENCH] Saved {case_id}: status={record['status']} duration={float(record['duration_s']):.1f}s",
             flush=True,
         )
+        if _is_existing_stack_ownership_conflict(record.get("message", "")):
+            print(
+                "[DUAL-BENCH] Aborting remaining cases: this ROS domain is owned by an "
+                "existing dual MoveIt stack. The failed setup case was recorded; stop the "
+                "other stack or select a different benchmark.ros_domain_id before rerunning.",
+                flush=True,
+            )
+            return 2
         if interrupted:
             print(
                 f"[DUAL-BENCH] Partial benchmark is safe at {output_dir / 'index.html'}. "

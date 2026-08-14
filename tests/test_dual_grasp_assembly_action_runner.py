@@ -159,7 +159,7 @@ def test_dual_validation_rejects_wrong_base_step_or_role(
     assert "requires holder_robot='left'" in runner.validate(_goal(holder_robot="right", inserter_robot="left"))
 
 
-def test_dual_real_requires_both_execution_acknowledgements(
+def test_dual_real_requires_execution_acknowledgement(
     tmp_path: Path,
 ) -> None:
     repo_root, config_path = _repo(tmp_path)
@@ -177,23 +177,6 @@ def test_dual_real_requires_both_execution_acknowledgements(
         publish_output=lambda _line: None,
     )
     assert outcome.error_code == "EXECUTION_DISABLED"
-
-    runner = DualPipelineRunner(
-        repo_root=repo_root,
-        config_path=config_path,
-        mode="real",
-        allow_execution=True,
-        allow_objectless_planning=False,
-    )
-    outcome = runner.run(
-        request=_goal(),
-        goal_id="blocked",
-        cancel_requested=lambda: False,
-        publish_feedback=lambda _phase, _progress: None,
-        publish_output=lambda _line: None,
-    )
-    assert outcome.error_code == "OBJECTLESS_PLANNING_NOT_ACKNOWLEDGED"
-
 
 def test_dual_real_goal_builds_perceived_runtime_command_and_result(
     monkeypatch,

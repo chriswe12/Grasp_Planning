@@ -122,6 +122,12 @@ pre-insertion while both grippers remain closed:
   --stop-after inserter_preinsertion
 ```
 
+If one namespaced gripper controller is not connected, the real executor logs
+that role as skipped and continues the same arm sequence using the planned
+MoveIt finger/object state. An unavailable inserter therefore does not perform
+a physical pickup; it only exercises the empty-arm path to pre-insertion. Any
+controller that is discovered but later fails a command still aborts the run.
+
 Hardware execution retains a typed confirmation and defaults to 5% velocity
 and acceleration scaling. Add `--rviz` when a live RViz view is useful. MoveIt
 includes the table and both robots, but not the Fabrica object meshes. The

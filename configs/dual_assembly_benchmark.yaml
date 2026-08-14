@@ -5,6 +5,9 @@ benchmark:
   ros_domain_id: 0
   isaac_python: /media/pdz/Elements1/IsaacLab/isaaclab.sh
   max_pair_attempts: 256
+  # Exact IK screens the full finite pose-feasible pool by default. Set a
+  # positive value only when an operational run needs a hard screening cap.
+  max_ik_screen_candidates: 0
   joint_rank_candidates: 8
   # Tuned KDL is the measured default. pick_ik remains available for explicit
   # A/B runs, but was slower on the exhaustive unreachable-pose check.
@@ -17,6 +20,9 @@ benchmark:
   exact_ik_beam_width: 4
   exact_ik_seed_perturbation_rad: 0.60
   pickup_approach_ik_steps: 5
+  # Prefer a 10 cm standoff, but shorten only after pure pickup-chain no-IK.
+  # Every fallback is rechecked through complete-state IK/collision validity.
+  pickup_pregrasp_offsets_m: [0.10, 0.075, 0.05, 0.025]
   planning_time_s: 15.0
   planning_attempts: 16
 

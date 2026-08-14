@@ -3,13 +3,17 @@ from __future__ import annotations
 import copy
 import json
 import math
+from dataclasses import make_dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import yaml
 
 import grasp_planning.pipeline.dual_robot_simple_sim as simple_sim
+from grasp_planning.grasping.fabrica_grasp_debug import SavedGraspCandidate
+from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.pipeline.dual_grasp_pair_planner import DualGraspPairConfig
@@ -22,11 +26,13 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
     resolve_planar_runtime_layout,
+    simple_dual_robot_attached_collision_objects,
     simple_dual_robot_pregrasp_aabb_obstacles,
     simple_dual_robot_pregrasp_aabb_schedule,
     source_local_subassembly_mesh,
     source_pose_resting_on_floor,
     translated_source_pose_world,
+    with_inserter_pickup_pregrasp_offset,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +51,148 @@ def test_runtime_pair_budget_matches_stage3_retention_budget() -> None:
     assert DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT == 256
     assert DualGraspPairConfig().max_accepted_pairs == DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT
     assert config["pair_planning"]["max_accepted_pairs"] == DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT
+
+
+def test_pickup_symmetry_bridge_expands_every_destination_over_exact_stage3_orbit() -> None:
+    identity = np.eye(4, dtype=float)
+    turn_x = np.diag((1.0, -1.0, -1.0, 1.0))
+    turn_x[:3, 3] = (0.02, -0.01, 0.03)
+    turn_z = np.diag((-1.0, -1.0, 1.0, 1.0))
+    turn_z[:3, 3] = (-0.01, 0.03, 0.0)
+    approximate = np.diag((-1.0, 1.0, -1.0, 1.0))
+
+    def transition(name: str, matrix: np.ndarray) -> dict[str, object]:
+        return {
+            "incoming_destination_symmetry_name": name,
+            "incoming_symmetry_source_m": matrix.tolist(),
+            "incoming_destination_transform_assembly_m": matrix.tolist(),
+        }
+
+    sources, source_diagnostics = simple_sim._exact_pickup_symmetry_sources(
+        (
+            transition("identity", identity),
+            transition("turn_x", turn_x),
+            transition("turn_x", turn_x),
+            transition("turn_z", turn_z),
+            transition("approximate_y", approximate),
+        ),
+        exact_validations={
+            "turn_x": {"accepted": True, "vertex_max_m": 1.0e-8},
+            "turn_z": {"accepted": True, "vertex_max_m": 2.0e-8},
+        },
+    )
+
+    identity_destination = SavedGraspCandidate(
+        grasp_id="g_identity",
+        grasp_position_obj=(0.10, 0.02, 0.03),
+        grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+        contact_point_a_obj=(0.10, 0.01, 0.03),
+        contact_point_b_obj=(0.10, 0.03, 0.03),
+        contact_normal_a_obj=(0.0, 1.0, 0.0),
+        contact_normal_b_obj=(0.0, -1.0, 0.0),
+        jaw_width=0.02,
+        roll_angle_rad=0.0,
+        score=0.8,
+    )
+    symmetry_sibling = simple_sim.transform_grasp_candidate_by_source_symmetry(
+        identity_destination,
+        symmetry_name="turn_x",
+        matrix_source=turn_x,
+    )
+    aliases, alias_diagnostics = simple_sim._pickup_symmetry_bridge_candidates(
+        (identity_destination, symmetry_sibling),
+        symmetry_sources=sources,
+    )
+
+    assert [source["name"] for source in sources] == ["turn_x", "turn_z"]
+    assert source_diagnostics["duplicate_matrix_count"] == 1
+    assert source_diagnostics["rejected_names"] == {"approximate_y": "not_exactly_validated"}
+    assert source_diagnostics["matrix_source"] == ("stage3_transition_artifact_scaled_source_frame")
+    assert alias_diagnostics["raw_alias_count"] == 4
+    assert alias_diagnostics["alias_count"] == 4
+
+    destinations = {
+        identity_destination.grasp_id: identity_destination,
+        symmetry_sibling.grasp_id: symmetry_sibling,
+    }
+    matrices = {"turn_x": turn_x, "turn_z": turn_z}
+    assert {
+        dict(alias.metadata or {})["runtime_pickup_symmetry_bridge"]["destination_grasp_id"] for alias in aliases
+    } == set(destinations)
+    identity_aliases = []
+    for alias in aliases:
+        bridge = dict(alias.metadata or {})["runtime_pickup_symmetry_bridge"]
+        destination = destinations[str(bridge["destination_grasp_id"])]
+        symmetry_name = str(bridge["destination_symmetry_name"])
+        np.testing.assert_allclose(
+            simple_sim._candidate_part_to_tcp_matrix(alias),
+            np.linalg.inv(matrices[symmetry_name]) @ simple_sim._candidate_part_to_tcp_matrix(destination),
+            atol=1.0e-10,
+        )
+        if destination is identity_destination:
+            identity_aliases.append(bridge)
+    assert {bridge["destination_candidate_symmetry_name"] for bridge in identity_aliases} == {"identity"}
+
+
+def test_shorter_pickup_pregrasp_rebuilds_truthful_task_payload() -> None:
+    pickup_grasp = WorldFrameGraspCandidate(
+        grasp_id="incoming",
+        position_w=(0.60, -0.20, 0.02),
+        orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        normal_w=(0.0, 0.0, -1.0),
+        pregrasp_offset=0.10,
+        pregrasp_position_w=(0.60, -0.20, 0.12),
+        gripper_width=0.04,
+        jaw_width=0.03,
+        roll_angle_rad=0.0,
+        contact_point_a_w=(0.60, -0.21, 0.02),
+        contact_point_b_w=(0.60, -0.19, 0.02),
+    )
+    Task = make_dataclass("Task", [("inserter_pickup_world_grasp", object)], frozen=True)
+    task = Task(inserter_pickup_world_grasp=pickup_grasp)
+
+    adjusted = with_inserter_pickup_pregrasp_offset(task, 0.075)
+
+    assert adjusted is not task
+    assert task.inserter_pickup_world_grasp.pregrasp_offset == 0.10
+    assert adjusted.inserter_pickup_world_grasp.pregrasp_offset == 0.075
+    assert adjusted.inserter_pickup_world_grasp.pregrasp_position_w == (
+        0.60,
+        -0.20,
+        0.095,
+    )
+
+
+def test_pickup_pregrasp_offset_must_remain_positive() -> None:
+    Task = make_dataclass("InvalidOffsetTask", [("inserter_pickup_world_grasp", object)], frozen=True)
+    task = Task(
+        inserter_pickup_world_grasp=SimpleNamespace(
+            normal_w=(0.0, 0.0, 1.0),
+            position_w=(0.0, 0.0, 0.0),
+        )
+    )
+
+    with pytest.raises(ValueError, match="finite and > 0"):
+        with_inserter_pickup_pregrasp_offset(task, 0.0)
+
+
+def test_shorter_pickup_pregrasp_is_serialized_without_changing_other_targets() -> None:
+    task = load_simple_dual_robot_pair_tasks(
+        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        retained_only=True,
+    )[0]
+    original_payload = task.to_payload()
+
+    adjusted = with_inserter_pickup_pregrasp_offset(task, 0.075)
+    adjusted_payload = adjusted.to_payload()
+
+    assert adjusted_payload["grasps"]["inserter_pickup"]["pregrasp_offset_m"] == 0.075
+    assert adjusted_payload["targets"]["inserter_pickup_pregrasp"]["position_world_m"] == pytest.approx(
+        adjusted.inserter_pickup_world_grasp.pregrasp_position_w
+    )
+    assert adjusted_payload["targets"]["inserter_pickup_grasp"] == original_payload["targets"]["inserter_pickup_grasp"]
+    assert adjusted_payload["targets"]["inserter_pickup_lift"] == original_payload["targets"]["inserter_pickup_lift"]
+    assert adjusted_payload["targets"]["inserter_preinsertion"] == original_payload["targets"]["inserter_preinsertion"]
 
 
 def test_runtime_uses_stage3_declared_holder_source_instead_of_stale_library(
@@ -406,11 +554,12 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
     isaac_runner = (REPO_ROOT / "scripts/run_simple_dual_robot_sim_in_isaac.py").read_text(encoding="utf-8")
     task_builder = (REPO_ROOT / "grasp_planning/pipeline/dual_robot_simple_sim.py").read_text(encoding="utf-8")
 
-    assert '"object_collision_geometry_in_scene": False' in planner
+    assert '"object_collision_geometry_in_scene": True' in planner
     assert '"work_surface_collision_geometry_in_scene": True' in planner
     assert "apply_planning_scene_obstacles" in planner
     assert "remove_planning_scene_obstacles" in planner
     assert '"pregrasp_aabb_collision_geometry"' in planner
+    assert '"attached_collision_geometry"' in planner
     assert 'parser.add_argument("--velocity-scale", type=float, default=0.35)' in planner
     assert 'parser.add_argument("--acceleration-scale", type=float, default=0.35)' in planner
     assert "KUKA_MOVEIT_ARM_START_JOINT_VALUES" in planner
@@ -453,7 +602,12 @@ def test_default_supported_layout_places_both_object_aabbs_on_lowered_floor() ->
     schedule = simple_dual_robot_pregrasp_aabb_schedule(obstacles)
 
     assert schedule["holder_pregrasp"]
+    assert schedule["holder_grasp"]
     assert schedule["inserter_pickup_pregrasp"]
+    assert schedule["inserter_pickup_grasp"]
+    assert schedule["inserter_pickup_lift"]
+    assert schedule["inserter_above_preinsertion"]
+    assert schedule["inserter_preinsertion"]
     assert set(schedule["holder_pregrasp"]).isdisjoint(schedule["inserter_pickup_pregrasp"])
     for obstacle in obstacles.values():
         center_z = float(obstacle["xyz"][2])
@@ -470,6 +624,16 @@ def test_default_supported_layout_places_both_object_aabbs_on_lowered_floor() ->
         floor_z,
         abs_tol=1.0e-9,
     )
+
+    attached = simple_dual_robot_attached_collision_objects(tasks[0])["incoming"]
+    assert attached["link_name"] == f"{tasks[0].inserter_robot_name}_gripper_tcp"
+    assert attached["attach_after_target"] == "inserter_pickup_grasp"
+    assert attached["active_targets"] == [
+        "inserter_pickup_lift",
+        "inserter_above_preinsertion",
+        "inserter_preinsertion",
+    ]
+    assert len(attached["touch_links"]) == 4
 
 
 def test_runtime_task_can_swap_holder_and_inserter_robot_assignments() -> None:
@@ -554,6 +718,138 @@ def test_simple_dual_sim_filters_and_records_grounded_pickup_floor_clearance() -
     assert all(task.inserter_candidate.grasp_id != "i0_2040" for task in tasks)
 
 
+def test_exact_pickup_aliases_follow_unchanged_direct_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_dir = REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"
+    tasks = load_simple_dual_robot_pair_tasks(
+        artifact_dir=artifact_dir,
+        step_id="step_001_part_0",
+        retained_only=True,
+    )
+
+    first_bridge_index = next(
+        index
+        for index, task in enumerate(tasks)
+        if isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+    )
+    direct_tasks = tasks[:first_bridge_index]
+    bridge_tasks = tasks[first_bridge_index:]
+    assert direct_tasks
+    assert bridge_tasks
+    assert all(not isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict) for task in direct_tasks)
+    assert all(isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict) for task in bridge_tasks)
+    assert {str(task.transition_symmetry["source_execution_candidate_id"]) for task in direct_tasks} & {
+        str(task.transition_symmetry["source_execution_candidate_id"]) for task in bridge_tasks
+    }
+    assert len({task.execution_candidate_id for task in tasks}) == len(tasks)
+
+    counts = tasks[0].candidate_filter_diagnostics
+    assert counts["pickup_symmetry_bridge_status"] == "used_with_direct_candidates"
+    assert counts["pose_feasible_direct_execution_candidates"] == len(direct_tasks)
+    assert counts["pose_feasible_bridge_execution_candidates"] == len(bridge_tasks)
+    assert counts["pose_feasible_direct_pickup_options"] > 0
+    assert counts["pose_feasible_bridge_pickup_options"] > 0
+
+    monkeypatch.setattr(
+        simple_sim,
+        "_exact_pickup_symmetry_validations",
+        lambda **_kwargs: ({}, {"status": "disabled_for_direct_order_test"}),
+    )
+    direct_only_tasks = load_simple_dual_robot_pair_tasks(
+        artifact_dir=artifact_dir,
+        step_id="step_001_part_0",
+        retained_only=True,
+    )
+    assert [task.execution_candidate_id for task in direct_tasks] == [
+        task.execution_candidate_id for task in direct_only_tasks
+    ]
+
+
+@pytest.mark.parametrize(
+    "step_id,incoming_part_id",
+    (
+        ("step_001_part_0", "0"),
+        ("step_002_part_3", "3"),
+        ("step_003_part_1", "1"),
+        ("step_004_part_4", "4"),
+    ),
+)
+def test_exact_pickup_aliases_are_considered_for_every_incoming_part(
+    step_id: str,
+    incoming_part_id: str,
+) -> None:
+    tasks = load_simple_dual_robot_pair_tasks(
+        artifact_dir=REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block",
+        step_id=step_id,
+        pickup_orientation_rpy_deg=(0.0, 0.0, 0.0),
+        retained_only=True,
+    )
+
+    assert tasks
+    assert {task.incoming_part_id for task in tasks} == {incoming_part_id}
+    first_bridge_index = next(
+        index
+        for index, task in enumerate(tasks)
+        if isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+    )
+    assert first_bridge_index > 0
+    assert all(
+        not isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+        for task in tasks[:first_bridge_index]
+    )
+    assert all(
+        isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict) for task in tasks[first_bridge_index:]
+    )
+
+    counts = tasks[0].candidate_filter_diagnostics
+    source_resolution = counts["pickup_symmetry_source_resolution"]
+    alias_generation = counts["pickup_symmetry_alias_generation"]
+    assert source_resolution["source_count"] > 0
+    assert source_resolution["matrix_source"] == ("stage3_transition_artifact_scaled_source_frame")
+    assert alias_generation["symmetry_source_count"] == source_resolution["source_count"]
+    assert counts["pickup_symmetry_aliases_checked"] == alias_generation["alias_count"]
+    assert counts["pickup_symmetry_aliases_accepted"] > 0
+    assert counts["pose_feasible_direct_execution_candidates"] > 0
+    assert counts["pose_feasible_bridge_execution_candidates"] > 0
+    assert counts["pickup_symmetry_bridge_status"] == "used_with_direct_candidates"
+
+
+def test_part0_roll_pickup_uses_exact_symmetry_bridge_and_preserves_stage3_tcp() -> None:
+    tasks = load_simple_dual_robot_pair_tasks(
+        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        step_id="step_001_part_0",
+        pickup_orientation_rpy_deg=(90.0, 0.0, 0.0),
+        retained_only=True,
+    )
+
+    assert tasks
+    counts = tasks[0].candidate_filter_diagnostics
+    assert counts["pickup_grasps_accepted"] == 0
+    assert counts["pickup_symmetry_bridge_status"] == "used"
+    assert counts["pickup_symmetry_aliases_accepted"] > 0
+    assert counts["pickup_symmetry_alias_destination_grasps"] > 0
+    assert not any(
+        name.startswith("face_normal_") for name in counts["pickup_symmetry_bridge_validation"]["accepted_names"]
+    )
+    assert len({task.execution_candidate_id for task in tasks}) == len(tasks)
+
+    task = tasks[0]
+    payload = task.to_payload()
+    bridge = task.transition_symmetry["pickup_symmetry_bridge"]
+    assert str(bridge["destination_symmetry_name"]).startswith("object_")
+    assert bridge["asset_validation"]["vertex_max_m"] <= 1.0e-6
+    assert bridge["tcp_invariance_max_abs_error"] <= 1.0e-8
+    assert "__pickup_bridge_" in task.execution_candidate_id
+    assert (
+        payload["grasps"]["inserter_pickup"]["part_to_tcp"] == payload["grasps"]["inserter_preinsertion"]["part_to_tcp"]
+    )
+    assert (
+        bridge["nominal_final_source_pose_assembly"]["matrix_assembly_m"]
+        != task.transition_symmetry["final_source_pose_assembly"]["matrix_assembly_m"]
+    )
+
+
 def test_empty_pickup_floor_queue_preserves_filter_diagnostics() -> None:
     try:
         load_simple_dual_robot_pair_tasks(
@@ -592,8 +888,30 @@ def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -
 
     retained_execution_ids = {task.execution_candidate_id for task in retained}
     assert len(expanded) > len(retained)
-    crossing_flags = [bool(task.layout_proxy_components["transition_segments_cross_xy"]) for task in expanded]
-    assert crossing_flags == sorted(crossing_flags)
+    first_bridge_index = next(
+        (
+            index
+            for index, task in enumerate(expanded)
+            if isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+        ),
+        len(expanded),
+    )
+    assert all(
+        not isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+        for task in expanded[:first_bridge_index]
+    )
+    assert all(
+        isinstance(task.transition_symmetry.get("pickup_symmetry_bridge"), dict)
+        for task in expanded[first_bridge_index:]
+    )
+    for ranked_partition in (
+        expanded[:first_bridge_index],
+        expanded[first_bridge_index:],
+    ):
+        crossing_flags = [
+            bool(task.layout_proxy_components["transition_segments_cross_xy"]) for task in ranked_partition
+        ]
+        assert crossing_flags == sorted(crossing_flags)
     fallback = [task for task in expanded if task.execution_candidate_id not in retained_execution_ids]
     transformed_fallback = [task for task in fallback if not bool(task.transition_symmetry.get("is_identity"))]
     assert transformed_fallback
@@ -607,6 +925,8 @@ def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -
         "pose_feasible_validated_transition_fallback_candidates"
     ] == (len(expanded) - len(retained))
     assert counts["pose_feasible_validated_transition_fallback_candidates"] == len(transformed_fallback)
+    assert [task.candidate_rank for task in expanded] == list(range(1, len(expanded) + 1))
+    assert [task.to_payload()["candidate_rank"] for task in expanded] == list(range(1, len(expanded) + 1))
 
 
 def test_later_step_task_contains_the_offline_checked_assembled_prefix() -> None:

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts import run_dual_assembly_benchmark as benchmark
 
@@ -51,7 +57,12 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     command = benchmark._command(payload=payload, spec=spec, paths=paths)
 
     assert command[:3] == [str(REPO_ROOT / "run_simple_dual_robot.sh"), "--mode", "sim"]
+    assert command[command.index("--artifact-root") + 1] == str(
+        (REPO_ROOT / "artifacts/dual_grasp_planning").resolve()
+    )
     assert command[command.index("--inserter-arm") + 1] == "auto"
+    assert command[command.index("--max-pair-attempts") + 1] == "256"
+    assert command[command.index("--max-ik-screen-candidates") + 1] == "0"
     assert command[command.index("--static-friction") + 1] == "5.0"
     assert command[command.index("--dynamic-friction") + 1] == "4.0"
     assert command[command.index("--gripper-effort-limit") + 1] == "200.0"
@@ -65,6 +76,9 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     assert command[command.index("--exact-ik-beam-width") + 1] == "4"
     assert command[command.index("--exact-ik-seed-perturbation-rad") + 1] == "0.6"
     assert command[command.index("--pickup-approach-ik-steps") + 1] == "5"
+    assert command[command.index("--pickup-pregrasp-offsets-m") + 1] == (
+        "0.1,0.075,0.05,0.025"
+    )
     assert command[command.index("--planning-time-s") + 1] == "15.0"
     assert command[command.index("--planning-attempts") + 1] == "16"
     assert "--headless" in command
@@ -74,6 +88,24 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     assert paths["video"].suffix == ".webm"
     assert paths["thumbnail"].name == "scene_thumbnail.jpg"
     assert command[command.index("--record-video") + 1] == str(paths["video"])
+
+
+def test_benchmark_command_forwards_alternate_artifact_root(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "stage3"
+    payload = _payload()
+    payload["benchmark"] = {
+        **dict(payload["benchmark"]),
+        "artifact_root": str(artifact_root),
+    }
+    spec = {
+        **benchmark._case_specs(payload=_payload(), limit_cases=1)[0],
+        "assembly": "plumbers_block",
+    }
+    paths = benchmark._case_paths(tmp_path / "output", spec)
+
+    command = benchmark._command(payload=payload, spec=spec, paths=paths)
+
+    assert command[command.index("--artifact-root") + 1] == str(artifact_root.resolve())
 
 
 def test_planning_only_command_skips_isaac_and_recording_options(tmp_path: Path) -> None:
@@ -161,6 +193,114 @@ def test_plan_summary_aggregates_exact_ik_collision_diagnostics(tmp_path: Path) 
     assert aggregate["target_diagnostics"]["holder:holder_pregrasp"]["invalid_states"] == 2
     assert aggregate["target_diagnostics"]["holder:holder_pregrasp"]["kinematic_cache_hits"] == 5
     assert aggregate["target_diagnostics"]["holder:holder_pregrasp"]["ik_requests"] == 3
+
+
+def test_plan_summary_keeps_joint_path_failure_primary_over_fallback_ik(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "kind": "dual_robot_simple_sim_plan_failure",
+                "attempts": [
+                    {
+                        "success": False,
+                        "failure": (
+                            "ik_preflight: holder grasp h1 failed holder_pregrasp: "
+                            "IK failed with code=-31"
+                        ),
+                    },
+                    {
+                        "success": False,
+                        "failure": (
+                            "ik_preflight: inserter grasp i1 failed inserter_pickup_pregrasp: "
+                            "kinematic IK state is invalid (lbr_one_link_5 <-> work_surface)"
+                        ),
+                    },
+                    {
+                        "success": False,
+                        "failure": (
+                            "inserter_pickup_grasp: preferred joint target failed "
+                            "(Planning failed with code=99999); pose fallback: "
+                            "IK failed with code=-31"
+                        ),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = benchmark._plan_summary(plan_path)
+
+    assert summary["moveit_failure_kind"] == "joint_path_planning"
+    assert summary["moveit_failure_label"] == "Joint-space path planning"
+    assert summary["moveit_failure_kind_counts"] == {
+        "exact_ik_preflight": 1,
+        "complete_state_collision": 1,
+        "joint_path_planning": 1,
+    }
+    assert summary["moveit_fallback_failure_kind_counts"] == {"fallback_pose_ik": 1}
+    assert summary["moveit_primary_failure_message"] == (
+        "inserter_pickup_grasp: Planning failed with code=99999"
+    )
+    assert "IK failed" not in str(summary["moveit_primary_failure_message"])
+    assert summary["moveit_fallback_failure_kind"] == "fallback_pose_ik"
+    assert summary["moveit_fallback_failure_message"] == "IK failed with code=-31"
+    assert benchmark._failure_phase(
+        "MoveIt could not plan any of 256 ranked pairs",
+        has_plan=True,
+        moveit_failure_kind=str(summary["moveit_failure_kind"]),
+    ) == ("joint_path_planning", "Joint-space path planning")
+
+
+def test_plan_summary_classifies_standalone_pose_ik_failure(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "kind": "dual_robot_simple_sim_plan_failure",
+                "attempts": [
+                    {
+                        "success": False,
+                        "failure": "holder_pregrasp: IK failed with code=-31",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = benchmark._plan_summary(plan_path)
+
+    assert summary["moveit_failure_kind"] == "fallback_pose_ik"
+    assert summary["moveit_primary_failure_message"] == "holder_pregrasp: IK failed with code=-31"
+    assert summary["moveit_fallback_failure_kind"] == ""
+
+
+def test_successful_plan_does_not_promote_rejected_candidate_to_case_failure(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "kind": "dual_robot_simple_sim_task",
+                "moveit": {
+                    "attempts": [
+                        {
+                            "success": False,
+                            "failure": "ik_preflight: holder_pregrasp: IK failed with code=-31",
+                        },
+                        {"success": True, "failure": ""},
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = benchmark._plan_summary(plan_path)
+
+    assert summary["moveit_failure_kind"] == ""
+    assert summary["moveit_failure_kind_counts"] == {"exact_ik_preflight": 1}
 
 
 def test_case_filters_select_one_named_matrix_cell() -> None:
@@ -290,6 +430,56 @@ def test_incremental_outputs_keep_latest_case_state_and_embed_video(tmp_path: Pa
     assert "sortCards" in dashboard
 
 
+def test_outputs_serialize_and_display_moveit_failure_taxonomy(tmp_path: Path) -> None:
+    spec = benchmark._case_specs(payload=_payload(), limit_cases=1)[0]
+    record = {
+        **spec,
+        "status": "failed",
+        "success": False,
+        "failure_stage": "joint_path_planning",
+        "failure_phase_label": "Joint-space path planning",
+        "failure_substage": "joint_path_planning",
+        "failure_substage_label": "Joint-space path planning",
+        "moveit_failure_kind": "joint_path_planning",
+        "moveit_failure_label": "Joint-space path planning",
+        "moveit_failure_kind_counts": {
+            "exact_ik_preflight": 2,
+            "complete_state_collision": 3,
+            "joint_path_planning": 1,
+        },
+        "moveit_primary_failure_message": "inserter_pickup_grasp: Planning failed with code=99999",
+        "moveit_fallback_failure_kind": "fallback_pose_ik",
+        "moveit_fallback_failure_message": "IK failed with code=-31",
+        "moveit_fallback_failure_kind_counts": {"fallback_pose_ik": 1},
+        "message": "MoveIt could not plan any ranked pair.",
+    }
+
+    benchmark._refresh_outputs(
+        output_dir=tmp_path,
+        specs=(spec,),
+        latest={str(spec["case_id"]): record},
+    )
+
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    csv_text = (tmp_path / "summary.csv").read_text(encoding="utf-8")
+    dashboard = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert summary["moveit_failure_taxonomy"] == {
+        "case_kind_counts": {"joint_path_planning": 1},
+        "attempt_kind_counts": {
+            "exact_ik_preflight": 2,
+            "complete_state_collision": 3,
+            "joint_path_planning": 1,
+        },
+        "fallback_kind_counts": {"fallback_pose_ik": 1},
+    }
+    assert "moveit_primary_failure_message" in csv_text.splitlines()[0]
+    assert 'data-failure="joint_path_planning"' in dashboard
+    assert "Failed at: Joint-space path planning" in dashboard
+    assert "inserter_pickup_grasp: Planning failed with code=99999" in dashboard
+    assert "fallback diagnostic" in dashboard
+    assert "IK failed with code=-31" in dashboard
+
+
 def test_video_thumbnail_extraction_uses_a_real_recording_frame(
     tmp_path: Path,
     monkeypatch,
@@ -401,6 +591,157 @@ def test_failure_phase_classifies_holder_and_grounded_pickup_failures() -> None:
     ) == ("incoming_grasp_planning", "Incoming-part grasp planning")
 
 
+def test_failure_phase_classifies_existing_moveit_stack_as_setup() -> None:
+    message = (
+        "[DUAL-RUN] Stop it first, or pass --reuse-moveit after confirming it matches mode=sim."
+    )
+
+    assert benchmark._failure_phase(message) == ("setup", "MoveIt/Isaac setup")
+    assert benchmark._is_existing_stack_ownership_conflict(message)
+    assert not benchmark._is_existing_stack_ownership_conflict(
+        "--reuse-moveit was requested, but the live MoveIt services are not ready"
+    )
+
+
+def test_benchmark_stops_after_recording_first_existing_stack_conflict(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    specs = benchmark._case_specs(payload=_payload(), limit_cases=2)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        benchmark,
+        "_parse_args",
+        lambda: SimpleNamespace(
+            config=REPO_ROOT / "configs/dual_assembly_benchmark.yaml",
+            artifact_root=None,
+            output_dir=tmp_path,
+            parts=None,
+            placements=None,
+            orientations=None,
+            limit_cases=2,
+            failed_from_summary=None,
+            failure_stages=None,
+            planning_only=True,
+            ik_only=True,
+            ik_collision_diagnostics=False,
+            no_resume=True,
+            retry_failed=False,
+            repair_videos=False,
+            repair_failure_evidence=False,
+            dry_run=False,
+        ),
+    )
+    monkeypatch.setattr(benchmark, "_case_specs", lambda **_kwargs: specs)
+    monkeypatch.setattr(benchmark, "_refresh_outputs", lambda **_kwargs: None)
+
+    def fake_run_case(*, spec, **_kwargs):
+        calls.append(str(spec["case_id"]))
+        return (
+            {
+                **spec,
+                "status": "failed",
+                "success": False,
+                "message": (
+                    "[DUAL-RUN] Stop it first, or pass --reuse-moveit after "
+                    "confirming it matches mode=sim."
+                ),
+                "duration_s": 0.1,
+            },
+            False,
+        )
+
+    monkeypatch.setattr(benchmark, "_run_case", fake_run_case)
+
+    assert benchmark.main() == 2
+    assert calls == [str(specs[0]["case_id"])]
+    records = benchmark._jsonl_records(tmp_path / "events.jsonl")
+    assert [record["status"] for record in records] == ["running", "failed"]
+
+
+def test_case_cleanup_terminates_exact_nested_process_group_only(
+    tmp_path: Path,
+) -> None:
+    nested_pid_path = tmp_path / "nested.pid"
+    handoff_path = tmp_path / "moveit-process-group"
+    nested_code = (
+        "import signal,time; "
+        "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "time.sleep(120)"
+    )
+    outer_code = (
+        "import pathlib,signal,subprocess,sys,time; "
+        f"child=subprocess.Popen([sys.executable, '-c', {nested_code!r}], start_new_session=True); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.signal(signal.SIGINT, lambda *_: sys.exit(130)); "
+        "time.sleep(120)"
+    )
+    outer = subprocess.Popen(
+        [sys.executable, "-c", outer_code, str(nested_pid_path)],
+        start_new_session=True,
+    )
+    unrelated = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        start_new_session=True,
+    )
+    nested_pid = 0
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not nested_pid_path.is_file():
+            time.sleep(0.02)
+        assert nested_pid_path.is_file()
+        nested_pid = int(nested_pid_path.read_text(encoding="utf-8"))
+        nested_start_time = benchmark._process_start_time_ticks(nested_pid)
+        outer_start_time = benchmark._process_start_time_ticks(outer.pid)
+        assert nested_start_time is not None
+        assert outer_start_time is not None
+        assert os.getpgid(nested_pid) == nested_pid
+        handoff_path.write_text(
+            f"{nested_pid} {nested_start_time}\n",
+            encoding="utf-8",
+        )
+
+        benchmark._terminate_process_group(
+            outer,
+            owned_process_group_files=(handoff_path,),
+            process_group_start_time_ticks=outer_start_time,
+            timeout_s=0.15,
+            term_timeout_s=0.15,
+            kill_timeout_s=3.0,
+        )
+
+        assert outer.poll() is not None
+        assert not benchmark._process_group_exists(nested_pid)
+        assert unrelated.poll() is None
+    finally:
+        for process_group_id in (nested_pid, outer.pid, unrelated.pid):
+            if process_group_id <= 1:
+                continue
+            try:
+                os.killpg(process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for process in (outer, unrelated):
+            try:
+                process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3.0)
+
+
+def test_dual_moveit_wrappers_handoff_exact_nested_process_group() -> None:
+    runner = (REPO_ROOT / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    launcher = (REPO_ROOT / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
+
+    assert "DUAL_MOVEIT_PROCESS_GROUP_FILE" in runner
+    assert 'START_ARGS+=(--process-group-file "${MOVEIT_PROCESS_GROUP_FILE}")' in runner
+    assert 'kill -TERM -- "-${moveit_process_group}"' in runner
+    assert 'kill -KILL -- "-${moveit_process_group}"' in runner
+    assert "--process-group-file" in launcher
+    assert "launch_start_time" in launcher
+
+
 def test_failure_scene_renderer_draws_assembly_and_incoming_part(tmp_path: Path) -> None:
     payload = _payload()
     spec = benchmark._case_specs(payload=payload, limit_cases=1)[0]
@@ -441,6 +782,7 @@ def test_wrapper_exposes_role_and_contact_physics_options() -> None:
         "--exact-ik-beam-width",
         "--exact-ik-seed-perturbation-rad",
         "--pickup-approach-ik-steps",
+        "--pickup-pregrasp-offsets-m",
         "--planning-time-s",
         "--planning-attempts",
     ):

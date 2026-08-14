@@ -20,6 +20,8 @@ Options:
   --ros-domain-id ID          Force the ROS domain for this stack.
                               Default: DUAL_ROBOT_ROS_DOMAIN_ID, then
                               ROS_DOMAIN_ID, then 0
+  --process-group-file PATH   Internal ownership handoff for the exact ROS
+                              launch PGID and its Linux start-time token.
   --skip-ros-graph-check      Start even if dual-arm nodes already exist.
   -h, --help                  Show this help.
 
@@ -39,6 +41,7 @@ ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
 CHECK_ROS_GRAPH=1
 PIDS=()
 PROCESS_GROUPS=()
+PROCESS_GROUP_FILE="${DUAL_MOVEIT_PROCESS_GROUP_FILE:-}"
 
 source_if_exists() {
   local setup_file="$1"
@@ -120,6 +123,10 @@ while [[ $# -gt 0 ]]; do
       ROS_DOMAIN_VALUE="${2:-}"
       shift 2
       ;;
+    --process-group-file)
+      PROCESS_GROUP_FILE="${2:-}"
+      shift 2
+      ;;
     --skip-ros-graph-check)
       CHECK_ROS_GRAPH=0
       shift
@@ -139,6 +146,17 @@ done
 if [[ -z "${LBR_WS}" || -z "${ROBOT_NAMESPACE}" || -z "${ROS_DOMAIN_VALUE}" ]]; then
   echo "[DUAL-LBR-MOVEIT] Empty workspace, namespace, or ROS domain is not allowed." >&2
   exit 1
+fi
+if [[ -n "${PROCESS_GROUP_FILE}" ]]; then
+  process_group_parent="$(dirname -- "${PROCESS_GROUP_FILE}")"
+  if [[ ! -d "${process_group_parent}" || ! -w "${process_group_parent}" ]]; then
+    echo "[DUAL-LBR-MOVEIT] Process-group handoff parent is not writable: ${process_group_parent}" >&2
+    exit 1
+  fi
+  if [[ -e "${PROCESS_GROUP_FILE}" || -L "${PROCESS_GROUP_FILE}" ]]; then
+    echo "[DUAL-LBR-MOVEIT] Refusing to overwrite process-group handoff: ${PROCESS_GROUP_FILE}" >&2
+    exit 1
+  fi
 fi
 if [[ ! "${ROS_DOMAIN_VALUE}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-LBR-MOVEIT] --ros-domain-id must be a non-negative integer." >&2
@@ -224,6 +242,18 @@ if [[ ! "${launch_process_group}" =~ ^[1-9][0-9]*$ || "${launch_process_group}" 
   exit 1
 fi
 PROCESS_GROUPS+=("${launch_process_group}")
+if [[ -n "${PROCESS_GROUP_FILE}" ]]; then
+  launch_stat="$(<"/proc/${launch_pid}/stat")"
+  launch_stat_tail="${launch_stat##*) }"
+  read -r -a launch_stat_fields <<< "${launch_stat_tail}"
+  launch_start_time="${launch_stat_fields[19]:-}"
+  if [[ ! "${launch_start_time}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[DUAL-LBR-MOVEIT] Could not resolve the ROS launch start-time token." >&2
+    exit 1
+  fi
+  umask 077
+  printf '%s %s\n' "${launch_process_group}" "${launch_start_time}" > "${PROCESS_GROUP_FILE}"
+fi
 
 echo "[DUAL-LBR-MOVEIT] Started. Leave this terminal running. Press Ctrl-C to stop the stack."
 set +e

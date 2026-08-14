@@ -36,8 +36,8 @@ def _parse_args() -> argparse.Namespace:
         "--allow-objectless-planning",
         action="store_true",
         help=(
-            "Acknowledge that MoveIt checks the table and both robots but does "
-            "not contain the two Fabrica object meshes."
+            "Permit execution of a legacy task that lacks phase-aware part "
+            "AABBs and an attached incoming-part collision body."
         ),
     )
     parser.add_argument(

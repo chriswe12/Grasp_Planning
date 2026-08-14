@@ -12,6 +12,7 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (
 from grasp_planning.ros2.dual_real_grasp_executor import (
     MOTION_SEQUENCE,
     DualRealExecutionConfig,
+    _activate_available_grippers,
     _execute_sequence,
     _preflight_targets,
     _select_ranked_preflight_candidate,
@@ -59,6 +60,28 @@ class _Commander:
         self.scene_calls.append(("remove", ids))
         return True, f"removed {len(ids)}"
 
+    def apply_planning_scene_attached_obstacles(
+        self,
+        obstacles,
+        *,
+        default_frame_id: str,
+    ):
+        del default_frame_id
+        ids = tuple(str(obstacle["id"]) for obstacle in obstacles)
+        self.scene_calls.append(("attach", ids))
+        return True, f"attached {len(ids)}"
+
+    def remove_planning_scene_attached_obstacles(
+        self,
+        obstacles,
+        *,
+        default_frame_id: str,
+    ):
+        del default_frame_id
+        ids = tuple(str(obstacle["id"]) for obstacle in obstacles)
+        self.scene_calls.append(("detach", ids))
+        return True, f"detached {len(ids)}"
+
 
 class _Gripper:
     def __init__(self) -> None:
@@ -71,6 +94,23 @@ class _Gripper:
     def close(self, *, width: float):
         self.calls.append(("close", width))
         return True, "closed"
+
+
+class _DiscoverableGripper:
+    def __init__(self, role: str, events: list[str], *, available: bool) -> None:
+        self.role = role
+        self.events = events
+        self.available = available
+
+    def wait_for_server(self, *, timeout_s: float) -> None:
+        assert timeout_s == 20.0
+        self.events.append(f"wait:{self.role}")
+        if not self.available:
+            raise RuntimeError(f"Normalized gripper open service '/{self.role}/open' is unavailable.")
+
+    def initialize_open(self) -> tuple[bool, str]:
+        self.events.append(f"open:{self.role}")
+        return True, "opened"
 
 
 class _FallbackIkCommander:
@@ -105,6 +145,23 @@ class _FallbackIkExecutionCommander(_Commander, _FallbackIkCommander):
         del trajectory
         self.executed.append(label)
         return True, f"{label} executed"
+
+
+class _CleanupFailPreflightCommander(_Commander):
+    def compute_ik(self, target, seed_joint_positions=None):
+        del target, seed_joint_positions
+        return tuple(KUKA_MOVEIT_ARM_START_JOINT_VALUES), "ok"
+
+    def remove_planning_scene_attached_obstacles(
+        self,
+        obstacles,
+        *,
+        default_frame_id: str,
+    ):
+        del default_frame_id
+        ids = tuple(str(obstacle["id"]) for obstacle in obstacles)
+        self.scene_calls.append(("detach_failed", ids))
+        return False, "synthetic world purge failure"
 
 
 class _RankedIkCommander:
@@ -285,6 +342,76 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     assert all(update["attempt_index"] == 4 for update in debug_updates)
 
 
+def test_gripper_activation_skips_unavailable_role_after_probing_both() -> None:
+    events: list[str] = []
+    steps, record = _recorded_steps()
+    configured = {
+        "holder": _DiscoverableGripper("holder", events, available=True),
+        "inserter": _DiscoverableGripper("inserter", events, available=False),
+    }
+
+    available, skipped = _activate_available_grippers(
+        configured,
+        timeout_s=20.0,
+        record=record,
+    )
+
+    assert tuple(available) == ("holder",)
+    assert skipped == ("inserter",)
+    assert events == ["wait:holder", "wait:inserter", "open:holder"]
+    assert [step["name"] for step in steps] == [
+        "wait_for_holder_gripper",
+        "skip_inserter_gripper_unavailable",
+        "initialize_holder_gripper_open_zero",
+    ]
+
+
+def test_execute_sequence_continues_when_inserter_gripper_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    payload = _plan_payload()
+    payload["moveit"] = {
+        "attached_collision_geometry": {
+            "objects": {
+                "incoming": {
+                    "id": "attached_incoming",
+                    "link_name": "lbr_two_gripper_tcp",
+                }
+            }
+        }
+    }
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+    commanders = {"holder": _Commander(), "inserter": _Commander()}
+    holder_gripper = _Gripper()
+    steps, record = _recorded_steps()
+
+    success, status, last_completed = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers={"holder": holder_gripper},
+        config=DualRealExecutionConfig(
+            execute=True,
+            stop_after="inserter_preinsertion",
+        ),
+        record=record,
+    )
+
+    assert success is True
+    assert status == "stopped_at_inserter_preinsertion"
+    assert last_completed == "inserter_preinsertion"
+    assert [name for name, _execute in commanders["inserter"].calls] == [
+        name for role, name in MOTION_SEQUENCE if role == "inserter"
+    ]
+    assert holder_gripper.calls == [
+        ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
+        ("close", plan["grasps"]["holder"]["jaw_width_m"]),
+    ]
+    assert any(step["name"] == "skip_position_inserter_gripper_for_approach" for step in steps)
+    assert any(step["name"] == "skip_position_inserter_gripper_for_contact" for step in steps)
+    assert ("attach", ("attached_incoming",)) in commanders["holder"].scene_calls
+    assert ("detach", ("attached_incoming",)) in commanders["holder"].scene_calls
+
+
 def test_execute_sequence_stops_before_holder_close_at_pregrasp(
     tmp_path: Path,
 ) -> None:
@@ -365,6 +492,62 @@ def test_execute_sequence_uses_aabbs_only_for_pregrasp_transit(
         ("apply", ("incoming_aabb",)),
         ("remove", ("incoming_aabb",)),
     ]
+
+
+def test_execute_sequence_keeps_subassembly_and_attached_incoming_in_transition_scene(
+    tmp_path: Path,
+) -> None:
+    payload = _plan_payload()
+    payload["moveit"] = {
+        "pregrasp_aabb_collision_geometry": {
+            "obstacles": {
+                "base": {"id": "base_aabb"},
+                "incoming": {"id": "incoming_aabb"},
+            },
+            "active_by_target": {
+                "holder_pregrasp": ["base", "incoming"],
+                "holder_grasp": ["base", "incoming"],
+                "inserter_pickup_pregrasp": ["base", "incoming"],
+                "inserter_pickup_grasp": ["base", "incoming"],
+                "inserter_pickup_lift": ["base"],
+                "inserter_above_preinsertion": ["base"],
+                "inserter_preinsertion": ["base"],
+            },
+        },
+        "attached_collision_geometry": {
+            "objects": {
+                "incoming": {
+                    "id": "attached_incoming",
+                    "link_name": "lbr_two_gripper_tcp",
+                }
+            }
+        },
+    }
+    plan = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+    commanders = {"holder": _Commander(), "inserter": _Commander()}
+    grippers = {"holder": _Gripper(), "inserter": _Gripper()}
+    _, record = _recorded_steps()
+
+    success, status, last_completed = _execute_sequence(
+        plan=plan,
+        commanders=commanders,
+        grippers=grippers,
+        config=DualRealExecutionConfig(
+            execute=True,
+            stop_after="inserter_preinsertion",
+        ),
+        record=record,
+    )
+
+    assert success is True
+    assert status == "stopped_at_inserter_preinsertion"
+    assert last_completed == "inserter_preinsertion"
+    scene_calls = commanders["holder"].scene_calls
+    assert ("attach", ("attached_incoming",)) in scene_calls
+    assert ("detach", ("attached_incoming",)) in scene_calls
+    attach_index = scene_calls.index(("attach", ("attached_incoming",)))
+    transition_apply_index = scene_calls.index(("apply", ("base_aabb",)), attach_index)
+    assert attach_index < transition_apply_index
 
 
 def test_dual_gripper_launch_has_stable_namespaces_and_usb_ids() -> None:
@@ -589,6 +772,40 @@ def test_fallback_preflight_joint_targets_are_reused_for_execution(
         assert [label for label, _ in commander.joint_plans] == expected_labels
         assert commander.executed == expected_labels
         assert all(joints == KUKA_MOVEIT_ARM_START_JOINT_VALUES for _, joints in commander.joint_plans)
+
+
+def test_real_preflight_aborts_instead_of_caching_after_attached_cleanup_failure() -> None:
+    plan = _plan_payload()
+    plan["moveit"] = {
+        "attached_collision_geometry": {
+            "objects": {
+                "incoming": {
+                    "id": "attached_incoming",
+                    "link_name": "lbr_two_gripper_tcp",
+                }
+            }
+        }
+    }
+    commanders = {
+        "holder": _CleanupFailPreflightCommander(),
+        "inserter": _CleanupFailPreflightCommander(),
+    }
+    _steps, record = _recorded_steps()
+
+    try:
+        _preflight_targets(
+            plan=plan,
+            commanders=commanders,
+            frame_id="base_link",
+            record=record,
+        )
+    except RuntimeError as exc:
+        assert "synthetic world purge failure" in str(exc)
+    else:
+        raise AssertionError("Expected dirty-scene cleanup failure to abort preflight.")
+
+    assert ("attach", ("attached_incoming",)) in commanders["holder"].scene_calls
+    assert ("detach_failed", ("attached_incoming",)) in commanders["holder"].scene_calls
 
 
 def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:

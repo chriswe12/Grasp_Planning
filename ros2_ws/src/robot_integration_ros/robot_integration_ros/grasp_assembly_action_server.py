@@ -645,7 +645,7 @@ class GraspAssemblyActionServer(Node):
             summaries.append(f"{role}={part_id} center={center} size={size}")
 
         self._debug_aabb_publisher.publish(marker_array)
-        self.get_logger().info("Published non-collision perceived-part AABBs: " + "; ".join(summaries))
+        self.get_logger().info("Published perceived-part collision AABBs: " + "; ".join(summaries))
 
     def _goal_callback(self, request: Any):
         error = self._runner.validate(request)
@@ -798,8 +798,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--allow-objectless-planning",
         action="store_true",
         help=(
-            "Acknowledge that the current dual real MoveIt scene contains both "
-            "robots and the table but omits Fabrica object meshes."
+            "Permit a legacy dual-real task without phase-aware part AABBs "
+            "and an attached incoming-part collision body."
         ),
     )
     return parser

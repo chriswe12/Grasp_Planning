@@ -26,6 +26,7 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
+    simple_dual_robot_attached_collision_objects,
     simple_dual_robot_pregrasp_aabb_obstacles,
     simple_dual_robot_pregrasp_aabb_schedule,
 )
@@ -201,15 +202,24 @@ def main() -> int:
     candidate_payloads: list[dict[str, object]] = []
     for rank, task in enumerate(tasks, start=1):
         pregrasp_aabb_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
+        attached_collision_objects = simple_dual_robot_attached_collision_objects(task)
         moveit_payload = {
             "namespace": "/lbr_dual_arm",
             "frame_id": "base_link",
-            "object_collision_geometry_in_scene": False,
+            "object_collision_geometry_in_scene": True,
             "pregrasp_aabb_collision_geometry": {
-                "representation": ("object_world_aabb_minus_selected_gripper_sweep"),
+                "representation": ("phase_aware_world_aabb_minus_intended_contact_sweeps"),
                 "obstacles": pregrasp_aabb_obstacles,
                 "active_by_target": (simple_dual_robot_pregrasp_aabb_schedule(pregrasp_aabb_obstacles)),
-                "removed_before_grasp_approach": True,
+                "removed_after_each_target": True,
+            },
+            "attached_collision_geometry": {
+                "representation": "pickup_world_aabb_in_grasp_tcp_frame",
+                "objects": attached_collision_objects,
+                "attach_after_target": {
+                    str(value["attach_after_target"]): key
+                    for key, value in attached_collision_objects.items()
+                },
             },
         }
         candidate_payload = task.to_payload()

@@ -321,6 +321,74 @@ def _candidate_geometry_key(candidate: SavedGraspCandidate) -> tuple[float, ...]
     return tuple(round(float(value), 7) for value in values)
 
 
+def transform_grasp_candidate_by_source_symmetry(
+    candidate: SavedGraspCandidate,
+    *,
+    symmetry_name: str,
+    matrix_source: object,
+    matrix_assembly_m: object | None = None,
+    symmetry_description: str | None = None,
+    symmetry_source: str = "unknown",
+    symmetry_angle_deg: float = 0.0,
+    symmetry_is_identity: bool | None = None,
+) -> SavedGraspCandidate:
+    """Apply one validated object symmetry to a saved source-frame grasp.
+
+    ``matrix_source`` acts on points expressed in the grasp bundle's source
+    frame.  Keeping this operation public lets runtime planning construct a
+    pickup-equivalent grasp without regenerating the Stage-1 contact library.
+    """
+
+    matrix = _validate_rigid_matrix(
+        matrix_source,
+        context=f"pickup symmetry '{symmetry_name}' source matrix",
+    )
+    rotation = matrix[:3, :3]
+    translation = matrix[:3, 3]
+    is_identity = _is_identity(matrix) if symmetry_is_identity is None else bool(symmetry_is_identity)
+
+    def point(raw: tuple[float, float, float]) -> tuple[float, float, float]:
+        transformed = rotation @ np.asarray(raw, dtype=float) + translation
+        return tuple(float(value) for value in transformed)
+
+    def vector(raw: tuple[float, float, float]) -> tuple[float, float, float]:
+        return _normalize_vector(rotation @ np.asarray(raw, dtype=float))
+
+    metadata = {
+        **(candidate.metadata or {}),
+        "symmetry_pickup_parent_grasp_id": candidate.grasp_id,
+        "symmetry_pickup_name": str(symmetry_name),
+        "symmetry_pickup_description": str(symmetry_description or symmetry_name),
+        "symmetry_pickup_source": str(symmetry_source),
+        "symmetry_pickup_angle_deg": float(symmetry_angle_deg),
+        "symmetry_pickup_matrix_assembly_m": _matrix_payload(
+            matrix if matrix_assembly_m is None else np.asarray(matrix_assembly_m, dtype=float)
+        ),
+        "symmetry_pickup_matrix_source": _matrix_payload(matrix),
+        "symmetry_pickup_is_identity": is_identity,
+    }
+    if is_identity:
+        return replace(candidate, metadata=metadata)
+
+    grasp_rotation = rotation @ quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+    return SavedGraspCandidate(
+        grasp_id=(f"{candidate.grasp_id}__sym_{_safe_id(symmetry_name)}"),
+        grasp_position_obj=point(candidate.grasp_position_obj),
+        grasp_orientation_xyzw_obj=rotmat_to_quat_xyzw(grasp_rotation),
+        contact_point_a_obj=point(candidate.contact_point_a_obj),
+        contact_point_b_obj=point(candidate.contact_point_b_obj),
+        contact_normal_a_obj=vector(candidate.contact_normal_a_obj),
+        contact_normal_b_obj=vector(candidate.contact_normal_b_obj),
+        jaw_width=candidate.jaw_width,
+        roll_angle_rad=candidate.roll_angle_rad,
+        contact_patch_lateral_offset_m=(candidate.contact_patch_lateral_offset_m),
+        contact_patch_approach_offset_m=(candidate.contact_patch_approach_offset_m),
+        score=candidate.score,
+        score_components=(None if candidate.score_components is None else dict(candidate.score_components)),
+        metadata=metadata,
+    )
+
+
 def expand_grasp_candidates_by_symmetry(
     candidates: Iterable[SavedGraspCandidate],
     *,
@@ -342,47 +410,16 @@ def expand_grasp_candidates_by_symmetry(
     for candidate in source_candidates:
         for record in records:
             matrix_source = source_from_assembly @ record.matrix @ assembly_from_source
-            rotation = matrix_source[:3, :3]
-            translation = matrix_source[:3, 3]
-
-            def point(raw: tuple[float, float, float]) -> tuple[float, float, float]:
-                transformed = rotation @ np.asarray(raw, dtype=float) + translation
-                return tuple(float(value) for value in transformed)
-
-            def vector(raw: tuple[float, float, float]) -> tuple[float, float, float]:
-                return _normalize_vector(rotation @ np.asarray(raw, dtype=float))
-
-            metadata = {
-                **(candidate.metadata or {}),
-                "symmetry_pickup_parent_grasp_id": candidate.grasp_id,
-                "symmetry_pickup_name": record.name,
-                "symmetry_pickup_description": record.description,
-                "symmetry_pickup_source": record.source,
-                "symmetry_pickup_angle_deg": record.angle_deg,
-                "symmetry_pickup_matrix_assembly_m": _matrix_payload(record.matrix),
-                "symmetry_pickup_matrix_source": _matrix_payload(matrix_source),
-                "symmetry_pickup_is_identity": record.is_identity,
-            }
-            if record.is_identity:
-                expanded = replace(candidate, metadata=metadata)
-            else:
-                grasp_rotation = rotation @ quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
-                expanded = SavedGraspCandidate(
-                    grasp_id=(f"{candidate.grasp_id}__sym_{_safe_id(record.name)}"),
-                    grasp_position_obj=point(candidate.grasp_position_obj),
-                    grasp_orientation_xyzw_obj=rotmat_to_quat_xyzw(grasp_rotation),
-                    contact_point_a_obj=point(candidate.contact_point_a_obj),
-                    contact_point_b_obj=point(candidate.contact_point_b_obj),
-                    contact_normal_a_obj=vector(candidate.contact_normal_a_obj),
-                    contact_normal_b_obj=vector(candidate.contact_normal_b_obj),
-                    jaw_width=candidate.jaw_width,
-                    roll_angle_rad=candidate.roll_angle_rad,
-                    contact_patch_lateral_offset_m=(candidate.contact_patch_lateral_offset_m),
-                    contact_patch_approach_offset_m=(candidate.contact_patch_approach_offset_m),
-                    score=candidate.score,
-                    score_components=(None if candidate.score_components is None else dict(candidate.score_components)),
-                    metadata=metadata,
-                )
+            expanded = transform_grasp_candidate_by_source_symmetry(
+                candidate,
+                symmetry_name=record.name,
+                matrix_source=matrix_source,
+                matrix_assembly_m=record.matrix,
+                symmetry_description=record.description,
+                symmetry_source=record.source,
+                symmetry_angle_deg=record.angle_deg,
+                symmetry_is_identity=record.is_identity,
+            )
             key = _candidate_geometry_key(expanded)
             if key in seen:
                 deduplicated += 1
@@ -680,4 +717,5 @@ __all__ = [
     "compile_step_transition_symmetries",
     "expand_grasp_candidates_by_symmetry",
     "load_assembly_symmetry_records",
+    "transform_grasp_candidate_by_source_symmetry",
 ]

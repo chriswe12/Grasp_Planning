@@ -57,6 +57,11 @@ The dual-arm path supports:
     the incoming part is grasped;
   - **transition symmetry** creates equivalent final/pre-insertion corridors
     after the grasp is fixed;
+  - a **pickup symmetry bridge** expands every Stage-3 destination grasp across
+    the complete effectively exact incoming-part symmetry orbit, checks those
+    equivalent pickup grasps alongside the direct pickup, and compensates the
+    final/pre-insertion object frame. This keeps the already validated TCP
+    corridor unchanged while the rigidly held part rotates during transport;
 - cheap distance/rotation pool ordering and corridor-diverse joint-space
   pre-ranking from the planned pickup lift. The simulator/benchmark candidate
   planner then checks exact MoveIt IK through a complete 14-joint hypothetical
@@ -241,6 +246,16 @@ stale generated library. Regenerate these files after
 enabling or changing transition symmetry; the runtime runner does not silently
 rebuild stale Stage-3 artifacts. Schema-2 artifacts remain readable, but the
 runtime then falls back to the transition-validated retained pair subset.
+Pickup symmetry bridges are derived from the symmetry provenance already in
+the declared inserter bundle and transition artifact, so current Stage-3
+artifacts do not need a separate raw-grasp serialization. Runtime retains the
+unchanged direct queue first, then adds floor-feasible aliases from every exact
+nonidentity symmetry for every Stage-3 destination grasp. Bridges retain the
+Stage-3-proven contact-patch offset, are geometrically deduplicated, and receive
+unique execution IDs before exact MoveIt screening. Runtime admits only asset
+symmetries whose transformed-vertex error is at most `1e-6 m`; approximate
+face-normal symmetries remain disabled until their carried-object sweep is
+explicitly revalidated.
 
 Stage-3 insertion filtering is adaptive. It evaluates candidates in score and
 diversity order, but score is applied within coverage buckets rather than
@@ -314,9 +329,14 @@ complete pair/transition candidates. After the actual-pose floor check, the
 runtime queue is split into a strict non-crossing phase followed by a crossed
 fallback phase; retained candidates lead only within their phase. Other non-identity corridors are
 eligible only when the artifact contains an explicit accepted pair-conditioned
-transition validation; collision-checked canonical identity pairs then fill
-the remaining 256-candidate fallback budget. A transformed corridor is never
-inferred for an identity-only pair. Before either simulation or real planning,
+transition validation; collision-checked canonical identity pairs extend the
+finite exact-IK screening pool beyond the retained Stage-3 prefix. Simulation
+screens that complete diversity-ordered pool until it has admitted up to
+`--max-pair-attempts` exact-IK-feasible candidates to path planning. IK failures
+therefore no longer consume the path-attempt budget. An optional
+`--max-ik-screen-candidates` bound can cap the screening work; its default `0`
+checks the finite pool until it is exhausted or the path pool is full. A
+transformed corridor is never inferred for an identity-only pair. Before either simulation or real planning,
 the loader rechecks the full saved inserter grasp library
 against the supplied pickup position, roll, pitch, yaw, and floor height; this
 is deliberately not tied to one simulated orientation. Stage-3 pair retention
@@ -334,8 +354,11 @@ pre-ranker starts at each planned pickup-lift joint state, probes A7
 `+pi`/`-pi`, and also seeds valid A7 `+3.0`/`-3.0` rad branches because the
 iiwa limit is slightly below pi. IK is free to adjust every joint to make up
 the remaining orientation. It sorts successful candidates with non-crossing
-pre-insertion phase first, then by pre-plan status and velocity-weighted transition joint-path cost before
-the normal exact IK/path/execution fallback. It then starts Isaac and streams
+pre-insertion phase first and then by velocity-weighted transition joint-path
+cost. All candidates not successfully pre-planned retain producer order within
+their clear/crossed phase: the smaller pre-rank search may promote positive
+evidence, but a missed branch cannot demote a top grasp behind the entire
+unchecked queue. Exact complete-state IK remains authoritative. It then starts Isaac and streams
 each MoveIt polyline continuously with position and velocity targets. It
 settles only at the holder grasp, incoming-part grasp, and final pre-insertion
 pose; intermediate MoveIt points and transport checkpoints no longer become
@@ -373,10 +396,14 @@ with 1 mm position and 0.01 rad orientation thresholds. In the measured hard
 failure, PickIK found no additional feasible grasp and was slower than tuned
 KDL, so it is not the operational default.
 
-The MoveIt launch is isolated in its own process group. On success, planner
-failure, Isaac failure, Ctrl-C, or shell exit, the wrapper gives every ROS
-process two seconds to stop and then kills any remaining members before
-returning. A normal rerun therefore does not require `--reuse-moveit`.
+The MoveIt launch is isolated in its own process group. The launcher hands the
+exact group ID and Linux process start-time token back to the wrapper, so the
+wrapper can still terminate the owned ROS group if an inner launcher shell has
+already exited. On success, planner failure, Isaac failure, Ctrl-C, or shell
+exit, cleanup sends TERM and then KILL only to that validated group. The
+benchmark applies the same ownership-aware teardown and stops after the first
+explicit existing-stack conflict instead of recording the rest of the matrix as
+planner failures. A normal rerun therefore does not require `--reuse-moveit`.
 
 During visible simulation and guarded real execution, a localhost browser
 debugger opens before candidate preflight or Isaac. In real mode it starts
@@ -432,7 +459,10 @@ jq '{
 The selected pickup grasp retains its parent and symmetry provenance. Once the
 gripper closes, its part-to-TCP transform is fixed: transition fallback may
 choose another compatible destination corridor, but cannot silently change
-the grasp or regrasp the part. A 180-degree A7 seed is considered only while
+the grasp or regrasp the part. A pickup symmetry bridge preserves this rule:
+it uses one equivalent part-to-TCP transform for pickup and pre-insertion, then
+right-composes the object source pose by the inverse transform so the gripper
+targets remain exactly the Stage-3-validated targets. A 180-degree A7 seed is considered only while
 solving a symmetry-validated destination pose, is discarded when it exceeds
 the bounded iiwa joint limits, and never bypasses MoveIt path planning.
 
@@ -575,11 +605,18 @@ state. KDL solves only the active arm; that kinematic result is cached across
 pair variants, inserted into the current complete two-arm/finger state, and
 revalidated by MoveIt on every reuse. Thus passive-arm collisions are never
 cached, while repeated pair combinations do not repeat the same expensive KDL
-solve. The selected complete branch is reused by trajectory planning. The
+solve. Pickup IK prefers a 10 cm pregrasp, then tries 7.5, 5, and 2.5 cm only
+when the preceding pickup pregrasp/approach fails with pure kinematic no-IK.
+Collision-invalid states never trigger this shortening. Every shorter approach
+is checked again through the complete dual-arm state, target-specific object
+geometry, and all five continuation poses; the selected offset and exact
+continuation joints are serialized and executed. The selected complete branch
+is reused by trajectory planning. The
 wrapper uses a short `0.35 s` timeout per distinct active-arm seed; after IK
 succeeds, OMPL receives up to `15 s` and `16` planning attempts. Override these with
 `--ik-timeout-s`, `--exact-ik-candidates`, `--exact-ik-beam-width`,
-`--exact-ik-seed-perturbation-rad`, `--planning-time-s`, and
+`--exact-ik-seed-perturbation-rad`, `--pickup-pregrasp-offsets-m`,
+`--planning-time-s`, and
 `--planning-attempts` when reproducing a solver boundary.
 
 Open the incremental dashboard at:
@@ -670,8 +707,10 @@ Without `--execute`, real mode performs only non-moving target IK checks:
 
 Real mode uses the same pose-dependent pickup-floor filter and retained-first,
 identity-fallback queue as simulation. It writes at most 256 candidates to the
-preflight task by default; use `--max-pair-attempts N` to override the bound for
-either mode. The collision-aware joint solutions selected during preflight are
+preflight task by default; use `--max-pair-attempts N` to override that real-task
+bound. In simulation, the same option instead limits exact-IK-feasible candidates
+admitted to expensive path planning, after the broader pose-feasible pool has
+been screened. The collision-aware joint solutions selected during preflight are
 the exact joint targets sent to path planning during execution, including a
 solution found only by the known-start fallback seed. The ROS action reports
 success only after `inserter_preinsertion`; an intentionally earlier
@@ -691,11 +730,22 @@ port (`38825` by default). Direct wrapper runs can pass
 `grasp_assembly_action.headless: true`) to suppress it.
 
 Hardware execution requires the correctly configured hardware MoveIt stack,
-explicit `--execute`, confirmation unless `--yes` is supplied, and currently
-`--allow-objectless-planning` because the simple runtime scene does not yet
-contain exact object collision meshes. The latter is a known safety limitation,
-not a convenience flag. Review `./run_simple_dual_robot.sh --help` and the
+explicit `--execute`, and confirmation unless `--yes` is supplied. Generated
+dual tasks now add phase-aware collision boxes for both detected workbench
+parts. The stationary held subassembly remains a carved world obstacle, and
+the incoming part becomes an attached TCP-frame collision body after pickup so
+MoveIt checks its loaded lift and pre-insertion path. The carved regions admit
+only the selected gripper-contact and insertion corridors. The legacy
+`--allow-objectless-planning` flag is needed only to run an older task artifact
+that lacks this geometry. Review `./run_simple_dual_robot.sh --help` and the
 KUKA hardware runbook below before enabling motion.
+
+Candidate cleanup detaches that incoming collision body and then explicitly
+removes the world object with the same ID. MoveIt restores a detached body to
+the world, so detach alone would leave stale incoming-part geometry in later
+holder IK checks. Either cleanup operation failing is fatal: subsequent
+candidates are not evaluated and their collision results are not cached against
+an unknown scene.
 
 The dual real executor publishes normalized positions to
 `/lbr_one/gripper_controller/position_command` and
@@ -706,6 +756,16 @@ candidate-specific approach/contact widths used by MoveIt, and monitors the
 matching `/position` feedback topic. Repeated identical positions are not
 republished. The namespaced `open`, `close`, and `stop` Trigger services remain
 available for homing, recovery, and emergency interruption.
+
+Gripper availability is role-local during dual real execution. The executor
+checks both controllers before homing either one, homes and commands every
+controller that is present, and records an unavailable holder or inserter as a
+skipped hardware gripper while continuing the same arm trajectory. MoveIt still
+uses the planned finger state and attached incoming-part collision body. Thus a
+missing inserter controller produces an empty-arm motion diagnostic, not a
+physical pickup, even though the arm can continue through pre-insertion. Once a
+controller is discovered, a later home, position, feedback, or stop failure is
+still treated as a real gripper fault rather than an optional absence.
 
 ## Grasp Generation Benchmark
 
@@ -1149,8 +1209,7 @@ or guarded real execution:
 ros2 run robot_integration_ros grasp_assembly_action_server \
   --dual-mode real \
   --config configs/dual_grasp_planning.yaml \
-  --execute \
-  --allow-objectless-planning
+  --execute
 ```
 
 The dual adapter uses both base and insertion `DebugPoseItem` poses and all goal

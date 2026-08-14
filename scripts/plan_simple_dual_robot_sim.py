@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Iterator, Mapping
 
 import numpy as np
 
@@ -32,8 +32,10 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
+    simple_dual_robot_attached_collision_objects,
     simple_dual_robot_pregrasp_aabb_obstacles,
     simple_dual_robot_pregrasp_aabb_schedule,
+    with_inserter_pickup_pregrasp_offset,
 )
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommander,
@@ -155,6 +157,19 @@ def _parse_args() -> argparse.Namespace:
         "--max-pair-attempts",
         type=int,
         default=DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
+        help=(
+            "Maximum exact-IK-feasible candidates admitted to path planning "
+            "and execution. This does not truncate the exact-IK input pool."
+        ),
+    )
+    parser.add_argument(
+        "--max-ik-screen-candidates",
+        type=int,
+        default=0,
+        help=(
+            "Optional cap on producer-ranked candidates screened by exact IK; "
+            "0 checks the finite pose-feasible pool until enough path candidates survive."
+        ),
     )
     parser.add_argument("--assembly-x", type=float, default=0.55)
     parser.add_argument("--assembly-y", type=float, default=0.0)
@@ -285,6 +300,18 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pickup-pregrasp-offsets-m",
+        type=float,
+        nargs="+",
+        default=(0.10, 0.075, 0.05, 0.025),
+        metavar="METERS",
+        help=(
+            "Ordered pickup-only pregrasp distances tried by exact IK. A shorter "
+            "distance is tried only after the preceding distance has pure "
+            "kinematic no-IK in the pickup pregrasp/approach chain."
+        ),
+    )
+    parser.add_argument(
         "--ik-collision-diagnostics",
         action="store_true",
         help=(
@@ -333,6 +360,55 @@ def _pregrasp_aabb_obstacles_for_target(
 ) -> list[dict[str, object]]:
     schedule = simple_dual_robot_pregrasp_aabb_schedule(obstacles)
     return [obstacles[key] for key in schedule.get(target_name, ())]
+
+
+def _apply_attached_collision_objects(
+    commander,
+    obstacles: Mapping[str, Mapping[str, object]],
+) -> tuple[bool, str]:
+    apply_attached = getattr(commander, "apply_planning_scene_attached_obstacles", None)
+    if not callable(apply_attached):
+        return True, "Attached-collision API unavailable in lightweight test adapter."
+    return apply_attached(
+        [dict(value) for value in obstacles.values()],
+        default_frame_id="base_link",
+    )
+
+
+def _apply_phase_collision_obstacles(
+    commander,
+    obstacles: list[dict[str, object]],
+) -> tuple[bool, str]:
+    apply_obstacles = getattr(commander, "apply_planning_scene_obstacles", None)
+    if not callable(apply_obstacles):
+        return True, "World-collision API unavailable in lightweight test adapter."
+    return apply_obstacles(obstacles, default_frame_id="base_link")
+
+
+def _remove_phase_collision_obstacles(
+    commander,
+    obstacles: list[dict[str, object]],
+) -> tuple[bool, str]:
+    remove_obstacles = getattr(commander, "remove_planning_scene_obstacles", None)
+    if not callable(remove_obstacles):
+        return True, "World-collision API unavailable in lightweight test adapter."
+    return remove_obstacles(
+        [str(obstacle["id"]) for obstacle in obstacles],
+        default_frame_id="base_link",
+    )
+
+
+def _remove_attached_collision_objects(
+    commander,
+    obstacles: Mapping[str, Mapping[str, object]],
+) -> tuple[bool, str]:
+    remove_attached = getattr(commander, "remove_planning_scene_attached_obstacles", None)
+    if not callable(remove_attached):
+        return True, "Attached-collision API unavailable in lightweight test adapter."
+    return remove_attached(
+        [dict(value) for value in obstacles.values()],
+        default_frame_id="base_link",
+    )
 
 
 def _pose_target(raw: dict[str, object]) -> PoseTarget:
@@ -459,6 +535,80 @@ def _inserter_diverse_task_prefix(tasks: list, *, limit: int) -> list:
         if len(selected) >= bounded_limit:
             break
     return selected
+
+
+def _runtime_ik_screen_queue(tasks: list, *, holder_only: bool) -> list:
+    """Return the complete finite pool in a diversity-preserving screen order."""
+
+    if holder_only:
+        unique_holder_tasks = {}
+        for task in tasks:
+            unique_holder_tasks.setdefault(task.holder_candidate.grasp_id, task)
+        return list(unique_holder_tasks.values())
+    return _inserter_diverse_task_prefix(tasks, limit=len(tasks))
+
+
+@dataclass(frozen=True)
+class _ExactIkFeasibleCandidate:
+    """One producer-ranked task admitted to bounded path planning."""
+
+    task: object
+    screen_rank: int
+    candidate_rank: int
+    joint_targets: dict[str, tuple[float, ...]]
+
+
+def _iter_exact_ik_feasible_candidates(
+    tasks: list,
+    *,
+    path_candidate_limit: int,
+    ik_screen_candidate_limit: int,
+    evaluate: Callable[
+        [object, int],
+        tuple[bool, str, dict[str, tuple[float, ...]]]
+        | tuple[bool, str, dict[str, tuple[float, ...]], object],
+    ],
+) -> Iterator[_ExactIkFeasibleCandidate]:
+    """Lazily screen a broad queue before each bounded path attempt.
+
+    ``path_candidate_limit`` deliberately caps only candidates that survive
+    exact complete-state IK.  It must not truncate the producer-ranked input
+    queue: doing that prevents a later pose-feasible grasp from ever reaching
+    the authoritative robot check.  ``ik_screen_candidate_limit == 0`` means
+    the finite input queue is the bound; a positive value is an explicit
+    operational cap for unusually large artifacts.  Yielding immediately is
+    important: a caller can try the first IK-feasible candidate without first
+    paying to fill the entire path-attempt budget.
+    """
+
+    if int(path_candidate_limit) < 1:
+        raise ValueError("path_candidate_limit must be at least 1.")
+    if int(ik_screen_candidate_limit) < 0:
+        raise ValueError("ik_screen_candidate_limit must be non-negative.")
+
+    source_count = len(tasks)
+    screen_count = (
+        source_count
+        if int(ik_screen_candidate_limit) == 0
+        else min(source_count, int(ik_screen_candidate_limit))
+    )
+    admitted = 0
+    for screen_rank, task in enumerate(tasks[:screen_count], start=1):
+        evaluation = evaluate(task, screen_rank)
+        feasible, _failure, joint_targets = evaluation[:3]
+        selected_task = task if len(evaluation) == 3 else evaluation[3]
+        if not feasible:
+            continue
+        producer_rank = int(getattr(selected_task, "candidate_rank", 0))
+        admitted += 1
+        yield _ExactIkFeasibleCandidate(
+            task=selected_task,
+            screen_rank=screen_rank,
+            candidate_rank=(producer_rank if producer_rank > 0 else screen_rank),
+            joint_targets=dict(joint_targets),
+        )
+        if admitted >= int(path_candidate_limit):
+            return
 
 
 def _corridor_diverse_joint_rank_pool(tasks: list, *, limit: int) -> list:
@@ -701,16 +851,21 @@ def _rank_tasks_by_inserter_joint_path(
             )
 
     planned.sort(key=lambda item: item[:4])
+    planned_tasks = [item[4] for item in planned]
+    planned_object_ids = {id(task) for task in planned_tasks}
+    # A bounded pre-rank success is positive evidence and may promote a task.
+    # A failure from its deliberately smaller IK/beam search is not proof that
+    # the exact shared-scene gate will fail.  Keep every non-planned task in
+    # producer order so a producer-top grasp cannot be demoted behind the whole
+    # unchecked queue merely because the weaker pre-ranker missed its branch.
+    fallback_tasks = [task for task in tasks if id(task) not in planned_object_ids]
     checked_object_ids = {id(task) for task in checked_tasks}
     unranked = [task for task in tasks if id(task) not in checked_object_ids]
-    planned_tasks = [item[4] for item in planned]
-    failed_tasks = [item[1] for item in failed]
 
     def crossing_phase(crosses: bool) -> list:
         return [
             *(task for task in planned_tasks if _transition_crosses_holder_corridor(task) is crosses),
-            *(task for task in unranked if _transition_crosses_holder_corridor(task) is crosses),
-            *(task for task in failed_tasks if _transition_crosses_holder_corridor(task) is crosses),
+            *(task for task in fallback_tasks if _transition_crosses_holder_corridor(task) is crosses),
         ]
 
     # A successful cheap pre-plan is useful evidence, but it must never move a
@@ -731,8 +886,8 @@ def _rank_tasks_by_inserter_joint_path(
         "unranked_fallback_count": len(unranked),
         "pool_selection": "round_robin_insertion_corridor",
         "corridors_checked": list(dict.fromkeys(_transition_corridor_key(task) for task in checked_tasks)),
-        "primary_sort": "strict_noncrossing_phase_then_preplan_status_then_transition_joint_path_cost",
-        "tie_breaker": "selection_score_within_preplan_status",
+        "primary_sort": "strict_noncrossing_phase_then_successful_preplans_then_stable_producer_fallback",
+        "tie_breaker": "transition_cost_for_successful_preplans; producer_order_for_all_other_tasks",
         "joint_weights_inverse_max_velocity": list(KUKA_MOVEIT_TRANSITION_JOINT_WEIGHTS),
         "bounded_joint_limits": {
             "lower_rad": list(KUKA_MOVEIT_JOINT_LOWER_LIMITS),
@@ -780,8 +935,61 @@ def _plan_and_execute(
     label: str,
     expected_joint_names: tuple[str, ...],
     preferred_joint_positions: tuple[float, ...] | None = None,
+    preferred_joint_sequence: tuple[tuple[str, tuple[float, ...]], ...] | None = None,
     gripper_robot_state: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, object] | None, str]:
+    if preferred_joint_positions is not None and preferred_joint_sequence is not None:
+        raise ValueError("Provide either one preferred joint target or a preferred joint sequence, not both.")
+
+    if preferred_joint_sequence is not None:
+        if not preferred_joint_sequence:
+            raise ValueError("A preferred joint sequence must contain at least one target.")
+        combined_waypoints: list[list[float]] = []
+        segment_records: list[dict[str, object]] = []
+        final_execution_message = ""
+        segment_count = len(preferred_joint_sequence)
+        for segment_index, (target_name, joint_positions) in enumerate(preferred_joint_sequence, start=1):
+            segment_label = (
+                label
+                if segment_count == 1 or segment_index == segment_count
+                else f"{label}__validated_segment_{segment_index:02d}_of_{segment_count:02d}"
+            )
+            trajectory, planning_message = commander.plan_to_joint_positions(
+                joint_positions,
+                label=f"{segment_label}_joint_ranked",
+            )
+            if trajectory is None:
+                return None, f"validated joint segment '{target_name}' path planning failed: {planning_message}"
+            segment_payload = _trajectory_payload(
+                trajectory,
+                expected_joint_names=expected_joint_names,
+            )
+            waypoint_start = len(combined_waypoints)
+            combined_waypoints.extend(segment_payload["waypoints"])  # type: ignore[arg-type]
+            waypoint_end = len(combined_waypoints)
+            ok, execution_message = commander.execute_trajectory(
+                trajectory,
+                label=segment_label,
+            )
+            if not ok:
+                return None, f"validated joint segment '{target_name}' execution failed: {execution_message}"
+            final_execution_message = execution_message
+            segment_records.append(
+                {
+                    "target": str(target_name),
+                    "joint_target": [float(value) for value in joint_positions],
+                    "waypoint_range": [waypoint_start, waypoint_end],
+                }
+            )
+        payload: dict[str, object] = {
+            "joint_names": list(expected_joint_names),
+            "waypoints": combined_waypoints,
+        }
+        if segment_count > 1:
+            payload["validated_joint_segments"] = segment_records
+            return payload, f"executed {segment_count} validated joint segments; {final_execution_message}"
+        return payload, final_execution_message
+
     if preferred_joint_positions is None:
         trajectory, message = commander.plan_to_pose(target, label=label)
     else:
@@ -831,6 +1039,35 @@ def _plan_and_execute(
     if not ok:
         return None, execution_message
     return payload, execution_message
+
+
+def _validated_joint_target_sequence(
+    joint_targets: Mapping[str, tuple[float, ...]],
+    *,
+    target_name: str,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    """Return the ordered exact-IK chain associated with one runtime target.
+
+    The canonical target key remains the endpoint for compatibility with older
+    artifacts. Newer results place stable approach keys immediately before it.
+    """
+
+    endpoint = joint_targets.get(target_name)
+    if endpoint is None:
+        return ()
+    if target_name != "inserter_pickup_grasp":
+        return ((target_name, tuple(float(value) for value in endpoint)),)
+
+    approach_prefix = f"{target_name}__approach_"
+    approach_targets = sorted(
+        (
+            (str(name), tuple(float(value) for value in values))
+            for name, values in joint_targets.items()
+            if str(name).startswith(approach_prefix)
+        ),
+        key=lambda item: int(item[0][len(approach_prefix) :].split("_of_", 1)[0]),
+    )
+    return (*approach_targets, (target_name, tuple(float(value) for value in endpoint)))
 
 
 def _reset_arm(
@@ -902,6 +1139,7 @@ class _IkPreflightCacheEntry:
     feasible: bool
     failure: str
     branches: tuple["_IkPreflightBranch", ...]
+    failure_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -924,6 +1162,7 @@ class _IkRoleSearchResult:
     branches: tuple[_IkPreflightBranch, ...]
     failure: str
     target_records: tuple[dict[str, object], ...]
+    failure_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -931,6 +1170,7 @@ class _IkSearchTarget:
     label: str
     pose: PoseTarget
     result_target_name: str | None
+    scene_target_name: str
 
 
 def _complete_dual_arm_start_state(
@@ -1065,7 +1305,8 @@ def _new_ik_preflight_state(
             "mode": "collision_disabled_ik_then_full_state_validity",
             "scene_scope": (
                 "Complete dual-arm robot state plus the MoveIt work surface. "
-                "Target-specific part AABBs are not present during exact preflight."
+                "Target-specific part AABBs are applied on their configured "
+                "pregrasp phases, and attached-object geometry is applied after pickup."
             ),
             "ik_requests": 0,
             "kinematic_cache_hits": 0,
@@ -1262,6 +1503,7 @@ def _ik_search_targets(
                     label=target_name,
                     pose=_pose_target(dict(targets[target_name])),
                     result_target_name=target_name,
+                    scene_target_name=target_name,
                 )
             )
             continue
@@ -1287,7 +1529,11 @@ def _ik_search_targets(
                         quaternion_xyzw=final_orientation,
                         frame_id="base_link",
                     ),
-                    result_target_name=target_name if step_index == steps else None,
+                    # Preserve every accepted continuation state for runtime
+                    # path planning. The final step retains the canonical key
+                    # expected by existing artifact consumers.
+                    result_target_name=(target_name if step_index == steps else label),
+                    scene_target_name=target_name,
                 )
             )
     return tuple(search_targets)
@@ -1307,6 +1553,9 @@ def _solve_role_ik_branches(
     pickup_approach_ik_steps: int,
     post_target_state_updates: Mapping[str, Mapping[str, float]],
     collision_diagnostics: bool,
+    phase_obstacles: dict[str, dict[str, object]],
+    attached_collision_objects: dict[str, dict[str, object]],
+    attachment_state: dict[str, bool],
     kinematic_cache: dict[tuple[object, ...], _KinematicIkCacheEntry] | None,
     state: dict[str, object],
 ) -> _IkRoleSearchResult:
@@ -1333,11 +1582,25 @@ def _solve_role_ik_branches(
     )
     for search_target in search_targets:
         target_name = search_target.label
+        active_aabbs = _pregrasp_aabb_obstacles_for_target(
+            phase_obstacles,
+            target_name=search_target.scene_target_name,
+        )
+        if active_aabbs:
+            scene_ok, scene_message = _apply_phase_collision_obstacles(commander, active_aabbs)
+            if not scene_ok:
+                return _IkRoleSearchResult(
+                    branches=(),
+                    failure=f"{target_name}: could not apply part collision geometry: {scene_message}",
+                    target_records=tuple(target_records),
+                    failure_kind="scene_error",
+                )
         expanded: list[_IkPreflightBranch] = []
         failure_messages: list[str] = []
         attempted_seed_count = 0
         solution_count = 0
         collision_disabled_solution_count = 0
+        kinematic_solution_observed_count = 0
         collision_invalid_state_count = 0
         valid_state_count = 0
         kinematic_failure_count = 0
@@ -1427,6 +1690,7 @@ def _solve_role_ik_branches(
                     cache_note = " (cached)" if kinematic_cache_hit else ""
                     failure_messages.append(f"parent={parent_index} seed={seed_index}: {message}{cache_note}")
                     continue
+                kinematic_solution_observed_count += 1
                 if not kinematic_cache_hit:
                     collision_disabled_solution_count += 1
                     state["ik_kinematic_solutions_returned"] = int(state["ik_kinematic_solutions_returned"]) + 1
@@ -1600,8 +1864,23 @@ def _solve_role_ik_branches(
                 "examples": diagnostic_examples,
             }
         target_records.append(target_record)
+        if active_aabbs:
+            remove_ok, remove_message = _remove_phase_collision_obstacles(commander, active_aabbs)
+            if not remove_ok:
+                return _IkRoleSearchResult(
+                    branches=(),
+                    failure=f"{target_name}: could not remove part collision geometry: {remove_message}",
+                    target_records=tuple(target_records),
+                    failure_kind="scene_error",
+                )
         if not expanded:
             detail = failure_messages[-1] if failure_messages else "no distinct IK solution"
+            if kinematic_solution_observed_count == 0:
+                failure_kind = "kinematic_no_ik"
+            elif collision_invalid_state_count or post_grasp_invalid_state_count:
+                failure_kind = "state_collision"
+            else:
+                failure_kind = "state_validity_error"
             return _IkRoleSearchResult(
                 branches=(),
                 failure=(
@@ -1609,8 +1888,22 @@ def _solve_role_ik_branches(
                     f"{kinematic_cache_miss_count} IK request(s)"
                 ),
                 target_records=tuple(target_records),
+                failure_kind=failure_kind,
             )
         beam = sorted(expanded, key=_ik_branch_sort_key)[: max(1, int(beam_width))]
+        if search_target.result_target_name == "inserter_pickup_grasp" and attached_collision_objects:
+            attach_ok, attach_message = _apply_attached_collision_objects(
+                commander,
+                attached_collision_objects,
+            )
+            if not attach_ok:
+                return _IkRoleSearchResult(
+                    branches=(),
+                    failure=f"{target_name}: could not attach incoming collision geometry: {attach_message}",
+                    target_records=tuple(target_records),
+                    failure_kind="scene_error",
+                )
+            attachment_state["active"] = True
 
     return _IkRoleSearchResult(
         branches=tuple(beam),
@@ -1649,6 +1942,13 @@ def _ik_preflight_pair(
     task_initial_robot_state = dict(initial_robot_state or _complete_dual_arm_start_state())
     task_initial_robot_state.update(_task_approach_gripper_state(task))
     post_target_state_updates = _task_post_grasp_state_updates(task)
+    if isinstance(task_payload.get("objects"), dict):
+        phase_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
+        attached_collision_objects = simple_dual_robot_attached_collision_objects(task)
+    else:
+        # Unit-level synthetic tasks exercise the IK search without mesh data.
+        phase_obstacles = {}
+        attached_collision_objects = {}
     pair_beam = [
         _IkPreflightBranch(
             target_joint_positions=(),
@@ -1680,6 +1980,7 @@ def _ik_preflight_pair(
         cache_hits = 0
         cache_misses = 0
         role_failures: list[str] = []
+        role_failure_kinds: list[str] = []
         for parent in pair_beam:
             input_robot_state = dict(parent.terminal_robot_state)
             cache_key = (
@@ -1698,26 +1999,47 @@ def _ik_preflight_pair(
                 cache_entry = feasible_cache[role][cache_key]
             else:
                 cache_misses += 1
-                search_result = _solve_role_ik_branches(
-                    commander=commanders[role],
-                    role=role,
-                    targets=targets,
-                    target_names=target_names,
-                    initial_robot_state=input_robot_state,
-                    preferred_joint_targets=preferred_joint_targets,
-                    candidate_count=ik_candidate_count,
-                    beam_width=ik_beam_width,
-                    seed_perturbation_rad=ik_seed_perturbation_rad,
-                    pickup_approach_ik_steps=pickup_approach_ik_steps,
-                    post_target_state_updates=post_target_state_updates,
-                    collision_diagnostics=collision_diagnostics,
-                    kinematic_cache=kinematic_cache,
-                    state=state,
-                )
+                attachment_state = {"active": False}
+                try:
+                    search_result = _solve_role_ik_branches(
+                        commander=commanders[role],
+                        role=role,
+                        targets=targets,
+                        target_names=target_names,
+                        initial_robot_state=input_robot_state,
+                        preferred_joint_targets=preferred_joint_targets,
+                        candidate_count=ik_candidate_count,
+                        beam_width=ik_beam_width,
+                        seed_perturbation_rad=ik_seed_perturbation_rad,
+                        pickup_approach_ik_steps=pickup_approach_ik_steps,
+                        post_target_state_updates=post_target_state_updates,
+                        collision_diagnostics=collision_diagnostics,
+                        phase_obstacles=phase_obstacles,
+                        attached_collision_objects=(attached_collision_objects if role == "inserter" else {}),
+                        attachment_state=attachment_state,
+                        kinematic_cache=kinematic_cache,
+                        state=state,
+                    )
+                finally:
+                    if (
+                        role == "inserter"
+                        and attached_collision_objects
+                        and attachment_state["active"]
+                    ):
+                        detach_ok, detach_message = _remove_attached_collision_objects(
+                            commanders[role],
+                            attached_collision_objects,
+                        )
+                        if not detach_ok:
+                            raise RuntimeError(
+                                f"Could not clean up incoming attached collision geometry: {detach_message}"
+                            )
+                        attachment_state["active"] = False
                 cache_entry = _IkPreflightCacheEntry(
                     feasible=bool(search_result.branches),
                     failure=search_result.failure,
                     branches=search_result.branches,
+                    failure_kind=search_result.failure_kind,
                 )
                 feasible_cache[role][cache_key] = cache_entry
                 records = state["records"]
@@ -1741,6 +2063,7 @@ def _ik_preflight_pair(
 
             if not cache_entry.feasible:
                 role_failures.append(cache_entry.failure)
+                role_failure_kinds.append(cache_entry.failure_kind)
                 continue
             for role_branch in cache_entry.branches:
                 combined_targets = dict(parent.target_joint_positions)
@@ -1761,6 +2084,7 @@ def _ik_preflight_pair(
         else:
             detail = role_failures[-1] if role_failures else "no complete-state branch survived"
             failure = f"{role} grasp {grasp_id} failed {detail}"
+        failure_kind = role_failure_kinds[-1] if role_failure_kinds else ""
         pair_role_records[role] = {
             "grasp_id": grasp_id,
             "cache_hit": cache_misses == 0,
@@ -1769,6 +2093,7 @@ def _ik_preflight_pair(
             "input_branches": cache_hits + cache_misses,
             "output_branches": len(pair_beam) if grasp_feasible else 0,
             "feasible": grasp_feasible,
+            "failure_kind": failure_kind,
         }
         if not grasp_feasible:
             break
@@ -1779,20 +2104,41 @@ def _ik_preflight_pair(
         state["pair_tasks_after"] = int(state["pair_tasks_after"]) + 1
     pair_records = state["pair_records"]
     assert isinstance(pair_records, list)
-    pair_records.append(
-        {
-            "rank": int(rank),
-            "pair_id": task.pair_id,
-            "transition_id": str(getattr(task, "transition_id", "")),
-            "execution_candidate_id": str(getattr(task, "execution_candidate_id", task.pair_id)),
-            "selection_score": float(task.selection_score),
-            "feasible": pair_feasible,
-            "failure": failure,
-            "roles": pair_role_records,
-        }
-    )
     resolved_joint_targets = dict(pair_beam[0].target_joint_positions) if pair_feasible else {}
+    pair_record: dict[str, object] = {
+        "rank": int(rank),
+        "candidate_rank": int(getattr(task, "candidate_rank", rank)),
+        "pair_id": task.pair_id,
+        "transition_id": str(getattr(task, "transition_id", "")),
+        "execution_candidate_id": str(getattr(task, "execution_candidate_id", task.pair_id)),
+        "selection_score": float(task.selection_score),
+        "feasible": pair_feasible,
+        "failure": failure,
+        "failure_kind": failure_kind if failure else "",
+        "roles": pair_role_records,
+    }
+    if resolved_joint_targets:
+        pair_record["validated_joint_target_order"] = list(resolved_joint_targets)
+        pair_record["validated_joint_targets"] = {
+            str(name): [float(value) for value in joints]
+            for name, joints in resolved_joint_targets.items()
+        }
+    pair_records.append(pair_record)
     return pair_feasible, failure, resolved_joint_targets
+
+
+def _is_retryable_pickup_kinematic_failure(pair_record: Mapping[str, object]) -> bool:
+    """Whether shortening only the pickup approach can address this failure."""
+
+    failure = str(pair_record.get("failure", ""))
+    return (
+        str(pair_record.get("failure_kind", "")) == "kinematic_no_ik"
+        and "inserter grasp " in failure
+        and (
+            "inserter_pickup_pregrasp:" in failure
+            or "inserter_pickup_grasp__approach_" in failure
+        )
+    )
 
 
 def _configure_role_assignment(
@@ -1833,6 +2179,8 @@ def main() -> int:
         )
     if args.max_pair_attempts < 1:
         raise ValueError("--max-pair-attempts must be at least 1.")
+    if args.max_ik_screen_candidates < 0:
+        raise ValueError("--max-ik-screen-candidates must be non-negative.")
     if args.joint_rank_candidates < 0:
         raise ValueError("--joint-rank-candidates must be non-negative.")
     if args.joint_rank_ik_candidates < 1:
@@ -1847,6 +2195,19 @@ def main() -> int:
         raise ValueError("--exact-ik-seed-perturbation-rad must be non-negative.")
     if args.pickup_approach_ik_steps < 1:
         raise ValueError("--pickup-approach-ik-steps must be at least 1.")
+    pickup_pregrasp_offsets_m = tuple(float(value) for value in args.pickup_pregrasp_offsets_m)
+    if not pickup_pregrasp_offsets_m or any(
+        not math.isfinite(value) or value <= 0.0 for value in pickup_pregrasp_offsets_m
+    ):
+        raise ValueError("--pickup-pregrasp-offsets-m must contain finite positive distances.")
+    if any(
+        next_offset >= offset
+        for offset, next_offset in zip(
+            pickup_pregrasp_offsets_m,
+            pickup_pregrasp_offsets_m[1:],
+        )
+    ):
+        raise ValueError("--pickup-pregrasp-offsets-m must be strictly decreasing.")
     if args.ik_timeout_s <= 0.0:
         raise ValueError("--ik-timeout-s must be positive.")
     (
@@ -1915,6 +2276,10 @@ def main() -> int:
             include_nonretained_identity_fallbacks=(not strict_retained_only and not bool(args.pair_id)),
         )
     )
+    tasks = [
+        with_inserter_pickup_pregrasp_offset(task, pickup_pregrasp_offsets_m[0])
+        for task in tasks
+    ]
     if args.pair_id:
         tasks = [task for task in tasks if task.pair_id == str(args.pair_id)]
         if not tasks:
@@ -1926,28 +2291,21 @@ def main() -> int:
                 f"No accepted pair uses holder grasp '{args.holder_grasp_id}' "
                 f"for {selection.step_id} at this placement."
             )
-    task_count_before_runtime_limit = len(tasks)
-    if args.holder_only:
-        unique_holder_tasks = {}
-        for task in tasks:
-            unique_holder_tasks.setdefault(
-                task.holder_candidate.grasp_id,
-                task,
-            )
-        tasks = list(unique_holder_tasks.values())[: int(args.max_pair_attempts)]
-    else:
-        tasks = _inserter_diverse_task_prefix(
-            tasks,
-            limit=int(args.max_pair_attempts),
-        )
+    task_count_before_runtime_selection = len(tasks)
+    tasks = _runtime_ik_screen_queue(tasks, holder_only=bool(args.holder_only))
     if not tasks:
         raise RuntimeError("No ranked compatible pair is available to plan.")
     debug_candidate_counts = dict(getattr(tasks[0], "candidate_filter_diagnostics", {}))
     debug_candidate_counts.update(
         {
-            "planner_queue_execution_candidates": len(tasks),
-            "planner_queue_source_execution_candidates": int(task_count_before_runtime_limit),
-            "planner_queue_selection": "noncrossing_then_round_robin_unique_pickup",
+            "planner_queue_execution_candidates": 0,
+            "planner_queue_source_execution_candidates": int(task_count_before_runtime_selection),
+            "planner_queue_ik_screen_candidates": len(tasks),
+            "planner_queue_path_candidate_limit": int(args.max_pair_attempts),
+            "planner_queue_selection": (
+                "broad_noncrossing_then_round_robin_unique_pickup_exact_ik_"
+                "then_bounded_path_candidates"
+            ),
             "planner_queue_noncrossing_execution_candidates": sum(
                 not _transition_crosses_holder_corridor(task) for task in tasks
             ),
@@ -2042,6 +2400,10 @@ def main() -> int:
             collision_diagnostics=bool(args.ik_collision_diagnostics),
         )
     )
+    ik_preflight["pickup_pregrasp_offset_candidates_m"] = list(
+        pickup_pregrasp_offsets_m
+    )
+    ik_preflight["pickup_pregrasp_offset_attempts"] = []
     ik_feasible_cache: dict[str, dict[tuple[object, ...], _IkPreflightCacheEntry]] = {
         role: {} for role in IK_PREFLIGHT_TARGETS
     }
@@ -2161,11 +2523,57 @@ def main() -> int:
             )
 
         last_task = tasks[0]
-        for attempt_index, task in enumerate(tasks, start=1):
+        path_candidate_limit = 1 if bool(args.ik_only) else int(args.max_pair_attempts)
+        ik_screen_candidate_limit = int(args.max_ik_screen_candidates)
+        ik_screen_bound = (
+            len(tasks)
+            if ik_screen_candidate_limit == 0
+            else min(len(tasks), ik_screen_candidate_limit)
+        )
+        ik_screened_candidate_count = 0
+        ik_feasible_candidate_count = 0
+        selected_screen_ranks: list[int] = []
+        selected_candidate_ranks: list[int] = []
+        exact_ik_selection: dict[str, object] = {}
+        pickup_offset_attempts_by_screen_rank: dict[int, list[dict[str, object]]] = {}
+
+        def update_exact_ik_selection(stop_reason: str) -> None:
+            exact_ik_selection.clear()
+            exact_ik_selection.update(
+                {
+                    "source_candidate_count": len(tasks),
+                    "ik_screen_candidate_limit": (
+                        None if ik_screen_candidate_limit == 0 else ik_screen_candidate_limit
+                    ),
+                    "candidates_screened": ik_screened_candidate_count,
+                    "ik_feasible_candidates": ik_feasible_candidate_count,
+                    "path_candidate_limit": path_candidate_limit,
+                    "stop_reason": stop_reason,
+                    "selected_screen_ranks": list(selected_screen_ranks),
+                    "selected_candidate_ranks": list(selected_candidate_ranks),
+                }
+            )
+            debug_candidate_counts.update(
+                {
+                    "planner_queue_execution_candidates": ik_feasible_candidate_count,
+                    "planner_queue_ik_candidates_screened": ik_screened_candidate_count,
+                    "planner_queue_exact_ik_feasible_candidates": ik_feasible_candidate_count,
+                    "planner_queue_selected_candidate_ranks": list(selected_candidate_ranks),
+                    "planner_queue_selected_screen_ranks": list(selected_screen_ranks),
+                    "planner_queue_stop_reason": stop_reason,
+                }
+            )
+            ik_preflight["candidate_selection"] = exact_ik_selection
+
+        update_exact_ik_selection("screening_not_started")
+
+        def evaluate_exact_ik(task, screen_rank: int):
+            nonlocal last_task, ik_screened_candidate_count, ik_feasible_candidate_count
             last_task = task
+            ik_screened_candidate_count += 1
             update_debug(
                 task=task,
-                attempt_index=attempt_index,
+                attempt_index=screen_rank,
                 phase="ik_preflight",
                 status="planning",
                 message=(
@@ -2173,26 +2581,52 @@ def main() -> int:
                 ),
             )
             print(
-                f"[DUAL-SIM-PLAN] Attempt {attempt_index}/{len(tasks)} "
+                f"[DUAL-SIM-PLAN] IK screen {screen_rank}/{len(tasks)} "
+                f"candidate_rank={int(getattr(task, 'candidate_rank', screen_rank))} "
                 f"pair={task.pair_id} transition={task.transition_id} "
                 f"pair_score={task.pair_score:.4f} "
                 f"selection_score={task.selection_score:.4f} "
                 f"layout_proxy={task.layout_proxy_score:.4f}",
                 flush=True,
             )
+            if bool(args.skip_ik_preflight):
+                ik_feasible_candidate_count += 1
+                selected_screen_ranks.append(screen_rank)
+                producer_rank = int(getattr(task, "candidate_rank", 0))
+                selected_candidate_ranks.append(
+                    producer_rank if producer_rank > 0 else screen_rank
+                )
+                update_exact_ik_selection("path_candidate_admitted")
+                return (
+                    True,
+                    "",
+                    dict(preferred_joint_targets_by_candidate.get(task.execution_candidate_id, {})),
+                )
 
-            task_payload = task.to_payload()
-            targets = dict(task_payload["targets"])
-            pregrasp_aabb_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
-            pregrasp_aabb_schedule = simple_dual_robot_pregrasp_aabb_schedule(pregrasp_aabb_obstacles)
-            if not bool(args.skip_ik_preflight):
-                pair_ik_ok, pair_ik_failure, preflight_joint_targets = _ik_preflight_pair(
+            selected_task = task
+            pair_ik_ok = False
+            pair_ik_failure = ""
+            preflight_joint_targets: dict[str, tuple[float, ...]] = {}
+            offset_attempts: list[dict[str, object]] = []
+            pair_tasks_checked_before_offsets = int(
+                ik_preflight["pair_tasks_checked"]
+            )
+            pair_tasks_after_before_offsets = int(ik_preflight["pair_tasks_after"])
+            for offset_attempt_index, pickup_pregrasp_offset_m in enumerate(
+                pickup_pregrasp_offsets_m,
+                start=1,
+            ):
+                selected_task = with_inserter_pickup_pregrasp_offset(
                     task,
+                    pickup_pregrasp_offset_m,
+                )
+                pair_ik_ok, pair_ik_failure, preflight_joint_targets = _ik_preflight_pair(
+                    selected_task,
                     commanders=commanders,
                     feasible_cache=ik_feasible_cache,
                     kinematic_cache=ik_kinematic_cache,
                     state=ik_preflight,
-                    rank=attempt_index,
+                    rank=screen_rank,
                     roles=active_roles,
                     preferred_joint_targets=(
                         preferred_joint_targets_by_candidate.get(
@@ -2207,76 +2641,166 @@ def main() -> int:
                     pickup_approach_ik_steps=int(args.pickup_approach_ik_steps),
                     collision_diagnostics=bool(args.ik_collision_diagnostics),
                 )
-                checked = int(ik_preflight["pair_tasks_checked"])
-                holder_checked = int(ik_preflight["holder_grasps_checked"])
-                inserter_checked = int(ik_preflight["inserter_grasps_checked"])
-                debug_candidate_counts.update(
-                    {
-                        "exact_ik_pair_tasks_checked": checked,
-                        "exact_ik_holder_grasps_checked": holder_checked,
-                        "exact_ik_inserter_grasps_checked": inserter_checked,
-                        "exact_ik_seed_calls": int(ik_preflight["ik_seed_calls"]),
-                        "exact_ik_kinematic_cache_hits": int(ik_preflight["ik_kinematic_cache_hits"]),
-                        "exact_ik_state_validity_requests": int(ik_preflight["ik_state_validity_requests"]),
-                        "exact_ik_solutions_found": int(ik_preflight["ik_solutions_found"]),
-                        "exact_ik_distinct_solutions_retained": int(ik_preflight["ik_distinct_solutions_retained"]),
-                    }
+                pair_records = ik_preflight["pair_records"]
+                assert isinstance(pair_records, list)
+                pair_record = pair_records[-1]
+                assert isinstance(pair_record, dict)
+                retryable = (
+                    not pair_ik_ok
+                    and not bool(args.holder_only)
+                    and _is_retryable_pickup_kinematic_failure(pair_record)
                 )
-                if not pair_ik_ok:
-                    update_debug(
-                        task=task,
-                        attempt_index=attempt_index,
-                        phase="ik_preflight",
-                        status="failed",
-                        message=pair_ik_failure,
-                    )
-                    print(
-                        "[DUAL-SIM-PLAN] IK preflight "
-                        f"rank {attempt_index}/{len(tasks)} failed: "
-                        f"{pair_ik_failure}. Checked {checked} pair(s), "
-                        f"{holder_checked} holder and {inserter_checked} "
-                        "inserter grasp(s); trying the next score.",
-                        flush=True,
-                    )
-                    attempt_records.append(
-                        {
-                            "attempt_index": attempt_index,
-                            "pair_id": task.pair_id,
-                            "transition_id": task.transition_id,
-                            "execution_candidate_id": task.execution_candidate_id,
-                            "score": task.pair_score,
-                            "selection_score": task.selection_score,
-                            "pickup_top_down_score": (task.pickup_top_down_score),
-                            "layout_proxy_score": (task.layout_proxy_score),
-                            "holder_reachability_proxy_score": (task.holder_reachability_proxy_score),
-                            "inserter_reachability_proxy_score": (task.inserter_reachability_proxy_score),
-                            "success": False,
-                            "failure": (f"ik_preflight: {pair_ik_failure}"),
-                            "steps": [],
-                        }
-                    )
-                    continue
-                # Use the exact full-state-valid solutions from preflight.
-                # Recomputing pose IK after moving
-                # the holder would discard the validated branch.
-                preferred_joint_targets_by_candidate[task.execution_candidate_id] = preflight_joint_targets
+                offset_record = {
+                    "screen_rank": screen_rank,
+                    "candidate_rank": int(
+                        getattr(task, "candidate_rank", screen_rank)
+                    ),
+                    "pair_id": task.pair_id,
+                    "execution_candidate_id": task.execution_candidate_id,
+                    "offset_attempt_index": offset_attempt_index,
+                    "pickup_pregrasp_offset_m": pickup_pregrasp_offset_m,
+                    "success": bool(pair_ik_ok),
+                    "failure": pair_ik_failure,
+                    "failure_kind": str(pair_record.get("failure_kind", "")),
+                    "retryable_with_shorter_offset": bool(retryable),
+                }
+                pair_record.update(offset_record)
+                offset_attempts.append(offset_record)
+                recorded_offset_attempts = ik_preflight[
+                    "pickup_pregrasp_offset_attempts"
+                ]
+                assert isinstance(recorded_offset_attempts, list)
+                recorded_offset_attempts.append(offset_record)
+                if pair_ik_ok or not retryable:
+                    break
                 print(
-                    "[DUAL-SIM-PLAN] IK preflight "
-                    f"rank {attempt_index}/{len(tasks)} passed; "
-                    "starting its full trajectory plan immediately.",
+                    "[DUAL-SIM-PLAN] Pickup pregrasp has pure kinematic "
+                    f"no-IK at {pickup_pregrasp_offset_m:.3f} m; trying the "
+                    "next shorter collision-checked approach.",
                     flush=True,
                 )
+            # These counters describe producer-ranked candidates, not the
+            # number of adaptive offset probes. The latter are recorded in
+            # pickup_pregrasp_offset_attempts and on each pair record.
+            ik_preflight["pair_tasks_checked"] = pair_tasks_checked_before_offsets + 1
+            ik_preflight["pair_tasks_after"] = (
+                pair_tasks_after_before_offsets + int(pair_ik_ok)
+            )
+            pickup_offset_attempts_by_screen_rank[screen_rank] = offset_attempts
+            last_task = selected_task
+            checked = int(ik_preflight["pair_tasks_checked"])
+            holder_checked = int(ik_preflight["holder_grasps_checked"])
+            inserter_checked = int(ik_preflight["inserter_grasps_checked"])
+            debug_candidate_counts.update(
+                {
+                    "exact_ik_pair_tasks_checked": checked,
+                    "exact_ik_holder_grasps_checked": holder_checked,
+                    "exact_ik_inserter_grasps_checked": inserter_checked,
+                    "exact_ik_seed_calls": int(ik_preflight["ik_seed_calls"]),
+                    "exact_ik_kinematic_cache_hits": int(ik_preflight["ik_kinematic_cache_hits"]),
+                    "exact_ik_state_validity_requests": int(ik_preflight["ik_state_validity_requests"]),
+                    "exact_ik_solutions_found": int(ik_preflight["ik_solutions_found"]),
+                    "exact_ik_distinct_solutions_retained": int(ik_preflight["ik_distinct_solutions_retained"]),
+                }
+            )
+            if not pair_ik_ok:
                 update_debug(
                     task=task,
-                    attempt_index=attempt_index,
+                    attempt_index=screen_rank,
                     phase="ik_preflight",
-                    status="succeeded",
-                    message=("Complete-state target IK preflight passed; the validated joint targets will be reused."),
+                    status="failed",
+                    message=pair_ik_failure,
                 )
+                print(
+                    "[DUAL-SIM-PLAN] IK preflight "
+                    f"screen rank {screen_rank}/{len(tasks)} failed: "
+                    f"{pair_ik_failure}. Checked {checked} pair(s), "
+                    f"{holder_checked} holder and {inserter_checked} "
+                    "inserter grasp(s); screening the next candidate.",
+                    flush=True,
+                )
+                attempt_records.append(
+                    {
+                        "attempt_index": screen_rank,
+                        "candidate_rank": int(getattr(task, "candidate_rank", screen_rank)),
+                        "screen_rank": screen_rank,
+                        "path_attempt_index": None,
+                        "phase": "exact_ik_preflight",
+                        "pair_id": task.pair_id,
+                        "transition_id": task.transition_id,
+                        "execution_candidate_id": task.execution_candidate_id,
+                        "score": task.pair_score,
+                        "selection_score": task.selection_score,
+                        "pickup_top_down_score": task.pickup_top_down_score,
+                        "layout_proxy_score": task.layout_proxy_score,
+                        "holder_reachability_proxy_score": task.holder_reachability_proxy_score,
+                        "inserter_reachability_proxy_score": task.inserter_reachability_proxy_score,
+                        "success": False,
+                        "failure": f"ik_preflight: {pair_ik_failure}",
+                        "pickup_pregrasp_offset_attempts": offset_attempts,
+                        "steps": [],
+                    }
+                )
+                update_exact_ik_selection("screening")
+                return False, pair_ik_failure, {}, selected_task
+
+            print(
+                "[DUAL-SIM-PLAN] IK preflight "
+                f"screen rank {screen_rank}/{len(tasks)} passed; "
+                "admitting it to the bounded path-planning pool.",
+                flush=True,
+            )
+            update_debug(
+                task=selected_task,
+                attempt_index=screen_rank,
+                phase="ik_preflight",
+                status="succeeded",
+                message=("Complete-state target IK passed; its full validated joint chain is retained."),
+            )
+            ik_feasible_candidate_count += 1
+            selected_screen_ranks.append(screen_rank)
+            producer_rank = int(getattr(task, "candidate_rank", 0))
+            selected_candidate_ranks.append(producer_rank if producer_rank > 0 else screen_rank)
+            update_exact_ik_selection("path_candidate_admitted")
+            return True, "", preflight_joint_targets, selected_task
+
+        exact_ik_candidates = _iter_exact_ik_feasible_candidates(
+            tasks,
+            path_candidate_limit=path_candidate_limit,
+            ik_screen_candidate_limit=ik_screen_candidate_limit,
+            evaluate=evaluate_exact_ik,
+        )
+        path_attempt_count = 0
+        for path_attempt_index, selected_candidate in enumerate(exact_ik_candidates, start=1):
+            path_attempt_count = path_attempt_index
+            task = selected_candidate.task
+            last_task = task
+            attempt_index = selected_candidate.screen_rank
+            preferred_joint_targets_by_candidate[
+                task.execution_candidate_id
+            ] = selected_candidate.joint_targets
+            task_payload = task.to_payload()
+            targets = dict(task_payload["targets"])
+            pregrasp_aabb_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
+            pregrasp_aabb_schedule = simple_dual_robot_pregrasp_aabb_schedule(pregrasp_aabb_obstacles)
+            attached_collision_objects = simple_dual_robot_attached_collision_objects(task)
+            print(
+                f"[DUAL-SIM-PLAN] Path attempt {path_attempt_index} "
+                f"(limit {path_candidate_limit}) "
+                f"from screen_rank={selected_candidate.screen_rank} "
+                f"candidate_rank={selected_candidate.candidate_rank} "
+                f"pair={task.pair_id} transition={task.transition_id}",
+                flush=True,
+            )
             if args.ik_only:
+                update_exact_ik_selection("candidate_succeeded")
                 attempt_records.append(
                     {
                         "attempt_index": attempt_index,
+                        "candidate_rank": selected_candidate.candidate_rank,
+                        "screen_rank": selected_candidate.screen_rank,
+                        "path_attempt_index": path_attempt_index,
+                        "phase": "exact_ik_preflight",
                         "pair_id": task.pair_id,
                         "transition_id": task.transition_id,
                         "execution_candidate_id": task.execution_candidate_id,
@@ -2290,19 +2814,49 @@ def main() -> int:
                         "failure": "",
                         "steps": [],
                         "mode": "ik_only",
+                        "selected_pickup_pregrasp_offset_m": float(
+                            task.inserter_pickup_world_grasp.pregrasp_offset
+                        ),
+                        "pickup_pregrasp_offset_attempts": pickup_offset_attempts_by_screen_rank.get(
+                            selected_candidate.screen_rank,
+                            [],
+                        ),
                     }
                 )
                 task_payload["generated_by"] = "scripts/plan_simple_dual_robot_sim.py"
                 task_payload["moveit"] = {
                     "namespace": str(args.moveit_namespace),
                     "frame_id": "base_link",
-                    "object_collision_geometry_in_scene": False,
+                    "object_collision_geometry_in_scene": True,
                     "work_surface_collision_geometry_in_scene": True,
                     "work_surface": work_surface,
                     "arm_arm_collision_checking": True,
                     "start_joint_positions": list(MOVEIT_START_JOINT_POSITIONS),
                     "ik_only": True,
+                    "pregrasp_aabb_collision_geometry": {
+                        "representation": "phase_aware_world_aabb_minus_intended_contact_sweeps",
+                        "obstacles": pregrasp_aabb_obstacles,
+                        "active_by_target": pregrasp_aabb_schedule,
+                        "removed_after_each_target": True,
+                    },
+                    "attached_collision_geometry": {
+                        "representation": "pickup_world_aabb_in_grasp_tcp_frame",
+                        "objects": attached_collision_objects,
+                        "attach_after_target": {
+                            str(value["attach_after_target"]): key
+                            for key, value in attached_collision_objects.items()
+                        },
+                    },
                     "ik_preflight": ik_preflight,
+                    "pickup_pregrasp_offset_selection": {
+                        "selected_m": float(
+                            task.inserter_pickup_world_grasp.pregrasp_offset
+                        ),
+                        "attempts": pickup_offset_attempts_by_screen_rank.get(
+                            selected_candidate.screen_rank,
+                            [],
+                        ),
+                    },
                     "joint_space_ranking": joint_space_ranking,
                     "attempts": attempt_records,
                 }
@@ -2341,6 +2895,7 @@ def main() -> int:
             trajectories: dict[str, object] = {}
             steps: list[dict[str, object]] = []
             failure = ""
+            incoming_collision_attached = False
             for role, target_name in target_sequence:
                 update_debug(
                     task=task,
@@ -2367,17 +2922,25 @@ def main() -> int:
                         flush=True,
                     )
                 try:
+                    candidate_joint_targets = preferred_joint_targets_by_candidate.get(
+                        task.execution_candidate_id,
+                        {},
+                    )
+                    validated_joint_sequence = _validated_joint_target_sequence(
+                        candidate_joint_targets,
+                        target_name=target_name,
+                    ) if not bool(args.skip_ik_preflight) else ()
                     trajectory_payload, message = _plan_and_execute(
                         commanders[role],
                         target=target,
                         label=f"{task.pair_id}_{target_name}",
                         expected_joint_names=joint_names,
                         preferred_joint_positions=(
-                            preferred_joint_targets_by_candidate.get(
-                                task.execution_candidate_id,
-                                {},
-                            ).get(target_name)
+                            candidate_joint_targets.get(target_name)
+                            if bool(args.skip_ik_preflight)
+                            else None
                         ),
+                        preferred_joint_sequence=(validated_joint_sequence or None),
                         gripper_robot_state=gripper_scene_state,
                     )
                 finally:
@@ -2399,6 +2962,9 @@ def main() -> int:
                         "target": target_name,
                         "ok": ok,
                         "message": message,
+                        "validated_joint_targets": [
+                            name for name, _joints in validated_joint_sequence
+                        ],
                     }
                 )
                 print(
@@ -2444,10 +3010,51 @@ def main() -> int:
                         f"[DUAL-SIM-PLAN] {target_name} closed gripper: {state_message}",
                         flush=True,
                     )
+                    if target_name == "inserter_pickup_grasp" and attached_collision_objects:
+                        attach_ok, attach_message = _apply_attached_collision_objects(
+                            commanders["holder"],
+                            attached_collision_objects,
+                        )
+                        steps.append(
+                            {
+                                "role": "shared",
+                                "target": f"{target_name}_attach_incoming_collision",
+                                "ok": attach_ok,
+                                "message": attach_message,
+                            }
+                        )
+                        if not attach_ok:
+                            failure = f"{target_name}: {attach_message}"
+                            break
+                        incoming_collision_attached = True
+
+            if incoming_collision_attached:
+                detach_ok, detach_message = _remove_attached_collision_objects(
+                    commanders["holder"],
+                    attached_collision_objects,
+                )
+                steps.append(
+                    {
+                        "role": "shared",
+                        "target": "cleanup_attached_incoming_collision",
+                        "ok": detach_ok,
+                        "message": detach_message,
+                    }
+                )
+                if not detach_ok:
+                    cleanup_failure = f"attached collision cleanup: {detach_message}"
+                    failure = f"{failure}; {cleanup_failure}" if failure else cleanup_failure
+                    # Continuing would make every subsequent collision result
+                    # and cache entry depend on an unknown planning scene.
+                    fatal_failure = cleanup_failure
 
             attempt_records.append(
                 {
                     "attempt_index": attempt_index,
+                    "candidate_rank": selected_candidate.candidate_rank,
+                    "screen_rank": selected_candidate.screen_rank,
+                    "path_attempt_index": path_attempt_index,
+                    "phase": "path_planning_execution",
                     "pair_id": task.pair_id,
                     "transition_id": task.transition_id,
                     "execution_candidate_id": task.execution_candidate_id,
@@ -2459,9 +3066,25 @@ def main() -> int:
                     "inserter_reachability_proxy_score": (task.inserter_reachability_proxy_score),
                     "success": not failure,
                     "failure": failure,
+                    "selected_pickup_pregrasp_offset_m": float(
+                        task.inserter_pickup_world_grasp.pregrasp_offset
+                    ),
+                    "pickup_pregrasp_offset_attempts": pickup_offset_attempts_by_screen_rank.get(
+                        selected_candidate.screen_rank,
+                        [],
+                    ),
                     "steps": steps,
                 }
             )
+            if fatal_failure:
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase="cleanup_attached_incoming_collision",
+                    status="fatal",
+                    message=fatal_failure,
+                )
+                break
             if failure:
                 update_debug(
                     task=task,
@@ -2499,6 +3122,7 @@ def main() -> int:
                         message=fatal_failure,
                     )
                     break
+                update_exact_ik_selection("screening_after_path_failure")
                 update_debug(
                     task=task,
                     attempt_index=attempt_index,
@@ -2508,22 +3132,40 @@ def main() -> int:
                 )
                 continue
 
+            update_exact_ik_selection("candidate_succeeded")
             task_payload["generated_by"] = "scripts/plan_simple_dual_robot_sim.py"
             task_payload["moveit"] = {
                 "namespace": str(args.moveit_namespace),
                 "frame_id": "base_link",
-                "object_collision_geometry_in_scene": False,
+                "object_collision_geometry_in_scene": True,
                 "work_surface_collision_geometry_in_scene": True,
                 "work_surface": work_surface,
                 "pregrasp_aabb_collision_geometry": {
-                    "representation": ("object_world_aabb_minus_selected_gripper_sweep"),
+                    "representation": ("phase_aware_world_aabb_minus_intended_contact_sweeps"),
                     "obstacles": pregrasp_aabb_obstacles,
                     "active_by_target": pregrasp_aabb_schedule,
-                    "removed_before_grasp_approach": True,
+                    "removed_after_each_target": True,
+                },
+                "attached_collision_geometry": {
+                    "representation": "pickup_world_aabb_in_grasp_tcp_frame",
+                    "objects": attached_collision_objects,
+                    "attach_after_target": {
+                        str(value["attach_after_target"]): key
+                        for key, value in attached_collision_objects.items()
+                    },
                 },
                 "arm_arm_collision_checking": True,
                 "start_joint_positions": list(MOVEIT_START_JOINT_POSITIONS),
                 "ik_preflight": ik_preflight,
+                "pickup_pregrasp_offset_selection": {
+                    "selected_m": float(
+                        task.inserter_pickup_world_grasp.pregrasp_offset
+                    ),
+                    "attempts": pickup_offset_attempts_by_screen_rank.get(
+                        selected_candidate.screen_rank,
+                        [],
+                    ),
+                },
                 "joint_space_ranking": joint_space_ranking,
                 "attempts": attempt_records,
             }
@@ -2552,12 +3194,37 @@ def main() -> int:
             )
             time.sleep(0.35)
             return 0
+        if fatal_failure:
+            exact_ik_stop_reason = "fatal_candidate_cleanup_or_recovery_failure"
+        elif path_attempt_count >= path_candidate_limit:
+            exact_ik_stop_reason = "path_candidate_limit_reached"
+        elif ik_screened_candidate_count >= len(tasks):
+            exact_ik_stop_reason = "source_pool_exhausted"
+        elif ik_screened_candidate_count >= ik_screen_bound:
+            exact_ik_stop_reason = "ik_screen_candidate_limit_reached"
+        else:
+            exact_ik_stop_reason = "screening_stopped"
+        update_exact_ik_selection(exact_ik_stop_reason)
+        print(
+            "[DUAL-SIM-PLAN] Exact-IK/path selection exhausted: "
+            f"screened={ik_screened_candidate_count}/{len(tasks)} "
+            f"path_attempts={path_attempt_count}/{path_candidate_limit} "
+            f"stop={exact_ik_stop_reason}",
+            flush=True,
+        )
         update_debug(
             task=last_task,
             attempt_index=len(attempt_records),
             phase="complete",
             status="fatal" if fatal_failure else "failed",
-            message=(fatal_failure or f"No complete plan among {len(tasks)} ranked candidates."),
+            message=(
+                fatal_failure
+                or (
+                    "No complete plan after screening "
+                    f"{exact_ik_selection['candidates_screened']} ranked candidates and attempting "
+                    f"{path_attempt_count} exact-IK-feasible candidate(s)."
+                )
+            ),
         )
         time.sleep(0.35)
     finally:
@@ -2592,7 +3259,11 @@ def main() -> int:
     )
     if fatal_failure:
         raise RuntimeError(f"{fatal_failure}; diagnostics written to {output}.")
-    raise RuntimeError(f"MoveIt could not plan any of {len(tasks)} ranked pairs; diagnostics written to {output}.")
+    raise RuntimeError(
+        "MoveIt could not complete any exact-IK-feasible candidate after "
+        f"screening {exact_ik_selection['candidates_screened']} ranked pair(s) and admitting "
+        f"{path_attempt_count} to bounded path planning; diagnostics written to {output}."
+    )
 
 
 if __name__ == "__main__":

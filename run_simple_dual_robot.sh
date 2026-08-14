@@ -20,7 +20,9 @@ Common options:
   --artifact-dir PATH
   --pair-id ID
   --holder-grasp-id ID
-  --max-pair-attempts N         Default: 256
+  --max-pair-attempts N         Exact-IK-feasible path candidates. Default: 256
+  --max-ik-screen-candidates N  Exact-IK input cap; 0 checks the full finite pool.
+                                Default: 0
   --assembly-x M                Default: 0.55
   --assembly-y M                Default: 0.0
   --assembly-z M                Default: --floor-z (assembled prefix supported)
@@ -61,6 +63,7 @@ Simulation options:
   --exact-ik-beam-width N      Coordinated holder/inserter branches. Default: 4
   --pickup-approach-ik-steps N Interpolated IK steps from pickup pregrasp to grasp.
                                Default: 5
+  --pickup-pregrasp-offsets-m CSV  Ordered pickup-only IK fallbacks. Default: 0.10,0.075,0.05,0.025
   --exact-ik-seed-perturbation-rad RAD  Default: 0.60
   --planning-time-s S          OMPL time after IK succeeds. Default: 15
   --planning-attempts N        OMPL attempts after IK succeeds. Default: 16
@@ -78,7 +81,7 @@ Simulation options:
 
 Real options:
   --execute                     Without this, only non-moving target IK is checked
-  --allow-objectless-planning   Required for motion in the current simple scene
+  --allow-objectless-planning   Allow a legacy task without phase-aware part collisions
   --stop-after PHASE            Default: holder_pregrasp
   --skip-grippers               Only valid through holder_pregrasp
   --yes                         Skip typed confirmation
@@ -94,6 +97,7 @@ ARTIFACT_DIR=""
 PAIR_ID=""
 HOLDER_GRASP_ID=""
 MAX_PAIR_ATTEMPTS="256"
+MAX_IK_SCREEN_CANDIDATES="0"
 ASSEMBLY_X="0.55"
 ASSEMBLY_Y="0.0"
 ASSEMBLY_Z=""
@@ -128,6 +132,7 @@ EXACT_IK_CANDIDATES="7"
 EXACT_IK_BEAM_WIDTH="4"
 EXACT_IK_SEED_PERTURBATION="0.60"
 PICKUP_APPROACH_IK_STEPS="5"
+PICKUP_PREGRASP_OFFSETS_M="0.10,0.075,0.05,0.025"
 PLANNING_TIME="15.0"
 PLANNING_ATTEMPTS="16"
 RECORD_VIDEO=""
@@ -145,6 +150,9 @@ STOP_AFTER="holder_pregrasp"
 SKIP_GRIPPERS=0
 ASSUME_YES=0
 MOVEIT_PID=""
+MOVEIT_PROCESS_GROUP_FILE="${DUAL_MOVEIT_PROCESS_GROUP_FILE:-}"
+MOVEIT_PROCESS_GROUP_FILE_OWNED=0
+MOVEIT_RUNTIME_DIR=""
 
 source_if_exists() {
   local setup_file="$1"
@@ -167,8 +175,60 @@ cleanup() {
   trap - EXIT INT TERM
   if [[ -n "${MOVEIT_PID}" && "${KEEP_MOVEIT}" -eq 0 ]]; then
     echo "[DUAL-RUN] Stopping MoveIt stack started by this command."
-    kill "${MOVEIT_PID}" 2>/dev/null || true
+    local moveit_process_group=""
+    local expected_start_time=""
+    local extra_field=""
+    if [[ -n "${MOVEIT_PROCESS_GROUP_FILE}" \
+      && -f "${MOVEIT_PROCESS_GROUP_FILE}" \
+      && ! -L "${MOVEIT_PROCESS_GROUP_FILE}" ]]; then
+      read -r moveit_process_group expected_start_time extra_field \
+        < "${MOVEIT_PROCESS_GROUP_FILE}" || true
+    fi
+    local own_process_group=""
+    own_process_group="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
+    local process_group_is_owned=0
+    if [[ "${moveit_process_group}" =~ ^[1-9][0-9]*$ \
+      && "${expected_start_time}" =~ ^[1-9][0-9]*$ \
+      && -z "${extra_field}" \
+      && "${moveit_process_group}" != "${own_process_group}" ]]; then
+      local current_start_time=""
+      if [[ -r "/proc/${moveit_process_group}/stat" ]]; then
+        local process_stat=""
+        local process_stat_tail=""
+        local -a process_stat_fields=()
+        process_stat="$(<"/proc/${moveit_process_group}/stat")"
+        process_stat_tail="${process_stat##*) }"
+        read -r -a process_stat_fields <<< "${process_stat_tail}"
+        current_start_time="${process_stat_fields[19]:-}"
+      fi
+      if [[ -z "${current_start_time}" || "${current_start_time}" == "${expected_start_time}" ]]; then
+        if kill -0 -- "-${moveit_process_group}" 2>/dev/null; then
+          process_group_is_owned=1
+          kill -TERM -- "-${moveit_process_group}" 2>/dev/null || true
+        fi
+      else
+        echo "[DUAL-RUN] Refusing stale MoveIt process-group handoff for PGID ${moveit_process_group}." >&2
+      fi
+    fi
+    kill -TERM "${MOVEIT_PID}" 2>/dev/null || true
+    if [[ "${process_group_is_owned}" -eq 1 ]]; then
+      for _ in $(seq 1 50); do
+        if ! kill -0 -- "-${moveit_process_group}" 2>/dev/null; then
+          process_group_is_owned=0
+          break
+        fi
+        sleep 0.1
+      done
+      if [[ "${process_group_is_owned}" -eq 1 ]]; then
+        echo "[DUAL-RUN] MoveIt process group did not stop after TERM; sending KILL." >&2
+        kill -KILL -- "-${moveit_process_group}" 2>/dev/null || true
+      fi
+    fi
     wait "${MOVEIT_PID}" 2>/dev/null || true
+  fi
+  if [[ "${MOVEIT_PROCESS_GROUP_FILE_OWNED}" -eq 1 ]]; then
+    rm -f -- "${MOVEIT_PROCESS_GROUP_FILE}" 2>/dev/null || true
+    rmdir -- "${MOVEIT_RUNTIME_DIR}" 2>/dev/null || true
   fi
   exit "${status}"
 }
@@ -183,6 +243,7 @@ while [[ $# -gt 0 ]]; do
     --pair-id) PAIR_ID="${2:-}"; shift 2 ;;
     --holder-grasp-id) HOLDER_GRASP_ID="${2:-}"; shift 2 ;;
     --max-pair-attempts) MAX_PAIR_ATTEMPTS="${2:-}"; shift 2 ;;
+    --max-ik-screen-candidates) MAX_IK_SCREEN_CANDIDATES="${2:-}"; shift 2 ;;
     --assembly-x) ASSEMBLY_X="${2:-}"; shift 2 ;;
     --assembly-y) ASSEMBLY_Y="${2:-}"; shift 2 ;;
     --assembly-z) ASSEMBLY_Z="${2:-}"; shift 2 ;;
@@ -217,6 +278,7 @@ while [[ $# -gt 0 ]]; do
     --exact-ik-beam-width) EXACT_IK_BEAM_WIDTH="${2:-}"; shift 2 ;;
     --exact-ik-seed-perturbation-rad) EXACT_IK_SEED_PERTURBATION="${2:-}"; shift 2 ;;
     --pickup-approach-ik-steps) PICKUP_APPROACH_IK_STEPS="${2:-}"; shift 2 ;;
+    --pickup-pregrasp-offsets-m) PICKUP_PREGRASP_OFFSETS_M="${2:-}"; shift 2 ;;
     --planning-time-s) PLANNING_TIME="${2:-}"; shift 2 ;;
     --planning-attempts) PLANNING_ATTEMPTS="${2:-}"; shift 2 ;;
     --record-video) RECORD_VIDEO="${2:-}"; shift 2 ;;
@@ -260,6 +322,10 @@ if [[ "${IK_SOLVER}" != "pick_ik" && "${IK_SOLVER}" != "kdl" ]]; then
 fi
 if [[ ! "${JOINT_RANK_CANDIDATES}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-RUN] --joint-rank-candidates must be a non-negative integer." >&2
+  exit 1
+fi
+if [[ ! "${MAX_IK_SCREEN_CANDIDATES}" =~ ^[0-9]+$ ]]; then
+  echo "[DUAL-RUN] --max-ik-screen-candidates must be a non-negative integer." >&2
   exit 1
 fi
 if [[ ! "${EXACT_IK_CANDIDATES}" =~ ^[1-9][0-9]*$ ]]; then
@@ -321,6 +387,22 @@ else
   START_ARGS=(--mode "$([[ "${MODE}" == "sim" ]] && printf mock || printf hardware)")
   START_ARGS+=(--ros-domain-id "${ROS_DOMAIN_ID}")
   START_ARGS+=(--ik-solver "${IK_SOLVER}")
+  if [[ -z "${MOVEIT_PROCESS_GROUP_FILE}" ]]; then
+    MOVEIT_RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dual-run-moveit.XXXXXX")"
+    MOVEIT_PROCESS_GROUP_FILE="${MOVEIT_RUNTIME_DIR}/process-group"
+    MOVEIT_PROCESS_GROUP_FILE_OWNED=1
+  else
+    moveit_process_group_parent="$(dirname -- "${MOVEIT_PROCESS_GROUP_FILE}")"
+    if [[ ! -d "${moveit_process_group_parent}" || ! -w "${moveit_process_group_parent}" ]]; then
+      echo "[DUAL-RUN] MoveIt process-group handoff parent is not writable: ${moveit_process_group_parent}" >&2
+      exit 1
+    fi
+    if [[ -e "${MOVEIT_PROCESS_GROUP_FILE}" || -L "${MOVEIT_PROCESS_GROUP_FILE}" ]]; then
+      echo "[DUAL-RUN] Refusing an existing MoveIt process-group handoff: ${MOVEIT_PROCESS_GROUP_FILE}" >&2
+      exit 1
+    fi
+  fi
+  START_ARGS+=(--process-group-file "${MOVEIT_PROCESS_GROUP_FILE}")
   if [[ "${RVIZ}" -eq 1 ]]; then
     START_ARGS+=(--rviz)
   fi
@@ -405,12 +487,14 @@ if [[ "${MODE}" == "sim" ]]; then
     PLAN_ARGS+=(--ik-collision-diagnostics)
   fi
   PLAN_ARGS+=(--joint-rank-candidates "${JOINT_RANK_CANDIDATES}")
+  IFS=',' read -r -a PICKUP_PREGRASP_OFFSET_VALUES <<< "${PICKUP_PREGRASP_OFFSETS_M}"
   PLAN_ARGS+=(
     --ik-timeout-s "${IK_TIMEOUT}"
     --exact-ik-candidates "${EXACT_IK_CANDIDATES}"
     --exact-ik-beam-width "${EXACT_IK_BEAM_WIDTH}"
     --exact-ik-seed-perturbation-rad "${EXACT_IK_SEED_PERTURBATION}"
     --pickup-approach-ik-steps "${PICKUP_APPROACH_IK_STEPS}"
+    --pickup-pregrasp-offsets-m "${PICKUP_PREGRASP_OFFSET_VALUES[@]}"
     --planning-time-s "${PLANNING_TIME}"
     --planning-attempts "${PLANNING_ATTEMPTS}"
   )
@@ -418,6 +502,7 @@ if [[ "${MODE}" == "sim" ]]; then
   python3 scripts/plan_simple_dual_robot_sim.py \
     "${COMMON_TASK_ARGS[@]}" \
     --max-pair-attempts "${MAX_PAIR_ATTEMPTS}" \
+    --max-ik-screen-candidates "${MAX_IK_SCREEN_CANDIDATES}" \
     "${PLAN_ARGS[@]}" \
     --output "${PLAN_PATH}"
   if [[ "${PLANNING_ONLY}" -eq 1 ]]; then

@@ -286,6 +286,70 @@ def _pregrasp_aabb_obstacles(
     return obstacles
 
 
+def _attached_collision_objects(
+    plan: Mapping[str, object],
+) -> dict[str, dict[str, object]]:
+    moveit = plan.get("moveit")
+    if not isinstance(moveit, dict):
+        return {}
+    raw_geometry = moveit.get("attached_collision_geometry")
+    if not isinstance(raw_geometry, dict):
+        return {}
+    raw_objects = raw_geometry.get("objects")
+    if not isinstance(raw_objects, dict):
+        return {}
+    objects: dict[str, dict[str, object]] = {}
+    for key, raw_object in raw_objects.items():
+        if not isinstance(raw_object, dict):
+            raise ValueError(f"Attached collision object '{key}' must be a mapping.")
+        objects[str(key)] = dict(raw_object)
+    return objects
+
+
+def _apply_attached_collision_objects(
+    commander,
+    obstacles: Mapping[str, Mapping[str, object]],
+    *,
+    frame_id: str,
+) -> tuple[bool, str]:
+    apply_attached = getattr(commander, "apply_planning_scene_attached_obstacles", None)
+    if not callable(apply_attached):
+        return True, "Attached-collision API unavailable in lightweight test adapter."
+    return apply_attached(
+        [dict(value) for value in obstacles.values()],
+        default_frame_id=frame_id,
+    )
+
+
+def _remove_attached_collision_objects(
+    commander,
+    obstacles: Mapping[str, Mapping[str, object]],
+    *,
+    frame_id: str,
+) -> tuple[bool, str]:
+    remove_attached = getattr(commander, "remove_planning_scene_attached_obstacles", None)
+    if not callable(remove_attached):
+        return True, "Attached-collision API unavailable in lightweight test adapter."
+    return remove_attached(
+        [dict(value) for value in obstacles.values()],
+        default_frame_id=frame_id,
+    )
+
+
+def _has_loaded_part_collision_geometry(plan: Mapping[str, object]) -> bool:
+    moveit = plan.get("moveit")
+    if not isinstance(moveit, dict):
+        return False
+    phase_geometry = moveit.get("pregrasp_aabb_collision_geometry")
+    attached_geometry = moveit.get("attached_collision_geometry")
+    return (
+        isinstance(phase_geometry, dict)
+        and bool(phase_geometry.get("obstacles"))
+        and isinstance(attached_geometry, dict)
+        and bool(attached_geometry.get("objects"))
+    )
+
+
 def _make_commander(
     *,
     role: str,
@@ -402,6 +466,52 @@ def _initialize_gripper_open(gripper) -> tuple[bool, str]:
     return gripper.open(width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
 
 
+def _activate_available_grippers(
+    grippers: Mapping[str, object],
+    *,
+    timeout_s: float,
+    record: Callable[..., None],
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Probe every role first, then home only controllers that are present."""
+
+    available: dict[str, object] = {}
+    skipped: list[str] = []
+    for role, gripper in grippers.items():
+        try:
+            gripper.wait_for_server(timeout_s=float(timeout_s))
+        except RuntimeError as exc:
+            if "unavailable" not in str(exc).lower():
+                raise
+            skipped.append(role)
+            record(
+                name=f"skip_{role}_gripper_unavailable",
+                role=role,
+                ok=True,
+                message=f"{exc} Continuing without hardware gripper commands for this role.",
+            )
+            continue
+        available[role] = gripper
+        record(
+            name=f"wait_for_{role}_gripper",
+            role=role,
+            ok=True,
+            message="Normalized position topics and open/stop Trigger services are configured.",
+        )
+
+    # Do not move either gripper until availability has been checked for both.
+    for role, gripper in available.items():
+        home_ok, home_message = _initialize_gripper_open(gripper)
+        record(
+            name=f"initialize_{role}_gripper_open_zero",
+            role=role,
+            ok=home_ok,
+            message=home_message,
+        )
+        if not home_ok:
+            raise RuntimeError(f"Could not establish the {role} gripper open zero: {home_message}")
+    return available, tuple(skipped)
+
+
 def _stop_grippers(grippers: Mapping[str, object], *, reason: str) -> None:
     for role, gripper in grippers.items():
         stop = getattr(gripper, "stop", None)
@@ -444,8 +554,8 @@ def _confirmation_text(
         f"  inserter:         lbr_two / {inserter_id}\n"
         f"  stop_after:       {config.stop_after}\n"
         f"  velocity_scale:   {config.velocity_scale:.3f}\n"
-        "  collision scene:  both robots + table + temporary pregrasp AABBs; "
-        "exact Fabrica meshes omitted\n"
+        "  collision scene:  both robots + table + phase-aware part AABBs; "
+        "incoming part attached during loaded transport\n"
         "Verify the physical 840 mm base transform, clear the cell, keep both "
         "E-stops reachable, and type 'yes' to continue: "
     )
@@ -469,6 +579,8 @@ def _preflight_targets(
     assert isinstance(targets, dict)
     success = True
     contact_roles = set(initial_contact_roles)
+    attached_objects = _attached_collision_objects(plan)
+    incoming_attached = False
     for role, target_name in _motion_sequence_through(stop_after):
         if role_filter is not None and role != role_filter:
             continue
@@ -489,6 +601,23 @@ def _preflight_targets(
                 break
             continue
         target = _target_from_payload(targets[target_name], frame_id=frame_id)
+        active_aabbs = _pregrasp_aabb_obstacles(plan, target_name=target_name)
+        if active_aabbs:
+            scene_ok, scene_message = commanders["holder"].apply_planning_scene_obstacles(
+                active_aabbs,
+                default_frame_id=frame_id,
+            )
+            record(
+                name=f"preflight_apply_{target_name}_part_aabbs",
+                role="shared",
+                ok=scene_ok,
+                message=scene_message,
+            )
+            if not scene_ok:
+                success = False
+                if stop_on_failure:
+                    break
+                continue
         joints, message = commanders[role].compute_ik(target)
         if joints is None:
             fallback_seed_state = dict(finger_state)
@@ -551,6 +680,37 @@ def _preflight_targets(
                 if not closed_ok:
                     message = f"{message}; could not apply post-grasp finger state: {closed_message}"
                     ok = False
+        if active_aabbs:
+            remove_ok, remove_message = commanders["holder"].remove_planning_scene_obstacles(
+                [str(obstacle["id"]) for obstacle in active_aabbs],
+                default_frame_id=frame_id,
+            )
+            record(
+                name=f"preflight_remove_{target_name}_part_aabbs",
+                role="shared",
+                ok=remove_ok,
+                message=remove_message,
+            )
+            if not remove_ok:
+                ok = False
+                message = f"{message}; could not remove phase part AABBs: {remove_message}"
+        if ok and target_name == "inserter_pickup_grasp" and attached_objects:
+            attach_ok, attach_message = _apply_attached_collision_objects(
+                commanders["holder"],
+                attached_objects,
+                frame_id=frame_id,
+            )
+            record(
+                name="preflight_attach_incoming_collision",
+                role="shared",
+                ok=attach_ok,
+                message=attach_message,
+            )
+            if attach_ok:
+                incoming_attached = True
+            else:
+                ok = False
+                message = f"{message}; could not attach incoming collision geometry: {attach_message}"
         record_args: dict[str, object] = {
             "name": f"preflight_{target_name}",
             "role": role,
@@ -569,6 +729,25 @@ def _preflight_targets(
             success = False
             if stop_on_failure:
                 break
+    if incoming_attached:
+        detach_ok, detach_message = _remove_attached_collision_objects(
+            commanders["holder"],
+            attached_objects,
+            frame_id=frame_id,
+        )
+        record(
+            name="preflight_cleanup_attached_incoming_collision",
+            role="shared",
+            ok=detach_ok,
+            message=detach_message,
+        )
+        if not detach_ok:
+            # A failed purge leaves the shared scene unknown.  Do not cache the
+            # result or evaluate another candidate against potentially stale
+            # incoming-part geometry.
+            raise RuntimeError(
+                f"Could not clean up incoming attached collision geometry: {detach_message}"
+            )
     return success
 
 
@@ -805,9 +984,36 @@ def _execute_sequence(
     assert isinstance(targets, dict)
     last_completed = ""
     contact_roles: set[str] = set()
+    attached_objects = _attached_collision_objects(plan)
+    incoming_attached = False
+
+    def _finish(success: bool, status: str, completed: str) -> tuple[bool, str, str]:
+        nonlocal incoming_attached
+        if incoming_attached:
+            detach_ok, detach_message = _remove_attached_collision_objects(
+                commanders["holder"],
+                attached_objects,
+                frame_id=str(config.frame_id),
+            )
+            record(
+                name="cleanup_attached_incoming_collision",
+                role="shared",
+                ok=detach_ok,
+                message=detach_message,
+            )
+            incoming_attached = False
+            if not detach_ok:
+                return False, "attached_collision_cleanup_failed", completed
+        return success, status, completed
 
     for role in ("holder", "inserter"):
         if role not in grippers:
+            record(
+                name=f"skip_position_{role}_gripper_for_approach",
+                role=role,
+                ok=True,
+                message="Gripper controller is unavailable; arm execution continues without this command.",
+            )
             continue
         debug_phase = "holder_pregrasp" if role == "holder" else "inserter_pickup_pregrasp"
         if update_debug is not None:
@@ -834,7 +1040,7 @@ def _execute_sequence(
                     status="failed",
                     message=message,
                 )
-            return False, f"{role}_gripper_approach_position_failed", last_completed
+            return _finish(False, f"{role}_gripper_approach_position_failed", last_completed)
 
     approach_state = _moveit_gripper_state_for_plan(plan)
     state_ok, state_message = _apply_moveit_gripper_state(commanders["holder"], approach_state)
@@ -845,7 +1051,7 @@ def _execute_sequence(
         message=state_message,
     )
     if not state_ok:
-        return False, "approach_gripper_moveit_state_failed", last_completed
+        return _finish(False, "approach_gripper_moveit_state_failed", last_completed)
 
     for role, target_name in MOTION_SEQUENCE:
         if update_debug is not None:
@@ -876,7 +1082,7 @@ def _execute_sequence(
                 message=message,
             )
             if not ok:
-                return (
+                return _finish(
                     False,
                     f"{target_name}_aabb_apply_failed",
                     last_completed,
@@ -933,7 +1139,7 @@ def _execute_sequence(
                     status="failed",
                     message=message,
                 )
-            return False, f"{target_name}_failed", last_completed
+            return _finish(False, f"{target_name}_failed", last_completed)
         last_completed = target_name
         if update_debug is not None:
             update_debug(
@@ -945,29 +1151,40 @@ def _execute_sequence(
             )
 
         close_role = GRIPPER_CLOSE_AFTER.get(target_name)
-        if close_role is not None and close_role in grippers:
-            width = _gripper_width_for_role(plan, close_role, contact=True)
-            ok, message = _command_gripper_width(
-                grippers[close_role],
-                width,
-                approach=False,
-            )
-            record(
-                name=f"position_{close_role}_gripper_for_contact",
-                role=close_role,
-                ok=ok,
-                message=message,
-            )
-            if not ok:
-                if update_debug is not None:
-                    update_debug(
-                        candidate=plan,
-                        attempt_index=candidate_rank,
-                        phase=target_name,
-                        status="failed",
-                        message=message,
-                    )
-                return False, f"{close_role}_gripper_close_failed", last_completed
+        if close_role is not None:
+            if close_role in grippers:
+                width = _gripper_width_for_role(plan, close_role, contact=True)
+                ok, message = _command_gripper_width(
+                    grippers[close_role],
+                    width,
+                    approach=False,
+                )
+                record(
+                    name=f"position_{close_role}_gripper_for_contact",
+                    role=close_role,
+                    ok=ok,
+                    message=message,
+                )
+                if not ok:
+                    if update_debug is not None:
+                        update_debug(
+                            candidate=plan,
+                            attempt_index=candidate_rank,
+                            phase=target_name,
+                            status="failed",
+                            message=message,
+                        )
+                    return _finish(False, f"{close_role}_gripper_close_failed", last_completed)
+            else:
+                record(
+                    name=f"skip_position_{close_role}_gripper_for_contact",
+                    role=close_role,
+                    ok=True,
+                    message=(
+                        "Gripper controller is unavailable; arm execution and the planned "
+                        "MoveIt finger/object state continue without this hardware command."
+                    ),
+                )
             contact_roles.add(close_role)
             closed_state = _moveit_gripper_state_for_plan(
                 plan,
@@ -981,12 +1198,27 @@ def _execute_sequence(
                 message=state_message,
             )
             if not state_ok:
-                return False, f"{close_role}_gripper_moveit_state_failed", last_completed
+                return _finish(False, f"{close_role}_gripper_moveit_state_failed", last_completed)
+            if close_role == "inserter" and attached_objects:
+                attach_ok, attach_message = _apply_attached_collision_objects(
+                    commanders["holder"],
+                    attached_objects,
+                    frame_id=str(config.frame_id),
+                )
+                record(
+                    name="attach_incoming_collision",
+                    role="shared",
+                    ok=attach_ok,
+                    message=attach_message,
+                )
+                if not attach_ok:
+                    return _finish(False, "incoming_collision_attach_failed", last_completed)
+                incoming_attached = True
 
         if target_name == config.stop_after:
-            return True, f"stopped_at_{target_name}", last_completed
+            return _finish(True, f"stopped_at_{target_name}", last_completed)
 
-    return True, "completed", last_completed
+    return _finish(True, "completed", last_completed)
 
 
 def _write_attempt(
@@ -1031,11 +1263,12 @@ def execute_dual_real_plan(
 ) -> DualRealExecutionResult:
     if config.stop_after not in STOP_AFTER_CHOICES:
         raise ValueError(f"stop_after must be one of {STOP_AFTER_CHOICES}; got {config.stop_after!r}.")
-    if config.execute and not config.allow_objectless_planning:
+    source_plan = load_and_validate_dual_plan(plan_json)
+    if config.execute and not _has_loaded_part_collision_geometry(source_plan) and not config.allow_objectless_planning:
         raise RuntimeError(
-            "Hardware execution uses a table-and-robots MoveIt scene without "
-            "Fabrica object meshes. Pass --allow-objectless-planning only after "
-            "checking the real placement and approach paths."
+            "Hardware execution plan has no phase-aware workbench-part and "
+            "attached incoming-part collision geometry. Rebuild the task, or "
+            "pass --allow-objectless-planning only for an explicitly reviewed legacy plan."
         )
     if config.execute and not config.grippers_enabled and config.stop_after != "holder_pregrasp":
         raise RuntimeError("Execution without gripper control is limited to stop_after=holder_pregrasp.")
@@ -1047,7 +1280,6 @@ def execute_dual_real_plan(
 
     plan_json = plan_json.expanduser().resolve()
     output_path = attempt_artifact_path.expanduser().resolve()
-    source_plan = load_and_validate_dual_plan(plan_json)
     ranked_candidates = _ranked_candidate_plans(source_plan)
     execution_plan = source_plan
     pair_id = ""
@@ -1063,6 +1295,7 @@ def execute_dual_real_plan(
     steps: list[dict[str, object]] = []
     commanders: dict[str, object] = {}
     grippers: dict[str, object] = {}
+    skipped_gripper_roles: tuple[str, ...] = ()
     debug_server = None
     debug_scene_candidate_id = ""
     candidate_counts = dict(ranked_candidates[0].get("candidate_filter_diagnostics", {}))
@@ -1266,7 +1499,7 @@ def execute_dual_real_plan(
                 return result
 
         if config.grippers_enabled:
-            grippers = {
+            configured_grippers = {
                 role: _make_gripper(
                     role=role,
                     commander=commanders[role],
@@ -1274,23 +1507,11 @@ def execute_dual_real_plan(
                 )
                 for role in ROLE_SPECS
             }
-            for role, gripper in grippers.items():
-                gripper.wait_for_server(timeout_s=float(config.wait_for_moveit_timeout_s))
-                _record(
-                    name=f"wait_for_{role}_gripper",
-                    role=role,
-                    ok=True,
-                    message="Normalized position topics and open/stop Trigger services are configured.",
-                )
-                home_ok, home_message = _initialize_gripper_open(gripper)
-                _record(
-                    name=f"initialize_{role}_gripper_open_zero",
-                    role=role,
-                    ok=home_ok,
-                    message=home_message,
-                )
-                if not home_ok:
-                    raise RuntimeError(f"Could not establish the {role} gripper open zero: {home_message}")
+            grippers, skipped_gripper_roles = _activate_available_grippers(
+                configured_grippers,
+                timeout_s=float(config.wait_for_moveit_timeout_s),
+                record=_record,
+            )
 
         success, status, last_completed = _execute_sequence(
             plan=execution_plan,
@@ -1317,6 +1538,12 @@ def execute_dual_real_plan(
                 else f"Dual real sequence failed with status {status}."
             )
         )
+        if skipped_gripper_roles:
+            message += (
+                " Hardware gripper commands were skipped for unavailable role(s): "
+                + ", ".join(skipped_gripper_roles)
+                + "."
+            )
         result = DualRealExecutionResult(
             success,
             status,
