@@ -6,6 +6,7 @@ from unittest import mock
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
 from grasp_planning.pipeline import RealExecutionConfig
 from grasp_planning.ros2 import real_grasp_executor
+from grasp_planning.ros2.moveit_pose_commander import PoseTarget
 
 
 class _FakeCommander:
@@ -15,6 +16,35 @@ class _FakeCommander:
     def move_to_pose(self, target, *, label: str, execute: bool) -> tuple[bool, str]:
         self.calls.append((label, target.frame_id))
         return True, f"{label} ok"
+
+
+class _FakeWaypointCommander:
+    """Only supports the compute_ik/get_current_pose/plan/execute primitives
+    the cartesian_waypoints strategy drives; has no move_to_pose, so a test
+    using it fails loudly if the "direct" code path is taken by mistake."""
+
+    def __init__(self, *, current_pose: PoseTarget) -> None:
+        self._current_pose = current_pose
+        self.plans: list[str] = []
+        self.executed: list[str] = []
+
+    def get_current_pose(self, *, frame_id: str) -> PoseTarget:
+        del frame_id
+        return self._current_pose
+
+    def compute_ik(self, target, seed_joint_positions=None):
+        del target, seed_joint_positions
+        return [0.0] * 7, "ok"
+
+    def plan_to_joint_positions(self, joint_positions, *, label: str):
+        del joint_positions
+        self.plans.append(label)
+        return object(), f"{label} plan ok"
+
+    def execute_trajectory(self, trajectory, *, label: str):
+        del trajectory
+        self.executed.append(label)
+        return True, f"{label} executed"
 
 
 class _FakeGripper:
@@ -148,6 +178,47 @@ def test_execute_selected_world_grasp_runs_full_sequence_with_gripper() -> None:
     assert commander.calls == [("pregrasp", "base"), ("grasp", "base"), ("lift", "base")]
     assert gripper.calls == [("open", 0.08), ("close", 0.02)]
     assert [step["name"] for step in steps] == ["open_gripper", "pregrasp", "grasp", "close_gripper", "lift"]
+
+
+def test_execute_selected_world_grasp_uses_cartesian_waypoint_ik_strategy() -> None:
+    current_pose = PoseTarget.from_quaternion(
+        x=0.0, y=0.0, z=0.0, quaternion_xyzw=(0.0, 0.0, 0.0, 1.0), frame_id="base"
+    )
+    commander = _FakeWaypointCommander(current_pose=current_pose)
+    config = RealExecutionConfig(
+        enabled=True,
+        stop_after="pregrasp",
+        frame_id="base",
+        gripper_enabled=False,
+        ik_strategy="cartesian_waypoints",
+        cartesian_waypoint_count=5,
+    )
+
+    result, steps = real_grasp_executor._execute_selected_world_grasp(
+        commander=commander,
+        gripper=None,
+        world_grasp=_world_grasp(),
+        config=config,
+        attempt_artifact_path=Path("artifacts/test_attempt.json"),
+    )
+
+    assert result.success is True
+    assert result.status == "stopped_at_pregrasp"
+    assert result.pregrasp_reached is True
+    assert commander.plans == ["pregrasp"]
+    assert commander.executed == ["pregrasp"]
+    assert [step["name"] for step in steps] == ["pregrasp"]
+
+
+def test_execute_real_grasp_from_bundle_rejects_unknown_ik_strategy(tmp_path: Path) -> None:
+    config = RealExecutionConfig(enabled=True, ik_strategy="teleport")
+
+    try:
+        real_grasp_executor.execute_real_grasp_from_bundle(input_json=tmp_path / "missing.json", config=config)
+    except ValueError as exc:
+        assert "teleport" in str(exc)
+    else:
+        raise AssertionError("Expected an unknown ik_strategy to raise before touching ROS or the bundle file.")
 
 
 def test_make_gripper_client_can_select_generic_gripper_command_client() -> None:

@@ -313,6 +313,8 @@ class RealExecutionConfig:
     joint_names: tuple[str, ...] = ()
     frame_id: str = "base"
     wait_for_moveit_timeout_s: float = 15.0
+    ik_strategy: str = "direct"
+    cartesian_waypoint_count: int = 10
     ik_timeout_s: float = 2.0
     planning_time_s: float = 5.0
     num_planning_attempts: int = 5

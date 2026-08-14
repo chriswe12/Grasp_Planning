@@ -8,9 +8,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from grasp_planning.pipeline.cartesian_waypoint_ik import IK_STRATEGIES, resolve_ik
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
 )
+from grasp_planning.ros2.mock_gripper_client import MockGripperClient
 from grasp_planning.ros2.moveit_pose_commander import (
     MoveItPoseCommander,
     MoveItPoseCommanderConfig,
@@ -26,6 +28,8 @@ from grasp_planning.start_poses import (
     kuka_gripper_approach_width,
     kuka_moveit_gripper_state,
 )
+
+GRIPPER_CLIENTS = ("mock", "trigger_service")
 
 ROLE_SPECS = {
     "holder": {
@@ -71,6 +75,8 @@ class DualRealExecutionConfig:
     moveit_namespace: str = "/lbr_dual_arm"
     frame_id: str = "base_link"
     wait_for_moveit_timeout_s: float = 20.0
+    ik_strategy: str = "direct"
+    cartesian_waypoint_count: int = 10
     ik_timeout_s: float = 2.0
     planning_time_s: float = 8.0
     num_planning_attempts: int = 8
@@ -83,6 +89,12 @@ class DualRealExecutionConfig:
     allow_objectless_planning: bool = False
     stop_after: str = "holder_pregrasp"
     grippers_enabled: bool = True
+    # "mock" (default): no gripper hardware/service is required, matching
+    # this repo's dual mock stack, which spawns no gripper controller at
+    # all. Set to "trigger_service" for real hardware, where the separate
+    # gripper-computer process (scripts/gripper_computer/start_dual_grippers.sh)
+    # actually serves the *_gripper_open/close/stop_service endpoints below.
+    gripper_client: str = "mock"
     gripper_timeout_s: float = 10.0
     grasp_settle_time_s: float = 0.5
     holder_gripper_open_service: str = "/lbr_one/gripper_controller/open"
@@ -319,6 +331,15 @@ def _make_gripper(
     commander,
     config: DualRealExecutionConfig,
 ):
+    client = str(config.gripper_client)
+    if client == "mock":
+        return MockGripperClient(
+            commander,
+            finger_joint_name=f"{ROLE_SPECS[role]['robot']}_left_finger_joint",
+            grasp_settle_time_s=float(config.grasp_settle_time_s),
+        )
+    if client != "trigger_service":
+        raise ValueError(f"gripper_client must be one of {GRIPPER_CLIENTS}; got {client!r}.")
     prefix = "holder" if role == "holder" else "inserter"
     return NormalizedPositionGripperClient(
         commander,
@@ -444,7 +465,13 @@ def _confirmation_text(
         f"  inserter:         lbr_two / {inserter_id}\n"
         f"  stop_after:       {config.stop_after}\n"
         f"  velocity_scale:   {config.velocity_scale:.3f}\n"
-        "  collision scene:  both robots + table + temporary pregrasp AABBs; "
+        f"  gripper_client:   {config.gripper_client}"
+        + (
+            "  <-- WILL NOT ACTUATE ANY REAL GRIPPER; grasps are simulated only\n"
+            if config.gripper_client == "mock"
+            else "\n"
+        )
+        + "  collision scene:  both robots + table + temporary pregrasp AABBs; "
         "exact Fabrica meshes omitted\n"
         "Verify the physical 840 mm base transform, clear the cell, keep both "
         "E-stops reachable, and type 'yes' to continue: "
@@ -464,6 +491,8 @@ def _preflight_targets(
     stop_after: str = "inserter_preinsertion",
     resolved_joint_targets: dict[str, tuple[float, ...]] | None = None,
     initial_contact_roles: frozenset[str] = frozenset(),
+    ik_strategy: str = "direct",
+    cartesian_waypoint_count: int = 10,
 ) -> bool:
     targets = plan["targets"]
     assert isinstance(targets, dict)
@@ -489,26 +518,40 @@ def _preflight_targets(
                 break
             continue
         target = _target_from_payload(targets[target_name], frame_id=frame_id)
-        joints, message = commanders[role].compute_ik(target)
+        joints, message = resolve_ik(
+            commanders[role],
+            target,
+            strategy=ik_strategy,
+            num_waypoints=cartesian_waypoint_count,
+        )
         if joints is None:
-            fallback_seed_state = dict(finger_state)
-            fallback_seed_state.update(
-                zip(ROLE_SPECS[role]["joint_names"], KUKA_MOVEIT_ARM_START_JOINT_VALUES)
-            )
-            try:
-                fallback_joints, fallback_message = commanders[role].compute_ik(
+            if ik_strategy == "cartesian_waypoints":
+                fallback_joints, fallback_message = resolve_ik(
+                    commanders[role],
                     target,
-                    seed_robot_state=fallback_seed_state,
-                )
-            except TypeError as exc:
-                if "seed_robot_state" not in str(exc):
-                    raise
-                # Compatibility for lightweight test adapters and older sourced
-                # ROS workspaces; production uses the complete state above.
-                fallback_joints, fallback_message = commanders[role].compute_ik(
-                    target,
+                    strategy=ik_strategy,
                     seed_joint_positions=KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+                    num_waypoints=cartesian_waypoint_count,
                 )
+            else:
+                fallback_seed_state = dict(finger_state)
+                fallback_seed_state.update(
+                    zip(ROLE_SPECS[role]["joint_names"], KUKA_MOVEIT_ARM_START_JOINT_VALUES)
+                )
+                try:
+                    fallback_joints, fallback_message = commanders[role].compute_ik(
+                        target,
+                        seed_robot_state=fallback_seed_state,
+                    )
+                except TypeError as exc:
+                    if "seed_robot_state" not in str(exc):
+                        raise
+                    # Compatibility for lightweight test adapters and older sourced
+                    # ROS workspaces; production uses the complete state above.
+                    fallback_joints, fallback_message = commanders[role].compute_ik(
+                        target,
+                        seed_joint_positions=KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+                    )
             if fallback_joints is not None:
                 joints = fallback_joints
                 message = f"live-state IK failed ({message}); start-seeded alternate IK succeeded"
@@ -628,6 +671,8 @@ def _select_ranked_preflight_candidate(
     record: Callable[..., None],
     stop_after: str = "inserter_preinsertion",
     update_debug: Callable[..., None] | None = None,
+    ik_strategy: str = "direct",
+    cartesian_waypoint_count: int = 10,
 ) -> tuple[dict[str, object] | None, dict[str, object]]:
     """Select the first producer-ranked pair passing all target IK checks."""
 
@@ -707,6 +752,8 @@ def _select_ranked_preflight_candidate(
                     stop_after=stop_after,
                     resolved_joint_targets=role_joint_targets,
                     initial_contact_roles=(frozenset({"holder"}) if role == "inserter" else frozenset()),
+                    ik_strategy=ik_strategy,
+                    cartesian_waypoint_count=cartesian_waypoint_count,
                 )
                 failure = "" if role_ok else "target IK failed"
                 role_cache[cache_key] = (
@@ -1031,6 +1078,10 @@ def execute_dual_real_plan(
 ) -> DualRealExecutionResult:
     if config.stop_after not in STOP_AFTER_CHOICES:
         raise ValueError(f"stop_after must be one of {STOP_AFTER_CHOICES}; got {config.stop_after!r}.")
+    if config.ik_strategy not in IK_STRATEGIES:
+        raise ValueError(f"ik_strategy must be one of {IK_STRATEGIES}; got {config.ik_strategy!r}.")
+    if config.gripper_client not in GRIPPER_CLIENTS:
+        raise ValueError(f"gripper_client must be one of {GRIPPER_CLIENTS}; got {config.gripper_client!r}.")
     if config.execute and not config.allow_objectless_planning:
         raise RuntimeError(
             "Hardware execution uses a table-and-robots MoveIt scene without "
@@ -1206,6 +1257,8 @@ def execute_dual_real_plan(
             record=_record,
             stop_after=str(config.stop_after),
             update_debug=_update_debug,
+            ik_strategy=str(config.ik_strategy),
+            cartesian_waypoint_count=int(config.cartesian_waypoint_count),
         )
         candidate_counts["exact_ik_pair_tasks_checked"] = int(pair_selection["candidates_checked"])
         candidate_counts["exact_ik_holder_grasps_checked"] = sum(
@@ -1375,6 +1428,7 @@ def execute_dual_real_plan(
 __all__ = [
     "DualRealExecutionConfig",
     "DualRealExecutionResult",
+    "GRIPPER_CLIENTS",
     "MOTION_SEQUENCE",
     "STOP_AFTER_CHOICES",
     "execute_dual_real_plan",

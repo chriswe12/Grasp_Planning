@@ -9,15 +9,20 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
     NoPoseFeasibleDualTasksError,
 )
+from grasp_planning.ros2 import dual_real_grasp_executor
 from grasp_planning.ros2.dual_real_grasp_executor import (
     MOTION_SEQUENCE,
     DualRealExecutionConfig,
     _execute_sequence,
+    _make_gripper,
     _preflight_targets,
     _select_ranked_preflight_candidate,
     _work_surface_obstacle,
+    execute_dual_real_plan,
     load_and_validate_dual_plan,
 )
+from grasp_planning.ros2.mock_gripper_client import MockGripperClient
+from grasp_planning.ros2.moveit_pose_commander import PoseTarget
 from grasp_planning.start_poses import (
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
     kuka_gripper_approach_width,
@@ -117,6 +122,38 @@ class _RankedIkCommander:
         if target.x > 0.9:
             return None, "synthetic no IK"
         return [0.0] * 7, "ok"
+
+
+class _KdlLikeCommander:
+    """Models a local single-seed solver's failure mode on a distant target.
+
+    A seedless call only converges within `near_threshold` of the current
+    pose. A call seeded with the fixed `KUKA_MOVEIT_ARM_START_JOINT_VALUES`
+    generic retry seed (what the existing single-shot fallback uses) is no
+    better - it only converges within `near_threshold` of *that* seed's own
+    pose too, which this fake does not know, so it is treated the same as no
+    seed. Any other seed is assumed to come from
+    `solve_cartesian_waypoint_chain`'s previous, already-close waypoint
+    solution and always converges - modeling why a walked chain succeeds on
+    a jump a single direct call (with or without the generic retry) cannot.
+    """
+
+    def __init__(self, *, current_pose: PoseTarget, near_threshold: float = 0.15) -> None:
+        self._current_pose = current_pose
+        self._near_threshold = near_threshold
+        self.calls: list[tuple[float, bool]] = []
+
+    def get_current_pose(self, *, frame_id: str) -> PoseTarget:
+        del frame_id
+        return self._current_pose
+
+    def compute_ik(self, target, seed_joint_positions=None):
+        if seed_joint_positions is None or tuple(seed_joint_positions) == tuple(KUKA_MOVEIT_ARM_START_JOINT_VALUES):
+            ok = abs(target.x - self._current_pose.x) <= self._near_threshold
+        else:
+            ok = True
+        self.calls.append((target.x, ok))
+        return ([0.0] * 7, "ok") if ok else (None, "no ik solution")
 
 
 def _recorded_steps():
@@ -547,6 +584,69 @@ def test_preflight_retries_ik_with_known_start_seed(tmp_path: Path) -> None:
         assert len(commander.seeds) >= 2
         assert commander.seeds[0] is None
         assert commander.seeds[1] is not None
+
+
+def test_preflight_targets_cartesian_waypoints_strategy_reaches_a_target_direct_cannot() -> None:
+    far_target_name = "inserter_preinsertion"
+    targets = {
+        target_name: {
+            "position_world_m": [1.0 if target_name == far_target_name else 0.0, 0.0, 0.1],
+            "orientation_xyzw_world": [0.0, 0.0, 0.0, 1.0],
+        }
+        for _, target_name in MOTION_SEQUENCE
+    }
+    plan = {
+        "roles": {
+            "holder": {"robot": "lbr_one"},
+            "inserter": {"robot": "lbr_two"},
+        },
+        "grasps": {
+            "holder": {"grasp_id": "h0001", "jaw_width_m": 0.040},
+            "inserter_pickup": {"grasp_id": "i0_0002", "jaw_width_m": 0.043},
+        },
+        "targets": targets,
+    }
+    current_pose = PoseTarget.from_quaternion(
+        x=0.0, y=0.0, z=0.1, quaternion_xyzw=(0.0, 0.0, 0.0, 1.0), frame_id="base_link"
+    )
+
+    direct_commanders = {
+        "holder": _KdlLikeCommander(current_pose=current_pose),
+        "inserter": _KdlLikeCommander(current_pose=current_pose),
+    }
+    direct_steps, direct_record = _recorded_steps()
+    direct_ok = _preflight_targets(
+        plan=plan,
+        commanders=direct_commanders,
+        frame_id="base_link",
+        record=direct_record,
+        ik_strategy="direct",
+    )
+    assert direct_ok is False
+    direct_far_step = next(step for step in direct_steps if step["name"] == f"preflight_{far_target_name}")
+    assert direct_far_step["ok"] is False
+
+    waypoint_commanders = {
+        "holder": _KdlLikeCommander(current_pose=current_pose),
+        "inserter": _KdlLikeCommander(current_pose=current_pose),
+    }
+    waypoint_steps, waypoint_record = _recorded_steps()
+    waypoint_ok = _preflight_targets(
+        plan=plan,
+        commanders=waypoint_commanders,
+        frame_id="base_link",
+        record=waypoint_record,
+        ik_strategy="cartesian_waypoints",
+        cartesian_waypoint_count=10,
+    )
+    assert waypoint_ok is True
+    waypoint_far_step = next(step for step in waypoint_steps if step["name"] == f"preflight_{far_target_name}")
+    assert waypoint_far_step["ok"] is True
+    assert "cartesian_waypoint_chain succeeded" in waypoint_far_step["message"]
+    # The chain reached x=1.0 through several small steps, not one direct
+    # jump: more than the 1 call a "direct" attempt (plus its 1 retry) would
+    # have made for this single target.
+    assert len(waypoint_commanders["inserter"].calls) > 2
 
 
 def test_fallback_preflight_joint_targets_are_reused_for_execution(

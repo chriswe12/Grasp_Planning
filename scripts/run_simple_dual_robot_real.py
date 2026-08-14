@@ -11,7 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from grasp_planning.pipeline.cartesian_waypoint_ik import IK_STRATEGIES  # noqa: E402
 from grasp_planning.ros2.dual_real_grasp_executor import (  # noqa: E402
+    GRIPPER_CLIENTS,
     STOP_AFTER_CHOICES,
     DualRealExecutionConfig,
     execute_dual_real_plan,
@@ -45,11 +47,44 @@ def _parse_args() -> argparse.Namespace:
         choices=STOP_AFTER_CHOICES,
         default="holder_pregrasp",
     )
+    parser.add_argument(
+        "--ik-strategy",
+        choices=IK_STRATEGIES,
+        default="direct",
+        help=(
+            "'direct' (default): one compute_ik call per target, matching "
+            "today's behavior. 'cartesian_waypoints': walk to each target "
+            "through --cartesian-waypoint-count linearly interpolated "
+            "Cartesian poses, seeding each waypoint's IK with the previous "
+            "waypoint's solution, to see whether a direct-jump IK failure is "
+            "a local-solver seeding artifact rather than a real reachability "
+            "limit."
+        ),
+    )
+    parser.add_argument(
+        "--cartesian-waypoint-count",
+        type=int,
+        default=10,
+        help="Only used when --ik-strategy=cartesian_waypoints.",
+    )
     parser.add_argument("--yes", action="store_true", help="Skip the final typed confirmation.")
     parser.add_argument(
         "--skip-grippers",
         action="store_true",
         help="Only valid for an executed holder_pregrasp motion test.",
+    )
+    parser.add_argument(
+        "--gripper-client",
+        choices=GRIPPER_CLIENTS,
+        default="mock",
+        help=(
+            "'mock' (default): no gripper hardware/service required - open/close "
+            "report success immediately and best-effort set the finger joint via "
+            "MoveIt's tracked robot state. Matches this repo's dual mock stack, "
+            "which spawns no gripper controller. Pass 'trigger_service' for real "
+            "hardware, where scripts/gripper_computer/start_dual_grippers.sh "
+            "actually serves the --*-gripper-*-service endpoints below."
+        ),
     )
     parser.add_argument("--velocity-scale", type=float, default=0.05)
     parser.add_argument("--acceleration-scale", type=float, default=0.05)
@@ -104,6 +139,8 @@ def main() -> int:
         raise ValueError("--acceleration-scale must be in (0, 0.20] for this hardware runner.")
     config = DualRealExecutionConfig(
         moveit_namespace=str(args.moveit_namespace),
+        ik_strategy=str(args.ik_strategy),
+        cartesian_waypoint_count=int(args.cartesian_waypoint_count),
         planning_time_s=float(args.planning_time_s),
         num_planning_attempts=int(args.planning_attempts),
         velocity_scale=float(args.velocity_scale),
@@ -114,6 +151,7 @@ def main() -> int:
         allow_objectless_planning=bool(args.allow_objectless_planning),
         stop_after=str(args.stop_after),
         grippers_enabled=not bool(args.skip_grippers),
+        gripper_client=str(args.gripper_client),
         gripper_timeout_s=float(args.gripper_timeout_s),
         grasp_settle_time_s=float(args.grasp_settle_time_s),
         gripper_position_feedback_tolerance=float(args.gripper_position_feedback_tolerance),

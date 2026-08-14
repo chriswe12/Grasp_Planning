@@ -19,6 +19,16 @@ class RunGraspPipelineRealTests(unittest.TestCase):
         self.assertEqual(config.stop_after, "grasp")
         self.assertEqual(config.frame_id, "base")
         self.assertAlmostEqual(config.velocity_scale, 0.05)
+        self.assertEqual(config.ik_strategy, "direct")
+        self.assertEqual(config.cartesian_waypoint_count, 10)
+
+    def test_real_execution_config_parses_cartesian_waypoint_ik_strategy(self) -> None:
+        config = run_grasp_pipeline._real_execution_config(
+            {"real_execution": {"ik_strategy": "cartesian_waypoints", "cartesian_waypoint_count": 20}}
+        )
+
+        self.assertEqual(config.ik_strategy, "cartesian_waypoints")
+        self.assertEqual(config.cartesian_waypoint_count, 20)
 
     def test_real_execution_config_parses_lbr_moveit_settings(self) -> None:
         config = run_grasp_pipeline._real_execution_config(

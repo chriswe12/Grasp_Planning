@@ -524,6 +524,8 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         joint_names=_tuple_strings(raw.get("joint_names", ())),
         frame_id=str(raw.get("frame_id", "base")),
         wait_for_moveit_timeout_s=float(raw.get("wait_for_moveit_timeout_s", 15.0)),
+        ik_strategy=str(raw.get("ik_strategy", "direct")),
+        cartesian_waypoint_count=int(raw.get("cartesian_waypoint_count", 10)),
         ik_timeout_s=float(raw.get("ik_timeout_s", 2.0)),
         planning_time_s=float(raw.get("planning_time_s", 5.0)),
         num_planning_attempts=int(raw.get("num_planning_attempts", 5)),

@@ -11,10 +11,20 @@ try:
     import rclpy
     from geometry_msgs.msg import Pose, PoseStamped
     from moveit_msgs.action import ExecuteTrajectory
-    from moveit_msgs.msg import CollisionObject, Constraints, JointConstraint, MoveItErrorCodes, PlanningScene
+    from moveit_msgs.msg import (
+        AllowedCollisionEntry,
+        AllowedCollisionMatrix,
+        CollisionObject,
+        Constraints,
+        JointConstraint,
+        MoveItErrorCodes,
+        PlanningScene,
+        PlanningSceneComponents,
+    )
     from moveit_msgs.srv import (
         ApplyPlanningScene,
         GetMotionPlan,
+        GetPlanningScene,
         GetPositionFK,
         GetPositionIK,
         GetStateValidity,
@@ -27,6 +37,8 @@ except Exception:  # pragma: no cover - optional dependency path
     rclpy = None
     Pose = None
     PoseStamped = None
+    AllowedCollisionEntry = None
+    AllowedCollisionMatrix = None
     ApplyPlanningScene = None
     CollisionObject = None
     ExecuteTrajectory = None
@@ -34,7 +46,9 @@ except Exception:  # pragma: no cover - optional dependency path
     JointConstraint = None
     MoveItErrorCodes = None
     PlanningScene = None
+    PlanningSceneComponents = None
     GetMotionPlan = None
+    GetPlanningScene = None
     GetPositionFK = None
     GetPositionIK = None
     GetStateValidity = None
@@ -168,6 +182,7 @@ class MoveItPoseCommanderConfig:
     fk_service_name: str = "/compute_fk"
     apply_planning_scene_service_name: str = "/apply_planning_scene"
     state_validity_service_name: str = "/check_state_validity"
+    get_planning_scene_service_name: str = "/get_planning_scene"
     execute_action_name: str = "/execute_trajectory"
     pipeline_id: str = ""
     planner_id: str = ""
@@ -193,6 +208,7 @@ class MoveItPoseCommanderConfig:
             "fk_service_name",
             "apply_planning_scene_service_name",
             "state_validity_service_name",
+            "get_planning_scene_service_name",
             "execute_action_name",
         ):
             object.__setattr__(
@@ -237,6 +253,10 @@ class MoveItPoseCommander(Node):
         self._state_validity_client = self.create_client(
             GetStateValidity,
             config.state_validity_service_name,
+        )
+        self._get_planning_scene_client = self.create_client(
+            GetPlanningScene,
+            config.get_planning_scene_service_name,
         )
         self._execute_client = ActionClient(self, ExecuteTrajectory, config.execute_action_name)
         self._active_goal_handle = None
@@ -404,6 +424,132 @@ class MoveItPoseCommander(Node):
         if not bool(getattr(response, "success", False)):
             return False, "MoveIt rejected the planning-scene removal."
         return True, f"Removed {len(collision_objects)} planning-scene obstacle(s)."
+
+    def get_allowed_collision_matrix(self) -> tuple[tuple[str, ...], tuple[tuple[bool, ...], ...]]:
+        """Fetch the move_group's live allowed-collision matrix (ACM).
+
+        Returns `(entry_names, entry_rows)` where `entry_rows[i][j]` is True
+        when collision checking between `entry_names[i]` and
+        `entry_names[j]` is currently disabled (i.e. that pair is allowed to
+        overlap without being reported as a collision).
+        """
+        if GetPlanningScene is None or PlanningSceneComponents is None:
+            raise RuntimeError("MoveIt planning-scene message types are unavailable.")
+        if not self._get_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            raise RuntimeError(
+                f"MoveIt get-planning-scene service '{self.config.get_planning_scene_service_name}' is unavailable."
+            )
+
+        request = GetPlanningScene.Request()
+        request.components.components = PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
+        response = self._wait_for_future(
+            self._get_planning_scene_client.call_async(request),
+            timeout_s=self.config.wait_for_moveit_timeout_s,
+            label="get-planning-scene request",
+        )
+        if response is None:
+            raise RuntimeError("get_planning_scene response was None.")
+
+        acm = response.scene.allowed_collision_matrix
+        entry_names = tuple(str(name) for name in acm.entry_names)
+        entry_rows = tuple(tuple(bool(value) for value in entry.enabled) for entry in acm.entry_values)
+        return entry_names, entry_rows
+
+    def apply_allowed_collision_matrix(
+        self,
+        entry_names: Sequence[str],
+        entry_rows: Sequence[Sequence[bool]],
+    ) -> tuple[bool, str]:
+        """Replace the move_group's ACM with the given full entry matrix.
+
+        MoveIt treats an ACM inside a diff `PlanningScene` message as a
+        complete replacement, not a merge, so callers must pass every entry
+        they want to keep (typically the result of `get_allowed_collision_matrix`
+        with some pairs flipped), not just the pairs being changed.
+        """
+        if AllowedCollisionMatrix is None or AllowedCollisionEntry is None or PlanningScene is None:
+            return False, "MoveIt planning-scene message types are unavailable."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        acm = AllowedCollisionMatrix()
+        acm.entry_names = [str(name) for name in entry_names]
+        entry_values = []
+        for row in entry_rows:
+            entry = AllowedCollisionEntry()
+            entry.enabled = [bool(value) for value in row]
+            entry_values.append(entry)
+        acm.entry_values = entry_values
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.allowed_collision_matrix = acm
+
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="allowed-collision-matrix apply",
+            )
+        except Exception as exc:
+            return False, f"Allowed-collision-matrix apply failed: {exc}"
+        if response is None:
+            return False, "Allowed-collision-matrix apply response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the allowed-collision-matrix update."
+        return True, f"Applied an allowed-collision-matrix with {len(acm.entry_names)} entries."
+
+    def apply_robot_state_joint_positions(
+        self,
+        joint_positions: Mapping[str, float],
+    ) -> tuple[bool, str]:
+        """Push named joint positions into the move_group-monitored robot state.
+
+        Intended for joints no `MoveGroup` plans (e.g. a mimic-driven gripper
+        finger, only ever set externally), so there is no `plan_to_joint_positions`
+        equivalent for them. This only updates the shared planning-scene
+        monitor's tracked `RobotState` - anything reading it (the
+        `MotionPlanning` RViz display, subsequent `is_diff=True` IK/planning
+        calls) reflects the new value. It does not command any hardware or
+        `ros2_control` interface, so a joint actually driven by a controller
+        (and any purely TF/`/joint_states`-driven RViz display) will not move.
+        """
+        if PlanningScene is None or ApplyPlanningScene is None:
+            return False, "MoveIt planning-scene message types are unavailable."
+        if not joint_positions:
+            return True, "No joint positions requested."
+        if not self._apply_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            return (
+                False,
+                f"MoveIt planning-scene service '{self.config.apply_planning_scene_service_name}' is unavailable.",
+            )
+
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.robot_state.is_diff = True
+        scene.robot_state.joint_state.name = [str(name) for name in joint_positions.keys()]
+        scene.robot_state.joint_state.position = [float(value) for value in joint_positions.values()]
+
+        request = ApplyPlanningScene.Request()
+        request.scene = scene
+        try:
+            response = self._wait_for_future(
+                self._apply_planning_scene_client.call_async(request),
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="robot-state joint-position apply",
+            )
+        except Exception as exc:
+            return False, f"Robot-state joint-position apply failed: {exc}"
+        if response is None:
+            return False, "Robot-state joint-position apply response was None."
+        if not bool(getattr(response, "success", False)):
+            return False, "MoveIt rejected the robot-state joint-position update."
+        return True, f"Applied {len(scene.robot_state.joint_state.name)} joint position(s)."
 
     def _collision_object_from_obstacle_spec(self, obstacle: Mapping[str, object], *, default_frame_id: str):
         obstacle_id = str(obstacle.get("id", "")).strip()

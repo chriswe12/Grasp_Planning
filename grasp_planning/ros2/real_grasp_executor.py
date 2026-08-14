@@ -242,6 +242,54 @@ def _best_effort_stop_gripper(gripper, *, reason: str) -> None:
     )
 
 
+def _move_to_pose(
+    commander,
+    target: PoseTarget,
+    *,
+    label: str,
+    execute: bool,
+    config,
+) -> tuple[bool, str]:
+    """`commander.move_to_pose`, routed through the configured IK strategy.
+
+    With the default `ik_strategy="direct"` this is exactly
+    `commander.move_to_pose(target, label=label, execute=execute)` - same
+    single `compute_ik` call, same planning/execution path. A non-default
+    strategy (currently only `"cartesian_waypoints"`) resolves IK itself via
+    `resolve_ik` and then drives the same `plan_to_joint_positions` /
+    `execute_trajectory` primitives `move_to_pose` uses internally, so this
+    stays a drop-in replacement regardless of strategy. See
+    `grasp_planning/pipeline/cartesian_waypoint_ik.py`.
+    """
+    # Imported lazily: grasp_planning/ros2/__init__.py eagerly imports this
+    # module, and cartesian_waypoint_ik imports PoseTarget from
+    # grasp_planning.ros2.moveit_pose_commander, which needs that same
+    # package __init__ to finish first. A top-level import here would be a
+    # real circular import; deferring it to call time (after every module
+    # involved has finished loading) breaks the cycle.
+    from grasp_planning.pipeline.cartesian_waypoint_ik import resolve_ik
+
+    strategy = str(getattr(config, "ik_strategy", "direct"))
+    if strategy == "direct":
+        return commander.move_to_pose(target, label=label, execute=execute)
+
+    joints, message = resolve_ik(
+        commander,
+        target,
+        strategy=strategy,
+        num_waypoints=int(getattr(config, "cartesian_waypoint_count", 10)),
+    )
+    if joints is None:
+        return False, f"{label}: {message}"
+
+    trajectory, plan_message = commander.plan_to_joint_positions(joints, label=label)
+    if trajectory is None:
+        return False, f"{label}: planning to the resolved IK target failed: {plan_message}"
+    if not execute:
+        return True, f"{label}: plan ready ({plan_message})"
+    return commander.execute_trajectory(trajectory, label=label)
+
+
 def _execute_selected_world_grasp(
     *,
     commander,
@@ -284,7 +332,7 @@ def _execute_selected_world_grasp(
                 steps,
             )
 
-    ok, message = commander.move_to_pose(targets["pregrasp"], label="pregrasp", execute=True)
+    ok, message = _move_to_pose(commander, targets["pregrasp"], label="pregrasp", execute=True, config=config)
     _record_step("pregrasp", ok=ok, message=message, target=targets["pregrasp"])
     if not ok:
         return (
@@ -314,7 +362,7 @@ def _execute_selected_world_grasp(
             steps,
         )
 
-    ok, message = commander.move_to_pose(targets["grasp"], label="grasp", execute=True)
+    ok, message = _move_to_pose(commander, targets["grasp"], label="grasp", execute=True, config=config)
     _record_step("grasp", ok=ok, message=message, target=targets["grasp"])
     if not ok:
         return (
@@ -364,7 +412,7 @@ def _execute_selected_world_grasp(
             steps,
         )
 
-    ok, message = commander.move_to_pose(targets["lift"], label="lift", execute=True)
+    ok, message = _move_to_pose(commander, targets["lift"], label="lift", execute=True, config=config)
     _record_step("lift", ok=ok, message=message, target=targets["lift"])
     if not ok:
         return (
@@ -413,6 +461,11 @@ def _planning_scene_failed_result(
 
 
 def execute_real_grasp_from_bundle(*, input_json: Path, config) -> RealExecutionResult:
+    from grasp_planning.pipeline.cartesian_waypoint_ik import IK_STRATEGIES  # see _move_to_pose
+
+    ik_strategy = str(getattr(config, "ik_strategy", "direct"))
+    if ik_strategy not in IK_STRATEGIES:
+        raise ValueError(f"ik_strategy must be one of {IK_STRATEGIES}; got {ik_strategy!r}.")
     if rclpy is None:
         raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
     bundle = load_grasp_bundle(input_json)

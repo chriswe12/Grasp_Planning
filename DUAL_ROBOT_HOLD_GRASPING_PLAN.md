@@ -402,6 +402,94 @@ The first exact-IK and simulation vertical slice is implemented by:
     is selected without repeating an already-cached holder grasp check;
   - checks the shared ROS environment contract and unified runner routing.
 
+A companion diagnostic separates arm-arm interference from a single arm's
+own reachability, since the real preflight above always resolves IK against
+the shared two-arm scene and cannot say by itself why a target failed:
+
+- [`grasp_planning/pipeline/dual_robot_isolated_arm_preflight.py`](grasp_planning/pipeline/dual_robot_isolated_arm_preflight.py)
+  - re-runs one saved candidate's per-role preflight targets twice: once
+    against the default collision-aware scene ("coupled"), and once with
+    every `arm_one`/`arm_two` link pair temporarily marked collision-allowed
+    in the live allowed collision matrix ("isolated" - each arm planned as if
+    the other robot weren't there, while self-collision and the table are
+    still checked);
+  - fetches, patches, and restores the exact allowed collision matrix via
+    new `get_allowed_collision_matrix`/`apply_allowed_collision_matrix`
+    helpers on `MoveItPoseCommander`
+    ([`moveit_pose_commander.py`](ros2_ws/src/robot_integration_ros/robot_integration_ros/moveit_pose_commander.py)),
+    rather than hard-coding the dual URDF's link names;
+  - reuses `_preflight_targets`/`_motion_sequence_through` from
+    `dual_real_grasp_executor.py` so both passes exercise identical target
+    poses and retry behavior;
+- [`scripts/run_simple_dual_robot_isolated_arm_preflight.py`](scripts/run_simple_dual_robot_isolated_arm_preflight.py)
+  - loads the same saved task JSON as `run_simple_dual_robot_real.py`,
+    selects one ranked candidate by `--candidate-rank` or `--pair-id`, prints
+    a coupled-vs-isolated table per target with a DIVERGES flag, and writes
+    the comparison to an attempt JSON; nothing is executed or moves;
+- [`tests/test_dual_robot_isolated_arm_preflight.py`](tests/test_dual_robot_isolated_arm_preflight.py)
+  - covers the pairwise-ACM patch/restore logic on ragged and pre-existing
+    matrices, a target that only fails coupled (interference), a target that
+    fails in both modes (not explained by the other arm), and the missing
+    link-prefix error.
+
+A second, independent diagnostic separates a KDL seeding artifact from a real
+reachability limit (the mock/hardware stack's default
+`kdl_kinematics_plugin/KDLKinematicsPlugin`,
+[`dual_lbr_kinematics.yaml`](ros2_ws/src/robot_integration_ros/config/dual_lbr_kinematics.yaml),
+is a local single-seed solver with only a `0.05 s` timeout and can fail a
+reachable but distant target):
+
+- [`grasp_planning/pipeline/cartesian_waypoint_ik.py`](grasp_planning/pipeline/cartesian_waypoint_ik.py)
+  - `interpolate_pose_targets`/`slerp_quaternion_xyzw` linearly interpolate a
+    Cartesian pose (position lerp, orientation slerp) into N waypoints;
+  - `solve_cartesian_waypoint_chain` solves IK one waypoint at a time,
+    seeding each waypoint with the *previous* waypoint's own solved joints,
+    so a large jump becomes N small, easy corrections instead of one big
+    seed-dependent leap;
+  - `resolve_ik(commander, target, strategy=...)` is the one modular seam
+    both real executors call through - `"direct"` (default, today's exact
+    single `compute_ik` call) or `"cartesian_waypoints"` - so switching
+    strategy is a config change in either routine, not a code change in
+    each;
+- wired into both routines identically, each defaulting to `"direct"` (byte-
+  for-byte the prior behavior):
+  - dual-arm: `DualRealExecutionConfig.ik_strategy`/`cartesian_waypoint_count`
+    in [`dual_real_grasp_executor.py`](grasp_planning/ros2/dual_real_grasp_executor.py),
+    exposed as `--ik-strategy`/`--cartesian-waypoint-count` on
+    [`scripts/run_simple_dual_robot_real.py`](scripts/run_simple_dual_robot_real.py)
+    and on the isolated-arm preflight script above (applied identically to
+    its coupled and isolated passes, so the two diagnostics compose without
+    confounding each other);
+  - single-arm: `RealExecutionConfig.ik_strategy`/`cartesian_waypoint_count`
+    in [`fabrica_pipeline.py`](grasp_planning/pipeline/fabrica_pipeline.py),
+    read from `real_execution.ik_strategy` in the pipeline YAML by
+    [`scripts/run_grasp_pipeline.py`](scripts/run_grasp_pipeline.py), and
+    routed through a `_move_to_pose` helper in
+    [`real_grasp_executor.py`](grasp_planning/ros2/real_grasp_executor.py)
+    that falls back to the exact original `commander.move_to_pose` call
+    when the strategy is `"direct"`;
+- [`tests/test_cartesian_waypoint_ik.py`](tests/test_cartesian_waypoint_ik.py),
+  extensions to
+  [`tests/test_dual_real_grasp_executor.py`](tests/test_dual_real_grasp_executor.py),
+  [`tests/test_real_grasp_executor.py`](tests/test_real_grasp_executor.py), and
+  [`tests/test_dual_robot_isolated_arm_preflight.py`](tests/test_dual_robot_isolated_arm_preflight.py)
+  - cover slerp/interpolation correctness, seed chaining, a synthetic solver
+    that only converges when seeded (proving the chain reaches a target a
+    single direct call cannot), and strategy passthrough in all three call
+    sites;
+  - [`tests/test_import_cycles.py`](tests/test_import_cycles.py) pins the
+    fresh-interpreter import order for all four affected entrypoints:
+    `grasp_planning/ros2/__init__.py` eagerly imports `real_grasp_executor`,
+    which needs `cartesian_waypoint_ik`, which imports `PoseTarget` from
+    `grasp_planning.ros2.moveit_pose_commander` - importing
+    `grasp_planning.pipeline.cartesian_waypoint_ik` *first*, before anything
+    triggers that package `__init__`, used to re-enter it mid-initialization
+    and fail. Fixed by deferring `real_grasp_executor.py`'s import of
+    `cartesian_waypoint_ik` to call time.
+
+See `~/Desktop/GRaspPlanningInstructions.md`'s "Debugging a failure" sections
+for the bag-pose walkthrough of both diagnostics.
+
 Run planning and Isaac execution together from one command:
 
 ```bash
