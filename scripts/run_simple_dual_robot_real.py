@@ -58,6 +58,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--execute-timeout-s", type=float, default=120.0)
     parser.add_argument("--gripper-timeout-s", type=float, default=10.0)
     parser.add_argument("--grasp-settle-time-s", type=float, default=0.5)
+    parser.add_argument("--gripper-position-feedback-tolerance", type=float, default=0.02)
     parser.add_argument(
         "--debug-gui",
         action="store_true",
@@ -84,6 +85,14 @@ def _parse_args() -> argparse.Namespace:
             f"--{role}-gripper-stop-service",
             default=f"/{robot}/gripper_controller/stop",
         )
+        parser.add_argument(
+            f"--{role}-gripper-position-command-topic",
+            default=f"/{robot}/gripper_controller/position_command",
+        )
+        parser.add_argument(
+            f"--{role}-gripper-position-feedback-topic",
+            default=f"/{robot}/gripper_controller/position",
+        )
     return parser.parse_args()
 
 
@@ -107,12 +116,17 @@ def main() -> int:
         grippers_enabled=not bool(args.skip_grippers),
         gripper_timeout_s=float(args.gripper_timeout_s),
         grasp_settle_time_s=float(args.grasp_settle_time_s),
+        gripper_position_feedback_tolerance=float(args.gripper_position_feedback_tolerance),
         holder_gripper_open_service=str(args.holder_gripper_open_service),
         holder_gripper_close_service=str(args.holder_gripper_close_service),
         holder_gripper_stop_service=str(args.holder_gripper_stop_service),
+        holder_gripper_position_command_topic=str(args.holder_gripper_position_command_topic),
+        holder_gripper_position_feedback_topic=str(args.holder_gripper_position_feedback_topic),
         inserter_gripper_open_service=str(args.inserter_gripper_open_service),
         inserter_gripper_close_service=str(args.inserter_gripper_close_service),
         inserter_gripper_stop_service=str(args.inserter_gripper_stop_service),
+        inserter_gripper_position_command_topic=str(args.inserter_gripper_position_command_topic),
+        inserter_gripper_position_feedback_topic=str(args.inserter_gripper_position_feedback_topic),
         debug_gui=bool(args.debug_gui),
         debug_gui_port=int(args.debug_gui_port),
         debug_gui_open_browser=bool(args.debug_gui_open_browser),

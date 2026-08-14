@@ -28,6 +28,7 @@ setup(
                 "config/dual_lbr_initial_joint_positions.yaml",
                 "config/dual_lbr_joint_limits.yaml",
                 "config/dual_lbr_kinematics.yaml",
+                "config/dual_lbr_kinematics_pick_ik.yaml",
                 "config/dual_lbr_moveit.rviz",
                 "config/dual_lbr_moveit_controllers.yaml",
                 "config/iiwa7_y_gripper.srdf.xacro",

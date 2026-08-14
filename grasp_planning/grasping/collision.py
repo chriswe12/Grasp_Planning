@@ -262,7 +262,7 @@ KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
 # frame and every saved grasp pose remain unchanged while the collision body is
 # represented in its real mounting orientation.
 KUKA_Y_GRIPPER_BODY_ROTATION_TCP = _rpy_to_rotmat(0.0, 0.0, np.pi)
-KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION = "kuka_y_body_yaw_pi_tcp_preserving_v1"
+KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION = "kuka_y_body_yaw_pi_tcp_preserving_dual_opening_v2"
 _KUKA_Y_GRIPPER_MESH_NAMES = {
     "base": "hand.STL",
     "left_finger": "left_finger.STL",
@@ -531,6 +531,96 @@ class KukaYGripperCollisionModel:
             ),
         )
 
+    def minimum_world_z_for_grasp(
+        self,
+        *,
+        grasp_rotmat_obj: np.ndarray,
+        contact_point_a_obj: np.ndarray,
+        contact_point_b_obj: np.ndarray,
+        grasp_center_obj: np.ndarray,
+        rotation_world_from_object: np.ndarray,
+        translation_world_from_object: np.ndarray,
+    ) -> float:
+        """Return exact mesh minimum Z without constructing world primitives."""
+
+        grasp_rotmat = np.asarray(grasp_rotmat_obj, dtype=float)
+        contact_a = np.asarray(contact_point_a_obj, dtype=float)
+        contact_b = np.asarray(contact_point_b_obj, dtype=float)
+        half_opening_m = 0.5 * float(np.linalg.norm(contact_b - contact_a)) + self.contact_gap_m
+        body_rotmat_obj = grasp_rotmat @ KUKA_Y_GRIPPER_BODY_ROTATION_TCP
+        base_origin_obj = np.asarray(grasp_center_obj, dtype=float) - body_rotmat_obj @ np.asarray(
+            self.tcp_to_grasp_center_m,
+            dtype=float,
+        )
+        rotation_world_from_object = np.asarray(rotation_world_from_object, dtype=float)
+        body_rotmat_world = rotation_world_from_object @ body_rotmat_obj
+        base_origin_world = (
+            rotation_world_from_object @ base_origin_obj
+            + np.asarray(translation_world_from_object, dtype=float)
+        )
+        local_z_projection = body_rotmat_world[2, :]
+
+        base_vertices, _ = self._mesh("base")
+        left_vertices, _ = self._mesh("left_finger")
+        right_vertices, _ = self._mesh("right_finger")
+        left_inner_y = float(np.max(_kuka_y_fingertip_reference_vertices(left_vertices)[:, 1]))
+        right_inner_y = float(np.min(_kuka_y_fingertip_reference_vertices(right_vertices)[:, 1]))
+        left_y_shift = -float(half_opening_m) - left_inner_y
+        right_y_shift = float(half_opening_m) - right_inner_y
+
+        minimum_local_projection = min(
+            float(np.min(base_vertices @ local_z_projection)),
+            float(np.min(left_vertices @ local_z_projection)) + left_y_shift * float(local_z_projection[1]),
+            float(np.min(right_vertices @ local_z_projection)) + right_y_shift * float(local_z_projection[1]),
+        )
+        return float(base_origin_world[2]) + minimum_local_projection
+
+    def world_component_aabb_bounds_for_grasp(
+        self,
+        *,
+        grasp_rotmat_obj: np.ndarray,
+        contact_point_a_obj: np.ndarray,
+        contact_point_b_obj: np.ndarray,
+        grasp_center_obj: np.ndarray,
+        rotation_world_from_object: np.ndarray,
+        translation_world_from_object: np.ndarray,
+    ) -> tuple[tuple[str, np.ndarray, np.ndarray], ...]:
+        """Return exact component AABBs without building collision primitives."""
+
+        grasp_rotmat = np.asarray(grasp_rotmat_obj, dtype=float)
+        contact_a = np.asarray(contact_point_a_obj, dtype=float)
+        contact_b = np.asarray(contact_point_b_obj, dtype=float)
+        half_opening_m = 0.5 * float(np.linalg.norm(contact_b - contact_a)) + self.contact_gap_m
+        body_rotmat_obj = grasp_rotmat @ KUKA_Y_GRIPPER_BODY_ROTATION_TCP
+        base_origin_obj = np.asarray(grasp_center_obj, dtype=float) - body_rotmat_obj @ np.asarray(
+            self.tcp_to_grasp_center_m,
+            dtype=float,
+        )
+        rotation_world_from_object = np.asarray(rotation_world_from_object, dtype=float)
+        body_rotmat_world = rotation_world_from_object @ body_rotmat_obj
+        base_origin_world = (
+            rotation_world_from_object @ base_origin_obj
+            + np.asarray(translation_world_from_object, dtype=float)
+        )
+
+        base_vertices, _ = self._mesh("base")
+        left_vertices, _ = self._mesh("left_finger")
+        right_vertices, _ = self._mesh("right_finger")
+        left_inner_y = float(np.max(_kuka_y_fingertip_reference_vertices(left_vertices)[:, 1]))
+        right_inner_y = float(np.min(_kuka_y_fingertip_reference_vertices(right_vertices)[:, 1]))
+        components = (
+            ("kuka_y_gripper_base", base_vertices, 0.0),
+            ("kuka_y_left_finger", left_vertices, -float(half_opening_m) - left_inner_y),
+            ("kuka_y_right_finger", right_vertices, float(half_opening_m) - right_inner_y),
+        )
+        bounds = []
+        for name, vertices, y_shift in components:
+            transformed = np.asarray(vertices, dtype=float) @ body_rotmat_world.T
+            transformed += base_origin_world[None, :]
+            transformed += float(y_shift) * body_rotmat_world[:, 1][None, :]
+            bounds.append((name, transformed.min(axis=0), transformed.max(axis=0)))
+        return tuple(bounds)
+
     def _mesh(self, key: str) -> tuple[np.ndarray, np.ndarray]:
         if key == "base" and self.base_vertices_local is not None and self.base_faces is not None:
             return self.base_vertices_local, self.base_faces
@@ -617,6 +707,44 @@ def make_gripper_collision_model(
             contact_patch_approach_offset_m=contact_patch_approach_offset_m,
         )
     raise AssertionError(f"Unhandled gripper collision model '{normalized}'.")
+
+
+def gripper_collision_check_gaps(approach_gap_m: float) -> tuple[float, ...]:
+    """Return contact and partially-open per-finger gaps for collision checks."""
+
+    approach_gap = float(approach_gap_m)
+    if approach_gap < 0.0:
+        raise ValueError("approach_gap_m must be non-negative.")
+    if approach_gap <= 1.0e-12:
+        return (0.0,)
+    return (0.0, approach_gap)
+
+
+def make_gripper_collision_models(
+    name: str = GRIPPER_COLLISION_MODEL_FRANKA,
+    *,
+    approach_gap_m: float,
+    contact_patch_lateral_offset_m: float = 0.0,
+    contact_patch_approach_offset_m: float = 0.0,
+) -> tuple[GripperCollisionModel, ...]:
+    """Build KUKA contact/approach states while preserving legacy Franka checks."""
+
+    normalized = normalize_gripper_collision_model_name(name)
+    gaps = (
+        gripper_collision_check_gaps(approach_gap_m)
+        if normalized == GRIPPER_COLLISION_MODEL_KUKA_Y
+        else (float(approach_gap_m),)
+    )
+
+    return tuple(
+        make_gripper_collision_model(
+            normalized,
+            contact_gap_m=gap_m,
+            contact_patch_lateral_offset_m=contact_patch_lateral_offset_m,
+            contact_patch_approach_offset_m=contact_patch_approach_offset_m,
+        )
+        for gap_m in gaps
+    )
 
 
 class MeshCollisionScene(Protocol):

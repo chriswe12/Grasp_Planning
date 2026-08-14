@@ -239,6 +239,7 @@ from grasp_planning.start_poses import (  # noqa: E402
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
     KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
     gripper_joint_target_from_width,
+    kuka_gripper_approach_width,
     kuka_moveit_to_isaac_joint_positions,
 )
 
@@ -1174,18 +1175,25 @@ def main() -> int:
     inserter_robot = scene["inserter_robot"]
     base_part = scene["base_part"]
     incoming_part = scene["incoming_part"]
+    plan_grasps = dict(plan["grasps"])
+    holder_approach_width_m = kuka_gripper_approach_width(
+        float(dict(plan_grasps["holder"])["jaw_width_m"])
+    )
+    inserter_approach_width_m = kuka_gripper_approach_width(
+        float(dict(plan_grasps["inserter_pickup"])["jaw_width_m"])
+    )
     holder_context = FR3MotionContext(
         robot=holder_robot,
         scene=scene,
         sim=sim,
-        fixed_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+        fixed_gripper_width=holder_approach_width_m,
         critical_damping_ratio=float(args_cli.critical_damping_ratio),
     )
     inserter_context = FR3MotionContext(
         robot=inserter_robot,
         scene=scene,
         sim=sim,
-        fixed_gripper_width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+        fixed_gripper_width=inserter_approach_width_m,
         critical_damping_ratio=float(args_cli.critical_damping_ratio),
     )
     holder_damping = holder_context.refresh_critical_joint_damping(required=True)
@@ -1413,6 +1421,13 @@ def main() -> int:
 
             trajectories = {str(name): dict(value) for name, value in dict(case_plan["trajectories"]).items()}
             targets = {str(name): dict(value) for name, value in dict(case_plan["targets"]).items()}
+            case_grasps = dict(case_plan["grasps"])
+            holder_context.fixed_gripper_width = kuka_gripper_approach_width(
+                float(dict(case_grasps["holder"])["jaw_width_m"])
+            )
+            inserter_context.fixed_gripper_width = kuka_gripper_approach_width(
+                float(dict(case_grasps["inserter_pickup"])["jaw_width_m"])
+            )
             case_initial_base_pose = _root_pose(base_part)
             case_result: dict[str, object] = {
                 "index": case_index,

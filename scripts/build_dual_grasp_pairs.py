@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from grasp_planning.pipeline import (  # noqa: E402
     inserter_artifact_name,
     pair_artifact_name,
     plan_dual_grasp_pairs,
+    write_assembly_sequence_html,
+    write_assembly_sequence_json,
     write_dual_grasp_pair_debug_artifacts,
     write_dual_grasp_pair_step_json,
     write_dual_grasp_pair_summary_json,
@@ -43,7 +46,7 @@ def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
     raw = dict(payload.get("pair_planning", {}))
     return DualGraspPairConfig(
         max_holder_candidates_per_step=int(raw.get("max_holder_candidates_per_step", 80)),
-        max_inserter_candidates_per_step=int(raw.get("max_inserter_candidates_per_step", 160)),
+        max_inserter_candidates_per_step=int(raw.get("max_inserter_candidates_per_step", 512)),
         max_candidates_per_cluster=int(raw.get("max_candidates_per_cluster", 2)),
         contact_position_bin_m=float(raw.get("contact_position_bin_m", 0.025)),
         axis_bin_deg=float(raw.get("axis_bin_deg", 30.0)),
@@ -72,6 +75,18 @@ def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
             )
         ),
         transition_symmetry_max_incoming_transforms=int(raw.get("transition_symmetry_max_incoming_transforms", 0)),
+        adaptive_inserter_shortlist=bool(raw.get("adaptive_inserter_shortlist", True)),
+        prefer_aabb_clear_inserter_candidates=bool(
+            raw.get("prefer_aabb_clear_inserter_candidates", True)
+        ),
+        balance_inserter_approach_directions=bool(
+            raw.get("balance_inserter_approach_directions", True)
+        ),
+        balance_inserter_symmetry_transforms=bool(
+            raw.get("balance_inserter_symmetry_transforms", True)
+        ),
+        exact_pair_clearance_ranking=bool(raw.get("exact_pair_clearance_ranking", True)),
+        stage3_worker_count=int(raw.get("stage3_worker_count", 1)),
     )
 
 
@@ -87,6 +102,24 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         help="Override the assembly artifact directory.",
+    )
+    parser.add_argument(
+        "--max-inserter-candidates-per-step",
+        type=int,
+        help="Override the Stage-3 unary inserter cap for this build.",
+    )
+    parser.add_argument(
+        "--max-pair-checks",
+        type=int,
+        help="Override the per-step holder/inserter pair-check budget.",
+    )
+    parser.add_argument(
+        "--skip-exact-pair-clearance-ranking",
+        action="store_true",
+        help=(
+            "Keep exact collision rejection but skip exact distance queries "
+            "when no positive pair-clearance margin is configured."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -109,6 +142,15 @@ def main(argv: list[str] | None = None) -> int:
         stage1_cache_dir=str(_repo_path(planning.stage1_cache_dir)),
     )
     pair_config = _pair_config(payload)
+    if args.max_inserter_candidates_per_step is not None:
+        pair_config = replace(
+            pair_config,
+            max_inserter_candidates_per_step=args.max_inserter_candidates_per_step,
+        )
+    if args.max_pair_checks is not None:
+        pair_config = replace(pair_config, max_pair_checks=args.max_pair_checks)
+    if args.skip_exact_pair_clearance_ranking:
+        pair_config = replace(pair_config, exact_pair_clearance_ranking=False)
 
     print(
         f"[Stage 1] loading/generating holder library for base {sequence.base_part_id}",
@@ -129,28 +171,44 @@ def main(argv: list[str] | None = None) -> int:
         config=_holder_feasibility_config(payload),
     )
     print(
-        "[Stage 3] generating insertion-filtered grasp libraries",
+        "[Stage 3] generating insertion-filtered grasp libraries "
+        f"(workers={'auto' if pair_config.stage3_worker_count == 0 else pair_config.stage3_worker_count}, "
+        f"adaptive_shortlist={pair_config.adaptive_inserter_shortlist})",
         flush=True,
     )
+    inserter_started = time.monotonic()
     inserter_libraries = generate_inserter_grasp_libraries(
         sequence=sequence,
         planning=planning,
         config=pair_config,
     )
+    inserter_elapsed = time.monotonic() - inserter_started
     for library in inserter_libraries:
         print(
             f"  {library.step_id}: {library.raw_candidate_count} raw, "
             f"{library.assembly_insertion_feasible_count} assembly/insertion "
-            f"feasible, {len(library.accepted_candidates)} table/retreat feasible",
+            f"feasible, {len(library.accepted_candidates)} table/retreat feasible, "
+            "approaches="
+            f"{library.bundle.metadata.get('accepted_approach_direction_counts_assembly', {})}",
             flush=True,
         )
+    print(
+        f"[Stage 3] insertion filtering completed in {inserter_elapsed:.2f}s",
+        flush=True,
+    )
     print("[Stage 3] pairing shortlisted end effectors", flush=True)
+    pairing_started = time.monotonic()
     result = plan_dual_grasp_pairs(
         sequence=sequence,
         holder_feasibility=holder_feasibility,
         inserter_libraries=inserter_libraries,
         planning=planning,
         config=pair_config,
+    )
+    pairing_elapsed = time.monotonic() - pairing_started
+    print(
+        f"[Stage 3] pair/transition checks completed in {pairing_elapsed:.2f}s",
+        flush=True,
     )
 
     if args.output_dir is None:
@@ -166,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    write_assembly_sequence_json(sequence, output_dir / "assembly_sequence.json")
+    write_assembly_sequence_html(sequence, output_dir / "assembly_sequence.html")
     write_holder_grasp_library_artifacts(
         holder_library,
         sequence=sequence,

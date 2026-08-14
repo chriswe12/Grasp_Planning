@@ -1,0 +1,27 @@
+arm_one:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.10
+  mode: global
+  position_threshold: 0.001
+  orientation_threshold: 0.01
+  position_scale: 1.0
+  rotation_scale: 0.5
+  cost_threshold: 0.001
+  stop_optimization_on_valid_solution: true
+  memetic_num_threads: 4
+  memetic_stop_on_first_solution: true
+  memetic_population_size: 32
+
+arm_two:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.10
+  mode: global
+  position_threshold: 0.001
+  orientation_threshold: 0.01
+  position_scale: 1.0
+  rotation_scale: 0.5
+  cost_threshold: 0.001
+  stop_optimization_on_valid_solution: true
+  memetic_num_threads: 4
+  memetic_stop_on_first_solution: true
+  memetic_population_size: 32

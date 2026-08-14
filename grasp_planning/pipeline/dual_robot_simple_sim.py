@@ -31,6 +31,7 @@ from grasp_planning.grasping.grasp_transforms import (
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 from grasp_planning.grasping.mesh_io import load_triangle_mesh, resolve_mesh_path
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
+from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
 
 from .dual_robot_pair_scoring import (
     MovableFrame,
@@ -54,7 +55,7 @@ DEFAULT_PICKUP_ORIENTATION_RPY_DEG = (0.0, 0.0, 0.0)
 DEFAULT_HOLDER_PREGRASP_OFFSET_M = 0.05
 DEFAULT_INSERTER_PREGRASP_OFFSET_M = 0.10
 DEFAULT_TRANSPORT_CLEARANCE_M = 0.08
-DEFAULT_PICKUP_CONTACT_GAP_M = 0.002
+DEFAULT_PICKUP_CONTACT_GAP_M = KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
 DEFAULT_PICKUP_FLOOR_CLEARANCE_MARGIN_M = 0.001
 DEFAULT_PICKUP_TOP_DOWN_SCORE_WEIGHT = 0.25
 DEFAULT_TRANSITION_SCORE_WEIGHT = 0.35
@@ -1604,13 +1605,13 @@ def load_simple_dual_robot_pair_tasks(
             holder_candidate,
             holder_source_pose_world,
             pregrasp_offset=holder_pregrasp_offset_m,
-            gripper_width_clearance=0.0,
+            gripper_width_clearance=2.0 * float(pickup_contact_gap_m),
         )
         pickup_world_grasp = saved_grasp_to_world_grasp(
             inserter_candidate,
             incoming_pickup_source_pose_world,
             pregrasp_offset=inserter_pregrasp_offset_m,
-            gripper_width_clearance=0.0,
+            gripper_width_clearance=2.0 * float(pickup_contact_gap_m),
         )
         pickup_top_down_score = max(
             0.0,
@@ -1686,7 +1687,7 @@ def load_simple_dual_robot_pair_tasks(
                 inserter_candidate,
                 pre_source_pose_world,
                 pregrasp_offset=inserter_pregrasp_offset_m,
-                gripper_width_clearance=0.0,
+                gripper_width_clearance=2.0 * float(pickup_contact_gap_m),
             )
             inserter_targets = (
                 target(

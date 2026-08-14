@@ -6,6 +6,19 @@ benchmark:
   isaac_python: /media/pdz/Elements1/IsaacLab/isaaclab.sh
   max_pair_attempts: 256
   joint_rank_candidates: 8
+  # Tuned KDL is the measured default. pick_ik remains available for explicit
+  # A/B runs, but was slower on the exhaustive unreachable-pose check.
+  ik_solver: kdl
+  ik_timeout_s: 0.35
+  # Seven covers balanced +/- A7, A1, and A3 branches from the nominal seed.
+  # Active-arm diagnostic IK is cached before complete-state collision checks,
+  # so this broader branch set is cheaper than the former repeated four seeds.
+  exact_ik_candidates: 7
+  exact_ik_beam_width: 4
+  exact_ik_seed_perturbation_rad: 0.60
+  pickup_approach_ik_steps: 5
+  planning_time_s: 15.0
+  planning_attempts: 16
 
 # The assembled prefix stays upright at the midpoint between both robot bases.
 base:
@@ -16,18 +29,42 @@ base:
 # Every pickup is in front of the robots (positive world X). Negative Y assigns
 # lbr_one as inserter; positive Y assigns lbr_two. The opposite arm holds.
 placements:
-  - id: left_near
-    x: 0.48
-    y: -0.26
-  - id: left_far
-    x: 0.62
-    y: -0.26
-  - id: right_near
-    x: 0.48
-    y: 0.26
-  - id: right_far
-    x: 0.62
-    y: 0.26
+  - id: left_inner_front
+    x: 0.44
+    y: -0.18
+  - id: left_inner_middle
+    x: 0.55
+    y: -0.18
+  - id: left_inner_back
+    x: 0.66
+    y: -0.18
+  - id: left_outer_front
+    x: 0.44
+    y: -0.30
+  - id: left_outer_middle
+    x: 0.55
+    y: -0.30
+  - id: left_outer_back
+    x: 0.66
+    y: -0.30
+  - id: right_inner_front
+    x: 0.44
+    y: 0.18
+  - id: right_inner_middle
+    x: 0.55
+    y: 0.18
+  - id: right_inner_back
+    x: 0.66
+    y: 0.18
+  - id: right_outer_front
+    x: 0.44
+    y: 0.30
+  - id: right_outer_middle
+    x: 0.55
+    y: 0.30
+  - id: right_outer_back
+    x: 0.66
+    y: 0.30
 
 # Z is computed per mesh/orientation so each incoming part rests on the floor.
 orientations:

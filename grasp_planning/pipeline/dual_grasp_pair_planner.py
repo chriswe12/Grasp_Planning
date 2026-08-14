@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
-from collections import Counter
+import os
+from collections import Counter, deque
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable
@@ -14,7 +16,9 @@ import numpy as np
 from grasp_planning.grasping.collision import (
     GRIPPER_COLLISION_MODEL_KUKA_Y,
     BoxCollisionPrimitive,
+    KukaYGripperCollisionModel,
     MeshCollisionPrimitive,
+    gripper_collision_check_gaps,
     make_gripper_collision_model,
     trimesh,
     trimesh_fcl_backend_available,
@@ -51,6 +55,9 @@ REASON_INSERTER_TABLE_COLLISION = "inserter_table_collision"
 REASON_INSERTER_CLEARANCE_MARGIN_FAILED = "inserter_clearance_margin_failed"
 REASON_END_EFFECTOR_SWEEP_COLLISION = "end_effector_sweep_collision"
 REASON_PAIR_CLEARANCE_MARGIN_FAILED = "pair_clearance_margin_failed"
+REASON_DIVERSITY_CLUSTER_FULL = "not_evaluated_diversity_cluster_full"
+REASON_SHORTLIST_COMPLETE = "not_evaluated_shortlist_complete"
+REASON_TIGHT_GEOMETRY_FALLBACK_NOT_NEEDED = "not_evaluated_tight_geometry_fallback_not_needed"
 
 
 def _score(candidate: SavedGraspCandidate) -> float:
@@ -66,7 +73,7 @@ class DualGraspPairConfig:
     """Search, robustness, scoring, and debugger limits for Stage 3."""
 
     max_holder_candidates_per_step: int = 80
-    max_inserter_candidates_per_step: int = 160
+    max_inserter_candidates_per_step: int = 512
     max_candidates_per_cluster: int = 2
     contact_position_bin_m: float = 0.025
     axis_bin_deg: float = 30.0
@@ -90,6 +97,12 @@ class DualGraspPairConfig:
     transition_symmetry_geometry_tolerance_m: float = 0.001
     transition_symmetry_max_partial_assembly_transforms: int = 0
     transition_symmetry_max_incoming_transforms: int = 0
+    adaptive_inserter_shortlist: bool = True
+    prefer_aabb_clear_inserter_candidates: bool = True
+    balance_inserter_approach_directions: bool = True
+    balance_inserter_symmetry_transforms: bool = True
+    exact_pair_clearance_ranking: bool = True
+    stage3_worker_count: int = 1
 
     def __post_init__(self) -> None:
         positive_ints = {
@@ -113,6 +126,7 @@ class DualGraspPairConfig:
             or self.matrix_unary_rejections_per_side < 0
             or self.transition_symmetry_max_partial_assembly_transforms < 0
             or self.transition_symmetry_max_incoming_transforms < 0
+            or self.stage3_worker_count < 0
         ):
             raise ValueError("Pair rejection/debugger limits must be >= 0.")
         positive_floats = {
@@ -406,7 +420,8 @@ class _CollisionQuery:
 class _CandidateGeometry:
     final_meshes: tuple[object, ...]
     swept_meshes: tuple[object, ...]
-    swept_bounds: tuple[np.ndarray, np.ndarray]
+    final_component_bounds: tuple[tuple[np.ndarray, np.ndarray], ...]
+    swept_component_bounds: tuple[tuple[np.ndarray, np.ndarray], ...]
 
 
 @dataclass(frozen=True)
@@ -460,7 +475,13 @@ def _manager_for_meshes(
     return manager if count else None
 
 
-def _query_manager(manager, query_meshes: tuple[object, ...]) -> _CollisionQuery:
+def _query_manager(
+    manager,
+    query_meshes: tuple[object, ...],
+    *,
+    compute_distance: bool = True,
+    stop_on_collision: bool = False,
+) -> _CollisionQuery:
     if manager is None:
         return _CollisionQuery(False, (), None)
     collides = False
@@ -471,10 +492,13 @@ def _query_manager(manager, query_meshes: tuple[object, ...]) -> _CollisionQuery
         if hit:
             collides = True
             names.update(str(name) for name in hit_names)
-        minimum_distance = min(
-            minimum_distance,
-            float(manager.min_distance_single(query_mesh)),
-        )
+            if stop_on_collision:
+                break
+        if compute_distance:
+            minimum_distance = min(
+                minimum_distance,
+                float(manager.min_distance_single(query_mesh)),
+            )
     return _CollisionQuery(
         collides=collides,
         obstacle_names=tuple(sorted(names)),
@@ -487,36 +511,74 @@ def _candidate_meshes_assembly(
     *,
     source_pose_assembly: ObjectWorldPose,
     planning: PlanningConfig,
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+) -> tuple[object, ...]:
+    return tuple(
+        _primitive_to_trimesh(primitive)
+        for primitive in _candidate_primitives_assembly(
+            candidate,
+            source_pose_assembly=source_pose_assembly,
+            planning=planning,
+            model_cache=model_cache,
+        )
+    )
+
+
+def _candidate_collision_models(
+    candidate: SavedGraspCandidate,
+    *,
+    planning: PlanningConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> tuple[object, ...]:
     offset_key = (
         float(candidate.contact_patch_lateral_offset_m),
         float(candidate.contact_patch_approach_offset_m),
     )
-    model = model_cache.get(offset_key)
-    if model is None:
-        model = make_gripper_collision_model(
-            planning.gripper_collision_model,
-            contact_gap_m=planning.detailed_finger_contact_gap_m,
-            contact_patch_lateral_offset_m=offset_key[0],
-            contact_patch_approach_offset_m=offset_key[1],
+    models = model_cache.get(offset_key)
+    if models is None:
+        models = tuple(
+            make_gripper_collision_model(
+                planning.gripper_collision_model,
+                contact_gap_m=gap_m,
+                contact_patch_lateral_offset_m=offset_key[0],
+                contact_patch_approach_offset_m=offset_key[1],
+            )
+            for gap_m in gripper_collision_check_gaps(planning.detailed_finger_contact_gap_m)
         )
-        model_cache[offset_key] = model
-    candidate_obj = candidate.to_object_frame_candidate()
-    primitives = model.primitives_for_grasp(
-        grasp_rotmat=quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj),
-        contact_point_a=np.asarray(
-            candidate_obj.contact_point_a_obj,
-            dtype=float,
-        ),
-        contact_point_b=np.asarray(
-            candidate_obj.contact_point_b_obj,
-            dtype=float,
-        ),
-        grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
+        model_cache[offset_key] = models
+    return models
+
+
+def _candidate_primitives_assembly(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose_assembly: ObjectWorldPose,
+    planning: PlanningConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+) -> tuple[BoxCollisionPrimitive | MeshCollisionPrimitive, ...]:
+    models = _candidate_collision_models(
+        candidate,
+        planning=planning,
+        model_cache=model_cache,
     )
+    candidate_obj = candidate.to_object_frame_candidate()
+    primitives_list: list[BoxCollisionPrimitive | MeshCollisionPrimitive] = []
+    base_added = False
+    for model in models:
+        for primitive in model.primitives_for_grasp(
+            grasp_rotmat=quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj),
+            contact_point_a=np.asarray(candidate_obj.contact_point_a_obj, dtype=float),
+            contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
+            grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
+        ):
+            if primitive.name == "kuka_y_gripper_base":
+                if base_added:
+                    continue
+                base_added = True
+            primitives_list.append(primitive)
     return tuple(
-        _primitive_to_trimesh(transform_primitive_to_world(primitive, source_pose_assembly)) for primitive in primitives
+        transform_primitive_to_world(primitive, source_pose_assembly)
+        for primitive in primitives_list
     )
 
 
@@ -537,6 +599,9 @@ def _swept_meshes(
     meshes: tuple[object, ...],
     translation_m: tuple[float, float, float] | np.ndarray,
 ) -> tuple[object, ...]:
+    translation = np.asarray(translation_m, dtype=float)
+    if float(np.linalg.norm(translation)) <= 1.0e-12:
+        return tuple(mesh.copy() for mesh in meshes)
     swept = []
     for mesh in meshes:
         triangle_mesh = TriangleMesh(
@@ -565,6 +630,17 @@ def _aabb_distance_lower_bound(
     return float(np.linalg.norm(separation))
 
 
+def _component_aabb_distance_lower_bound(
+    first: tuple[tuple[np.ndarray, np.ndarray], ...],
+    second: tuple[tuple[np.ndarray, np.ndarray], ...],
+) -> float:
+    return min(
+        _aabb_distance_lower_bound(first_bounds, second_bounds)
+        for first_bounds in first
+        for second_bounds in second
+    )
+
+
 def _minimum_table_clearance(
     meshes: tuple[object, ...],
     translations: tuple[tuple[float, float, float], ...],
@@ -579,6 +655,123 @@ def _minimum_table_clearance(
         )
         for mesh in meshes
     )
+
+
+def _minimum_table_clearance_primitives(
+    primitives: tuple[BoxCollisionPrimitive | MeshCollisionPrimitive, ...],
+    translations: tuple[tuple[float, float, float], ...],
+    *,
+    table_z_m: float,
+) -> float:
+    minimum_z = math.inf
+    for primitive in primitives:
+        if isinstance(primitive, MeshCollisionPrimitive):
+            primitive_minimum_z = float(np.min(primitive.vertices_obj[:, 2]))
+        else:
+            transform = primitive.transform_matrix_obj()
+            vertical_radius = float(
+                np.dot(
+                    np.abs(transform[2, :3]),
+                    np.asarray(primitive.half_extents, dtype=float),
+                )
+            )
+            primitive_minimum_z = float(transform[2, 3]) - vertical_radius
+        minimum_z = min(minimum_z, primitive_minimum_z)
+    minimum_translation_z = min(float(translation[2]) for translation in translations)
+    return minimum_z + minimum_translation_z - float(table_z_m)
+
+
+def _minimum_table_clearance_candidate(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose_assembly: ObjectWorldPose,
+    planning: PlanningConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+    translations: tuple[tuple[float, float, float], ...],
+    table_z_m: float,
+) -> float:
+    candidate_obj = candidate.to_object_frame_candidate()
+    grasp_rotmat = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+    contact_a = np.asarray(candidate_obj.contact_point_a_obj, dtype=float)
+    contact_b = np.asarray(candidate_obj.contact_point_b_obj, dtype=float)
+    grasp_center = np.asarray(candidate_obj.grasp_position_obj, dtype=float)
+    fast_minima = tuple(
+        model.minimum_world_z_for_grasp(
+            grasp_rotmat_obj=grasp_rotmat,
+            contact_point_a_obj=contact_a,
+            contact_point_b_obj=contact_b,
+            grasp_center_obj=grasp_center,
+            rotation_world_from_object=source_pose_assembly.rotation_world_from_object,
+            translation_world_from_object=source_pose_assembly.translation_world,
+        )
+        for model in _candidate_collision_models(
+            candidate,
+            planning=planning,
+            model_cache=model_cache,
+        )
+        if isinstance(model, KukaYGripperCollisionModel)
+    )
+    if fast_minima:
+        minimum_z = min(fast_minima)
+    else:
+        primitives = _candidate_primitives_assembly(
+            candidate,
+            source_pose_assembly=source_pose_assembly,
+            planning=planning,
+            model_cache=model_cache,
+        )
+        return _minimum_table_clearance_primitives(
+            primitives,
+            translations,
+            table_z_m=table_z_m,
+        )
+    minimum_translation_z = min(float(translation[2]) for translation in translations)
+    return minimum_z + minimum_translation_z - float(table_z_m)
+
+
+def _candidate_swept_component_bounds(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose_assembly: ObjectWorldPose,
+    planning: PlanningConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+    translations: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    candidate_obj = candidate.to_object_frame_candidate()
+    grasp_rotmat = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
+    contact_a = np.asarray(candidate_obj.contact_point_a_obj, dtype=float)
+    contact_b = np.asarray(candidate_obj.contact_point_b_obj, dtype=float)
+    grasp_center = np.asarray(candidate_obj.grasp_position_obj, dtype=float)
+    component_bounds: list[tuple[np.ndarray, np.ndarray]] = []
+    base_added = False
+    for model in _candidate_collision_models(
+        candidate,
+        planning=planning,
+        model_cache=model_cache,
+    ):
+        if not isinstance(model, KukaYGripperCollisionModel):
+            return ()
+        for name, minimum, maximum in model.world_component_aabb_bounds_for_grasp(
+            grasp_rotmat_obj=grasp_rotmat,
+            contact_point_a_obj=contact_a,
+            contact_point_b_obj=contact_b,
+            grasp_center_obj=grasp_center,
+            rotation_world_from_object=source_pose_assembly.rotation_world_from_object,
+            translation_world_from_object=source_pose_assembly.translation_world,
+        ):
+            if name == "kuka_y_gripper_base":
+                if base_added:
+                    continue
+                base_added = True
+            for translation in translations:
+                offset = np.asarray(translation, dtype=float)
+                component_bounds.append(
+                    (
+                        minimum + np.minimum(offset, 0.0),
+                        maximum + np.maximum(offset, 0.0),
+                    )
+                )
+    return tuple(component_bounds)
 
 
 def _minimum(*values: float | None) -> float | None:
@@ -620,6 +813,153 @@ def _retreat_translation(
     return tuple(float(value) for value in final_to_pre / norm * distance_m)
 
 
+def _evaluate_inserter_candidate_geometry(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose: ObjectWorldPose,
+    planning: PlanningConfig,
+    config: DualGraspPairConfig,
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
+    motion_translations: tuple[tuple[float, float, float], ...],
+    table_z_m: float,
+    retreat: tuple[float, float, float],
+    insertion_translation: tuple[float, float, float],
+    retreat_extends_past_preinsertion: bool,
+    force_full_assembly_recheck: bool,
+    assembled_manager: object,
+    assembled_component_bounds: tuple[tuple[np.ndarray, np.ndarray], ...],
+    defer_aabb_overlap: bool,
+) -> InserterCandidateStatus | None:
+    table_clearance = _minimum_table_clearance_candidate(
+        candidate,
+        source_pose_assembly=source_pose,
+        planning=planning,
+        model_cache=model_cache,
+        translations=motion_translations,
+        table_z_m=table_z_m,
+    )
+    if table_clearance < -1.0e-9:
+        return InserterCandidateStatus(
+            candidate=candidate,
+            status="rejected",
+            reason=REASON_INSERTER_TABLE_COLLISION,
+            minimum_clearance_m=table_clearance,
+            details={"obstacle_type": "table"},
+        )
+    if table_clearance < config.table_clearance_margin_m:
+        return InserterCandidateStatus(
+            candidate=candidate,
+            status="rejected",
+            reason=REASON_INSERTER_CLEARANCE_MARGIN_FAILED,
+            minimum_clearance_m=table_clearance,
+            details={
+                "obstacle_type": "table",
+                "required_clearance_m": config.table_clearance_margin_m,
+            },
+        )
+
+    if force_full_assembly_recheck or config.geometry_clearance_margin_m > 0.0:
+        checked_translations = (insertion_translation, retreat)
+    elif retreat_extends_past_preinsertion:
+        checked_translations = (retreat,)
+    else:
+        checked_translations = ()
+
+    swept_component_bounds = _candidate_swept_component_bounds(
+        candidate,
+        source_pose_assembly=source_pose,
+        planning=planning,
+        model_cache=model_cache,
+        translations=checked_translations,
+    )
+    if swept_component_bounds and assembled_component_bounds:
+        assembled_aabb_lower_bound = _component_aabb_distance_lower_bound(
+            swept_component_bounds,
+            assembled_component_bounds,
+        )
+    else:
+        assembled_aabb_lower_bound = math.inf
+    if assembled_aabb_lower_bound > config.geometry_clearance_margin_m:
+        assembled_query = _CollisionQuery(
+            collides=False,
+            obstacle_names=(),
+            minimum_distance_m=(
+                None if math.isinf(assembled_aabb_lower_bound) else assembled_aabb_lower_bound
+            ),
+        )
+        collision_check = "component_aabb_separation_proof"
+    elif defer_aabb_overlap:
+        return None
+    else:
+        final_primitives = _candidate_primitives_assembly(
+            candidate,
+            source_pose_assembly=source_pose,
+            planning=planning,
+            model_cache=model_cache,
+        )
+        final_meshes = tuple(_primitive_to_trimesh(primitive) for primitive in final_primitives)
+        assembled_query_meshes = tuple(
+            mesh
+            for translation in checked_translations
+            for mesh in _swept_meshes(final_meshes, translation)
+        )
+        assembled_query = _query_manager(
+            assembled_manager,
+            assembled_query_meshes,
+            compute_distance=config.geometry_clearance_margin_m > 0.0,
+            stop_on_collision=config.geometry_clearance_margin_m <= 0.0,
+        )
+        collision_check = "exact_fcl"
+
+    minimum_clearance = _minimum(
+        assembled_query.minimum_distance_m,
+        table_clearance,
+    )
+    if assembled_query.collides:
+        return InserterCandidateStatus(
+            candidate=candidate,
+            status="rejected",
+            reason=(
+                REASON_ASSEMBLY_INSERTION_SWEEP_COLLISION
+                if force_full_assembly_recheck
+                else REASON_INSERTER_RETREAT_COLLISION
+            ),
+            minimum_clearance_m=minimum_clearance,
+            details={
+                "obstacle_part_ids": list(assembled_query.obstacle_names),
+                "retreat_translation_assembly_m": list(retreat),
+                "retreat_extends_past_preinsertion": retreat_extends_past_preinsertion,
+                "collision_check": collision_check,
+            },
+        )
+    if (
+        assembled_query.minimum_distance_m is not None
+        and assembled_query.minimum_distance_m < config.geometry_clearance_margin_m
+    ):
+        return InserterCandidateStatus(
+            candidate=candidate,
+            status="rejected",
+            reason=REASON_INSERTER_CLEARANCE_MARGIN_FAILED,
+            minimum_clearance_m=minimum_clearance,
+            details={
+                "obstacle_type": "assembled_parts",
+                "required_clearance_m": config.geometry_clearance_margin_m,
+                "collision_check": collision_check,
+            },
+        )
+    return InserterCandidateStatus(
+        candidate=candidate,
+        status="accepted",
+        reason=REASON_ACCEPTED,
+        minimum_clearance_m=minimum_clearance,
+        details={
+            "insertion_translation_assembly_m": list(insertion_translation),
+            "retreat_translation_assembly_m": list(retreat),
+            "collision_check": collision_check,
+        },
+    )
+
+
 def generate_inserter_grasp_library(
     *,
     sequence: AssemblySequence,
@@ -639,8 +979,14 @@ def generate_inserter_grasp_library(
         raise RuntimeError("trimesh with python-fcl is required for inserter grasp filtering.")
 
     part = sequence.parts_by_id[step.incoming_part_id]
-    obstacle_paths = tuple(
-        str(sequence.parts_by_id[part_id].resolved_mesh_path) for part_id in step.assembled_part_ids_before
+    force_full_assembly_recheck = bool(planning.symmetry_pickup_enabled)
+    obstacle_paths = (
+        ()
+        if force_full_assembly_recheck
+        else tuple(
+            str(sequence.parts_by_id[part_id].resolved_mesh_path)
+            for part_id in step.assembled_part_ids_before
+        )
     )
     stage1 = generate_stage1_result(
         geometry=GeometryConfig(
@@ -659,13 +1005,18 @@ def generate_inserter_grasp_library(
                 ),
             },
         ),
-        planning=replace(planning, skip_stage1_collision_checks=False),
+        # Symmetry variants need a complete Stage-3 corridor recheck anyway.
+        # Avoid doing the canonical assembly sweep first when its result will
+        # not be consumed; object/self-collision generation still runs.
+        planning=replace(
+            planning,
+            skip_stage1_collision_checks=force_full_assembly_recheck,
+        ),
     )
     symmetry_metadata: dict[str, object] = {
         "symmetry_pickup_enabled": bool(planning.symmetry_pickup_enabled),
         "symmetry_pickup_load_status": "disabled",
     }
-    force_full_assembly_recheck = False
     if planning.symmetry_pickup_enabled:
         records_by_part, asset_metadata = load_assembly_symmetry_records(
             sequence,
@@ -734,10 +1085,25 @@ def generate_inserter_grasp_library(
         for part_id in step.assembled_part_ids_before
     }
     assembled_manager = _manager_for_meshes(part_meshes.items())
-    model_cache: dict[tuple[float, float], object] = {}
+    assembled_component_bounds = tuple(
+        _bounds((mesh,)) for mesh in part_meshes.values()
+    )
+    model_cache: dict[tuple[float, float], tuple[object, ...]] = {}
     statuses: list[InserterCandidateStatus] = []
     accepted: list[SavedGraspCandidate] = []
-    for raw_candidate in renamed_raw:
+    deferred_exact: list[SavedGraspCandidate] = []
+    cluster_counts: Counter[tuple[int, ...]] = Counter()
+    iteration_candidates = (
+        _balanced_inserter_candidate_order(
+            renamed_raw,
+            source_pose_assembly=source_pose,
+            balance_approach_directions=(config.balance_inserter_approach_directions),
+            balance_symmetry_transforms=(config.balance_inserter_symmetry_transforms),
+        )
+        if config.adaptive_inserter_shortlist
+        else renamed_raw
+    )
+    for raw_candidate in iteration_candidates:
         candidate = filtered_by_id.get(raw_candidate.grasp_id)
         if candidate is None:
             statuses.append(
@@ -753,116 +1119,129 @@ def generate_inserter_grasp_library(
             )
             continue
 
-        final_meshes = _candidate_meshes_assembly(
-            candidate,
-            source_pose_assembly=source_pose,
-            planning=planning,
-            model_cache=model_cache,
-        )
-        retreat_swept = _swept_meshes(final_meshes, retreat)
-        if force_full_assembly_recheck:
-            assembled_query_meshes = (
-                *_swept_meshes(final_meshes, insertion_translation),
-                *retreat_swept,
-            )
-        elif config.geometry_clearance_margin_m > 0.0:
-            assembled_query_meshes = (
-                *_swept_meshes(final_meshes, insertion_translation),
-                *retreat_swept,
-            )
-        elif retreat_extends_past_preinsertion:
-            assembled_query_meshes = retreat_swept
-        else:
-            # Existing Stage 1 already collision-checked the full insertion
-            # sweep. A shorter retreat retraces a subset of the same geometry.
-            assembled_query_meshes = ()
-        assembled_query = _query_manager(
-            assembled_manager,
-            assembled_query_meshes,
-        )
-        table_clearance = _minimum_table_clearance(
-            final_meshes,
-            motion_translations,
-            table_z_m=sequence.table_z_assembly_m,
-        )
-        minimum_clearance = _minimum(
-            assembled_query.minimum_distance_m,
-            table_clearance,
-        )
-        if assembled_query.collides:
+        if config.adaptive_inserter_shortlist and len(accepted) >= config.max_inserter_candidates_per_step:
             statuses.append(
                 InserterCandidateStatus(
                     candidate=candidate,
-                    status="rejected",
-                    reason=(
-                        REASON_ASSEMBLY_INSERTION_SWEEP_COLLISION
-                        if force_full_assembly_recheck
-                        else REASON_INSERTER_RETREAT_COLLISION
-                    ),
-                    minimum_clearance_m=minimum_clearance,
+                    status="not_evaluated",
+                    reason=REASON_SHORTLIST_COMPLETE,
+                    minimum_clearance_m=None,
                     details={
-                        "obstacle_part_ids": list(assembled_query.obstacle_names),
-                        "retreat_translation_assembly_m": list(retreat),
-                        "retreat_extends_past_preinsertion": (retreat_extends_past_preinsertion),
+                        "shortlist_limit": config.max_inserter_candidates_per_step,
+                        "filter": "score_ordered_adaptive_shortlist",
                     },
                 )
             )
             continue
+
+        cluster = _candidate_cluster_key(
+            candidate,
+            source_pose_assembly=source_pose,
+            config=config,
+        )
         if (
-            assembled_query.minimum_distance_m is not None
-            and assembled_query.minimum_distance_m < config.geometry_clearance_margin_m
+            config.adaptive_inserter_shortlist
+            and cluster_counts[cluster] >= config.max_candidates_per_cluster
         ):
             statuses.append(
                 InserterCandidateStatus(
                     candidate=candidate,
-                    status="rejected",
-                    reason=REASON_INSERTER_CLEARANCE_MARGIN_FAILED,
-                    minimum_clearance_m=minimum_clearance,
+                    status="not_evaluated",
+                    reason=REASON_DIVERSITY_CLUSTER_FULL,
+                    minimum_clearance_m=None,
                     details={
-                        "obstacle_type": "assembled_parts",
-                        "required_clearance_m": (config.geometry_clearance_margin_m),
+                        "cluster": list(cluster),
+                        "cluster_limit": config.max_candidates_per_cluster,
+                        "filter": "score_ordered_adaptive_shortlist",
                     },
                 )
             )
             continue
-        if table_clearance < -1.0e-9:
-            statuses.append(
-                InserterCandidateStatus(
-                    candidate=candidate,
-                    status="rejected",
-                    reason=REASON_INSERTER_TABLE_COLLISION,
-                    minimum_clearance_m=minimum_clearance,
-                    details={"obstacle_type": "table"},
-                )
-            )
-            continue
-        if table_clearance < config.table_clearance_margin_m:
-            statuses.append(
-                InserterCandidateStatus(
-                    candidate=candidate,
-                    status="rejected",
-                    reason=REASON_INSERTER_CLEARANCE_MARGIN_FAILED,
-                    minimum_clearance_m=minimum_clearance,
-                    details={
-                        "obstacle_type": "table",
-                        "required_clearance_m": (config.table_clearance_margin_m),
-                    },
-                )
-            )
-            continue
-        statuses.append(
-            InserterCandidateStatus(
-                candidate=candidate,
-                status="accepted",
-                reason=REASON_ACCEPTED,
-                minimum_clearance_m=minimum_clearance,
-                details={
-                    "insertion_translation_assembly_m": list(insertion_translation),
-                    "retreat_translation_assembly_m": list(retreat),
-                },
-            )
+
+        candidate_status = _evaluate_inserter_candidate_geometry(
+            candidate,
+            source_pose=source_pose,
+            planning=planning,
+            config=config,
+            model_cache=model_cache,
+            motion_translations=motion_translations,
+            table_z_m=sequence.table_z_assembly_m,
+            retreat=retreat,
+            insertion_translation=insertion_translation,
+            retreat_extends_past_preinsertion=retreat_extends_past_preinsertion,
+            force_full_assembly_recheck=force_full_assembly_recheck,
+            assembled_manager=assembled_manager,
+            assembled_component_bounds=assembled_component_bounds,
+            defer_aabb_overlap=(
+                config.adaptive_inserter_shortlist
+                and config.prefer_aabb_clear_inserter_candidates
+            ),
         )
-        accepted.append(candidate)
+        if candidate_status is None:
+            deferred_exact.append(candidate)
+            continue
+        statuses.append(candidate_status)
+        if candidate_status.status == "accepted":
+            accepted.append(candidate)
+            cluster_counts[cluster] += 1
+
+    for candidate in deferred_exact:
+        if len(accepted) >= config.max_inserter_candidates_per_step:
+            statuses.append(
+                InserterCandidateStatus(
+                    candidate=candidate,
+                    status="not_evaluated",
+                    reason=REASON_TIGHT_GEOMETRY_FALLBACK_NOT_NEEDED,
+                    minimum_clearance_m=None,
+                    details={
+                        "filter": "aabb_clear_candidates_filled_shortlist",
+                        "shortlist_limit": config.max_inserter_candidates_per_step,
+                    },
+                )
+            )
+            continue
+        cluster = _candidate_cluster_key(
+            candidate,
+            source_pose_assembly=source_pose,
+            config=config,
+        )
+        if cluster_counts[cluster] >= config.max_candidates_per_cluster:
+            statuses.append(
+                InserterCandidateStatus(
+                    candidate=candidate,
+                    status="not_evaluated",
+                    reason=REASON_DIVERSITY_CLUSTER_FULL,
+                    minimum_clearance_m=None,
+                    details={
+                        "cluster": list(cluster),
+                        "cluster_limit": config.max_candidates_per_cluster,
+                        "filter": "aabb_clear_candidates_filled_cluster",
+                    },
+                )
+            )
+            continue
+        candidate_status = _evaluate_inserter_candidate_geometry(
+            candidate,
+            source_pose=source_pose,
+            planning=planning,
+            config=config,
+            model_cache=model_cache,
+            motion_translations=motion_translations,
+            table_z_m=sequence.table_z_assembly_m,
+            retreat=retreat,
+            insertion_translation=insertion_translation,
+            retreat_extends_past_preinsertion=retreat_extends_past_preinsertion,
+            force_full_assembly_recheck=force_full_assembly_recheck,
+            assembled_manager=assembled_manager,
+            assembled_component_bounds=assembled_component_bounds,
+            defer_aabb_overlap=False,
+        )
+        if candidate_status is None:  # pragma: no cover - exact pass cannot defer
+            raise AssertionError("Exact inserter fallback unexpectedly deferred.")
+        statuses.append(candidate_status)
+        if candidate_status.status == "accepted":
+            accepted.append(candidate)
+            cluster_counts[cluster] += 1
 
     accepted_tuple = tuple(sorted(accepted, key=_candidate_sort_key))
     metadata = {
@@ -878,6 +1257,31 @@ def generate_inserter_grasp_library(
         "raw_candidate_count": len(renamed_raw),
         "assembly_insertion_feasible_count": len(renamed_filtered),
         "table_retreat_feasible_count": len(accepted_tuple),
+        "adaptive_inserter_shortlist": bool(config.adaptive_inserter_shortlist),
+        "adaptive_inserter_shortlist_limit": config.max_inserter_candidates_per_step,
+        "balance_inserter_approach_directions": bool(
+            config.balance_inserter_approach_directions
+        ),
+        "balance_inserter_symmetry_transforms": bool(
+            config.balance_inserter_symmetry_transforms
+        ),
+        "accepted_approach_direction_counts_assembly": (
+            _candidate_approach_direction_counts(
+                accepted_tuple,
+                source_pose_assembly=source_pose,
+            )
+        ),
+        "accepted_symmetry_transform_counts": dict(
+            sorted(Counter(_candidate_symmetry_key(candidate) for candidate in accepted_tuple).items())
+        ),
+        "prefer_aabb_clear_inserter_candidates": bool(
+            config.prefer_aabb_clear_inserter_candidates
+        ),
+        "tight_geometry_deferred_count": len(deferred_exact),
+        "expensive_candidate_check_count": sum(
+            status.status != "not_evaluated" and status.grasp_id in filtered_by_id
+            for status in statuses
+        ),
         "candidate_ids_renamed": True,
         "table_filter_applied": True,
         "retreat_filter_applied": True,
@@ -915,16 +1319,67 @@ def generate_inserter_grasp_libraries(
     planning: PlanningConfig,
     config: DualGraspPairConfig,
 ) -> tuple[InserterGraspLibrary, ...]:
-    return tuple(
-        generate_inserter_grasp_library(
-            sequence=sequence,
-            step=step,
-            planning=planning,
-            config=config,
-        )
-        for step in sequence.steps
-        if step.holder_base_available
+    steps = tuple(step for step in sequence.steps if step.holder_base_available)
+    worker_count = resolve_stage3_worker_count(
+        requested=config.stage3_worker_count,
+        task_count=len(steps),
     )
+    if worker_count <= 1:
+        return tuple(
+            generate_inserter_grasp_library(
+                sequence=sequence,
+                step=step,
+                planning=planning,
+                config=config,
+            )
+            for step in steps
+        )
+
+    results: list[InserterGraspLibrary | None] = [None] * len(steps)
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                _generate_inserter_grasp_library_worker,
+                sequence,
+                step,
+                planning,
+                config,
+            ): index
+            for index, step in enumerate(steps)
+        }
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+    return tuple(result for result in results if result is not None)
+
+
+def _generate_inserter_grasp_library_worker(
+    sequence: AssemblySequence,
+    step: AssemblySequenceStep,
+    planning: PlanningConfig,
+    config: DualGraspPairConfig,
+) -> InserterGraspLibrary:
+    return generate_inserter_grasp_library(
+        sequence=sequence,
+        step=step,
+        planning=planning,
+        config=config,
+    )
+
+
+def resolve_stage3_worker_count(*, requested: int, task_count: int) -> int:
+    """Resolve zero-as-auto workers without exceeding independent Stage-3 steps."""
+
+    if task_count <= 0:
+        return 0
+    if requested < 0:
+        raise ValueError("requested Stage-3 worker count must be >= 0.")
+    if requested > 0:
+        return min(int(requested), int(task_count))
+    try:
+        available = len(os.sched_getaffinity(0))
+    except AttributeError:
+        available = os.cpu_count() or 1
+    return min(int(task_count), max(1, int(available) - 1))
 
 
 def _axis_bins(axis: np.ndarray, *, bin_rad: float) -> tuple[int, int]:
@@ -935,6 +1390,128 @@ def _axis_bins(axis: np.ndarray, *, bin_rad: float) -> tuple[int, int]:
     return (
         int(round(azimuth / bin_rad)),
         int(round(elevation / bin_rad)),
+    )
+
+
+def _candidate_approach_direction_key(
+    candidate: SavedGraspCandidate,
+    *,
+    source_pose_assembly: ObjectWorldPose,
+) -> tuple[int, int]:
+    """Return the signed dominant assembly-frame axis of the approach vector."""
+
+    rotation_assembly = source_pose_assembly.rotation_world_from_object @ quat_to_rotmat_xyzw(
+        candidate.grasp_orientation_xyzw_obj
+    )
+    approach_axis = np.asarray(rotation_assembly[:, 2], dtype=float)
+    axis_index = int(np.argmax(np.abs(approach_axis)))
+    sign = 1 if float(approach_axis[axis_index]) >= 0.0 else -1
+    return axis_index, sign
+
+
+def _approach_direction_label(direction: tuple[int, int]) -> str:
+    axis_index, sign = direction
+    return f"{'+' if sign > 0 else '-'}{'xyz'[axis_index]}"
+
+
+def _candidate_symmetry_key(candidate: SavedGraspCandidate) -> str:
+    return str((candidate.metadata or {}).get("symmetry_pickup_name", "identity"))
+
+
+def _balanced_inserter_candidate_order(
+    candidates: Iterable[SavedGraspCandidate],
+    *,
+    source_pose_assembly: ObjectWorldPose,
+    balance_approach_directions: bool,
+    balance_symmetry_transforms: bool,
+) -> tuple[SavedGraspCandidate, ...]:
+    """Score-order candidates while round-robining physical coverage strata.
+
+    Approach direction is the outer stratum so every feasible signed axis gets
+    one candidate before any direction gets a second.  Symmetry transforms are
+    round-robined within each direction.  Exhausted strata naturally donate
+    their remaining capacity to the directions and symmetries that exist.
+    """
+
+    score_ordered = tuple(sorted(candidates, key=_candidate_sort_key))
+    if not balance_approach_directions and not balance_symmetry_transforms:
+        return score_ordered
+
+    grouped: dict[tuple[int, int] | None, dict[str, deque[SavedGraspCandidate]]] = {}
+    for candidate in score_ordered:
+        direction = (
+            _candidate_approach_direction_key(
+                candidate,
+                source_pose_assembly=source_pose_assembly,
+            )
+            if balance_approach_directions
+            else None
+        )
+        symmetry = _candidate_symmetry_key(candidate) if balance_symmetry_transforms else "all"
+        grouped.setdefault(direction, {}).setdefault(symmetry, deque()).append(candidate)
+
+    def best_candidate(direction: tuple[int, int] | None) -> SavedGraspCandidate:
+        return min(
+            (queue[0] for queue in grouped[direction].values()),
+            key=_candidate_sort_key,
+        )
+
+    direction_order = tuple(
+        sorted(
+            grouped,
+            key=lambda direction: (
+                _candidate_sort_key(best_candidate(direction)),
+                (-1, 0) if direction is None else direction,
+            ),
+        )
+    )
+    symmetry_cycles: dict[tuple[int, int] | None, deque[str]] = {}
+    for direction in direction_order:
+        symmetry_cycles[direction] = deque(
+            sorted(
+                grouped[direction],
+                key=lambda symmetry: (
+                    _candidate_sort_key(grouped[direction][symmetry][0]),
+                    symmetry,
+                ),
+            )
+        )
+
+    ordered: list[SavedGraspCandidate] = []
+    while True:
+        added = False
+        for direction in direction_order:
+            cycle = symmetry_cycles[direction]
+            if not cycle:
+                continue
+            symmetry = cycle.popleft()
+            queue = grouped[direction][symmetry]
+            ordered.append(queue.popleft())
+            added = True
+            if queue:
+                cycle.append(symmetry)
+        if not added:
+            break
+    return tuple(ordered)
+
+
+def _candidate_approach_direction_counts(
+    candidates: Iterable[SavedGraspCandidate],
+    *,
+    source_pose_assembly: ObjectWorldPose,
+) -> dict[str, int]:
+    return dict(
+        sorted(
+            Counter(
+                _approach_direction_label(
+                    _candidate_approach_direction_key(
+                        candidate,
+                        source_pose_assembly=source_pose_assembly,
+                    )
+                )
+                for candidate in candidates
+            ).items()
+        )
     )
 
 
@@ -969,10 +1546,17 @@ def _diverse_shortlist(
     source_pose_assembly: ObjectWorldPose,
     config: DualGraspPairConfig,
     limit: int,
+    balance_approach_directions: bool = False,
+    balance_symmetry_transforms: bool = False,
 ) -> tuple[SavedGraspCandidate, ...]:
     cluster_counts: Counter[tuple[int, ...]] = Counter()
     selected: list[SavedGraspCandidate] = []
-    for candidate in sorted(candidates, key=_candidate_sort_key):
+    for candidate in _balanced_inserter_candidate_order(
+        candidates,
+        source_pose_assembly=source_pose_assembly,
+        balance_approach_directions=balance_approach_directions,
+        balance_symmetry_transforms=balance_symmetry_transforms,
+    ):
         cluster = _candidate_cluster_key(
             candidate,
             source_pose_assembly=source_pose_assembly,
@@ -1021,7 +1605,7 @@ def _candidate_geometry(
         tuple[float, float, float],
         tuple[float, float, float],
     ],
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> _CandidateGeometry:
     final_meshes = _candidate_meshes_assembly(
         candidate,
@@ -1029,11 +1613,21 @@ def _candidate_geometry(
         planning=planning,
         model_cache=model_cache,
     )
-    swept_meshes = tuple(mesh for translation in translations for mesh in _swept_meshes(final_meshes, translation))
+    unique_translations: list[tuple[float, float, float]] = []
+    for translation in translations:
+        normalized = tuple(float(value) for value in translation)
+        if normalized not in unique_translations:
+            unique_translations.append(normalized)
+    swept_meshes = tuple(
+        mesh
+        for translation in unique_translations
+        for mesh in _swept_meshes(final_meshes, translation)
+    )
     return _CandidateGeometry(
         final_meshes=final_meshes,
         swept_meshes=swept_meshes,
-        swept_bounds=_bounds(swept_meshes),
+        final_component_bounds=tuple(_bounds((mesh,)) for mesh in final_meshes),
+        swept_component_bounds=tuple(_bounds((mesh,)) for mesh in swept_meshes),
     )
 
 
@@ -1075,7 +1669,7 @@ def _transition_candidate_geometry(
     config: DualGraspPairConfig,
     assembled_manager: object,
     table_z_m: float,
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> _TransitionCandidateGeometry:
     insertion, retreat = _transition_motion_translations(
         transition,
@@ -1245,6 +1839,24 @@ def _pair_id(
     return f"p{step.step_index:03d}_{holder.grasp_id}_{inserter.grasp_id}"
 
 
+def _balanced_pair_combinations(
+    holders: Iterable[SavedGraspCandidate],
+    inserters: Iterable[SavedGraspCandidate],
+    *,
+    config: DualGraspPairConfig,
+) -> tuple[tuple[SavedGraspCandidate, SavedGraspCandidate], ...]:
+    """Cover every inserter once before pairing any inserter a second time."""
+
+    holder_order = tuple(sorted(holders, key=_candidate_sort_key))
+    inserter_order = tuple(inserters)
+    combinations: list[tuple[SavedGraspCandidate, SavedGraspCandidate]] = []
+    for holder in holder_order:
+        combinations.extend((holder, inserter) for inserter in inserter_order)
+        if len(combinations) >= config.max_pair_checks:
+            break
+    return tuple(combinations[: config.max_pair_checks])
+
+
 def _evaluate_pair(
     *,
     step: AssemblySequenceStep,
@@ -1256,9 +1868,9 @@ def _evaluate_pair(
     config: DualGraspPairConfig,
     inserter_manager_cache_key: str | None = None,
 ) -> DualGraspPairEvaluation:
-    lower_bound = _aabb_distance_lower_bound(
-        holder_geometry.swept_bounds,
-        inserter_geometry.swept_bounds,
+    lower_bound = _component_aabb_distance_lower_bound(
+        holder_geometry.final_component_bounds,
+        inserter_geometry.swept_component_bounds,
     )
     pair_id = _pair_id(step, holder, inserter)
     if lower_bound > config.geometry_clearance_margin_m:
@@ -1296,13 +1908,22 @@ def _evaluate_pair(
             (f"inserter_sweep_{index}", mesh) for index, mesh in enumerate(inserter_geometry.swept_meshes)
         )
         inserter_manager_cache[manager_key] = inserter_manager
-    exact = _query_manager(inserter_manager, holder_geometry.final_meshes)
+    exact = _query_manager(
+        inserter_manager,
+        holder_geometry.final_meshes,
+        compute_distance=(
+            config.exact_pair_clearance_ranking
+            or config.geometry_clearance_margin_m > 0.0
+        ),
+        stop_on_collision=config.geometry_clearance_margin_m <= 0.0,
+    )
     clearance_component = _clearance_score(
         exact.minimum_distance_m,
         config=config,
     )
     details = {
         "minimum_clearance_is_lower_bound": False,
+        "exact_clearance_computed": exact.minimum_distance_m is not None,
         "aabb_distance_lower_bound_m": lower_bound,
         "colliding_inserter_sweep_primitives": list(exact.obstacle_names),
     }
@@ -1363,7 +1984,7 @@ def _validate_retained_pair_transitions(
     holder_geometries: dict[str, _CandidateGeometry],
     planning: PlanningConfig,
     config: DualGraspPairConfig,
-    model_cache: dict[tuple[float, float], object],
+    model_cache: dict[tuple[float, float], tuple[object, ...]],
 ) -> tuple[DualGraspPairEvaluation, ...]:
     """Attach transition compatibility, validating variants for retained pairs."""
 
@@ -1534,6 +2155,8 @@ def _retain_diverse_pairs(
     evaluations: Iterable[DualGraspPairEvaluation],
     *,
     config: DualGraspPairConfig,
+    inserters_by_id: dict[str, SavedGraspCandidate] | None = None,
+    inserter_source_pose_assembly: ObjectWorldPose | None = None,
 ) -> tuple[str, ...]:
     """Retain high-scoring pairs while covering inserter grasps first.
 
@@ -1554,15 +2177,26 @@ def _retain_diverse_pairs(
     by_inserter: dict[str, list[DualGraspPairEvaluation]] = {}
     for evaluation in compatible:
         by_inserter.setdefault(evaluation.inserter_grasp_id, []).append(evaluation)
-    inserter_order = tuple(
-        sorted(
-            by_inserter,
-            key=lambda inserter_id: (
-                -by_inserter[inserter_id][0].score,
-                inserter_id,
-            ),
+    if inserters_by_id is not None and inserter_source_pose_assembly is not None:
+        inserter_order = tuple(
+            candidate.grasp_id
+            for candidate in _balanced_inserter_candidate_order(
+                (inserters_by_id[inserter_id] for inserter_id in by_inserter),
+                source_pose_assembly=inserter_source_pose_assembly,
+                balance_approach_directions=(config.balance_inserter_approach_directions),
+                balance_symmetry_transforms=(config.balance_inserter_symmetry_transforms),
+            )
         )
-    )
+    else:
+        inserter_order = tuple(
+            sorted(
+                by_inserter,
+                key=lambda inserter_id: (
+                    -by_inserter[inserter_id][0].score,
+                    inserter_id,
+                ),
+            )
+        )
     indices = {inserter_id: 0 for inserter_id in inserter_order}
     while len(retained) < config.max_accepted_pairs:
         added = False
@@ -1770,7 +2404,7 @@ def plan_dual_grasp_pairs(
 
     holder_by_id = {candidate.grasp_id: candidate for candidate in holder_feasibility.candidates}
     holder_state_by_step = {state.step_id: state for state in holder_feasibility.states}
-    model_cache: dict[tuple[float, float], object] = {}
+    model_cache: dict[tuple[float, float], tuple[object, ...]] = {}
     step_results: list[DualGraspPairStepResult] = []
     for step in sequence.steps:
         if not step.holder_base_available:
@@ -1803,6 +2437,8 @@ def plan_dual_grasp_pairs(
             source_pose_assembly=library.source_frame_pose_assembly,
             config=config,
             limit=config.max_inserter_candidates_per_step,
+            balance_approach_directions=(config.balance_inserter_approach_directions),
+            balance_symmetry_transforms=(config.balance_inserter_symmetry_transforms),
         )
         holder_shortlisted_ids = tuple(candidate.grasp_id for candidate in holder_shortlist)
         inserter_shortlisted_ids = tuple(candidate.grasp_id for candidate in inserter_shortlist)
@@ -1852,23 +2488,10 @@ def plan_dual_grasp_pairs(
             )
             for candidate in inserter_shortlist
         }
-        combinations = sorted(
-            (
-                (
-                    -(
-                        config.holder_score_weight * _score(holder)
-                        + config.inserter_score_weight * _score(inserter)
-                        + config.clearance_score_weight
-                    ),
-                    holder.grasp_id,
-                    inserter.grasp_id,
-                    holder,
-                    inserter,
-                )
-                for holder in holder_shortlist
-                for inserter in inserter_shortlist
-            ),
-            key=lambda item: (item[0], item[1], item[2]),
+        combinations = _balanced_pair_combinations(
+            holder_shortlist,
+            inserter_shortlist,
+            config=config,
         )
         inserter_manager_cache: dict[str, object] = {}
         evaluations_list = [
@@ -1881,7 +2504,7 @@ def plan_dual_grasp_pairs(
                 inserter_manager_cache=inserter_manager_cache,
                 config=config,
             )
-            for _, _, _, holder, inserter in combinations[: config.max_pair_checks]
+            for holder, inserter in combinations
         ]
         diagnostic_ids = {
             evaluation.pair_id
@@ -1912,9 +2535,12 @@ def plan_dual_grasp_pairs(
             )
             for evaluation in evaluations_list
         )
+        inserters_by_id = {candidate.grasp_id: candidate for candidate in inserter_shortlist}
         retained_pair_ids = _retain_diverse_pairs(
             evaluations,
             config=config,
+            inserters_by_id=inserters_by_id,
+            inserter_source_pose_assembly=library.source_frame_pose_assembly,
         )
         evaluations = _validate_retained_pair_transitions(
             evaluations,
@@ -1923,7 +2549,7 @@ def plan_dual_grasp_pairs(
             sequence=sequence,
             step=step,
             holders_by_id=holder_by_id,
-            inserters_by_id={candidate.grasp_id: candidate for candidate in inserter_shortlist},
+            inserters_by_id=inserters_by_id,
             holder_geometries=holder_geometries,
             planning=planning,
             config=config,
@@ -2021,7 +2647,9 @@ def plan_dual_grasp_pairs(
                     "inserter_shortlist_count": len(inserter_shortlist),
                     "possible_shortlisted_pair_count": (len(holder_shortlist) * len(inserter_shortlist)),
                     "checked_pair_count": len(evaluations),
-                    "pair_check_limit_reached": (len(combinations) > len(evaluations)),
+                    "pair_check_limit_reached": (
+                        len(holder_shortlist) * len(inserter_shortlist) > len(evaluations)
+                    ),
                     "broadphase_clear_count": (len(evaluations) - exact_count),
                     "exact_fcl_pair_check_count": exact_count,
                     "compatible_pair_count": compatible_count,

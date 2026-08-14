@@ -181,6 +181,11 @@ def test_live_debug_scene_uses_world_frame_part_poses(tmp_path) -> None:
     ]
     assert scene["incoming_poses"]["above_preinsertion"]["position_world_m"] == [0.6, 0.1, 0.13]
     assert scene["layout_proxy_components"]["transition_segments_cross_xy"] is True
+    assert scene["jaw_widths_m"] == {"holder": 0.04, "inserter": 0.05}
+    assert np.allclose(
+        [scene["approach_widths_m"]["holder"], scene["approach_widths_m"]["inserter"]],
+        [0.05, 0.06],
+    )
     assert "holder_grasp" in scene["gripper_floor_clearance_m"]
     assert np.isfinite(scene["gripper_floor_clearance_m"]["holder_grasp"])
 
@@ -266,6 +271,8 @@ def test_live_debug_server_reports_candidate_and_phase(
     assert 'id="queue-counts"' in debug_module._LIVE_HTML
     assert 'id="joint-counts"' in debug_module._LIVE_HTML
     assert 'id="ik-counts"' in debug_module._LIVE_HTML
+    assert "exact_ik_seed_calls" in debug_module._LIVE_HTML
+    assert "exact_ik_solutions_found" in debug_module._LIVE_HTML
     assert 'id="crossing"' in debug_module._LIVE_HTML
     assert 'id="holder-floor"' in debug_module._LIVE_HTML
     assert "gripper_floor_clearance_m" in debug_module._LIVE_HTML

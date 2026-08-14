@@ -57,9 +57,16 @@ The dual-arm path supports:
     the incoming part is grasped;
   - **transition symmetry** creates equivalent final/pre-insertion corridors
     after the grasp is fixed;
-- cheap distance/rotation pool ordering, corridor-diverse joint-space
-  pre-ranking from the planned pickup lift, then exact MoveIt IK/full
-  trajectory planning with candidate fallback;
+- cheap distance/rotation pool ordering and corridor-diverse joint-space
+  pre-ranking from the planned pickup lift. The simulator/benchmark candidate
+  planner then checks exact MoveIt IK through a complete 14-joint hypothetical
+  state: holder targets are solved first and frozen while inserter
+  pickup/transition targets are checked. Incoming pickup approach IK follows
+  short Cartesian continuation waypoints from pregrasp to grasp instead of one
+  large numerical jump. Its request-local cache key includes the detected
+  world pose and complete input state, and full trajectory planning reuses the
+  validated holder and inserter joint targets instead of recomputing a
+  different IK branch;
 - execution of the validated vertical slice in Isaac; and
 - guarded real-robot planning/execution through pre-insertion.
 
@@ -235,6 +242,61 @@ enabling or changing transition symmetry; the runtime runner does not silently
 rebuild stale Stage-3 artifacts. Schema-2 artifacts remain readable, but the
 runtime then falls back to the transition-validated retained pair subset.
 
+Stage-3 insertion filtering is adaptive. It evaluates candidates in score and
+diversity order, but score is applied within coverage buckets rather than
+globally: signed assembly-frame approach axes are round-robined first and
+pickup-symmetry transforms are round-robined within each axis. The same
+ordering is used for unary filtering, the pairing shortlist, and retained pair
+selection, so one high-scoring physical side cannot consume every bounded
+stage. Empty or exhausted buckets donate their capacity to the remaining
+feasible directions. The default inserter library cap is 512. Stage 3 prefers
+robust corridors whose individual gripper-component AABBs prove separation
+from the assembled prefix, and invokes exact FCL only when those robust
+candidates cannot fill the configured inserter shortlist.
+The endpoint-AABB test is exact for the linear insertion/retreat sweep because
+the swept AABB is the union of its endpoint AABBs. Independent assembly steps
+run in separate worker processes; `pair_planning.stage3_worker_count: 0`
+selects up to one worker per step from the available CPU affinity. Set
+`adaptive_inserter_shortlist: false` and
+`prefer_aabb_clear_inserter_candidates: false` only when an exhaustive
+diagnostic artifact is more important than build time. The coverage policy is
+controlled by `balance_inserter_approach_directions` and
+`balance_inserter_symmetry_transforms`; disabling both restores global
+score-first ordering.
+
+For a faster collision-safe test build, keep the artifacts separate from the
+full profile:
+
+```bash
+python3 scripts/build_dual_grasp_pairs.py \
+  --config configs/dual_grasp_planning.yaml \
+  --assembly plumbers_block \
+  --output-dir artifacts/dual_grasp_planning_fast/plumbers_block \
+  --max-inserter-candidates-per-step 320 \
+  --max-pair-checks 8000 \
+  --skip-exact-pair-clearance-ranking
+```
+
+This still performs exact FCL collision rejection. It skips only exact
+separation-distance queries for overlapping, non-colliding pair AABBs, so such
+pairs receive no exact-clearance ranking bonus. Run it with
+`--artifact-root artifacts/dual_grasp_planning_fast`. The full profile uses the
+YAML defaults (512 inserters, 16,000 pair checks, exact clearance ranking) and
+can write to `artifacts/dual_grasp_planning_overnight/plumbers_block` without
+overwriting the fast artifacts.
+
+For the KUKA Y-gripper, every offline assembly, holder-state, pair, and pickup-
+floor decision must pass at two finger states: the selected contact width and
+the approach width, which is 5 mm farther open per finger (10 mm total jaw
+clearance). `planning.detailed_finger_contact_gap_m: 0.005` is that per-finger
+approach clearance. Changing it invalidates the KUKA Stage-1 collision cache;
+rebuild the artifacts before sim or real execution.
+Stage-1 target-object self-collision is the deliberate exception: it checks the
+partially open approach geometry, because a closed whole-gripper query would
+classify the intended finger-pad/object contacts as collisions. Closed and
+approach states are both required for external obstacles such as the floor,
+assembled parts, and the other gripper.
+
 ### 2. Run the dual-arm Isaac vertical slice
 
 For the first holder-active step, run:
@@ -288,6 +350,28 @@ object. The wrapper stops the MoveIt stack when finished. Add `--headless` for a
 `--record-video /tmp/dual_part_0.mp4` to save a video. Use
 `--joint-rank-candidates N` to change the pre-plan bound or
 `--skip-joint-space-ranking` only for a comparison run.
+
+The dual iiwa MoveIt stack defaults to tuned KDL: its redundant-space search
+resolution is `0.03 rad` instead of the former `0.005 rad`, and its solver
+timeout is `0.10 s`. Exact preflight starts four complete-state searches at
+the first pose, retains up to four coordinated branches, and then preserves
+one continuation per branch through five pickup approach waypoints. These
+solutions are cached only for the current detected world pose and planning
+request; a new perception pose creates new targets and new IK searches.
+
+PickIK global mode is retained as an explicit A/B option. Install the optional
+ROS plugin before selecting it:
+
+```bash
+sudo apt install ros-humble-pick-ik
+cd ros2_ws
+colcon build --packages-select robot_integration_ros --symlink-install
+```
+
+Then pass `--ik-solver pick_ik`. Its optional configuration uses global mode
+with 1 mm position and 0.01 rad orientation thresholds. In the measured hard
+failure, PickIK found no additional feasible grasp and was slower than tuned
+KDL, so it is not the operational default.
 
 The MoveIt launch is isolated in its own process group. On success, planner
 failure, Isaac failure, Ctrl-C, or shell exit, the wrapper gives every ROS
@@ -360,9 +444,10 @@ or partially reset state; its messages are saved in the failed plan artifact.
 
 ### 2a. Run the resumable dual-assembly benchmark
 
-The default benchmark runs all four `plumbers_block` insertion steps at four
-front-of-robot pickup locations and eight incoming-part orientations: 128
-MoveIt-plus-Isaac cases. The assembled prefix remains upright at
+The default benchmark runs all four `plumbers_block` insertion steps at twelve
+front-of-robot pickup locations and eight incoming-part orientations: 384
+MoveIt-plus-Isaac cases. Each side samples three forward depths and two lateral
+offsets. The assembled prefix remains upright at
 `(0.55, 0.0)` for every case. Negative-Y pickups assign `lbr_one` as inserter;
 positive-Y pickups assign `lbr_two`, and the opposite arm holds the assembly.
 
@@ -377,7 +462,7 @@ Named filters make a single matrix cell reproducible without changing YAML:
 ```bash
 python3 scripts/run_dual_assembly_benchmark.py \
   --parts 3 \
-  --placements right_near \
+  --placements right_inner_middle \
   --orientations upright_yaw_0
 ```
 
@@ -402,15 +487,118 @@ command resumes interrupted and pending cases while skipping completed cases.
 Use `--retry-failed` to rerun failures or `--no-resume` to start the event log
 again.
 
+To measure fixes without mixing old successes into the new report, select the
+failed case IDs from a completed summary and write them to a separate output:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py \
+  --failed-from-summary artifacts/dual_assembly_benchmark/plumbers_block_384_positions/summary.json \
+  --output-dir artifacts/dual_assembly_benchmark/plumbers_block_failed_retry \
+  --no-resume
+```
+
+The new manifest and dashboard contain only the previously failed cases, so
+every success in that dashboard is a recovered case.
+
+For a fast planner-only regression, skip Isaac entirely and select just the
+cases that previously failed during MoveIt candidate planning:
+
+```bash
+python3 scripts/run_dual_assembly_benchmark.py \
+  --failed-from-summary artifacts/dual_assembly_benchmark/plumbers_block_384_positions/summary.json \
+  --failure-stages moveit_candidate_planning \
+  --planning-only \
+  --output-dir artifacts/dual_assembly_benchmark/plumbers_block_moveit_planning_only \
+  --no-resume
+```
+
+In this mode, a case succeeds only when the planner writes a complete MoveIt
+plan and returns successfully. Isaac is never launched, no video or attempt
+artifact is expected, and the resumable HTML/CSV report still records the
+candidate, timing, precise planning failure, and a static scene image for both
+successful and failed planner-only cases.
+
+To separate single-arm pickup reachability from dual-arm coordination, first
+start the mock MoveIt stack and then run the isolated pickup A/B benchmark
+against an existing benchmark summary:
+
+```bash
+./start_dual_lbr_moveit.sh --mode mock --ros-domain-id 43
+
+# In a sourced second terminal on the same ROS domain:
+ROS_DOMAIN_ID=43 python3 scripts/run_solo_pickup_ik_ab_benchmark.py \
+  --baseline-summary artifacts/dual_assembly_benchmark/plumbers_block_ik_after_gripper_fix_20260811/summary.json \
+  --output-dir artifacts/dual_assembly_benchmark/solo_pickup_ik_ab_20260812
+```
+
+The A side is the saved full dual-arm result. The B side runs every
+floor-valid Stage-3 incoming-part grasp through pickup pregrasp, interpolated
+approach, closed grasp, and lift for `lbr_one` and `lbr_two` independently. It
+also runs the unary-valid holder/base grasps through pregrasp, interpolated
+approach, and closed contact for each arm; the holder does not lift because the
+production holder sequence ends at contact. It keeps the tested arm's joint
+limits, self-collision, work-surface collision, exact TCP target, and
+candidate-specific gripper widths, while ignoring the passive robot, inter-arm
+contacts, and the other separately placed object. `summary.json` and
+`index.html` checkpoint after every case. The outcome matrix distinguishes
+dual failures where both assigned pickup tasks work independently, cases
+recovered only by swapping arm roles, and cases where at least one isolated
+pickup remains unreachable.
+
+By default the A/B runner evaluates every floor-valid incoming grasp for both
+robots, even after finding a successful grasp. Each dashboard row links to a
+collision-debug-style `incoming_grasps.html`: the actual global part pose,
+full work surface, `base_link` axes, both physical robot bases and shoulders,
+contacts, complete KUKA gripper collision mesh, and per-arm IK outcome for
+every grasp. The cyan ghost is the exact 10-cm pregrasp TCP target and the
+brown gripper is the contact pose; dashed lines connect both shoulders to the
+selected pregrasp. Use the dashboard's `world` link for the complete scene or
+`focus` for a close object/gripper view, and switch between them inside the
+viewer. Green means at least one isolated arm completed the pickup sequence;
+red means both failed. The candidate details identify the failed target and
+the counts of IK requests, no-solution responses, valid states, and
+collision-invalid states. Pass `--no-grasp-debug` only when a faster
+aggregate-only rerun is desired.
+
+The A/B `index.html` embeds the first failed pose's world viewer immediately.
+Its pose selector contains every completed dual-failed bundle; after selecting
+a pose, use the report's previous/next grasp buttons or the left/right arrow
+keys to traverse all of that pose's floor-valid grasps without opening another
+page. The statistics table remains below the viewer.
+
+Exact preflight is reliability-first. For every target it tries seven balanced
+bounded seeds spanning the current/pre-ranked state, both valid joint-7
+branches, both joint-1 shoulder directions, and both joint-3 upper-arm
+directions. It retains four low-motion holder branches through grasp, then
+searches the complete inserter sequence against each frozen 14-joint holder
+state. KDL solves only the active arm; that kinematic result is cached across
+pair variants, inserted into the current complete two-arm/finger state, and
+revalidated by MoveIt on every reuse. Thus passive-arm collisions are never
+cached, while repeated pair combinations do not repeat the same expensive KDL
+solve. The selected complete branch is reused by trajectory planning. The
+wrapper uses a short `0.35 s` timeout per distinct active-arm seed; after IK
+succeeds, OMPL receives up to `15 s` and `16` planning attempts. Override these with
+`--ik-timeout-s`, `--exact-ik-candidates`, `--exact-ik-beam-width`,
+`--exact-ik-seed-perturbation-rad`, `--planning-time-s`, and
+`--planning-attempts` when reproducing a solver boundary.
+
 Open the incremental dashboard at:
 
 ```text
 artifacts/dual_assembly_benchmark/plumbers_block/index.html
 ```
 
-The dashboard provides overall and grouped success rates, part/status filters,
-inline video playback or failure-scene stills, explicit failure phases, and
-links to each plan, attempt, and log. Both the benchmark and one-case simulator
+The dashboard provides live statistics for the currently visible cases. Filter
+by failure phase, part, pickup location, source-frame orientation, status, or
+inserter arm; search error text and candidate IDs; and sort the case cards by
+phase, runtime, part, location, or orientation. The configurable group table
+shows pass rate, median runtime, and the dominant failure phases for any of
+those dimensions. Clicking a table row or visual-guide tile filters the cases.
+The guide uses actual OBJ thumbnails for parts, top-down workspace diagrams for
+locations and arm assignment, oriented XYZ diagrams for RPY, and a phase
+timeline for failure groups. The gallery retains lazy-loaded inline video
+playback or failure-scene stills, explicit per-case failure phases, and links to
+each plan, attempt, and log. Both the benchmark and one-case simulator
 use static/dynamic contact friction `5.0/4.0` and a KUKA finger effort limit of
 `200`, so weak simulated contact is not the limiting factor. Finger motion is
 not commanded as one high-force step: it follows a three-second quintic close,
@@ -423,10 +611,18 @@ current generalized inertia as `D = 2 sqrt(K I)` (`zeta = 1`). Edit
 physics, or case limits; incoming-part Z is still computed from the rotated mesh
 so it rests on the floor.
 
-For a completed legacy report, this command backfills failure-stage labels and
-scene stills without rerunning MoveIt or Isaac:
+Each recorded case has a JPEG scene thumbnail used as the video poster. Videos
+are loaded only after pressing `Play recording`, so large reports do not create
+hundreds of simultaneous browser media players. The direct `open video` link is
+also retained as a fallback. Failed cases without video show their rendered
+scene image directly; click it to open a near-full-screen view, then use Escape,
+the close button, or the dark backdrop to dismiss it.
+
+For a completed report, these commands repair browser video paths/posters and
+backfill failure-stage scene stills without rerunning MoveIt or Isaac:
 
 ```bash
+python3 scripts/run_dual_assembly_benchmark.py --repair-videos
 python3 scripts/run_dual_assembly_benchmark.py --repair-failure-evidence
 ```
 
@@ -437,6 +633,11 @@ To keep MoveIt running for RViz or repeated planner calls:
 ```bash
 ./start_dual_lbr_moveit.sh --mode mock --rviz
 ```
+
+The default solver is `kdl`; use `--ik-solver pick_ik` for an explicit global
+solver comparison after installing the optional plugin. When reusing an
+existing stack, the runner cannot change its solver—restart MoveIt with the
+requested solver first.
 
 In another terminal:
 
@@ -452,6 +653,12 @@ planning scene, so cross-arm collisions remain enabled. The normal default maps
 Simulation can pass `--inserter-arm auto` to swap those logical roles according
 to pickup Y; the saved task, debugger, MoveIt group, and Isaac scene retain the
 resolved physical-arm provenance.
+
+MoveIt is given the selected candidate's finger state explicitly. It uses the
+5-mm-per-finger approach opening through pregrasp/grasp IK and planning, then
+switches that gripper to the selected contact width after the grasp. Both states
+are checked against the complete shared planning scene; unspecified finger
+joints do not fall back to MoveIt's fully-open default.
 
 ### 4. Real dual-arm safety boundary
 
@@ -489,6 +696,16 @@ explicit `--execute`, confirmation unless `--yes` is supplied, and currently
 contain exact object collision meshes. The latter is a known safety limitation,
 not a convenience flag. Review `./run_simple_dual_robot.sh --help` and the
 KUKA hardware runbook below before enabling motion.
+
+The dual real executor publishes normalized positions to
+`/lbr_one/gripper_controller/position_command` and
+`/lbr_two/gripper_controller/position_command` (`std_msgs/msg/Float64`): `0`
+is fully open and `1` is fully closed. It calls each namespaced `open` Trigger
+service once at startup to establish the multi-turn zero, commands the same
+candidate-specific approach/contact widths used by MoveIt, and monitors the
+matching `/position` feedback topic. Repeated identical positions are not
+republished. The namespaced `open`, `close`, and `stop` Trigger services remain
+available for homing, recovery, and emergency interruption.
 
 ## Grasp Generation Benchmark
 

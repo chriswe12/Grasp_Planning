@@ -38,6 +38,7 @@ Common options:
   --attempt-output PATH         PITL/Isaac or real attempt artifact.
   --ros-domain-id ID            Default: DUAL_ROBOT_ROS_DOMAIN_ID,
                                 then ROS_DOMAIN_ID, then 0
+  --ik-solver NAME              kdl or pick_ik. Default: kdl
   --rviz
   --reuse-moveit               Reuse an already-running /lbr_dual_arm stack
   --keep-moveit                Leave a stack started by this script running
@@ -49,6 +50,20 @@ Common options:
 Simulation options:
   --headless
   --holder-only
+  --planning-only              Stop after a complete MoveIt candidate plan;
+                               do not launch Isaac.
+  --ik-only                    Stop after exact complete-state IK; skip OMPL,
+                               mock motion, and Isaac.
+  --ik-collision-diagnostics   Record per-target state-validity totals and exact
+                               colliding links from the normal exact preflight.
+  --ik-timeout-s S             Per-seed kinematic IK timeout. Default: 0.35
+  --exact-ik-candidates N      Complete-state seeds per exact target. Default: 7
+  --exact-ik-beam-width N      Coordinated holder/inserter branches. Default: 4
+  --pickup-approach-ik-steps N Interpolated IK steps from pickup pregrasp to grasp.
+                               Default: 5
+  --exact-ik-seed-perturbation-rad RAD  Default: 0.60
+  --planning-time-s S          OMPL time after IK succeeds. Default: 15
+  --planning-attempts N        OMPL attempts after IK succeeds. Default: 16
   --skip-joint-space-ranking   Keep Stage-3 order without seeded MoveIt transition ranking.
   --joint-rank-candidates N    Candidates to pre-plan in joint space. Default: 8
   --record-video PATH
@@ -95,15 +110,26 @@ PLAN_OUTPUT=""
 TASK_OUTPUT=""
 ATTEMPT_OUTPUT=""
 ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
+IK_SOLVER="kdl"
 RVIZ=0
 REUSE_MOVEIT=0
 KEEP_MOVEIT=0
 HEADLESS=0
 HOLDER_ONLY=0
+PLANNING_ONLY=0
+IK_ONLY=0
+IK_COLLISION_DIAGNOSTICS=0
 PLANNING_DEBUG_GUI=1
 PLANNING_DEBUG_GUI_PORT="${DUAL_REAL_PLANNING_DEBUG_GUI_PORT:-38825}"
 JOINT_SPACE_RANKING=1
 JOINT_RANK_CANDIDATES="8"
+IK_TIMEOUT="0.35"
+EXACT_IK_CANDIDATES="7"
+EXACT_IK_BEAM_WIDTH="4"
+EXACT_IK_SEED_PERTURBATION="0.60"
+PICKUP_APPROACH_IK_STEPS="5"
+PLANNING_TIME="15.0"
+PLANNING_ATTEMPTS="16"
 RECORD_VIDEO=""
 ISAAC_PYTHON="${ISAAC_PYTHON:-/media/pdz/Elements1/IsaacLab/isaaclab.sh}"
 STATIC_FRICTION="5.0"
@@ -173,15 +199,26 @@ while [[ $# -gt 0 ]]; do
     --task-output) TASK_OUTPUT="${2:-}"; shift 2 ;;
     --attempt-output) ATTEMPT_OUTPUT="${2:-}"; shift 2 ;;
     --ros-domain-id) ROS_DOMAIN_VALUE="${2:-}"; shift 2 ;;
+    --ik-solver) IK_SOLVER="${2:-}"; shift 2 ;;
     --rviz) RVIZ=1; shift ;;
     --reuse-moveit) REUSE_MOVEIT=1; shift ;;
     --keep-moveit) KEEP_MOVEIT=1; shift ;;
     --headless) HEADLESS=1; shift ;;
     --holder-only) HOLDER_ONLY=1; shift ;;
+    --planning-only) PLANNING_ONLY=1; shift ;;
+    --ik-only) IK_ONLY=1; PLANNING_ONLY=1; JOINT_SPACE_RANKING=0; shift ;;
+    --ik-collision-diagnostics) IK_COLLISION_DIAGNOSTICS=1; shift ;;
     --no-planning-debug-gui) PLANNING_DEBUG_GUI=0; shift ;;
     --debug-gui-port) PLANNING_DEBUG_GUI_PORT="${2:-}"; shift 2 ;;
     --skip-joint-space-ranking) JOINT_SPACE_RANKING=0; shift ;;
     --joint-rank-candidates) JOINT_RANK_CANDIDATES="${2:-}"; shift 2 ;;
+    --ik-timeout-s) IK_TIMEOUT="${2:-}"; shift 2 ;;
+    --exact-ik-candidates) EXACT_IK_CANDIDATES="${2:-}"; shift 2 ;;
+    --exact-ik-beam-width) EXACT_IK_BEAM_WIDTH="${2:-}"; shift 2 ;;
+    --exact-ik-seed-perturbation-rad) EXACT_IK_SEED_PERTURBATION="${2:-}"; shift 2 ;;
+    --pickup-approach-ik-steps) PICKUP_APPROACH_IK_STEPS="${2:-}"; shift 2 ;;
+    --planning-time-s) PLANNING_TIME="${2:-}"; shift 2 ;;
+    --planning-attempts) PLANNING_ATTEMPTS="${2:-}"; shift 2 ;;
     --record-video) RECORD_VIDEO="${2:-}"; shift 2 ;;
     --isaac-python) ISAAC_PYTHON="${2:-}"; shift 2 ;;
     --static-friction) STATIC_FRICTION="${2:-}"; shift 2 ;;
@@ -209,12 +246,36 @@ if [[ "${MODE}" != "sim" && "${MODE}" != "real" ]]; then
   echo "[DUAL-RUN] --mode must be sim or real." >&2
   exit 1
 fi
+if [[ "${PLANNING_ONLY}" -eq 1 && "${MODE}" != "sim" ]]; then
+  echo "[DUAL-RUN] --planning-only is only valid with --mode sim." >&2
+  exit 1
+fi
 if [[ ! "${ROS_DOMAIN_VALUE}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-RUN] --ros-domain-id must be a non-negative integer." >&2
   exit 1
 fi
+if [[ "${IK_SOLVER}" != "pick_ik" && "${IK_SOLVER}" != "kdl" ]]; then
+  echo "[DUAL-RUN] --ik-solver must be pick_ik or kdl." >&2
+  exit 1
+fi
 if [[ ! "${JOINT_RANK_CANDIDATES}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-RUN] --joint-rank-candidates must be a non-negative integer." >&2
+  exit 1
+fi
+if [[ ! "${EXACT_IK_CANDIDATES}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[DUAL-RUN] --exact-ik-candidates must be a positive integer." >&2
+  exit 1
+fi
+if [[ ! "${EXACT_IK_BEAM_WIDTH}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[DUAL-RUN] --exact-ik-beam-width must be a positive integer." >&2
+  exit 1
+fi
+if [[ ! "${PICKUP_APPROACH_IK_STEPS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[DUAL-RUN] --pickup-approach-ik-steps must be a positive integer." >&2
+  exit 1
+fi
+if [[ ! "${PLANNING_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[DUAL-RUN] --planning-attempts must be a positive integer." >&2
   exit 1
 fi
 
@@ -259,6 +320,7 @@ else
   fi
   START_ARGS=(--mode "$([[ "${MODE}" == "sim" ]] && printf mock || printf hardware)")
   START_ARGS+=(--ros-domain-id "${ROS_DOMAIN_ID}")
+  START_ARGS+=(--ik-solver "${IK_SOLVER}")
   if [[ "${RVIZ}" -eq 1 ]]; then
     START_ARGS+=(--rviz)
   fi
@@ -336,13 +398,32 @@ if [[ "${MODE}" == "sim" ]]; then
   if [[ "${JOINT_SPACE_RANKING}" -eq 0 ]]; then
     PLAN_ARGS+=(--skip-joint-space-ranking)
   fi
+  if [[ "${IK_ONLY}" -eq 1 ]]; then
+    PLAN_ARGS+=(--ik-only)
+  fi
+  if [[ "${IK_COLLISION_DIAGNOSTICS}" -eq 1 ]]; then
+    PLAN_ARGS+=(--ik-collision-diagnostics)
+  fi
   PLAN_ARGS+=(--joint-rank-candidates "${JOINT_RANK_CANDIDATES}")
+  PLAN_ARGS+=(
+    --ik-timeout-s "${IK_TIMEOUT}"
+    --exact-ik-candidates "${EXACT_IK_CANDIDATES}"
+    --exact-ik-beam-width "${EXACT_IK_BEAM_WIDTH}"
+    --exact-ik-seed-perturbation-rad "${EXACT_IK_SEED_PERTURBATION}"
+    --pickup-approach-ik-steps "${PICKUP_APPROACH_IK_STEPS}"
+    --planning-time-s "${PLANNING_TIME}"
+    --planning-attempts "${PLANNING_ATTEMPTS}"
+  )
   PLAN_ARGS+=(--inserter-arm "${INSERTER_ARM}")
   python3 scripts/plan_simple_dual_robot_sim.py \
     "${COMMON_TASK_ARGS[@]}" \
     --max-pair-attempts "${MAX_PAIR_ATTEMPTS}" \
     "${PLAN_ARGS[@]}" \
     --output "${PLAN_PATH}"
+  if [[ "${PLANNING_ONLY}" -eq 1 ]]; then
+    echo "[DUAL-RUN] Planning-only success: ${PLAN_PATH}"
+    exit 0
+  fi
   ISAAC_ARGS=(
     -p scripts/run_simple_dual_robot_sim_in_isaac.py
     --plan-json "${PLAN_PATH}"

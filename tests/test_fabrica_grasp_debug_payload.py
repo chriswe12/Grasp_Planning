@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from grasp_planning.grasping.fabrica_grasp_debug import CandidateStatus, SavedGraspCandidate, candidate_payload
+from grasp_planning.grasping.world_constraints import ObjectWorldPose
 
 
 def _candidate() -> SavedGraspCandidate:
@@ -76,3 +77,23 @@ def test_candidate_payload_places_kuka_tcp_at_saved_grasp_position() -> None:
     )[0]
 
     assert payload["franka_hand_origin_obj"] == [0.03, 0.0, -0.1455]
+
+
+def test_candidate_payload_reports_pregrasp_in_display_world_frame() -> None:
+    payload = candidate_payload(
+        [CandidateStatus(grasp=_candidate(), status="accepted", reason="ok")],
+        contact_gap_m=0.005,
+        object_pose_world=ObjectWorldPose(
+            position_world=(1.0, 2.0, 3.0),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        ),
+        gripper_collision_model="kuka_y_gripper",
+        pregrasp_offset_m=0.10,
+        pregrasp_width_clearance_m=0.01,
+    )[0]
+
+    assert payload["grasp_position_obj"] == [1.0, 2.0, 3.0]
+    assert payload["pregrasp_position_obj"] == [1.0, 2.0, 2.9]
+    assert payload["pregrasp_translation_obj"] == [0.0, 0.0, -0.1]
+    assert payload["pregrasp_offset_m"] == 0.1
+    assert payload["pregrasp_gripper_width_m"] == 0.03

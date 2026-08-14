@@ -8,7 +8,9 @@ import json
 import math
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 
@@ -45,6 +47,8 @@ from grasp_planning.ros2.multi_ik_planner import (  # noqa: E402
 )
 from grasp_planning.start_poses import (  # noqa: E402
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+    kuka_gripper_clamp_width,
+    kuka_moveit_gripper_state,
 )
 
 MOVEIT_START_JOINT_POSITIONS = KUKA_MOVEIT_ARM_START_JOINT_VALUES
@@ -215,6 +219,12 @@ def _parse_args() -> argparse.Namespace:
         help="Output plan JSON (default: selected assembly artifact directory).",
     )
     parser.add_argument("--moveit-namespace", default="/lbr_dual_arm")
+    parser.add_argument(
+        "--ik-timeout-s",
+        type=float,
+        default=0.35,
+        help="MoveIt kinematic IK timeout for each distinct active-arm seed.",
+    )
     parser.add_argument("--planning-time-s", type=float, default=5.0)
     parser.add_argument("--planning-attempts", type=int, default=8)
     parser.add_argument("--velocity-scale", type=float, default=0.35)
@@ -246,6 +256,46 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Partial joint paths retained per transition target during ranking.",
+    )
+    parser.add_argument(
+        "--exact-ik-candidates",
+        type=int,
+        default=7,
+        help="Distinct complete-state seeds tried per target during exact IK preflight.",
+    )
+    parser.add_argument(
+        "--exact-ik-beam-width",
+        type=int,
+        default=4,
+        help="Complete holder/inserter IK branches retained between exact targets.",
+    )
+    parser.add_argument(
+        "--exact-ik-seed-perturbation-rad",
+        type=float,
+        default=0.60,
+        help="Deterministic shoulder/elbow/wrist seed perturbation used by exact IK.",
+    )
+    parser.add_argument(
+        "--pickup-approach-ik-steps",
+        type=int,
+        default=5,
+        help=(
+            "Full-state-valid continuation steps from incoming pickup pregrasp "
+            "to grasp. Each waypoint is seeded by the preceding solution."
+        ),
+    )
+    parser.add_argument(
+        "--ik-collision-diagnostics",
+        action="store_true",
+        help=(
+            "Record exact colliding bodies and per-target validity totals from the normal "
+            "kinematic-IK plus complete-state-validity preflight."
+        ),
+    )
+    parser.add_argument(
+        "--ik-only",
+        action="store_true",
+        help="Stop after an exact IK-feasible pair is selected; do not run OMPL or mock execution.",
     )
     parser.add_argument(
         "--debug-gui",
@@ -370,6 +420,45 @@ def _transition_crosses_holder_corridor(task) -> bool:
     if not isinstance(components, dict):
         return False
     return bool(components.get("transition_segments_cross_xy", False))
+
+
+def _inserter_diverse_task_prefix(tasks: list, *, limit: int) -> list:
+    """Keep score order while visiting unique pickup targets before repeats.
+
+    Pair/transition expansion can place hundreds of holder variants for a few
+    high-scoring inserter grasps at the head of the queue. Exact IK then spends
+    its whole budget proving the same pickup poses unreachable. Round-robin is
+    applied separately to noncrossing and crossed phases so arm-crossing policy
+    remains stricter than score or pickup diversity.
+    """
+
+    bounded_limit = max(0, min(int(limit), len(tasks)))
+    if bounded_limit == 0:
+        return []
+    selected: list = []
+    for crossed in (False, True):
+        phase_tasks = [task for task in tasks if _transition_crosses_holder_corridor(task) is crossed]
+        by_pickup: dict[tuple[object, ...], list] = {}
+        for task in phase_tasks:
+            by_pickup.setdefault(_pickup_target_signature(task), []).append(task)
+        pickup_order = tuple(by_pickup)
+        depth = 0
+        while len(selected) < bounded_limit:
+            added = False
+            for pickup_key in pickup_order:
+                pickup_tasks = by_pickup[pickup_key]
+                if depth >= len(pickup_tasks):
+                    continue
+                selected.append(pickup_tasks[depth])
+                added = True
+                if len(selected) >= bounded_limit:
+                    break
+            if not added:
+                break
+            depth += 1
+        if len(selected) >= bounded_limit:
+            break
+    return selected
 
 
 def _corridor_diverse_joint_rank_pool(tasks: list, *, limit: int) -> list:
@@ -673,6 +762,7 @@ def _commander(
             pose_link=str(spec["pose_link"]),
             joint_names=tuple(spec["joint_names"]),
             moveit_namespace=moveit_namespace,
+            ik_timeout_s=float(args.ik_timeout_s),
             planning_time_s=float(args.planning_time_s),
             num_planning_attempts=int(args.planning_attempts),
             velocity_scale=float(args.velocity_scale),
@@ -690,6 +780,7 @@ def _plan_and_execute(
     label: str,
     expected_joint_names: tuple[str, ...],
     preferred_joint_positions: tuple[float, ...] | None = None,
+    gripper_robot_state: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, object] | None, str]:
     if preferred_joint_positions is None:
         trajectory, message = commander.plan_to_pose(target, label=label)
@@ -706,9 +797,14 @@ def _plan_and_execute(
             trajectory = pose_trajectory
             message = f"preferred joint target failed ({message}); pose fallback: {pose_message}"
     if trajectory is None and message.startswith("IK failed"):
+        fallback_seed_state = dict(gripper_robot_state or {})
+        fallback_seed_state.update(
+            (str(name), float(value))
+            for name, value in zip(expected_joint_names, MOVEIT_START_JOINT_POSITIONS)
+        )
         fallback_joints, fallback_message = commander.compute_ik(
             target,
-            seed_joint_positions=MOVEIT_START_JOINT_POSITIONS,
+            seed_robot_state=fallback_seed_state,
         )
         if fallback_joints is not None:
             trajectory, fallback_plan_message = commander.plan_to_joint_positions(
@@ -801,15 +897,159 @@ IK_PREFLIGHT_TARGETS = {
 }
 
 
-def _new_ik_preflight_state(*, pair_task_count: int) -> dict[str, object]:
+@dataclass(frozen=True)
+class _IkPreflightCacheEntry:
+    feasible: bool
+    failure: str
+    branches: tuple["_IkPreflightBranch", ...]
+
+
+@dataclass(frozen=True)
+class _KinematicIkCacheEntry:
+    """Collision-independent IK result for one active-arm target and seed."""
+
+    joints: tuple[float, ...] | None
+    message: str
+
+
+@dataclass(frozen=True)
+class _IkPreflightBranch:
+    target_joint_positions: tuple[tuple[str, tuple[float, ...]], ...]
+    terminal_robot_state: tuple[tuple[str, float], ...]
+    joint_path_cost: float
+
+
+@dataclass(frozen=True)
+class _IkRoleSearchResult:
+    branches: tuple[_IkPreflightBranch, ...]
+    failure: str
+    target_records: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
+class _IkSearchTarget:
+    label: str
+    pose: PoseTarget
+    result_target_name: str | None
+
+
+def _complete_dual_arm_start_state(
+    *,
+    holder_start_joint_positions: tuple[float, ...] | None = None,
+) -> dict[str, float]:
+    """Return an explicit state for both arm groups after role assignment."""
+
+    state: dict[str, float] = {}
+    for role in ("holder", "inserter"):
+        positions = (
+            holder_start_joint_positions
+            if role == "holder" and holder_start_joint_positions is not None
+            else MOVEIT_START_JOINT_POSITIONS
+        )
+        joint_names = tuple(str(value) for value in ARM_SPECS[role]["joint_names"])
+        if len(positions) != len(joint_names):
+            raise ValueError(f"Expected {len(joint_names)} {role} start joints, got {len(positions)}.")
+        state.update((name, float(value)) for name, value in zip(joint_names, positions))
+    return state
+
+
+def _task_approach_gripper_state(task) -> dict[str, float]:
+    """Return candidate-specific partially-closed MoveIt finger joints."""
+
+    holder_grasp = getattr(task, "holder_world_grasp", None)
+    inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
+    holder_robot = str(
+        getattr(task, "holder_robot_name", str(ARM_SPECS["holder"]["pose_link"]).split("_gripper", 1)[0])
+    )
+    inserter_robot = str(
+        getattr(task, "inserter_robot_name", str(ARM_SPECS["inserter"]["pose_link"]).split("_gripper", 1)[0])
+    )
+    state: dict[str, float] = {}
+    state.update(
+        kuka_moveit_gripper_state(
+            holder_robot,
+            kuka_gripper_clamp_width(getattr(holder_grasp, "gripper_width", 0.05)),
+        )
+    )
+    state.update(
+        kuka_moveit_gripper_state(
+            inserter_robot,
+            kuka_gripper_clamp_width(getattr(inserter_grasp, "gripper_width", 0.05)),
+        )
+    )
+    return state
+
+
+def _task_post_grasp_state_updates(task) -> dict[str, dict[str, float]]:
+    """Return finger-state changes that occur immediately after contact."""
+
+    holder_grasp = getattr(task, "holder_world_grasp", None)
+    inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
+    holder_robot = str(
+        getattr(task, "holder_robot_name", str(ARM_SPECS["holder"]["pose_link"]).split("_gripper", 1)[0])
+    )
+    inserter_robot = str(
+        getattr(task, "inserter_robot_name", str(ARM_SPECS["inserter"]["pose_link"]).split("_gripper", 1)[0])
+    )
     return {
-        "skipped": False,
-        "mode": "lazy_strict_score_order",
-        "scope": (
-            "Each ranked pair is collision-aware IK screened from the shared "
-            "mock start state immediately before its full sequential plan. "
-            "Results are cached by role, grasp ID, and exact target poses."
+        "holder_grasp": kuka_moveit_gripper_state(
+            holder_robot,
+            getattr(holder_grasp, "jaw_width", 0.04),
         ),
+        "inserter_pickup_grasp": kuka_moveit_gripper_state(
+            inserter_robot,
+            getattr(inserter_grasp, "jaw_width", 0.04),
+        ),
+    }
+
+
+def _robot_state_signature(state: Mapping[str, float]) -> tuple[tuple[str, float], ...]:
+    return tuple(sorted((str(name), round(float(value), 9)) for name, value in state.items()))
+
+
+def _new_ik_preflight_state(
+    *,
+    pair_task_count: int,
+    ik_candidate_count: int = 1,
+    ik_beam_width: int = 1,
+    ik_seed_perturbation_rad: float = 0.60,
+    pickup_approach_ik_steps: int = 1,
+    collision_diagnostics: bool = False,
+) -> dict[str, object]:
+    state = {
+        "skipped": False,
+        "mode": "lazy_cached_kinematics_complete_state_multi_seed_beam",
+        "scope": (
+            "Each ranked pair is screened by active-arm kinematic IK followed by "
+            "MoveIt validity of the complete hypothetical dual-arm state. Active-arm "
+            "solutions are cached across passive-arm variants, but every reused "
+            "solution is revalidated. Multiple holder branches are retained "
+            "from pregrasp through grasp; every retained holder state then seeds "
+            "the inserter pickup and transition search. Pickup pregrasp-to-grasp "
+            "IK uses short continuation waypoints. Complete role results are cached by "
+            "role, grasp ID, exact targets, search settings, preferred branches, "
+            "and the complete input robot state."
+        ),
+        "ik_candidates_per_target": int(ik_candidate_count),
+        "ik_beam_width": int(ik_beam_width),
+        "ik_seed_perturbation_rad": float(ik_seed_perturbation_rad),
+        "pickup_approach_ik_steps": int(pickup_approach_ik_steps),
+        "collision_diagnostics_enabled": bool(collision_diagnostics),
+        "ik_seed_calls": 0,
+        "ik_request_duration_s": 0.0,
+        "ik_kinematic_cache_hits": 0,
+        "ik_kinematic_cache_misses": 0,
+        "ik_kinematic_solutions_returned": 0,
+        "ik_kinematic_failures": 0,
+        "ik_state_validity_requests": 0,
+        "ik_valid_states": 0,
+        "ik_invalid_states": 0,
+        "ik_invalid_states_without_contacts": 0,
+        "ik_solutions_found": 0,
+        "ik_distinct_solutions_retained": 0,
+        "post_grasp_state_validity_requests": 0,
+        "post_grasp_valid_states": 0,
+        "post_grasp_invalid_states": 0,
         "pair_tasks_before": int(pair_task_count),
         "pair_tasks_checked": 0,
         "pair_tasks_after": 0,
@@ -820,22 +1060,583 @@ def _new_ik_preflight_state(*, pair_task_count: int) -> dict[str, object]:
         "records": {role: [] for role in IK_PREFLIGHT_TARGETS},
         "pair_records": [],
     }
+    if collision_diagnostics:
+        state["collision_diagnostics"] = {
+            "mode": "collision_disabled_ik_then_full_state_validity",
+            "scene_scope": (
+                "Complete dual-arm robot state plus the MoveIt work surface. "
+                "Target-specific part AABBs are not present during exact preflight."
+            ),
+            "ik_requests": 0,
+            "kinematic_cache_hits": 0,
+            "kinematic_cache_misses": 0,
+            "ik_request_duration_s": 0.0,
+            "collision_disabled_ik_solutions": 0,
+            "kinematic_or_numerical_failures": 0,
+            "state_validity_requests": 0,
+            "valid_states": 0,
+            "invalid_states": 0,
+            "invalid_states_without_contacts": 0,
+            "contact_class_counts": {},
+            "contact_pair_counts": {},
+            "contact_examples": [],
+        }
+    return state
+
+
+def _collision_body_arm(body: str) -> str:
+    value = str(body)
+    if value.startswith("lbr_one_"):
+        return "lbr_one"
+    if value.startswith("lbr_two_"):
+        return "lbr_two"
+    return ""
+
+
+def _collision_contact_class(contact: Mapping[str, object]) -> str:
+    body_1 = str(contact.get("body_1", ""))
+    body_2 = str(contact.get("body_2", ""))
+    bodies = {body_1, body_2}
+    if "dual_sim_work_surface" in bodies:
+        robot_body = body_2 if body_1 == "dual_sim_work_surface" else body_1
+        if "finger" in robot_body:
+            return "finger_floor"
+        if "gripper" in robot_body:
+            return "gripper_floor"
+        return "arm_floor"
+    arm_1 = _collision_body_arm(body_1)
+    arm_2 = _collision_body_arm(body_2)
+    if arm_1 and arm_2:
+        return "inter_arm" if arm_1 != arm_2 else "self_collision"
+    if int(contact.get("body_type_1", -1)) == 1 or int(contact.get("body_type_2", -1)) == 1:
+        return "robot_world_object"
+    return "other"
+
+
+def _canonical_contact_pair(contact: Mapping[str, object]) -> str:
+    bodies = sorted((str(contact.get("body_1", "")), str(contact.get("body_2", ""))))
+    return f"{bodies[0]} <-> {bodies[1]}"
+
+
+def _record_collision_diagnostic(
+    state: dict[str, object],
+    *,
+    role: str,
+    target: str,
+    parent_index: int,
+    seed_index: int,
+    contacts: list[dict[str, object]],
+) -> None:
+    diagnostics = state.get("collision_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return
+    class_counts = diagnostics["contact_class_counts"]
+    pair_counts = diagnostics["contact_pair_counts"]
+    examples = diagnostics["contact_examples"]
+    assert isinstance(class_counts, dict)
+    assert isinstance(pair_counts, dict)
+    assert isinstance(examples, list)
+    for contact in contacts:
+        contact_class = _collision_contact_class(contact)
+        contact_pair = _canonical_contact_pair(contact)
+        class_counts[contact_class] = int(class_counts.get(contact_class, 0)) + 1
+        pair_counts[contact_pair] = int(pair_counts.get(contact_pair, 0)) + 1
+        if len(examples) < 100:
+            examples.append(
+                {
+                    "role": str(role),
+                    "target": str(target),
+                    "parent_index": int(parent_index),
+                    "seed_index": int(seed_index),
+                    "class": contact_class,
+                    **contact,
+                }
+            )
+
+
+def _exact_ik_seed_candidates(
+    start_joint_positions: tuple[float, ...],
+    *,
+    preferred_joint_positions: tuple[float, ...] | None,
+    candidate_count: int,
+    perturbation_rad: float,
+) -> tuple[tuple[float, ...], ...]:
+    """Build deterministic bounded seeds spanning useful iiwa IK branches."""
+
+    count = max(1, int(candidate_count))
+    start = np.asarray(start_joint_positions, dtype=float)
+    lower = np.asarray(KUKA_MOVEIT_JOINT_LOWER_LIMITS, dtype=float)
+    upper = np.asarray(KUKA_MOVEIT_JOINT_UPPER_LIMITS, dtype=float)
+    if start.shape != lower.shape:
+        raise ValueError(f"Expected {lower.size} exact-IK start joints, got {start.size}.")
+    if np.any(start < lower) or np.any(start > upper):
+        raise ValueError("Exact-IK start state is outside the configured iiwa joint limits.")
+
+    seeds: list[tuple[float, ...]] = []
+
+    def add_seed(raw_seed) -> None:
+        if len(seeds) >= count:
+            return
+        seed = np.asarray(raw_seed, dtype=float)
+        if seed.shape != start.shape or np.any(seed < lower) or np.any(seed > upper):
+            return
+        candidate = tuple(float(value) for value in seed)
+        if not any(np.max(np.abs(seed - np.asarray(existing, dtype=float))) < 1.0e-9 for existing in seeds):
+            seeds.append(candidate)
+
+    add_seed(start)
+    if preferred_joint_positions is not None:
+        if len(preferred_joint_positions) != start.size:
+            raise ValueError(f"Expected {start.size} preferred exact-IK joints, got {len(preferred_joint_positions)}.")
+        add_seed(preferred_joint_positions)
+
+    for offset in (math.pi, -math.pi):
+        branch = start.copy()
+        branch[-1] += offset
+        add_seed(branch)
+    for a7_target in (KUKA_A7_NEAR_LIMIT_BRANCH_RAD, -KUKA_A7_NEAR_LIMIT_BRANCH_RAD):
+        branch = start.copy()
+        branch[-1] = a7_target
+        add_seed(branch)
+
+    # Deliberately probe both signs of each branch before moving to the next
+    # joint. With the normal seven-seed budget this yields start, both bounded
+    # A7 wrist branches, both A1 shoulder branches, and both A3 upper-arm
+    # branches. The former four-seed ordering reached only +A1 after spending
+    # two seeds on A7, which biased mirrored left/right pickup poses.
+    for joint_index, scale in ((0, 1.0), (2, 1.0), (3, 0.75), (4, 1.0)):
+        for direction in (1.0, -1.0):
+            branch = start.copy()
+            branch[joint_index] += direction * float(perturbation_rad) * scale
+            add_seed(branch)
+
+    golden_ratio = 0.5 * (1.0 + math.sqrt(5.0))
+    sample_index = 1
+    while len(seeds) < count and sample_index <= count * 8:
+        offsets = np.asarray(
+            [
+                float(perturbation_rad) * ((((sample_index * (joint_index + 1)) / golden_ratio) % 1.0) * 2.0 - 1.0)
+                for joint_index in range(start.size)
+            ],
+            dtype=float,
+        )
+        add_seed(start + offsets)
+        sample_index += 1
+    return tuple(seeds)
+
+
+def _is_distinct_ik_solution(
+    solution: tuple[float, ...],
+    accepted: list[tuple[float, ...]],
+    *,
+    tolerance_rad: float = 0.05,
+) -> bool:
+    return all(
+        float(np.max(np.abs(np.asarray(solution, dtype=float) - np.asarray(other, dtype=float))))
+        >= float(tolerance_rad)
+        for other in accepted
+    )
+
+
+def _ik_branch_sort_key(branch: _IkPreflightBranch) -> tuple[object, ...]:
+    return (
+        round(float(branch.joint_path_cost), 12),
+        tuple(round(float(value), 9) for _name, joints in branch.target_joint_positions for value in joints),
+    )
+
+
+def _ik_search_targets(
+    *,
+    targets: Mapping[str, object],
+    target_names: tuple[str, ...],
+    pickup_approach_ik_steps: int,
+) -> tuple[_IkSearchTarget, ...]:
+    """Expand pickup approach into request-local numerical continuation targets."""
+
+    steps = max(1, int(pickup_approach_ik_steps))
+    search_targets: list[_IkSearchTarget] = []
+    for target_name in target_names:
+        if target_name != "inserter_pickup_grasp" or steps == 1:
+            search_targets.append(
+                _IkSearchTarget(
+                    label=target_name,
+                    pose=_pose_target(dict(targets[target_name])),
+                    result_target_name=target_name,
+                )
+            )
+            continue
+
+        start_payload = dict(targets["inserter_pickup_pregrasp"])
+        final_payload = dict(targets[target_name])
+        start_position = np.asarray(start_payload["position_world_m"], dtype=float)
+        final_position = np.asarray(final_payload["position_world_m"], dtype=float)
+        final_orientation = tuple(float(value) for value in final_payload["orientation_xyzw_world"])
+        if start_position.shape != (3,) or final_position.shape != (3,) or len(final_orientation) != 4:
+            raise ValueError("Pickup pregrasp/grasp targets must contain 3D positions and a quaternion.")
+        for step_index in range(1, steps + 1):
+            fraction = float(step_index) / float(steps)
+            position = start_position + fraction * (final_position - start_position)
+            label = f"{target_name}__approach_{step_index:02d}_of_{steps:02d}"
+            search_targets.append(
+                _IkSearchTarget(
+                    label=label,
+                    pose=PoseTarget.from_quaternion(
+                        x=float(position[0]),
+                        y=float(position[1]),
+                        z=float(position[2]),
+                        quaternion_xyzw=final_orientation,
+                        frame_id="base_link",
+                    ),
+                    result_target_name=target_name if step_index == steps else None,
+                )
+            )
+    return tuple(search_targets)
+
+
+def _solve_role_ik_branches(
+    *,
+    commander: MoveItPoseCommander,
+    role: str,
+    targets: Mapping[str, object],
+    target_names: tuple[str, ...],
+    initial_robot_state: Mapping[str, float],
+    preferred_joint_targets: Mapping[str, tuple[float, ...]],
+    candidate_count: int,
+    beam_width: int,
+    seed_perturbation_rad: float,
+    pickup_approach_ik_steps: int,
+    post_target_state_updates: Mapping[str, Mapping[str, float]],
+    collision_diagnostics: bool,
+    kinematic_cache: dict[tuple[object, ...], _KinematicIkCacheEntry] | None,
+    state: dict[str, object],
+) -> _IkRoleSearchResult:
+    """Retain distinct full-state-valid IK branches through one role sequence.
+
+    KDL solves only the active arm's kinematics.  Those solutions are reusable
+    when the passive arm changes, but collision validity is not: every cached
+    active-arm solution is therefore inserted into the current complete robot
+    state and checked again with MoveIt.
+    """
+
+    role_joint_names = tuple(str(value) for value in ARM_SPECS[role]["joint_names"])
+    initial_branch = _IkPreflightBranch(
+        target_joint_positions=(),
+        terminal_robot_state=tuple((str(name), float(value)) for name, value in initial_robot_state.items()),
+        joint_path_cost=0.0,
+    )
+    beam = [initial_branch]
+    target_records: list[dict[str, object]] = []
+    search_targets = _ik_search_targets(
+        targets=targets,
+        target_names=target_names,
+        pickup_approach_ik_steps=pickup_approach_ik_steps,
+    )
+    for search_target in search_targets:
+        target_name = search_target.label
+        expanded: list[_IkPreflightBranch] = []
+        failure_messages: list[str] = []
+        attempted_seed_count = 0
+        solution_count = 0
+        collision_disabled_solution_count = 0
+        collision_invalid_state_count = 0
+        valid_state_count = 0
+        kinematic_failure_count = 0
+        invalid_without_contacts_count = 0
+        kinematic_cache_hit_count = 0
+        kinematic_cache_miss_count = 0
+        post_grasp_valid_state_count = 0
+        post_grasp_invalid_state_count = 0
+        contact_class_counts: dict[str, int] = {}
+        contact_pair_counts: dict[str, int] = {}
+        diagnostic_examples: list[dict[str, object]] = []
+        for parent_index, parent in enumerate(beam):
+            parent_state = dict(parent.terminal_robot_state)
+            active_start = tuple(float(parent_state[name]) for name in role_joint_names)
+            seeds = _exact_ik_seed_candidates(
+                active_start,
+                preferred_joint_positions=(
+                    preferred_joint_targets.get(search_target.result_target_name)
+                    if search_target.result_target_name is not None
+                    else None
+                ),
+                candidate_count=candidate_count,
+                perturbation_rad=seed_perturbation_rad,
+            )
+            distinct_solutions: list[tuple[float, ...]] = []
+            # The first target creates the requested branch diversity. Once a
+            # beam exists, preserve one continuation from every parent instead
+            # of creating beam_width**2 children and immediately pruning them.
+            solution_limit = int(beam_width) if len(beam) == 1 else 1
+            for seed_index, active_seed in enumerate(seeds):
+                attempted_seed_count += 1
+                seed_robot_state = dict(parent_state)
+                seed_robot_state.update((name, value) for name, value in zip(role_joint_names, active_seed))
+                kinematic_cache_hit = False
+                pose = search_target.pose
+                kinematic_cache_key = (
+                    str(role),
+                    str(pose.frame_id),
+                    *(round(float(value), 9) for value in (*pose.position_xyz, *pose.orientation_xyzw)),
+                    *(round(float(value), 9) for value in active_seed),
+                )
+                cached_ik = None if kinematic_cache is None else kinematic_cache.get(kinematic_cache_key)
+                if cached_ik is None:
+                    ik_started_at = time.monotonic()
+                    raw_joints, message = commander.compute_ik(
+                        search_target.pose,
+                        seed_robot_state=seed_robot_state,
+                        avoid_collisions=False,
+                    )
+                    ik_duration_s = time.monotonic() - ik_started_at
+                    cached_ik = _KinematicIkCacheEntry(
+                        joints=(None if raw_joints is None else tuple(float(value) for value in raw_joints)),
+                        message=str(message),
+                    )
+                    if kinematic_cache is not None:
+                        kinematic_cache[kinematic_cache_key] = cached_ik
+                    kinematic_cache_miss_count += 1
+                    state["ik_kinematic_cache_misses"] = int(state["ik_kinematic_cache_misses"]) + 1
+                    state["ik_seed_calls"] = int(state["ik_seed_calls"]) + 1
+                    state["ik_request_duration_s"] = float(state["ik_request_duration_s"]) + float(ik_duration_s)
+                    diagnostics = state.get("collision_diagnostics")
+                    if isinstance(diagnostics, dict):
+                        diagnostics["kinematic_cache_misses"] = int(diagnostics["kinematic_cache_misses"]) + 1
+                        diagnostics["ik_requests"] = int(diagnostics["ik_requests"]) + 1
+                        diagnostics["ik_request_duration_s"] = (
+                            float(diagnostics["ik_request_duration_s"]) + float(ik_duration_s)
+                        )
+                else:
+                    kinematic_cache_hit = True
+                    ik_duration_s = 0.0
+                    kinematic_cache_hit_count += 1
+                    state["ik_kinematic_cache_hits"] = int(state["ik_kinematic_cache_hits"]) + 1
+                    diagnostics = state.get("collision_diagnostics")
+                    if isinstance(diagnostics, dict):
+                        diagnostics["kinematic_cache_hits"] = int(diagnostics["kinematic_cache_hits"]) + 1
+                joints = None if cached_ik.joints is None else list(cached_ik.joints)
+                message = cached_ik.message
+                diagnostics = state.get("collision_diagnostics")
+                if joints is None:
+                    if not kinematic_cache_hit:
+                        kinematic_failure_count += 1
+                        state["ik_kinematic_failures"] = int(state["ik_kinematic_failures"]) + 1
+                        if isinstance(diagnostics, dict):
+                            diagnostics["kinematic_or_numerical_failures"] = (
+                                int(diagnostics["kinematic_or_numerical_failures"]) + 1
+                            )
+                    cache_note = " (cached)" if kinematic_cache_hit else ""
+                    failure_messages.append(f"parent={parent_index} seed={seed_index}: {message}{cache_note}")
+                    continue
+                if not kinematic_cache_hit:
+                    collision_disabled_solution_count += 1
+                    state["ik_kinematic_solutions_returned"] = int(state["ik_kinematic_solutions_returned"]) + 1
+                    if isinstance(diagnostics, dict):
+                        diagnostics["collision_disabled_ik_solutions"] = (
+                            int(diagnostics["collision_disabled_ik_solutions"]) + 1
+                        )
+                candidate_robot_state = dict(parent_state)
+                candidate_robot_state.update(
+                    (name, float(value)) for name, value in zip(role_joint_names, joints)
+                )
+                validity, validity_message = commander.check_state_validity(candidate_robot_state, group_name="")
+                state["ik_state_validity_requests"] = int(state["ik_state_validity_requests"]) + 1
+                if isinstance(diagnostics, dict):
+                    diagnostics["state_validity_requests"] = int(diagnostics["state_validity_requests"]) + 1
+                if validity is None:
+                    failure_messages.append(
+                        f"parent={parent_index} seed={seed_index}: kinematic IK found a state but "
+                        f"state validity failed: {validity_message}"
+                    )
+                    continue
+                if not bool(validity["valid"]):
+                    collision_invalid_state_count += 1
+                    state["ik_invalid_states"] = int(state["ik_invalid_states"]) + 1
+                    contacts = [dict(value) for value in validity.get("contacts", [])]
+                    if not contacts:
+                        invalid_without_contacts_count += 1
+                        state["ik_invalid_states_without_contacts"] = (
+                            int(state["ik_invalid_states_without_contacts"]) + 1
+                        )
+                    if isinstance(diagnostics, dict):
+                        diagnostics["invalid_states"] = int(diagnostics["invalid_states"]) + 1
+                        if not contacts:
+                            diagnostics["invalid_states_without_contacts"] = (
+                                int(diagnostics["invalid_states_without_contacts"]) + 1
+                            )
+                        for contact in contacts:
+                            contact_class = _collision_contact_class(contact)
+                            contact_pair = _canonical_contact_pair(contact)
+                            contact_class_counts[contact_class] = int(contact_class_counts.get(contact_class, 0)) + 1
+                            contact_pair_counts[contact_pair] = int(contact_pair_counts.get(contact_pair, 0)) + 1
+                    if collision_diagnostics and len(diagnostic_examples) < 8:
+                        diagnostic_examples.append(
+                            {
+                                "parent_index": int(parent_index),
+                                "seed_index": int(seed_index),
+                                "ik_duration_s": float(ik_duration_s),
+                                "contacts": contacts,
+                            }
+                        )
+                    if collision_diagnostics:
+                        _record_collision_diagnostic(
+                            state,
+                            role=role,
+                            target=target_name,
+                            parent_index=parent_index,
+                            seed_index=seed_index,
+                            contacts=contacts,
+                        )
+                    contact_summary = ", ".join(sorted({_canonical_contact_pair(value) for value in contacts}))
+                    failure_messages.append(
+                        f"parent={parent_index} seed={seed_index}: kinematic IK state is invalid"
+                        + (f" ({contact_summary})" if contact_summary else " (no contacts returned)")
+                    )
+                    continue
+                state["ik_valid_states"] = int(state["ik_valid_states"]) + 1
+                if isinstance(diagnostics, dict):
+                    diagnostics["valid_states"] = int(diagnostics["valid_states"]) + 1
+                valid_state_count += 1
+                post_state_update = (
+                    post_target_state_updates.get(search_target.result_target_name, {})
+                    if search_target.result_target_name is not None
+                    else {}
+                )
+                if post_state_update:
+                    post_grasp_state = dict(candidate_robot_state)
+                    post_grasp_state.update(
+                        (str(name), float(value)) for name, value in post_state_update.items()
+                    )
+                    validity_checker = getattr(commander, "check_state_validity", None)
+                    if callable(validity_checker):
+                        post_validity, post_validity_message = validity_checker(
+                            post_grasp_state,
+                            group_name="",
+                        )
+                    else:
+                        post_validity, post_validity_message = ({"valid": True, "contacts": []}, "not available")
+                    state["post_grasp_state_validity_requests"] = (
+                        int(state["post_grasp_state_validity_requests"]) + 1
+                    )
+                    if post_validity is None:
+                        failure_messages.append(
+                            f"parent={parent_index} seed={seed_index}: post-grasp state validity failed: "
+                            f"{post_validity_message}"
+                        )
+                        continue
+                    if not bool(post_validity["valid"]):
+                        post_grasp_invalid_state_count += 1
+                        state["post_grasp_invalid_states"] = int(state["post_grasp_invalid_states"]) + 1
+                        contacts = [dict(value) for value in post_validity.get("contacts", [])]
+                        contact_summary = ", ".join(sorted({_canonical_contact_pair(value) for value in contacts}))
+                        failure_messages.append(
+                            f"parent={parent_index} seed={seed_index}: post-grasp closed state is invalid"
+                            + (f" ({contact_summary})" if contact_summary else " (no contacts returned)")
+                        )
+                        continue
+                    post_grasp_valid_state_count += 1
+                    state["post_grasp_valid_states"] = int(state["post_grasp_valid_states"]) + 1
+                state["ik_solutions_found"] = int(state["ik_solutions_found"]) + 1
+                solution = tuple(float(value) for value in joints)
+                if not _is_distinct_ik_solution(solution, distinct_solutions):
+                    continue
+                distinct_solutions.append(solution)
+                solution_count += 1
+                state["ik_distinct_solutions_retained"] = int(state["ik_distinct_solutions_retained"]) + 1
+                if len(distinct_solutions) >= solution_limit:
+                    break
+
+            for solution in distinct_solutions:
+                terminal_state = dict(parent_state)
+                terminal_state.update((name, value) for name, value in zip(role_joint_names, solution))
+                if search_target.result_target_name is not None:
+                    terminal_state.update(
+                        (str(name), float(value))
+                        for name, value in post_target_state_updates.get(
+                            search_target.result_target_name,
+                            {},
+                        ).items()
+                    )
+                active_delta = np.asarray(solution, dtype=float) - np.asarray(active_start, dtype=float)
+                edge_cost = float(
+                    np.linalg.norm(active_delta * np.asarray(KUKA_MOVEIT_TRANSITION_JOINT_WEIGHTS, dtype=float))
+                )
+                target_joint_positions = dict(parent.target_joint_positions)
+                if search_target.result_target_name is not None:
+                    target_joint_positions[search_target.result_target_name] = solution
+                expanded.append(
+                    _IkPreflightBranch(
+                        target_joint_positions=tuple(target_joint_positions.items()),
+                        terminal_robot_state=tuple(terminal_state.items()),
+                        joint_path_cost=float(parent.joint_path_cost) + edge_cost,
+                    )
+                )
+
+        target_record = {
+            "target": target_name,
+            "result_target": search_target.result_target_name,
+            "ok": bool(expanded),
+            "input_branches": len(beam),
+            "seed_attempts": attempted_seed_count,
+            "ik_requests": int(kinematic_cache_miss_count),
+            "kinematic_cache_hits": int(kinematic_cache_hit_count),
+            "kinematic_cache_misses": int(kinematic_cache_miss_count),
+            "distinct_solutions": solution_count,
+            "output_branches_before_prune": len(expanded),
+            "output_branches_retained": min(len(expanded), int(beam_width)),
+            "seed_mode": "complete_dual_arm_multi_seed",
+            "last_failure": failure_messages[-1] if failure_messages else "",
+            "post_grasp_valid_states": int(post_grasp_valid_state_count),
+            "post_grasp_invalid_states": int(post_grasp_invalid_state_count),
+        }
+        if collision_diagnostics:
+            target_record["collision_diagnostics"] = {
+                "collision_disabled_ik_solutions": int(collision_disabled_solution_count),
+                "kinematic_or_numerical_failures": int(kinematic_failure_count),
+                "valid_states": int(valid_state_count),
+                "invalid_states": int(collision_invalid_state_count),
+                "invalid_states_without_contacts": int(invalid_without_contacts_count),
+                "contact_class_counts": contact_class_counts,
+                "contact_pair_counts": contact_pair_counts,
+                "examples": diagnostic_examples,
+            }
+        target_records.append(target_record)
+        if not expanded:
+            detail = failure_messages[-1] if failure_messages else "no distinct IK solution"
+            return _IkRoleSearchResult(
+                branches=(),
+                failure=(
+                    f"{target_name}: {detail} across {attempted_seed_count} seed evaluation(s), "
+                    f"{kinematic_cache_miss_count} IK request(s)"
+                ),
+                target_records=tuple(target_records),
+            )
+        beam = sorted(expanded, key=_ik_branch_sort_key)[: max(1, int(beam_width))]
+
+    return _IkRoleSearchResult(
+        branches=tuple(beam),
+        failure="",
+        target_records=tuple(target_records),
+    )
 
 
 def _ik_preflight_pair(
     task,
     *,
     commanders: dict[str, MoveItPoseCommander],
-    feasible_cache: dict[
-        str,
-        dict[tuple[str, tuple[float, ...]], bool],
-    ],
+    feasible_cache: dict[str, dict[tuple[object, ...], _IkPreflightCacheEntry]],
+    kinematic_cache: dict[tuple[object, ...], _KinematicIkCacheEntry] | None = None,
     state: dict[str, object],
     rank: int,
     roles: tuple[str, ...] = ("holder", "inserter"),
     preferred_joint_targets: dict[str, tuple[float, ...]] | None = None,
-) -> tuple[bool, str]:
-    """Screen one ranked pair and stop immediately on its first failed role."""
+    initial_robot_state: Mapping[str, float] | None = None,
+    ik_candidate_count: int = 1,
+    ik_beam_width: int = 1,
+    ik_seed_perturbation_rad: float = 0.60,
+    pickup_approach_ik_steps: int = 1,
+    collision_diagnostics: bool = False,
+) -> tuple[bool, str, dict[str, tuple[float, ...]]]:
+    """Screen one pair using coordinated complete-state multi-branch IK."""
 
     task_payload = task.to_payload()
     targets = dict(task_payload["targets"])
@@ -845,6 +1646,19 @@ def _ik_preflight_pair(
     }
     pair_role_records: dict[str, object] = {}
     preferred_joint_targets = preferred_joint_targets or {}
+    task_initial_robot_state = dict(initial_robot_state or _complete_dual_arm_start_state())
+    task_initial_robot_state.update(_task_approach_gripper_state(task))
+    post_target_state_updates = _task_post_grasp_state_updates(task)
+    pair_beam = [
+        _IkPreflightBranch(
+            target_joint_positions=(),
+            terminal_robot_state=tuple(
+                (str(name), float(value))
+                for name, value in task_initial_robot_state.items()
+            ),
+            joint_path_cost=0.0,
+        )
+    ]
     failure = ""
     for role in roles:
         target_names = IK_PREFLIGHT_TARGETS[role]
@@ -862,58 +1676,98 @@ def _ik_preflight_pair(
             for target_name in target_names
             for value in preferred_joint_targets.get(target_name, ())
         )
-        cache_key = (grasp_id, target_signature)
-        cache_hit = cache_key in feasible_cache[role]
-        if cache_hit:
-            grasp_feasible = feasible_cache[role][cache_key]
-        else:
-            target_records = []
-            grasp_feasible = True
-            previous_joints: tuple[float, ...] | None = None
-            for target_name in target_names:
-                seed = preferred_joint_targets.get(target_name, previous_joints)
-                if seed is None:
-                    joints, message = commanders[role].compute_ik(_pose_target(dict(targets[target_name])))
-                else:
-                    joints, message = commanders[role].compute_ik(
-                        _pose_target(dict(targets[target_name])),
-                        seed_joint_positions=seed,
-                    )
-                ok = joints is not None
-                target_records.append(
+        expanded_pair_beam: list[_IkPreflightBranch] = []
+        cache_hits = 0
+        cache_misses = 0
+        role_failures: list[str] = []
+        for parent in pair_beam:
+            input_robot_state = dict(parent.terminal_robot_state)
+            cache_key = (
+                grasp_id,
+                target_signature,
+                _robot_state_signature(input_robot_state),
+                int(ik_candidate_count),
+                int(ik_beam_width),
+                round(float(ik_seed_perturbation_rad), 9),
+                int(pickup_approach_ik_steps),
+                bool(collision_diagnostics),
+            )
+            cache_hit = cache_key in feasible_cache[role]
+            if cache_hit:
+                cache_hits += 1
+                cache_entry = feasible_cache[role][cache_key]
+            else:
+                cache_misses += 1
+                search_result = _solve_role_ik_branches(
+                    commander=commanders[role],
+                    role=role,
+                    targets=targets,
+                    target_names=target_names,
+                    initial_robot_state=input_robot_state,
+                    preferred_joint_targets=preferred_joint_targets,
+                    candidate_count=ik_candidate_count,
+                    beam_width=ik_beam_width,
+                    seed_perturbation_rad=ik_seed_perturbation_rad,
+                    pickup_approach_ik_steps=pickup_approach_ik_steps,
+                    post_target_state_updates=post_target_state_updates,
+                    collision_diagnostics=collision_diagnostics,
+                    kinematic_cache=kinematic_cache,
+                    state=state,
+                )
+                cache_entry = _IkPreflightCacheEntry(
+                    feasible=bool(search_result.branches),
+                    failure=search_result.failure,
+                    branches=search_result.branches,
+                )
+                feasible_cache[role][cache_key] = cache_entry
+                records = state["records"]
+                assert isinstance(records, dict)
+                role_records = records[role]
+                assert isinstance(role_records, list)
+                role_records.append(
                     {
-                        "target": target_name,
-                        "ok": ok,
-                        "message": message,
+                        "grasp_id": grasp_id,
+                        "feasible": cache_entry.feasible,
+                        "input_robot_state": list(_robot_state_signature(input_robot_state)),
+                        "branches_retained": len(cache_entry.branches),
+                        "targets": list(search_result.target_records),
                     }
                 )
-                if not ok:
-                    grasp_feasible = False
-                    failure = f"{role} grasp {grasp_id} failed {target_name}: {message}"
-                    break
-                previous_joints = tuple(float(value) for value in joints)
-            feasible_cache[role][cache_key] = grasp_feasible
-            records = state["records"]
-            assert isinstance(records, dict)
-            role_records = records[role]
-            assert isinstance(role_records, list)
-            role_records.append(
-                {
-                    "grasp_id": grasp_id,
-                    "feasible": grasp_feasible,
-                    "targets": target_records,
-                }
-            )
-            checked_key = f"{role}_grasps_checked"
-            feasible_key = f"{role}_grasps_feasible"
-            state[checked_key] = int(state[checked_key]) + 1
-            if grasp_feasible:
-                state[feasible_key] = int(state[feasible_key]) + 1
-        if cache_hit and not grasp_feasible:
-            failure = f"{role} grasp {grasp_id} reused a cached IK failure"
+                checked_key = f"{role}_grasps_checked"
+                feasible_key = f"{role}_grasps_feasible"
+                state[checked_key] = int(state[checked_key]) + 1
+                if cache_entry.feasible:
+                    state[feasible_key] = int(state[feasible_key]) + 1
+
+            if not cache_entry.feasible:
+                role_failures.append(cache_entry.failure)
+                continue
+            for role_branch in cache_entry.branches:
+                combined_targets = dict(parent.target_joint_positions)
+                combined_targets.update(dict(role_branch.target_joint_positions))
+                expanded_pair_beam.append(
+                    _IkPreflightBranch(
+                        target_joint_positions=tuple(combined_targets.items()),
+                        terminal_robot_state=role_branch.terminal_robot_state,
+                        joint_path_cost=float(parent.joint_path_cost) + float(role_branch.joint_path_cost),
+                    )
+                )
+
+        grasp_feasible = bool(expanded_pair_beam)
+        if grasp_feasible:
+            pair_beam = sorted(expanded_pair_beam, key=_ik_branch_sort_key)[: max(1, int(ik_beam_width))]
+        elif cache_misses == 0 and cache_hits:
+            failure = f"{role} grasp {grasp_id} reused a cached IK failure: {role_failures[-1]}"
+        else:
+            detail = role_failures[-1] if role_failures else "no complete-state branch survived"
+            failure = f"{role} grasp {grasp_id} failed {detail}"
         pair_role_records[role] = {
             "grasp_id": grasp_id,
-            "cache_hit": cache_hit,
+            "cache_hit": cache_misses == 0,
+            "cache_hits": cache_hits,
+            "cache_misses": cache_misses,
+            "input_branches": cache_hits + cache_misses,
+            "output_branches": len(pair_beam) if grasp_feasible else 0,
             "feasible": grasp_feasible,
         }
         if not grasp_feasible:
@@ -937,7 +1791,8 @@ def _ik_preflight_pair(
             "roles": pair_role_records,
         }
     )
-    return pair_feasible, failure
+    resolved_joint_targets = dict(pair_beam[0].target_joint_positions) if pair_feasible else {}
+    return pair_feasible, failure, resolved_joint_targets
 
 
 def _configure_role_assignment(
@@ -984,6 +1839,16 @@ def main() -> int:
         raise ValueError("--joint-rank-ik-candidates must be at least 1.")
     if args.joint_rank_beam_width < 1:
         raise ValueError("--joint-rank-beam-width must be at least 1.")
+    if args.exact_ik_candidates < 1:
+        raise ValueError("--exact-ik-candidates must be at least 1.")
+    if args.exact_ik_beam_width < 1:
+        raise ValueError("--exact-ik-beam-width must be at least 1.")
+    if args.exact_ik_seed_perturbation_rad < 0.0:
+        raise ValueError("--exact-ik-seed-perturbation-rad must be non-negative.")
+    if args.pickup_approach_ik_steps < 1:
+        raise ValueError("--pickup-approach-ik-steps must be at least 1.")
+    if args.ik_timeout_s <= 0.0:
+        raise ValueError("--ik-timeout-s must be positive.")
     (
         holder_robot,
         inserter_robot,
@@ -1061,6 +1926,7 @@ def main() -> int:
                 f"No accepted pair uses holder grasp '{args.holder_grasp_id}' "
                 f"for {selection.step_id} at this placement."
             )
+    task_count_before_runtime_limit = len(tasks)
     if args.holder_only:
         unique_holder_tasks = {}
         for task in tasks:
@@ -1068,14 +1934,20 @@ def main() -> int:
                 task.holder_candidate.grasp_id,
                 task,
             )
-        tasks = list(unique_holder_tasks.values())
-    tasks = tasks[: int(args.max_pair_attempts)]
+        tasks = list(unique_holder_tasks.values())[: int(args.max_pair_attempts)]
+    else:
+        tasks = _inserter_diverse_task_prefix(
+            tasks,
+            limit=int(args.max_pair_attempts),
+        )
     if not tasks:
         raise RuntimeError("No ranked compatible pair is available to plan.")
     debug_candidate_counts = dict(getattr(tasks[0], "candidate_filter_diagnostics", {}))
     debug_candidate_counts.update(
         {
             "planner_queue_execution_candidates": len(tasks),
+            "planner_queue_source_execution_candidates": int(task_count_before_runtime_limit),
+            "planner_queue_selection": "noncrossing_then_round_robin_unique_pickup",
             "planner_queue_noncrossing_execution_candidates": sum(
                 not _transition_crosses_holder_corridor(task) for task in tasks
             ),
@@ -1090,6 +1962,11 @@ def main() -> int:
             "exact_ik_pair_tasks_checked": 0,
             "exact_ik_holder_grasps_checked": 0,
             "exact_ik_inserter_grasps_checked": 0,
+            "exact_ik_seed_calls": 0,
+            "exact_ik_kinematic_cache_hits": 0,
+            "exact_ik_state_validity_requests": 0,
+            "exact_ik_solutions_found": 0,
+            "exact_ik_distinct_solutions_retained": 0,
         }
     )
     debug_server: DualRobotPlanningDebugServer | None = None
@@ -1156,14 +2033,31 @@ def main() -> int:
             "pair_tasks_before": len(tasks),
         }
         if bool(args.skip_ik_preflight)
-        else _new_ik_preflight_state(pair_task_count=len(tasks))
+        else _new_ik_preflight_state(
+            pair_task_count=len(tasks),
+            ik_candidate_count=int(args.exact_ik_candidates),
+            ik_beam_width=int(args.exact_ik_beam_width),
+            ik_seed_perturbation_rad=float(args.exact_ik_seed_perturbation_rad),
+            pickup_approach_ik_steps=int(args.pickup_approach_ik_steps),
+            collision_diagnostics=bool(args.ik_collision_diagnostics),
+        )
     )
-    ik_feasible_cache: dict[
-        str,
-        dict[tuple[str, tuple[float, ...]], bool],
-    ] = {role: {} for role in IK_PREFLIGHT_TARGETS}
+    ik_feasible_cache: dict[str, dict[tuple[object, ...], _IkPreflightCacheEntry]] = {
+        role: {} for role in IK_PREFLIGHT_TARGETS
+    }
+    # Separate active-arm kinematics from complete-state validity. Keep the
+    # former across pair/holder variants; every reuse is still revalidated with
+    # the current passive arm and finger state inside _solve_role_ik_branches.
+    ik_kinematic_cache: dict[tuple[object, ...], _KinematicIkCacheEntry] = {}
     try:
         active_roles = ("holder",) if args.holder_only else tuple(ARM_SPECS)
+        initial_robot_state = _complete_dual_arm_start_state(
+            holder_start_joint_positions=(
+                None
+                if args.holder_start_joint_positions is None
+                else tuple(float(value) for value in args.holder_start_joint_positions)
+            )
+        )
         target_sequence = (
             (("holder", "holder_pregrasp"), ("holder", "holder_grasp")) if args.holder_only else TARGET_SEQUENCE
         )
@@ -1176,7 +2070,7 @@ def main() -> int:
             for role in active_roles
         }
         for commander in commanders.values():
-            commander.wait_for_moveit(require_execute=True)
+            commander.wait_for_moveit(require_execute=not bool(args.ik_only))
         work_surface = _work_surface_obstacle(floor_z_world_m=float(args.floor_z))
         surface_ok, surface_message = commanders["holder"].apply_planning_scene_obstacles(
             [work_surface],
@@ -1194,18 +2088,25 @@ def main() -> int:
             attempt_index=0,
             phase="reset",
             status="planning",
-            message="Returning both mock arms to the nominal start state.",
-        )
-        reset_ok, reset_messages = _reset_active_roles(
-            commanders,
-            active_roles=active_roles,
-            holder_start_joint_positions=(
-                None
-                if args.holder_start_joint_positions is None
-                else tuple(float(value) for value in args.holder_start_joint_positions)
+            message=(
+                "IK-only mode uses the explicit nominal complete robot state without motion."
+                if args.ik_only
+                else "Returning both mock arms to the nominal start state."
             ),
-            recovering_from_candidate=False,
         )
+        if args.ik_only:
+            reset_ok, reset_messages = True, {"mode": "explicit_state_no_motion"}
+        else:
+            reset_ok, reset_messages = _reset_active_roles(
+                commanders,
+                active_roles=active_roles,
+                holder_start_joint_positions=(
+                    None
+                    if args.holder_start_joint_positions is None
+                    else tuple(float(value) for value in args.holder_start_joint_positions)
+                ),
+                recovering_from_candidate=False,
+            )
         if not reset_ok:
             update_debug(
                 task=tasks[0],
@@ -1217,7 +2118,13 @@ def main() -> int:
             time.sleep(0.35)
             raise RuntimeError(f"Could not reset dual MoveIt mock state: {reset_messages}")
 
-        if args.holder_only:
+        if args.ik_only:
+            joint_space_ranking = {
+                "skipped": True,
+                "reason": "ik_only",
+                "candidate_count_before": len(tasks),
+            }
+        elif args.holder_only:
             joint_space_ranking = {
                 "skipped": True,
                 "reason": "holder_only",
@@ -1262,8 +2169,7 @@ def main() -> int:
                 phase="ik_preflight",
                 status="planning",
                 message=(
-                    "Checking exact holder and inserter target IK before "
-                    "executing this candidate in the mock MoveIt state."
+                    "Checking cached kinematic IK plus complete dual-arm state validity through the sequence."
                 ),
             )
             print(
@@ -1280,10 +2186,11 @@ def main() -> int:
             pregrasp_aabb_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
             pregrasp_aabb_schedule = simple_dual_robot_pregrasp_aabb_schedule(pregrasp_aabb_obstacles)
             if not bool(args.skip_ik_preflight):
-                pair_ik_ok, pair_ik_failure = _ik_preflight_pair(
+                pair_ik_ok, pair_ik_failure, preflight_joint_targets = _ik_preflight_pair(
                     task,
                     commanders=commanders,
                     feasible_cache=ik_feasible_cache,
+                    kinematic_cache=ik_kinematic_cache,
                     state=ik_preflight,
                     rank=attempt_index,
                     roles=active_roles,
@@ -1293,6 +2200,12 @@ def main() -> int:
                             {},
                         )
                     ),
+                    initial_robot_state=initial_robot_state,
+                    ik_candidate_count=int(args.exact_ik_candidates),
+                    ik_beam_width=int(args.exact_ik_beam_width),
+                    ik_seed_perturbation_rad=float(args.exact_ik_seed_perturbation_rad),
+                    pickup_approach_ik_steps=int(args.pickup_approach_ik_steps),
+                    collision_diagnostics=bool(args.ik_collision_diagnostics),
                 )
                 checked = int(ik_preflight["pair_tasks_checked"])
                 holder_checked = int(ik_preflight["holder_grasps_checked"])
@@ -1302,6 +2215,11 @@ def main() -> int:
                         "exact_ik_pair_tasks_checked": checked,
                         "exact_ik_holder_grasps_checked": holder_checked,
                         "exact_ik_inserter_grasps_checked": inserter_checked,
+                        "exact_ik_seed_calls": int(ik_preflight["ik_seed_calls"]),
+                        "exact_ik_kinematic_cache_hits": int(ik_preflight["ik_kinematic_cache_hits"]),
+                        "exact_ik_state_validity_requests": int(ik_preflight["ik_state_validity_requests"]),
+                        "exact_ik_solutions_found": int(ik_preflight["ik_solutions_found"]),
+                        "exact_ik_distinct_solutions_retained": int(ik_preflight["ik_distinct_solutions_retained"]),
                     }
                 )
                 if not pair_ik_ok:
@@ -1338,6 +2256,10 @@ def main() -> int:
                         }
                     )
                     continue
+                # Use the exact full-state-valid solutions from preflight.
+                # Recomputing pose IK after moving
+                # the holder would discard the validated branch.
+                preferred_joint_targets_by_candidate[task.execution_candidate_id] = preflight_joint_targets
                 print(
                     "[DUAL-SIM-PLAN] IK preflight "
                     f"rank {attempt_index}/{len(tasks)} passed; "
@@ -1349,8 +2271,73 @@ def main() -> int:
                     attempt_index=attempt_index,
                     phase="ik_preflight",
                     status="succeeded",
-                    message="Exact target IK preflight passed.",
+                    message=("Complete-state target IK preflight passed; the validated joint targets will be reused."),
                 )
+            if args.ik_only:
+                attempt_records.append(
+                    {
+                        "attempt_index": attempt_index,
+                        "pair_id": task.pair_id,
+                        "transition_id": task.transition_id,
+                        "execution_candidate_id": task.execution_candidate_id,
+                        "score": task.pair_score,
+                        "selection_score": task.selection_score,
+                        "pickup_top_down_score": task.pickup_top_down_score,
+                        "layout_proxy_score": task.layout_proxy_score,
+                        "holder_reachability_proxy_score": task.holder_reachability_proxy_score,
+                        "inserter_reachability_proxy_score": task.inserter_reachability_proxy_score,
+                        "success": True,
+                        "failure": "",
+                        "steps": [],
+                        "mode": "ik_only",
+                    }
+                )
+                task_payload["generated_by"] = "scripts/plan_simple_dual_robot_sim.py"
+                task_payload["moveit"] = {
+                    "namespace": str(args.moveit_namespace),
+                    "frame_id": "base_link",
+                    "object_collision_geometry_in_scene": False,
+                    "work_surface_collision_geometry_in_scene": True,
+                    "work_surface": work_surface,
+                    "arm_arm_collision_checking": True,
+                    "start_joint_positions": list(MOVEIT_START_JOINT_POSITIONS),
+                    "ik_only": True,
+                    "ik_preflight": ik_preflight,
+                    "joint_space_ranking": joint_space_ranking,
+                    "attempts": attempt_records,
+                }
+                task_payload["trajectories"] = {}
+                task_payload["holder_only"] = bool(args.holder_only)
+                output = (
+                    selection.artifact_dir / f"simple_dual_robot_sim_plan_{selection.step_id}.json"
+                    if args.output is None
+                    else args.output.expanduser().resolve()
+                )
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(task_payload, indent=2), encoding="utf-8")
+                print(
+                    f"[DUAL-SIM-PLAN] IK-only selected pair {task.pair_id}; wrote {output}",
+                    flush=True,
+                )
+                update_debug(
+                    task=task,
+                    attempt_index=attempt_index,
+                    phase="complete",
+                    status="complete",
+                    message=f"IK-only selected {task.execution_candidate_id}; diagnostics written to {output}",
+                )
+                time.sleep(0.10)
+                return 0
+            gripper_scene_state = _task_approach_gripper_state(task)
+            scene_ok, scene_message = commanders["holder"].apply_planning_scene_robot_state(
+                gripper_scene_state
+            )
+            if not scene_ok:
+                raise RuntimeError(
+                    f"Could not set candidate-specific MoveIt approach gripper widths: {scene_message}"
+                )
+            print(f"[DUAL-SIM-PLAN] approach grippers: {scene_message}", flush=True)
+            post_grasp_state_updates = _task_post_grasp_state_updates(task)
             trajectories: dict[str, object] = {}
             steps: list[dict[str, object]] = []
             failure = ""
@@ -1390,9 +2377,8 @@ def main() -> int:
                                 task.execution_candidate_id,
                                 {},
                             ).get(target_name)
-                            if role == "inserter"
-                            else None
                         ),
+                        gripper_robot_state=gripper_scene_state,
                     )
                 finally:
                     if active_aabbs:
@@ -1437,6 +2423,27 @@ def main() -> int:
                     message=message,
                 )
                 trajectories[target_name] = trajectory_payload
+                closed_state_update = post_grasp_state_updates.get(target_name)
+                if closed_state_update:
+                    gripper_scene_state.update(closed_state_update)
+                    state_ok, state_message = commanders["holder"].apply_planning_scene_robot_state(
+                        closed_state_update
+                    )
+                    steps.append(
+                        {
+                            "role": role,
+                            "target": f"{target_name}_gripper_state",
+                            "ok": state_ok,
+                            "message": state_message,
+                        }
+                    )
+                    if not state_ok:
+                        failure = f"{target_name}: could not apply closed gripper state: {state_message}"
+                        break
+                    print(
+                        f"[DUAL-SIM-PLAN] {target_name} closed gripper: {state_message}",
+                        flush=True,
+                    )
 
             attempt_records.append(
                 {
@@ -1574,6 +2581,7 @@ def main() -> int:
         "step_id": selection.step_id,
         "fatal_failure": fatal_failure,
         "joint_space_ranking": joint_space_ranking,
+        "candidate_filter_diagnostics": debug_candidate_counts,
         "ik_preflight": ik_preflight,
         "attempts": attempt_records,
     }

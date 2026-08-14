@@ -6,7 +6,9 @@ from .collision import (
     FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
     KukaYGripperCollisionModel,
+    gripper_collision_check_gaps,
     make_gripper_collision_model,
+    make_gripper_collision_models,
     normalize_gripper_collision_model_name,
 )
 from .fabrica_grasp_debug import (
@@ -62,8 +64,10 @@ __all__ = [
     "finger_box_corners",
     "finger_boxes_from_grasp",
     "grasp_approach_axis_world",
+    "gripper_collision_check_gaps",
     "load_grasp_bundle",
     "make_gripper_collision_model",
+    "make_gripper_collision_models",
     "normalize_gripper_collision_model_name",
     "sample_pickup_placement_spec",
     "score_grasps",

@@ -21,9 +21,12 @@ def _package_path(relative_path: str) -> str:
 def _launch_setup(context: LaunchContext):
     mode = LaunchConfiguration("mode").perform(context)
     robot_namespace = LaunchConfiguration("robot_namespace").perform(context)
+    ik_solver = LaunchConfiguration("ik_solver").perform(context)
     description_path = _package_path("urdf/dual_iiwa7_y_gripper_moveit.urdf.xacro")
     semantic_description_path = _package_path("config/dual_iiwa7_y_gripper.srdf")
-    kinematics_path = _package_path("config/dual_lbr_kinematics.yaml")
+    kinematics_path = _package_path(
+        "config/dual_lbr_kinematics_pick_ik.yaml" if ik_solver == "pick_ik" else "config/dual_lbr_kinematics.yaml"
+    )
     joint_limits_path = _package_path("config/dual_lbr_joint_limits.yaml")
     moveit_controllers_path = _package_path("config/dual_lbr_moveit_controllers.yaml")
     initial_joint_positions_path = _package_path("config/dual_lbr_initial_joint_positions.yaml")
@@ -124,6 +127,14 @@ def generate_launch_description() -> LaunchDescription:
             "robot_namespace",
             default_value="lbr_dual_arm",
             description="Shared namespace for dual-arm control, MoveIt, and planning-scene topics.",
+        )
+    )
+    description.add_action(
+        DeclareLaunchArgument(
+            "ik_solver",
+            default_value="kdl",
+            choices=["pick_ik", "kdl"],
+            description="MoveIt IK plugin for both redundant iiwa7 arms.",
         )
     )
     description.add_action(
