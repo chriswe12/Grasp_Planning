@@ -10,12 +10,15 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (
     NoPoseFeasibleDualTasksError,
 )
 from grasp_planning.ros2.dual_real_grasp_executor import (
+    CARTESIAN_TARGETS,
     MOTION_SEQUENCE,
     DualRealExecutionConfig,
+    PreplannedDualSequence,
     _activate_available_grippers,
     _execute_sequence,
     _preflight_targets,
     _select_ranked_preflight_candidate,
+    _validate_preplanned_trajectory_start,
     _work_surface_obstacle,
     load_and_validate_dual_plan,
 )
@@ -33,9 +36,15 @@ class _Commander:
     def __init__(self) -> None:
         self.calls: list[tuple[str, bool]] = []
         self.scene_calls: list[tuple[str, tuple[str, ...]]] = []
+        self.executed: list[str] = []
 
     def move_to_pose(self, target, *, label: str, execute: bool):
         self.calls.append((label, execute))
+        return True, f"{label} executed"
+
+    def execute_trajectory(self, trajectory, *, label: str):
+        del trajectory
+        self.executed.append(label)
         return True, f"{label} executed"
 
     def apply_planning_scene_obstacles(
@@ -164,16 +173,47 @@ class _CleanupFailPreflightCommander(_Commander):
         return False, "synthetic world purge failure"
 
 
-class _RankedIkCommander:
-    def __init__(self) -> None:
+class _RankedIkCommander(_Commander):
+    def __init__(self, role: str) -> None:
+        super().__init__()
+        self.role = role
         self.calls = 0
 
-    def compute_ik(self, target, seed_joint_positions=None):
-        del seed_joint_positions
+    def compute_ik(self, target, seed_joint_positions=None, seed_robot_state=None):
+        del seed_joint_positions, seed_robot_state
         self.calls += 1
+        return [float(target.x)] * 7, "ok"
+
+    @property
+    def joint_names(self) -> tuple[str, ...]:
+        robot = "lbr_one" if self.role == "holder" else "lbr_two"
+        return tuple(f"{robot}_A{index}" for index in range(1, 8))
+
+    def plan_to_joint_positions(self, joints, *, label: str, start_robot_state):
+        if float(joints[0]) > 0.9:
+            return None, f"synthetic connected motion failure at {label}"
+        start = tuple(float(start_robot_state[name]) for name in self.joint_names)
+        return _fake_trajectory(self.joint_names, start, tuple(joints)), "ok"
+
+    def plan_cartesian_to_pose(
+        self,
+        target,
+        *,
+        label: str,
+        start_robot_state,
+        max_step_m: float,
+        revolute_jump_threshold_rad: float,
+    ):
+        del label, max_step_m, revolute_jump_threshold_rad
         if target.x > 0.9:
-            return None, "synthetic no IK"
-        return [0.0] * 7, "ok"
+            return None, "synthetic Cartesian failure"
+        start = tuple(float(start_robot_state[name]) for name in self.joint_names)
+        terminal = tuple(value + 0.01 for value in start)
+        return _fake_trajectory(self.joint_names, start, terminal), "ok"
+
+    def check_state_validity(self, state, *, group_name: str):
+        del state, group_name
+        return {"valid": True, "contacts": []}, "ok"
 
 
 def _recorded_steps():
@@ -183,6 +223,53 @@ def _recorded_steps():
         steps.append(kwargs)
 
     return steps, record
+
+
+def _fake_trajectory(
+    joint_names: tuple[str, ...],
+    start: tuple[float, ...],
+    terminal: tuple[float, ...],
+):
+    return SimpleNamespace(
+        joint_trajectory=SimpleNamespace(
+            joint_names=list(joint_names),
+            points=[
+                SimpleNamespace(positions=list(start)),
+                SimpleNamespace(positions=list(terminal)),
+            ],
+        )
+    )
+
+
+def _initial_robot_state() -> dict[str, float]:
+    return {
+        f"lbr_{robot}_A{index}": 0.0
+        for robot in ("one", "two")
+        for index in range(1, 8)
+    }
+
+
+def _preplanned_sequence(stop_after: str) -> PreplannedDualSequence:
+    trajectories = {}
+    joint_targets = {}
+    segment_modes = {}
+    start_states = {}
+    full_state = _initial_robot_state()
+    for role, name in MOTION_SEQUENCE:
+        robot = "one" if role == "holder" else "two"
+        names = tuple(f"lbr_{robot}_A{index}" for index in range(1, 8))
+        trajectories[name] = _fake_trajectory(names, (0.0,) * 7, (0.1,) * 7)
+        joint_targets[name] = (0.1,) * 7
+        segment_modes[name] = "cartesian_linear" if name in CARTESIAN_TARGETS else "free_space"
+        start_states[name] = dict(full_state)
+        if name == stop_after:
+            break
+    return PreplannedDualSequence(
+        trajectories=trajectories,
+        joint_targets=joint_targets,
+        segment_modes=segment_modes,
+        start_states=start_states,
+    )
 
 
 def _plan_payload() -> dict[str, object]:
@@ -239,16 +326,36 @@ def test_load_and_validate_dual_plan_accepts_saved_vertical_slice(
     assert payload["roles"]["inserter"]["robot"] == "lbr_two"
 
 
-def test_load_and_validate_dual_plan_rejects_role_swap(tmp_path: Path) -> None:
+def test_load_and_validate_dual_plan_rejects_internally_inconsistent_role(tmp_path: Path) -> None:
     payload = _plan_payload()
     payload["roles"]["holder"]["robot"] = "lbr_two"
 
     try:
         load_and_validate_dual_plan(_write_plan(tmp_path, payload))
     except ValueError as exc:
-        assert "expected 'lbr_one'" in str(exc)
+        assert "expected 'arm_two'" in str(exc)
     else:
         raise AssertionError("Expected mismatched role mapping to fail.")
+
+
+def test_load_and_validate_dual_plan_accepts_complete_role_swap(tmp_path: Path) -> None:
+    payload = _plan_payload()
+    payload["roles"] = {
+        "holder": {
+            "robot": "lbr_two",
+            "planning_group": "arm_two",
+            "tcp_link": "lbr_two_gripper_tcp",
+        },
+        "inserter": {
+            "robot": "lbr_one",
+            "planning_group": "arm_one",
+            "tcp_link": "lbr_one_gripper_tcp",
+        },
+    }
+
+    loaded = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+    assert loaded["roles"]["holder"]["robot"] == "lbr_two"
+    assert loaded["roles"]["inserter"]["robot"] == "lbr_one"
 
 
 def test_ranked_plan_accepts_higher_score_after_retained_queue_boundary(
@@ -313,6 +420,7 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
         grippers=grippers,
         config=config,
         record=record,
+        preplanned_sequence=_preplanned_sequence(config.stop_after),
         candidate_rank=4,
         update_debug=lambda **entry: debug_updates.append(entry),
     )
@@ -320,12 +428,9 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     assert success is True
     assert status == "stopped_at_inserter_preinsertion"
     assert last_completed == "inserter_preinsertion"
-    assert commanders["holder"].calls == [
-        ("holder_pregrasp", True),
-        ("holder_grasp", True),
-    ]
-    assert commanders["inserter"].calls == [
-        (target_name, True) for role, target_name in MOTION_SEQUENCE if role == "inserter"
+    assert commanders["holder"].executed == ["holder_pregrasp", "holder_grasp"]
+    assert commanders["inserter"].executed == [
+        target_name for role, target_name in MOTION_SEQUENCE if role == "inserter"
     ]
     assert grippers["holder"].calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
@@ -340,6 +445,30 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     assert debug_updates[-1]["phase"] == "inserter_preinsertion"
     assert debug_updates[-1]["status"] == "succeeded"
     assert all(update["attempt_index"] == 4 for update in debug_updates)
+
+
+def test_execution_start_guard_checks_both_arms_against_preflight() -> None:
+    class LiveCommander:
+        def get_current_robot_state(self):
+            state = _initial_robot_state()
+            state["lbr_one_A4"] = 0.08
+            return state
+
+    trajectory = _fake_trajectory(
+        tuple(f"lbr_two_A{index}" for index in range(1, 8)),
+        (0.0,) * 7,
+        (0.1,) * 7,
+    )
+    ok, message = _validate_preplanned_trajectory_start(
+        commander=LiveCommander(),
+        trajectory=trajectory,
+        expected_start_state=_initial_robot_state(),
+        tolerance_rad=0.05,
+    )
+
+    assert ok is False
+    assert "lbr_one_A4" in message
+    assert "0.0800 rad" in message
 
 
 def test_gripper_activation_skips_unavailable_role_after_probing_both() -> None:
@@ -394,12 +523,13 @@ def test_execute_sequence_continues_when_inserter_gripper_is_unavailable(
             stop_after="inserter_preinsertion",
         ),
         record=record,
+        preplanned_sequence=_preplanned_sequence("inserter_preinsertion"),
     )
 
     assert success is True
     assert status == "stopped_at_inserter_preinsertion"
     assert last_completed == "inserter_preinsertion"
-    assert [name for name, _execute in commanders["inserter"].calls] == [
+    assert commanders["inserter"].executed == [
         name for role, name in MOTION_SEQUENCE if role == "inserter"
     ]
     assert holder_gripper.calls == [
@@ -431,12 +561,13 @@ def test_execute_sequence_stops_before_holder_close_at_pregrasp(
         grippers=grippers,
         config=config,
         record=record,
+        preplanned_sequence=_preplanned_sequence(config.stop_after),
     )
 
     assert success is True
     assert status == "stopped_at_holder_pregrasp"
     assert last_completed == "holder_pregrasp"
-    assert commanders["inserter"].calls == []
+    assert commanders["inserter"].executed == []
     assert grippers["holder"].calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"]))
     ]
@@ -482,6 +613,7 @@ def test_execute_sequence_uses_aabbs_only_for_pregrasp_transit(
             stop_after="inserter_pickup_pregrasp",
         ),
         record=record,
+        preplanned_sequence=_preplanned_sequence("inserter_pickup_pregrasp"),
     )
 
     assert success is True
@@ -537,6 +669,7 @@ def test_execute_sequence_keeps_subassembly_and_attached_incoming_in_transition_
             stop_after="inserter_preinsertion",
         ),
         record=record,
+        preplanned_sequence=_preplanned_sequence("inserter_preinsertion"),
     )
 
     assert success is True
@@ -725,14 +858,93 @@ def test_preflight_retries_ik_with_known_start_seed(tmp_path: Path) -> None:
         is True
     )
     target_steps = [step for step in steps if not step["name"].endswith("_gripper_state")]
-    assert all("alternate IK succeeded" in step["message"] for step in target_steps)
+    assert all("multi-seed IK succeeded" in step["message"] for step in target_steps)
     for commander in commanders.values():
-        assert len(commander.seeds) >= 2
-        assert commander.seeds[0] is None
-        assert commander.seeds[1] is not None
+        assert commander.seeds
+        assert all(seed is not None for seed in commander.seeds)
 
 
-def test_fallback_preflight_joint_targets_are_reused_for_execution(
+def test_connected_preflight_uses_later_ik_seed_when_continuation_seed_fails() -> None:
+    class LaterSeedCommander(_RankedIkCommander):
+        def __init__(self, role: str) -> None:
+            super().__init__(role)
+            self.ik_seeds = []
+
+        def compute_ik(self, target, *, seed_robot_state=None, avoid_collisions=None):
+            del avoid_collisions
+            seed = tuple(float(seed_robot_state[name]) for name in self.joint_names)
+            self.ik_seeds.append(seed)
+            if len(self.ik_seeds) == 1:
+                return None, "synthetic continuation-branch failure"
+            return [float(target.x)] * 7, "later branch ok"
+
+    candidate = _plan_payload()
+    candidate["ranked_pair_candidates"] = [dict(candidate)]
+    commanders = {
+        "holder": LaterSeedCommander("holder"),
+        "inserter": LaterSeedCommander("inserter"),
+    }
+    steps, record = _recorded_steps()
+
+    selected, _summary, preplanned = _select_ranked_preflight_candidate(
+        plan=candidate,
+        commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="holder_pregrasp"),
+        frame_id="base_link",
+        record=record,
+        stop_after="holder_pregrasp",
+    )
+
+    assert selected is not None
+    assert preplanned is not None
+    assert len(commanders["holder"].ik_seeds) >= 2
+    planned = next(step for step in steps if step["name"] == "preflight_plan_holder_pregrasp")
+    assert "selected seed 1" in planned["message"]
+
+
+def test_connected_preflight_tries_later_ik_solution_when_first_motion_plan_fails() -> None:
+    class LaterMotionBranchCommander(_RankedIkCommander):
+        def __init__(self, role: str) -> None:
+            super().__init__(role)
+            self.ik_calls = 0
+
+        def compute_ik(self, target, *, seed_robot_state=None, avoid_collisions=None):
+            del target, seed_robot_state, avoid_collisions
+            self.ik_calls += 1
+            return [0.8 if self.ik_calls == 1 else 0.5] * 7, "ok"
+
+        def plan_to_joint_positions(self, joints, *, label: str, start_robot_state):
+            if float(joints[0]) > 0.7:
+                return None, "synthetic first-branch motion failure"
+            return super().plan_to_joint_positions(joints, label=label, start_robot_state=start_robot_state)
+
+    candidate = _plan_payload()
+    candidate["ranked_pair_candidates"] = [dict(candidate)]
+    commanders = {
+        "holder": LaterMotionBranchCommander("holder"),
+        "inserter": LaterMotionBranchCommander("inserter"),
+    }
+    steps, record = _recorded_steps()
+
+    selected, _summary, preplanned = _select_ranked_preflight_candidate(
+        plan=candidate,
+        commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="holder_pregrasp"),
+        frame_id="base_link",
+        record=record,
+        stop_after="holder_pregrasp",
+    )
+
+    assert selected is not None
+    assert preplanned is not None
+    planned = next(step for step in steps if step["name"] == "preflight_plan_holder_pregrasp")
+    assert "selected seed 1" in planned["message"]
+    assert "2 distinct solutions" in planned["message"]
+
+
+def test_connected_preflight_trajectories_are_reused_without_replanning(
     tmp_path: Path,
 ) -> None:
     plan = load_and_validate_dual_plan(_write_plan(tmp_path))
@@ -740,16 +952,8 @@ def test_fallback_preflight_joint_targets_are_reused_for_execution(
         "holder": _FallbackIkExecutionCommander(),
         "inserter": _FallbackIkExecutionCommander(),
     }
-    resolved_joint_targets: dict[str, tuple[float, ...]] = {}
     _, record = _recorded_steps()
-
-    assert _preflight_targets(
-        plan=plan,
-        commanders=commanders,
-        frame_id="base_link",
-        record=record,
-        resolved_joint_targets=resolved_joint_targets,
-    )
+    preplanned = _preplanned_sequence("inserter_preinsertion")
     success, status, last_completed = _execute_sequence(
         plan=plan,
         commanders=commanders,
@@ -760,18 +964,16 @@ def test_fallback_preflight_joint_targets_are_reused_for_execution(
             stop_after="inserter_preinsertion",
         ),
         record=record,
-        preferred_joint_targets=resolved_joint_targets,
+        preplanned_sequence=preplanned,
     )
 
     assert success is True
     assert status == "stopped_at_inserter_preinsertion"
     assert last_completed == "inserter_preinsertion"
-    assert set(resolved_joint_targets) == {name for _, name in MOTION_SEQUENCE}
     for role, commander in commanders.items():
         expected_labels = [name for target_role, name in MOTION_SEQUENCE if target_role == role]
-        assert [label for label, _ in commander.joint_plans] == expected_labels
+        assert commander.joint_plans == []
         assert commander.executed == expected_labels
-        assert all(joints == KUKA_MOVEIT_ARM_START_JOINT_VALUES for _, joints in commander.joint_plans)
 
 
 def test_real_preflight_aborts_instead_of_caching_after_attached_cleanup_failure() -> None:
@@ -823,29 +1025,34 @@ def test_ranked_real_preflight_rejects_first_pair_and_selects_second() -> None:
     plan = dict(first)
     plan["ranked_pair_candidates"] = [first, second]
     commanders = {
-        "holder": _RankedIkCommander(),
-        "inserter": _RankedIkCommander(),
+        "holder": _RankedIkCommander("holder"),
+        "inserter": _RankedIkCommander("inserter"),
     }
     steps, record = _recorded_steps()
     debug_updates = []
 
-    selected, summary = _select_ranked_preflight_candidate(
+    selected, summary, preplanned = _select_ranked_preflight_candidate(
         plan=plan,
         commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="inserter_preinsertion"),
         frame_id="base_link",
         record=record,
         update_debug=lambda **entry: debug_updates.append(entry),
     )
 
     assert selected is not None
+    assert preplanned is not None
     assert selected["pair_id"] == "p002_h0001_i0_0003"
     assert summary["candidates_checked"] == 2
     assert summary["selected_rank"] == 2
     assert summary["selected_pair_id"] == "p002_h0001_i0_0003"
     assert set(summary["selected_joint_targets"]) == {name for _, name in MOTION_SEQUENCE}
-    assert commanders["holder"].calls == 2
-    assert commanders["inserter"].calls == 7
-    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is False
+    assert {entry["mode"] for entry in summary["preplanned_segments"]} == {
+        "free_space",
+        "cartesian_linear",
+    }
     assert [(update["attempt_index"], update["status"]) for update in debug_updates] == [
         (1, "planning"),
         (1, "failed"),
@@ -874,27 +1081,75 @@ def test_ranked_preflight_does_not_cache_same_grasp_across_transitions() -> None
     plan = dict(first)
     plan["ranked_pair_candidates"] = [first, second]
     commanders = {
-        "holder": _RankedIkCommander(),
-        "inserter": _RankedIkCommander(),
+        "holder": _RankedIkCommander("holder"),
+        "inserter": _RankedIkCommander("inserter"),
     }
     _, record = _recorded_steps()
 
-    selected, summary = _select_ranked_preflight_candidate(
+    selected, summary, preplanned = _select_ranked_preflight_candidate(
         plan=plan,
         commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="inserter_preinsertion"),
         frame_id="base_link",
         record=record,
     )
 
     assert selected is not None
+    assert preplanned is not None
     assert selected["execution_candidate_id"].endswith("__tr_right")
     assert summary["selected_transition_id"] == "tr_right"
-    assert commanders["holder"].calls == 2
-    # Five targets for each transition, plus the seeded retry for the first
-    # transition's failing pre-insertion target.
-    assert commanders["inserter"].calls == 11
-    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is False
     assert summary["records"][1]["roles"]["inserter"]["cache_hit"] is False
+
+
+def test_ranked_preflight_caches_identical_failed_connected_prefix() -> None:
+    first = _plan_payload()
+    first["candidate_rank"] = 1
+    first["execution_candidate_id"] = f"{first['pair_id']}__tr_first"
+    first["targets"]["holder_pregrasp"]["position_world_m"] = [1.0, 0.0, 0.1]
+
+    second = json.loads(json.dumps(first))
+    second["candidate_rank"] = 2
+    second["execution_candidate_id"] = second["execution_candidate_id"].replace("tr_first", "tr_second")
+    second["transition_id"] = "tr_second"
+    second["targets"]["inserter_preinsertion"]["position_world_m"] = [0.45, 0.0, 0.1]
+    second["grasps"]["inserter_preinsertion"] = {
+        "grasp_id": "transition_specific_grasp",
+        "jaw_width_m": 0.041,
+        "position_world_m": [0.45, 0.0, 0.1],
+    }
+
+    third = _plan_payload()
+    third["candidate_rank"] = 3
+    third["pair_id"] = "p003_h0004_i0_0005"
+    third["execution_candidate_id"] = "p003_h0004_i0_0005__tr_good"
+    plan = dict(first)
+    plan["ranked_pair_candidates"] = [first, second, third]
+    commanders = {
+        "holder": _RankedIkCommander("holder"),
+        "inserter": _RankedIkCommander("inserter"),
+    }
+    steps, record = _recorded_steps()
+
+    selected, summary, preplanned = _select_ranked_preflight_candidate(
+        plan=plan,
+        commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="inserter_preinsertion"),
+        frame_id="base_link",
+        record=record,
+    )
+
+    assert selected is not None
+    assert preplanned is not None
+    assert selected["pair_id"] == "p003_h0004_i0_0005"
+    assert summary["cached_prefix_rejections"] == 1
+    assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
+    assert not any(
+        step["name"] == "preflight_plan_holder_pregrasp" and step.get("candidate_rank") == 2
+        for step in steps
+    )
 
 
 def test_ranked_preflight_stops_before_unrequested_preinsertion_targets() -> None:
@@ -902,22 +1157,23 @@ def test_ranked_preflight_stops_before_unrequested_preinsertion_targets() -> Non
     candidate["targets"]["inserter_above_preinsertion"]["position_world_m"] = [1.0, 0.0, 0.1]
     candidate["ranked_pair_candidates"] = [dict(candidate)]
     commanders = {
-        "holder": _RankedIkCommander(),
-        "inserter": _RankedIkCommander(),
+        "holder": _RankedIkCommander("holder"),
+        "inserter": _RankedIkCommander("inserter"),
     }
     steps, record = _recorded_steps()
 
-    selected, summary = _select_ranked_preflight_candidate(
+    selected, summary, preplanned = _select_ranked_preflight_candidate(
         plan=candidate,
         commanders=commanders,
+        initial_robot_state=_initial_robot_state(),
+        config=DualRealExecutionConfig(stop_after="inserter_pickup_grasp"),
         frame_id="base_link",
         record=record,
         stop_after="inserter_pickup_grasp",
     )
 
     assert selected is not None
+    assert preplanned is not None
     assert selected["pair_id"] == "p001_h0001_i0_0002"
     assert summary["stop_after"] == "inserter_pickup_grasp"
-    assert commanders["holder"].calls == 2
-    assert commanders["inserter"].calls == 2
-    assert not any(step["name"] == "preflight_inserter_above_preinsertion" for step in steps)
+    assert not any(step["name"] == "preflight_plan_inserter_above_preinsertion" for step in steps)

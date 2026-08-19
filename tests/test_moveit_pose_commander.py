@@ -186,6 +186,8 @@ def test_moveit_pose_commander_config_prefixes_default_endpoints_with_namespace(
     assert config.moveit_namespace == "/lbr"
     assert config.ik_service_name == "/lbr/compute_ik"
     assert config.planning_service_name == "/lbr/plan_kinematic_path"
+    assert config.cartesian_path_service_name == "/lbr/compute_cartesian_path"
+    assert config.get_planning_scene_service_name == "/lbr/get_planning_scene"
     assert config.query_planner_interface_service_name == "/lbr/query_planner_interface"
     assert config.fk_service_name == "/lbr/compute_fk"
     assert config.apply_planning_scene_service_name == "/lbr/apply_planning_scene"
@@ -201,6 +203,108 @@ def test_moveit_pose_commander_config_does_not_double_prefix_namespaced_endpoint
 
     assert config.ik_service_name == "/lbr/compute_ik"
     assert config.execute_action_name == "/lbr/execute_trajectory"
+
+
+def test_get_current_robot_state_reads_complete_moveit_scene_state() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(moveit_namespace="/lbr_dual_arm")
+    commander._get_planning_scene_client = mock.Mock()
+    commander._get_planning_scene_client.call_async.return_value = object()
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        scene=SimpleNamespace(
+            robot_state=SimpleNamespace(
+                joint_state=SimpleNamespace(
+                    name=["lbr_one_A1", "lbr_two_A1"],
+                    position=[0.25, -0.4],
+                )
+            )
+        )
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.get_current_robot_state.__globals__,
+        {
+            "GetPlanningScene": _FakeGetPlanningScene,
+            "PlanningSceneComponents": SimpleNamespace(ROBOT_STATE=1),
+        },
+    ):
+        state = commander.get_current_robot_state()
+
+    request = commander._get_planning_scene_client.call_async.call_args.args[0]
+    assert request.components.components == 1
+    assert state == {"lbr_one_A1": 0.25, "lbr_two_A1": -0.4}
+
+
+def test_plan_cartesian_to_pose_requires_full_path_and_scales_timing() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        planning_group="arm_one",
+        pose_link="lbr_one_gripper_tcp",
+        joint_names=("lbr_one_A1",),
+        velocity_scale=0.05,
+        acceleration_scale=0.05,
+    )
+    commander._cartesian_path_client = mock.Mock()
+    commander._cartesian_path_client.call_async.return_value = object()
+    trajectory = SimpleNamespace(
+        joint_trajectory=SimpleNamespace(
+            joint_names=["lbr_one_A1"],
+            points=[
+                SimpleNamespace(
+                    positions=[0.0],
+                    velocities=[0.0],
+                    accelerations=[0.0],
+                    time_from_start=SimpleNamespace(sec=0, nanosec=0),
+                ),
+                SimpleNamespace(
+                    positions=[0.1],
+                    velocities=[1.0],
+                    accelerations=[1.0],
+                    time_from_start=SimpleNamespace(sec=1, nanosec=0),
+                ),
+            ],
+        )
+    )
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(
+        error_code=SimpleNamespace(val=1),
+        fraction=1.0,
+        solution=trajectory,
+    )
+
+    with mock.patch.dict(
+        MoveItPoseCommander.plan_cartesian_to_pose.__globals__,
+        {
+            "GetCartesianPath": _FakeGetCartesianPath,
+            "MoveItErrorCodes": _FakeMoveItErrorCodes,
+            "Pose": _FakePose,
+        },
+    ):
+        planned, message = commander.plan_cartesian_to_pose(
+            PoseTarget.from_quaternion(
+                x=0.4,
+                y=-0.2,
+                z=0.3,
+                quaternion_xyzw=(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+            ),
+            label="holder_grasp",
+            start_robot_state={"lbr_one_A1": 0.0, "lbr_two_A1": -0.2},
+            max_step_m=0.005,
+            revolute_jump_threshold_rad=0.35,
+        )
+
+    request = commander._cartesian_path_client.call_async.call_args.args[0]
+    assert planned is trajectory
+    assert "fraction=1.000000" in message
+    assert request.header.frame_id == "base_link"
+    assert request.start_state.joint_state.name == ["lbr_one_A1", "lbr_two_A1"]
+    assert request.max_step == 0.005
+    assert request.revolute_jump_threshold == 0.35
+    assert request.avoid_collisions is True
+    final = trajectory.joint_trajectory.points[-1]
+    assert final.time_from_start.sec == 20
+    np.testing.assert_allclose(final.velocities, [0.05])
+    np.testing.assert_allclose(final.accelerations, [0.0025])
 
 
 def test_remove_planning_scene_obstacles_sends_remove_operations() -> None:
@@ -672,6 +776,30 @@ class _FakeGetPositionIK:
                 ),
                 timeout=SimpleNamespace(sec=0, nanosec=0),
             )
+
+
+class _FakeGetPlanningScene:
+    class Request:
+        def __init__(self) -> None:
+            self.components = SimpleNamespace(components=0)
+
+
+class _FakeGetCartesianPath:
+    class Request:
+        def __init__(self) -> None:
+            self.header = SimpleNamespace(frame_id="")
+            self.start_state = SimpleNamespace(
+                is_diff=False,
+                joint_state=SimpleNamespace(name=[], position=[]),
+            )
+            self.group_name = ""
+            self.link_name = ""
+            self.waypoints = []
+            self.max_step = 0.0
+            self.jump_threshold = 0.0
+            self.prismatic_jump_threshold = 0.0
+            self.revolute_jump_threshold = 0.0
+            self.avoid_collisions = False
 
 
 class _FakeGetStateValidity:

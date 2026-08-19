@@ -82,8 +82,12 @@ target preflight:
 ```
 
 The same command starts the hardware MoveIt stack and builds a fresh target
-task. The real executor then replans every requested phase from the live shared
-joint state; it never replays mock or Isaac joint waypoints.
+task. Before either arm moves, the real executor plans the complete connected
+sequence from the live shared joint state. Grasp approaches, pickup lift, and
+the final pre-insertion descent are collision-aware straight Cartesian TCP
+paths; other transfers are free-space MoveIt plans. Hardware execution uses
+those exact preflight trajectories and aborts if either arm has drifted from a
+saved segment start. It never replays mock or Isaac joint waypoints.
 
 Ramp execution one stop point at a time. This first motion command moves only
 the holder to pregrasp and does not actuate either gripper:

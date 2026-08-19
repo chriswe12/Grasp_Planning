@@ -384,7 +384,7 @@ class DualPipelineRunner:
     ) -> tuple[str, float] | None:
         if "Waiting for MoveIt" in line:
             return "PLANNING", 0.05
-        if "IK preflight kept" in line or "preflight_holder" in line:
+        if "IK preflight kept" in line or "preflight_holder" in line or "preflight_plan_holder" in line:
             return "PLANNING", 0.50
         if "Selected pair" in line or "Selected ranked pair" in line or "preflight_inserter_preinsertion" in line:
             return "PLANNING", 1.0

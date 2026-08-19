@@ -37,6 +37,7 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     simple_dual_robot_pregrasp_aabb_schedule,
     with_inserter_pickup_pregrasp_offset,
 )
+from grasp_planning.ros2.kuka_ik_seeds import kuka_iiwa_ik_seed_candidates  # noqa: E402
 from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
     MoveItPoseCommander,
     MoveItPoseCommanderConfig,
@@ -1404,67 +1405,12 @@ def _exact_ik_seed_candidates(
 ) -> tuple[tuple[float, ...], ...]:
     """Build deterministic bounded seeds spanning useful iiwa IK branches."""
 
-    count = max(1, int(candidate_count))
-    start = np.asarray(start_joint_positions, dtype=float)
-    lower = np.asarray(KUKA_MOVEIT_JOINT_LOWER_LIMITS, dtype=float)
-    upper = np.asarray(KUKA_MOVEIT_JOINT_UPPER_LIMITS, dtype=float)
-    if start.shape != lower.shape:
-        raise ValueError(f"Expected {lower.size} exact-IK start joints, got {start.size}.")
-    if np.any(start < lower) or np.any(start > upper):
-        raise ValueError("Exact-IK start state is outside the configured iiwa joint limits.")
-
-    seeds: list[tuple[float, ...]] = []
-
-    def add_seed(raw_seed) -> None:
-        if len(seeds) >= count:
-            return
-        seed = np.asarray(raw_seed, dtype=float)
-        if seed.shape != start.shape or np.any(seed < lower) or np.any(seed > upper):
-            return
-        candidate = tuple(float(value) for value in seed)
-        if not any(np.max(np.abs(seed - np.asarray(existing, dtype=float))) < 1.0e-9 for existing in seeds):
-            seeds.append(candidate)
-
-    add_seed(start)
-    if preferred_joint_positions is not None:
-        if len(preferred_joint_positions) != start.size:
-            raise ValueError(f"Expected {start.size} preferred exact-IK joints, got {len(preferred_joint_positions)}.")
-        add_seed(preferred_joint_positions)
-
-    for offset in (math.pi, -math.pi):
-        branch = start.copy()
-        branch[-1] += offset
-        add_seed(branch)
-    for a7_target in (KUKA_A7_NEAR_LIMIT_BRANCH_RAD, -KUKA_A7_NEAR_LIMIT_BRANCH_RAD):
-        branch = start.copy()
-        branch[-1] = a7_target
-        add_seed(branch)
-
-    # Deliberately probe both signs of each branch before moving to the next
-    # joint. With the normal seven-seed budget this yields start, both bounded
-    # A7 wrist branches, both A1 shoulder branches, and both A3 upper-arm
-    # branches. The former four-seed ordering reached only +A1 after spending
-    # two seeds on A7, which biased mirrored left/right pickup poses.
-    for joint_index, scale in ((0, 1.0), (2, 1.0), (3, 0.75), (4, 1.0)):
-        for direction in (1.0, -1.0):
-            branch = start.copy()
-            branch[joint_index] += direction * float(perturbation_rad) * scale
-            add_seed(branch)
-
-    golden_ratio = 0.5 * (1.0 + math.sqrt(5.0))
-    sample_index = 1
-    while len(seeds) < count and sample_index <= count * 8:
-        offsets = np.asarray(
-            [
-                float(perturbation_rad) * ((((sample_index * (joint_index + 1)) / golden_ratio) % 1.0) * 2.0 - 1.0)
-                for joint_index in range(start.size)
-            ],
-            dtype=float,
-        )
-        add_seed(start + offsets)
-        sample_index += 1
-    return tuple(seeds)
-
+    return kuka_iiwa_ik_seed_candidates(
+        start_joint_positions,
+        preferred_joint_positions=preferred_joint_positions,
+        candidate_count=candidate_count,
+        perturbation_rad=perturbation_rad,
+    )
 
 def _is_distinct_ik_solution(
     solution: tuple[float, ...],

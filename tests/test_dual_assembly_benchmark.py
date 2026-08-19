@@ -123,6 +123,137 @@ def test_planning_only_command_skips_isaac_and_recording_options(tmp_path: Path)
     assert "--static-friction" not in command
 
 
+def test_real_preflight_only_command_runs_connected_planning_without_execution_or_isaac(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload["benchmark"] = {**dict(payload["benchmark"]), "ros_domain_id": 43}
+    spec = benchmark._case_specs(payload=payload, limit_cases=1)[0]
+    paths = benchmark._case_paths(tmp_path, spec)
+
+    command = benchmark._command(
+        payload=payload,
+        spec=spec,
+        paths=paths,
+        real_preflight_only=True,
+    )
+
+    assert command[:3] == [str(REPO_ROOT / "run_simple_dual_robot.sh"), "--mode", "real"]
+    assert command[command.index("--task-output") + 1] == str(paths["plan"])
+    assert command[command.index("--attempt-output") + 1] == str(paths["attempt"])
+    assert command[command.index("--stop-after") + 1] == "inserter_preinsertion"
+    assert command[command.index("--cartesian-max-step-m") + 1] == "0.005"
+    assert command[command.index("--ros-domain-id") + 1] == "43"
+    assert "--reuse-moveit" in command
+    assert "--execute" not in command
+    assert "--planning-only" not in command
+    assert "--record-video" not in command
+    assert "--isaac-python" not in command
+    assert "--static-friction" not in command
+
+
+def test_real_preflight_benchmark_manages_one_mock_moveit_stack_by_default(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload["benchmark"] = {
+        **dict(payload["benchmark"]),
+        "ros_domain_id": 43,
+        "ik_solver": "kdl",
+    }
+    handoff = tmp_path / "process-group"
+
+    command = benchmark._managed_mock_moveit_command(
+        payload=payload,
+        process_group_file=handoff,
+    )
+
+    assert command == [
+        str(REPO_ROOT / "start_dual_lbr_moveit.sh"),
+        "--mode",
+        "mock",
+        "--ros-domain-id",
+        "43",
+        "--ik-solver",
+        "kdl",
+        "--process-group-file",
+        str(handoff),
+    ]
+
+
+def test_real_preflight_summary_preserves_primary_failed_segment(tmp_path: Path) -> None:
+    attempt_path = tmp_path / "attempt.json"
+    attempt_path.write_text(
+        json.dumps(
+            {
+                "kind": "dual_robot_real_execution_attempt",
+                "pair_selection": {
+                    "candidates_checked": 2,
+                    "selected_rank": None,
+                    "selected_pair_id": "",
+                    "preplanned_segments": [],
+                    "records": [
+                        {
+                            "rank": 1,
+                            "pair_id": "pair_one",
+                            "execution_candidate_id": "candidate_one",
+                            "transition_id": "transition_one",
+                            "roles": {
+                                "holder": {
+                                    "failure": (
+                                        "inserter_above_preinsertion: connected free_space "
+                                        "planning failed: Planning failed with code=-2"
+                                    )
+                                },
+                                "inserter": {
+                                    "failure": (
+                                        "inserter_above_preinsertion: connected free_space "
+                                        "planning failed: Planning failed with code=-2"
+                                    )
+                                },
+                            },
+                        },
+                        {
+                            "rank": 2,
+                            "pair_id": "pair_two",
+                            "execution_candidate_id": "candidate_two",
+                            "transition_id": "transition_two",
+                            "roles": {
+                                "holder": {
+                                    "failure": (
+                                        "inserter_preinsertion: connected cartesian_linear "
+                                        "planning failed: fraction=0.75"
+                                    )
+                                }
+                            },
+                        },
+                    ],
+                },
+                "result": {
+                    "success": False,
+                    "status": "motion_preflight_failed",
+                    "message": "No ranked grasp pair passed complete connected motion preflight.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = benchmark._real_preflight_summary(attempt_path)
+
+    assert summary["pair_id"] == "pair_one"
+    assert summary["connected_preflight_candidates_checked"] == 2
+    assert summary["connected_preflight_failure_segment"] == "inserter_above_preinsertion"
+    assert summary["connected_preflight_failure_segment_counts"] == {
+        "inserter_above_preinsertion": 1,
+        "inserter_preinsertion": 1,
+    }
+    assert benchmark._failure_phase(
+        "No ranked grasp pair passed complete connected motion preflight.",
+        attempt_result=benchmark._attempt_result(attempt_path),
+    ) == ("real_connected_preflight", "Real connected motion preflight")
+
+
 def test_plan_summary_aggregates_exact_ik_collision_diagnostics(tmp_path: Path) -> None:
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -601,6 +732,12 @@ def test_failure_phase_classifies_existing_moveit_stack_as_setup() -> None:
     assert not benchmark._is_existing_stack_ownership_conflict(
         "--reuse-moveit was requested, but the live MoveIt services are not ready"
     )
+    assert benchmark._is_reused_stack_unavailable(
+        "--reuse-moveit was requested, but the live MoveIt services are not ready"
+    )
+    assert benchmark._is_reused_stack_unavailable(
+        "Missing /lbr_dual_arm/compute_ik or /lbr_dual_arm/plan_kinematic_path"
+    )
 
 
 def test_benchmark_stops_after_recording_first_existing_stack_conflict(
@@ -615,6 +752,7 @@ def test_benchmark_stops_after_recording_first_existing_stack_conflict(
         lambda: SimpleNamespace(
             config=REPO_ROOT / "configs/dual_assembly_benchmark.yaml",
             artifact_root=None,
+            ros_domain_id=None,
             output_dir=tmp_path,
             parts=None,
             placements=None,
@@ -623,6 +761,8 @@ def test_benchmark_stops_after_recording_first_existing_stack_conflict(
             failed_from_summary=None,
             failure_stages=None,
             planning_only=True,
+            real_preflight_only=False,
+            reuse_moveit=False,
             ik_only=True,
             ik_collision_diagnostics=False,
             no_resume=True,
@@ -657,6 +797,52 @@ def test_benchmark_stops_after_recording_first_existing_stack_conflict(
     assert calls == [str(specs[0]["case_id"])]
     records = benchmark._jsonl_records(tmp_path / "events.jsonl")
     assert [record["status"] for record in records] == ["running", "failed"]
+
+
+def test_reused_real_preflight_stops_after_first_missing_stack_case(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    payload = _payload()
+    specs = benchmark._case_specs(payload=payload, limit_cases=2)
+    calls: list[str] = []
+    args = SimpleNamespace(
+        retry_failed=False,
+        planning_only=False,
+        real_preflight_only=True,
+        ik_only=False,
+        ik_collision_diagnostics=False,
+    )
+    monkeypatch.setattr(benchmark, "_refresh_outputs", lambda **_kwargs: None)
+
+    def fake_run_case(*, spec, **_kwargs):
+        calls.append(str(spec["case_id"]))
+        return (
+            {
+                **spec,
+                "status": "failed",
+                "success": False,
+                "message": (
+                    "[DUAL-RUN] Missing /lbr_dual_arm/compute_ik or "
+                    "/lbr_dual_arm/plan_kinematic_path; restart the selected MoveIt stack."
+                ),
+                "duration_s": 0.1,
+            },
+            False,
+        )
+
+    monkeypatch.setattr(benchmark, "_run_case", fake_run_case)
+    events_path = tmp_path / "events.jsonl"
+
+    assert benchmark._run_selected_cases(
+        args=args,
+        payload=payload,
+        output_dir=tmp_path,
+        specs=specs,
+        latest={},
+        events_path=events_path,
+    ) == 2
+    assert calls == [str(specs[0]["case_id"])]
 
 
 def test_case_cleanup_terminates_exact_nested_process_group_only(

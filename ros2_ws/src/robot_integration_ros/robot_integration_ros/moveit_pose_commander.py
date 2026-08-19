@@ -18,10 +18,13 @@ try:
         JointConstraint,
         MoveItErrorCodes,
         PlanningScene,
+        PlanningSceneComponents,
     )
     from moveit_msgs.srv import (
         ApplyPlanningScene,
+        GetCartesianPath,
         GetMotionPlan,
+        GetPlanningScene,
         GetPositionFK,
         GetPositionIK,
         GetStateValidity,
@@ -42,7 +45,10 @@ except Exception:  # pragma: no cover - optional dependency path
     JointConstraint = None
     MoveItErrorCodes = None
     PlanningScene = None
+    PlanningSceneComponents = None
+    GetCartesianPath = None
     GetMotionPlan = None
+    GetPlanningScene = None
     GetPositionFK = None
     GetPositionIK = None
     GetStateValidity = None
@@ -172,6 +178,8 @@ class MoveItPoseCommanderConfig:
     moveit_namespace: str = ""
     ik_service_name: str = "/compute_ik"
     planning_service_name: str = "/plan_kinematic_path"
+    cartesian_path_service_name: str = "/compute_cartesian_path"
+    get_planning_scene_service_name: str = "/get_planning_scene"
     query_planner_interface_service_name: str = "/query_planner_interface"
     fk_service_name: str = "/compute_fk"
     apply_planning_scene_service_name: str = "/apply_planning_scene"
@@ -197,6 +205,8 @@ class MoveItPoseCommanderConfig:
         for field_name in (
             "ik_service_name",
             "planning_service_name",
+            "cartesian_path_service_name",
+            "get_planning_scene_service_name",
             "query_planner_interface_service_name",
             "fk_service_name",
             "apply_planning_scene_service_name",
@@ -219,6 +229,9 @@ class MoveItPoseCommander(Node):
             or PoseStamped is None
             or GetPositionIK is None
             or GetMotionPlan is None
+            or GetCartesianPath is None
+            or GetPlanningScene is None
+            or PlanningSceneComponents is None
             or GetPositionFK is None
             or GetStateValidity is None
             or QueryPlannerInterfaces is None
@@ -233,6 +246,14 @@ class MoveItPoseCommander(Node):
         self._config = config
         self._ik_client = self.create_client(GetPositionIK, config.ik_service_name)
         self._plan_client = self.create_client(GetMotionPlan, config.planning_service_name)
+        self._cartesian_path_client = self.create_client(
+            GetCartesianPath,
+            config.cartesian_path_service_name,
+        )
+        self._get_planning_scene_client = self.create_client(
+            GetPlanningScene,
+            config.get_planning_scene_service_name,
+        )
         self._planner_query_client = self.create_client(
             QueryPlannerInterfaces,
             config.query_planner_interface_service_name,
@@ -259,6 +280,14 @@ class MoveItPoseCommander(Node):
             raise RuntimeError(f"MoveIt IK service '{self.config.ik_service_name}' is unavailable.")
         if not self._plan_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
             raise RuntimeError(f"MoveIt planning service '{self.config.planning_service_name}' is unavailable.")
+        if not self._cartesian_path_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            raise RuntimeError(
+                f"MoveIt Cartesian-path service '{self.config.cartesian_path_service_name}' is unavailable."
+            )
+        if not self._get_planning_scene_client.wait_for_service(timeout_sec=self.config.wait_for_moveit_timeout_s):
+            raise RuntimeError(
+                f"MoveIt planning-scene query service '{self.config.get_planning_scene_service_name}' is unavailable."
+            )
         if self.config.pipeline_id and not self._planner_query_client.wait_for_service(
             timeout_sec=self.config.wait_for_moveit_timeout_s
         ):
@@ -686,6 +715,137 @@ class MoveItPoseCommander(Node):
             ),
             frame_id=pose_msg.header.frame_id or str(frame_id),
         )
+
+    def get_current_robot_state(self) -> dict[str, float]:
+        """Return the complete joint state monitored by MoveIt's planning scene."""
+
+        request = GetPlanningScene.Request()
+        request.components.components = PlanningSceneComponents.ROBOT_STATE
+        future = self._get_planning_scene_client.call_async(request)
+        try:
+            response = self._wait_for_future(
+                future,
+                timeout_s=self.config.wait_for_moveit_timeout_s,
+                label="planning-scene state request",
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Planning-scene state query failed: {exc}") from exc
+        if response is None:
+            raise RuntimeError("Planning-scene state response was None")
+        joint_state = response.scene.robot_state.joint_state
+        names = tuple(str(name) for name in joint_state.name)
+        positions = tuple(float(value) for value in joint_state.position)
+        if not names or len(names) != len(positions):
+            raise RuntimeError("MoveIt returned an empty or malformed current robot state")
+        if len(names) != len(set(names)):
+            raise RuntimeError("MoveIt current robot state contains duplicate joint names")
+        return dict(zip(names, positions))
+
+    @staticmethod
+    def _scale_cartesian_trajectory_timing(
+        trajectory,
+        *,
+        velocity_scale: float,
+        acceleration_scale: float,
+    ) -> tuple[bool, str]:
+        """Conservatively slow a time-parameterized Cartesian trajectory in place."""
+
+        speed_scale = min(float(velocity_scale), math.sqrt(float(acceleration_scale)))
+        if not 0.0 < speed_scale <= 1.0:
+            return False, "Cartesian velocity/acceleration scales must be in (0, 1]"
+        points = tuple(trajectory.joint_trajectory.points)
+        if len(points) < 2:
+            return False, "Cartesian trajectory must contain at least two joint points"
+        previous_seconds = -1.0
+        for index, point in enumerate(points):
+            duration = point.time_from_start
+            seconds = float(duration.sec) + float(duration.nanosec) * 1.0e-9
+            if index > 0 and seconds <= previous_seconds:
+                return False, "Cartesian trajectory is not time-parameterized"
+            previous_seconds = seconds
+            scaled_seconds = seconds / speed_scale
+            whole_seconds = int(scaled_seconds)
+            nanoseconds = int(round((scaled_seconds - whole_seconds) * 1.0e9))
+            if nanoseconds >= 1_000_000_000:
+                whole_seconds += 1
+                nanoseconds -= 1_000_000_000
+            duration.sec = whole_seconds
+            duration.nanosec = nanoseconds
+            point.velocities = [float(value) * speed_scale for value in point.velocities]
+            point.accelerations = [float(value) * speed_scale * speed_scale for value in point.accelerations]
+        return True, f"time-scaled by {speed_scale:.4f}"
+
+    def plan_cartesian_to_pose(
+        self,
+        target: PoseTarget,
+        *,
+        label: str,
+        start_robot_state: Mapping[str, float],
+        max_step_m: float,
+        revolute_jump_threshold_rad: float,
+    ):
+        """Plan a complete collision-aware Cartesian path from an explicit state."""
+
+        state_items = tuple((str(name), float(value)) for name, value in start_robot_state.items())
+        names = tuple(name for name, _value in state_items)
+        missing = [joint_name for joint_name in self.config.joint_names if joint_name not in names]
+        if missing:
+            return None, f"Complete Cartesian start state is missing active-group joints: {missing}"
+        if len(names) != len(set(names)):
+            return None, "Cartesian start state contains duplicate joint names"
+        if float(max_step_m) <= 0.0:
+            return None, "Cartesian max step must be positive"
+        if float(revolute_jump_threshold_rad) <= 0.0:
+            return None, "Cartesian revolute jump threshold must be positive"
+
+        request = GetCartesianPath.Request()
+        request.header.frame_id = str(target.frame_id)
+        request.start_state.is_diff = True
+        request.start_state.joint_state.name = [name for name, _value in state_items]
+        request.start_state.joint_state.position = [value for _name, value in state_items]
+        request.group_name = self.config.planning_group
+        request.link_name = self.config.pose_link
+        waypoint = Pose()
+        waypoint.position.x = float(target.x)
+        waypoint.position.y = float(target.y)
+        waypoint.position.z = float(target.z)
+        waypoint.orientation.x = float(target.qx)
+        waypoint.orientation.y = float(target.qy)
+        waypoint.orientation.z = float(target.qz)
+        waypoint.orientation.w = float(target.qw)
+        request.waypoints = [waypoint]
+        request.max_step = float(max_step_m)
+        request.jump_threshold = 0.0
+        request.prismatic_jump_threshold = 0.0
+        request.revolute_jump_threshold = float(revolute_jump_threshold_rad)
+        request.avoid_collisions = bool(self.config.avoid_collisions)
+
+        future = self._cartesian_path_client.call_async(request)
+        try:
+            response = self._wait_for_future(
+                future,
+                timeout_s=self.config.planning_time_s + 5.0,
+                label=f"{label} Cartesian-path request",
+            )
+        except Exception as exc:
+            return None, f"Cartesian planning call failed: {exc}"
+        if response is None:
+            return None, "Cartesian planning response was None"
+        if response.error_code.val != MoveItErrorCodes.SUCCESS:
+            return None, f"Cartesian planning failed with code={response.error_code.val}"
+        fraction = float(response.fraction)
+        if fraction < 1.0 - 1.0e-6:
+            return None, f"Cartesian path incomplete: fraction={fraction:.6f}"
+        trajectory = response.solution
+        timing_ok, timing_message = self._scale_cartesian_trajectory_timing(
+            trajectory,
+            velocity_scale=float(self.config.velocity_scale),
+            acceleration_scale=float(self.config.acceleration_scale),
+        )
+        if not timing_ok:
+            return None, timing_message
+        point_count = len(tuple(trajectory.joint_trajectory.points))
+        return trajectory, f"ok; Cartesian fraction={fraction:.6f}; points={point_count}; {timing_message}"
 
     def compute_ik(
         self,

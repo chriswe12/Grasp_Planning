@@ -55,6 +55,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--acceleration-scale", type=float, default=0.05)
     parser.add_argument("--planning-time-s", type=float, default=8.0)
     parser.add_argument("--planning-attempts", type=int, default=8)
+    parser.add_argument("--ik-timeout-s", type=float, default=0.35)
+    parser.add_argument("--exact-ik-candidates", type=int, default=7)
+    parser.add_argument("--exact-ik-beam-width", type=int, default=4)
+    parser.add_argument("--exact-ik-seed-perturbation-rad", type=float, default=0.60)
+    parser.add_argument("--cartesian-max-step-m", type=float, default=0.005)
+    parser.add_argument("--cartesian-revolute-jump-threshold-rad", type=float, default=0.35)
+    parser.add_argument("--execution-start-tolerance-rad", type=float, default=0.05)
     parser.add_argument("--execute-timeout-s", type=float, default=120.0)
     parser.add_argument("--gripper-timeout-s", type=float, default=10.0)
     parser.add_argument("--grasp-settle-time-s", type=float, default=0.5)
@@ -102,12 +109,31 @@ def main() -> int:
         raise ValueError("--velocity-scale must be in (0, 0.20] for this hardware runner.")
     if not 0.0 < args.acceleration_scale <= 0.20:
         raise ValueError("--acceleration-scale must be in (0, 0.20] for this hardware runner.")
+    if args.cartesian_max_step_m <= 0.0:
+        raise ValueError("--cartesian-max-step-m must be positive.")
+    if args.cartesian_revolute_jump_threshold_rad <= 0.0:
+        raise ValueError("--cartesian-revolute-jump-threshold-rad must be positive.")
+    if args.execution_start_tolerance_rad <= 0.0:
+        raise ValueError("--execution-start-tolerance-rad must be positive.")
+    if args.exact_ik_candidates <= 0:
+        raise ValueError("--exact-ik-candidates must be positive.")
+    if args.ik_timeout_s <= 0.0:
+        raise ValueError("--ik-timeout-s must be positive.")
+    if args.exact_ik_beam_width <= 0:
+        raise ValueError("--exact-ik-beam-width must be positive.")
     config = DualRealExecutionConfig(
         moveit_namespace=str(args.moveit_namespace),
+        ik_timeout_s=float(args.ik_timeout_s),
         planning_time_s=float(args.planning_time_s),
         num_planning_attempts=int(args.planning_attempts),
+        ik_candidate_count=int(args.exact_ik_candidates),
+        ik_beam_width=int(args.exact_ik_beam_width),
+        ik_seed_perturbation_rad=float(args.exact_ik_seed_perturbation_rad),
         velocity_scale=float(args.velocity_scale),
         acceleration_scale=float(args.acceleration_scale),
+        cartesian_max_step_m=float(args.cartesian_max_step_m),
+        cartesian_revolute_jump_threshold_rad=float(args.cartesian_revolute_jump_threshold_rad),
+        execution_start_tolerance_rad=float(args.execution_start_tolerance_rad),
         execute_timeout_s=float(args.execute_timeout_s),
         execute=bool(args.execute),
         require_confirmation=not bool(args.yes),

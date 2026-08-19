@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a resumable, video-recorded benchmark over every dual assembly step."""
+"""Run a resumable execution or planning benchmark over every dual assembly step."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ import statistics
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
 
 import numpy as np
 import yaml
@@ -34,13 +35,14 @@ FAILURE_STAGE_ORDER = {
     "joint_path_planning": 5,
     "fallback_pose_ik": 6,
     "moveit_candidate_planning": 7,
-    "execution_start": 8,
-    "holder_base_grasp": 9,
-    "incoming_part_grasp": 10,
-    "transition": 11,
-    "execution_validation": 12,
-    "success": 13,
-    "pending": 14,
+    "real_connected_preflight": 8,
+    "execution_start": 9,
+    "holder_base_grasp": 10,
+    "incoming_part_grasp": 11,
+    "transition": 12,
+    "execution_validation": 13,
+    "success": 14,
+    "pending": 15,
 }
 FAILURE_STAGE_LABELS = {
     "setup": "MoveIt/Isaac setup",
@@ -51,6 +53,7 @@ FAILURE_STAGE_LABELS = {
     "joint_path_planning": "Joint-space path planning",
     "fallback_pose_ik": "Fallback pose IK",
     "moveit_candidate_planning": "MoveIt candidate planning",
+    "real_connected_preflight": "Real connected motion preflight",
     "execution_start": "Isaac execution startup",
     "holder_base_grasp": "Holder/base grasp",
     "incoming_part_grasp": "Incoming-part grasp",
@@ -59,6 +62,18 @@ FAILURE_STAGE_LABELS = {
     "success": "Successful",
     "pending": "Not completed",
 }
+
+CONNECTED_PREFLIGHT_SEGMENT_LABELS = {
+    "holder_pregrasp": "Holder pregrasp",
+    "holder_grasp": "Holder straight-line grasp",
+    "inserter_pickup_pregrasp": "Inserter pickup pregrasp",
+    "inserter_pickup_grasp": "Inserter straight-line pickup grasp",
+    "inserter_pickup_lift": "Inserter straight-line pickup lift",
+    "inserter_above_preinsertion": "Inserter above pre-insertion",
+    "inserter_preinsertion": "Inserter straight-line pre-insertion",
+}
+FAILURE_STAGE_ORDER.update({segment: 8 for segment in CONNECTED_PREFLIGHT_SEGMENT_LABELS})
+FAILURE_STAGE_LABELS.update(CONNECTED_PREFLIGHT_SEGMENT_LABELS)
 
 MOVEIT_FAILURE_KIND_LABELS = {
     key: FAILURE_STAGE_LABELS[key]
@@ -344,19 +359,14 @@ def _command(
     planning_only: bool = False,
     ik_only: bool = False,
     ik_collision_diagnostics: bool = False,
+    real_preflight_only: bool = False,
 ) -> list[str]:
     benchmark = dict(payload.get("benchmark", {}) or {})
     physics = dict(payload.get("physics", {}) or {})
-    pickup_pregrasp_offsets = benchmark.get(
-        "pickup_pregrasp_offsets_m",
-        (0.10, 0.075, 0.05, 0.025),
-    )
-    if not isinstance(pickup_pregrasp_offsets, (list, tuple)) or not pickup_pregrasp_offsets:
-        raise ValueError("benchmark.pickup_pregrasp_offsets_m must be a non-empty list.")
     command = [
         str(REPO_ROOT / "run_simple_dual_robot.sh"),
         "--mode",
-        "sim",
+        "real" if real_preflight_only else "sim",
         "--assembly",
         str(spec["assembly"]),
         "--artifact-root",
@@ -365,28 +375,8 @@ def _command(
         str(spec["incoming_part_id"]),
         "--max-pair-attempts",
         str(benchmark.get("max_pair_attempts", 256)),
-        "--max-ik-screen-candidates",
-        str(benchmark.get("max_ik_screen_candidates", 0)),
-        "--joint-rank-candidates",
-        str(benchmark.get("joint_rank_candidates", 8)),
         "--ik-solver",
         str(benchmark.get("ik_solver", "kdl")),
-        "--ik-timeout-s",
-        str(benchmark.get("ik_timeout_s", 0.35)),
-        "--exact-ik-candidates",
-        str(benchmark.get("exact_ik_candidates", 7)),
-        "--exact-ik-beam-width",
-        str(benchmark.get("exact_ik_beam_width", 4)),
-        "--exact-ik-seed-perturbation-rad",
-        str(benchmark.get("exact_ik_seed_perturbation_rad", 0.60)),
-        "--pickup-approach-ik-steps",
-        str(benchmark.get("pickup_approach_ik_steps", 5)),
-        "--pickup-pregrasp-offsets-m",
-        ",".join(str(float(value)) for value in pickup_pregrasp_offsets),
-        "--planning-time-s",
-        str(benchmark.get("planning_time_s", 15.0)),
-        "--planning-attempts",
-        str(benchmark.get("planning_attempts", 16)),
         "--assembly-x",
         str(spec["assembly_x"]),
         "--assembly-y",
@@ -409,13 +399,76 @@ def _command(
         "auto",
         "--floor-z",
         str(spec["floor_z"]),
-        "--plan-output",
-        str(paths["plan"]),
         "--ros-domain-id",
         str(benchmark.get("ros_domain_id", 0)),
         "--headless",
         "--no-planning-debug-gui",
     ]
+
+    if real_preflight_only:
+        command.extend(
+            [
+                "--task-output",
+                str(paths["plan"]),
+                "--attempt-output",
+                str(paths["attempt"]),
+                "--reuse-moveit",
+                "--stop-after",
+                "inserter_preinsertion",
+                "--planning-time-s",
+                str(benchmark.get("real_preflight_planning_time_s", 8.0)),
+                "--planning-attempts",
+                str(benchmark.get("real_preflight_planning_attempts", 8)),
+                "--ik-timeout-s",
+                str(benchmark.get("ik_timeout_s", 0.35)),
+                "--exact-ik-candidates",
+                str(benchmark.get("exact_ik_candidates", 7)),
+                "--exact-ik-beam-width",
+                str(benchmark.get("exact_ik_beam_width", 4)),
+                "--exact-ik-seed-perturbation-rad",
+                str(benchmark.get("exact_ik_seed_perturbation_rad", 0.60)),
+                "--cartesian-max-step-m",
+                str(benchmark.get("cartesian_max_step_m", 0.005)),
+                "--cartesian-revolute-jump-threshold-rad",
+                str(benchmark.get("cartesian_revolute_jump_threshold_rad", 0.35)),
+                "--execution-start-tolerance-rad",
+                str(benchmark.get("execution_start_tolerance_rad", 0.05)),
+            ]
+        )
+        return command
+
+    pickup_pregrasp_offsets = benchmark.get(
+        "pickup_pregrasp_offsets_m",
+        (0.10, 0.075, 0.05, 0.025),
+    )
+    if not isinstance(pickup_pregrasp_offsets, (list, tuple)) or not pickup_pregrasp_offsets:
+        raise ValueError("benchmark.pickup_pregrasp_offsets_m must be a non-empty list.")
+    command.extend(
+        [
+            "--max-ik-screen-candidates",
+            str(benchmark.get("max_ik_screen_candidates", 0)),
+            "--joint-rank-candidates",
+            str(benchmark.get("joint_rank_candidates", 8)),
+            "--ik-timeout-s",
+            str(benchmark.get("ik_timeout_s", 0.35)),
+            "--exact-ik-candidates",
+            str(benchmark.get("exact_ik_candidates", 7)),
+            "--exact-ik-beam-width",
+            str(benchmark.get("exact_ik_beam_width", 4)),
+            "--exact-ik-seed-perturbation-rad",
+            str(benchmark.get("exact_ik_seed_perturbation_rad", 0.60)),
+            "--pickup-approach-ik-steps",
+            str(benchmark.get("pickup_approach_ik_steps", 5)),
+            "--pickup-pregrasp-offsets-m",
+            ",".join(str(float(value)) for value in pickup_pregrasp_offsets),
+            "--planning-time-s",
+            str(benchmark.get("planning_time_s", 15.0)),
+            "--planning-attempts",
+            str(benchmark.get("planning_attempts", 16)),
+            "--plan-output",
+            str(paths["plan"]),
+        ]
+    )
     if planning_only:
         command.append("--planning-only")
         if ik_only:
@@ -463,6 +516,82 @@ def _attempt_result(path: Path) -> dict[str, object]:
         return {}
     result = payload.get("result")
     return dict(result) if isinstance(result, dict) else {}
+
+
+def _connected_preflight_segment(message: object) -> str:
+    normalized = str(message).strip().lower()
+    for segment in CONNECTED_PREFLIGHT_SEGMENT_LABELS:
+        if normalized.startswith(f"{segment}:"):
+            return segment
+    return ""
+
+
+def _real_preflight_summary(path: Path) -> dict[str, object]:
+    """Extract the selected pair and exact connected-preflight failure segment."""
+
+    payload = _read_json_mapping(path)
+    if payload is None or str(payload.get("kind", "")) != "dual_robot_real_execution_attempt":
+        return {}
+    pair_selection = dict(payload.get("pair_selection", {}) or {})
+    raw_records = pair_selection.get("records", [])
+    records = (
+        [dict(value) for value in raw_records if isinstance(value, Mapping)] if isinstance(raw_records, list) else []
+    )
+    failure_records: list[dict[str, object]] = []
+    segment_counts: dict[str, int] = {}
+    for record in records:
+        if bool(record.get("ok", False)):
+            continue
+        roles = dict(record.get("roles", {}) or {})
+        failure = ""
+        for raw_role in roles.values():
+            if not isinstance(raw_role, Mapping):
+                continue
+            failure = str(raw_role.get("failure", "")).strip()
+            if failure:
+                break
+        if not failure:
+            continue
+        segment = _connected_preflight_segment(failure)
+        if segment:
+            segment_counts[segment] = int(segment_counts.get(segment, 0)) + 1
+        failure_records.append(
+            {
+                "rank": int(record.get("rank", 0)),
+                "pair_id": str(record.get("pair_id", "")),
+                "execution_candidate_id": str(record.get("execution_candidate_id", "")),
+                "segment": segment,
+                "message": failure,
+            }
+        )
+
+    primary_failure = failure_records[0] if failure_records else {}
+    selected_pair_id = str(pair_selection.get("selected_pair_id", ""))
+    selected_candidate_id = str(pair_selection.get("selected_execution_candidate_id", ""))
+    selected_transition_id = str(pair_selection.get("selected_transition_id", ""))
+    if not selected_pair_id and records:
+        selected_pair_id = str(records[0].get("pair_id", ""))
+    if not selected_candidate_id and records:
+        selected_candidate_id = str(records[0].get("execution_candidate_id", ""))
+    if not selected_transition_id and records:
+        selected_transition_id = str(records[0].get("transition_id", ""))
+    primary_segment = str(primary_failure.get("segment", ""))
+    return {
+        "pair_id": selected_pair_id,
+        "transition_id": selected_transition_id,
+        "execution_candidate_id": selected_candidate_id,
+        "connected_preflight_candidates_checked": int(pair_selection.get("candidates_checked", 0)),
+        "connected_preflight_selected_rank": pair_selection.get("selected_rank"),
+        "connected_preflight_segments": list(pair_selection.get("preplanned_segments", []) or []),
+        "connected_preflight_failure_segment": primary_segment,
+        "connected_preflight_failure_segment_label": CONNECTED_PREFLIGHT_SEGMENT_LABELS.get(
+            primary_segment,
+            "",
+        ),
+        "connected_preflight_primary_failure_message": str(primary_failure.get("message", "")),
+        "connected_preflight_failure_segment_counts": segment_counts,
+        "connected_preflight_failures": failure_records,
+    }
 
 
 def _split_preferred_joint_failure(message: str) -> tuple[str, str]:
@@ -812,6 +941,8 @@ def _failure_phase(
 
     normalized = message.lower()
     result = dict(attempt_result or {})
+    if str(result.get("status", "")) == "motion_preflight_failed":
+        return "real_connected_preflight", "Real connected motion preflight"
     if moveit_failure_kind in MOVEIT_FAILURE_KIND_LABELS:
         return moveit_failure_kind, MOVEIT_FAILURE_KIND_LABELS[moveit_failure_kind]
     if any(
@@ -899,6 +1030,16 @@ def _is_existing_stack_ownership_conflict(message: object) -> bool:
     normalized = str(message).lower()
     return "a dual moveit stack already exists" in normalized or (
         "stop it first" in normalized and "pass --reuse-moveit" in normalized
+    )
+
+
+def _is_reused_stack_unavailable(message: object) -> bool:
+    normalized = str(message).lower()
+    return (
+        "--reuse-moveit was requested" in normalized and "services are not ready" in normalized
+    ) or (
+        "missing /lbr_dual_arm/compute_ik" in normalized
+        and "/lbr_dual_arm/plan_kinematic_path" in normalized
     )
 
 
@@ -1297,6 +1438,114 @@ def _terminate_process_group(
     )
 
 
+def _managed_mock_moveit_command(
+    *,
+    payload: Mapping[str, object],
+    process_group_file: Path,
+) -> list[str]:
+    benchmark = dict(payload.get("benchmark", {}) or {})
+    return [
+        str(REPO_ROOT / "start_dual_lbr_moveit.sh"),
+        "--mode",
+        "mock",
+        "--ros-domain-id",
+        str(benchmark.get("ros_domain_id", 0)),
+        "--ik-solver",
+        str(benchmark.get("ik_solver", "kdl")),
+        "--process-group-file",
+        str(process_group_file),
+    ]
+
+
+def _wait_for_managed_moveit(
+    process: subprocess.Popen[str],
+    *,
+    log_path: Path,
+    timeout_s: float,
+) -> None:
+    deadline = time.monotonic() + max(1.0, float(timeout_s))
+    ready_marker = "You can start planning now!"
+    while time.monotonic() < deadline:
+        log_tail = _tail(log_path, max_characters=30000)
+        if ready_marker in log_tail:
+            return
+        returncode = process.poll()
+        if returncode is not None:
+            raise RuntimeError(
+                f"Managed mock MoveIt exited with code {returncode} before becoming ready. "
+                f"See {log_path}. Last output: {log_tail[-2000:]}"
+            )
+        time.sleep(0.2)
+    raise RuntimeError(
+        f"Managed mock MoveIt did not become ready within {float(timeout_s):.1f}s. "
+        f"See {log_path}."
+    )
+
+
+@contextmanager
+def _connected_preflight_moveit(
+    *,
+    payload: Mapping[str, object],
+    output_dir: Path,
+    reuse_moveit: bool,
+) -> Iterator[None]:
+    """Own one shared mock stack unless explicit live-stack reuse was requested."""
+
+    if reuse_moveit:
+        print(
+            "[DUAL-BENCH] Reusing the caller-managed MoveIt stack for connected preflight.",
+            flush=True,
+        )
+        yield
+        return
+
+    benchmark = dict(payload.get("benchmark", {}) or {})
+    log_path = output_dir / "shared_mock_moveit.log"
+    runtime_dir = tempfile.TemporaryDirectory(prefix="dual-benchmark-moveit-")
+    process_group_file = Path(runtime_dir.name) / "process-group"
+    command = _managed_mock_moveit_command(
+        payload=payload,
+        process_group_file=process_group_file,
+    )
+    log = log_path.open("w", encoding="utf-8")
+    environment = dict(os.environ)
+    environment["ROS_LOG_DIR"] = str(environment.get("ROS_LOG_DIR", "/tmp/ros-log"))
+    process = subprocess.Popen(
+        command,
+        cwd=REPO_ROOT,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+        env=environment,
+    )
+    process_group_start_time_ticks = _process_start_time_ticks(process.pid)
+    print(
+        "[DUAL-BENCH] Starting one managed mock MoveIt stack for all connected-preflight cases "
+        f"on ROS domain {benchmark.get('ros_domain_id', 0)}.",
+        flush=True,
+    )
+    try:
+        _wait_for_managed_moveit(
+            process,
+            log_path=log_path,
+            timeout_s=float(benchmark.get("real_preflight_moveit_start_timeout_s", 90.0)),
+        )
+        print("[DUAL-BENCH] Managed mock MoveIt is ready.", flush=True)
+        yield
+    finally:
+        print("[DUAL-BENCH] Stopping the managed mock MoveIt stack.", flush=True)
+        try:
+            _terminate_process_group(
+                process,
+                owned_process_group_files=(process_group_file,),
+                process_group_start_time_ticks=process_group_start_time_ticks,
+            )
+        finally:
+            log.close()
+            runtime_dir.cleanup()
+
+
 def _run_case(
     *,
     payload: Mapping[str, object],
@@ -1305,6 +1554,7 @@ def _run_case(
     planning_only: bool = False,
     ik_only: bool = False,
     ik_collision_diagnostics: bool = False,
+    real_preflight_only: bool = False,
 ) -> tuple[dict[str, object], bool]:
     paths["case_dir"].mkdir(parents=True, exist_ok=True)
     for key in ("plan", "attempt", "video", "thumbnail", "image", "case"):
@@ -1316,6 +1566,7 @@ def _run_case(
         planning_only=planning_only,
         ik_only=ik_only,
         ik_collision_diagnostics=ik_collision_diagnostics,
+        real_preflight_only=real_preflight_only,
     )
     started_at = time.time()
     interrupted = False
@@ -1367,7 +1618,11 @@ def _run_case(
             )
 
     attempt_result = _attempt_result(paths["attempt"])
-    plan_summary = _plan_summary(paths["plan"])
+    real_preflight_summary = _real_preflight_summary(paths["attempt"]) if real_preflight_only else {}
+    plan_summary = {
+        **_plan_summary(paths["plan"]),
+        **real_preflight_summary,
+    }
     video_exists = paths["video"].is_file() and paths["video"].stat().st_size > 0
     if interrupted:
         status = "interrupted"
@@ -1412,7 +1667,7 @@ def _run_case(
             thumbnail_path = str(paths["thumbnail"])
         except (FileNotFoundError, RuntimeError, subprocess.CalledProcessError, OSError) as exc:
             thumbnail_error = str(exc)
-    if not video_exists and (not success or planning_only):
+    if not video_exists and (not success or planning_only or real_preflight_only):
         try:
             _render_failure_scene(
                 path=paths["image"],
@@ -1420,25 +1675,38 @@ def _run_case(
                 spec=spec,
                 plan_path=paths["plan"],
                 failure_label=(
-                    "MoveIt candidate planning succeeded" if planning_only and success else failure_phase_label
+                    "Real connected motion preflight succeeded"
+                    if real_preflight_only and success
+                    else "MoveIt candidate planning succeeded"
+                    if planning_only and success
+                    else failure_phase_label
                 ),
                 message=message,
             )
             image_path = str(paths["image"])
         except (FileNotFoundError, KeyError, TypeError, ValueError, OSError) as exc:
             image_error = str(exc)
+    failure_substage = str(
+        real_preflight_summary.get("connected_preflight_failure_segment", "")
+        or plan_summary.get("moveit_failure_kind", "")
+    )
+    failure_substage_label = str(
+        real_preflight_summary.get("connected_preflight_failure_segment_label", "")
+        or plan_summary.get("moveit_failure_label", "")
+    )
     record = {
         **dict(spec),
         **plan_summary,
         "status": status,
         "success": success,
         "planning_only": planning_only,
+        "real_preflight_only": bool(real_preflight_only),
         "ik_only": bool(ik_only),
         "ik_collision_diagnostics_enabled": bool(ik_collision_diagnostics),
         "failure_stage": failure_stage,
         "failure_phase_label": failure_phase_label,
-        "failure_substage": str(plan_summary.get("moveit_failure_kind", "")),
-        "failure_substage_label": str(plan_summary.get("moveit_failure_label", "")),
+        "failure_substage": failure_substage,
+        "failure_substage_label": failure_substage_label,
         "result_status": str(attempt_result.get("status", "")),
         "message": message,
         "returncode": returncode,
@@ -1641,7 +1909,11 @@ def _repair_failure_evidence(
             continue
         paths = _case_paths(output_dir, spec)
         attempt_result = _attempt_result(paths["attempt"])
-        plan_summary = _plan_summary(paths["plan"])
+        real_preflight_summary = _real_preflight_summary(paths["attempt"])
+        plan_summary = {
+            **_plan_summary(paths["plan"]),
+            **real_preflight_summary,
+        }
         message = str(attempt_result.get("message", "")) if attempt_result else _meaningful_log_failure(paths["log"])
         failure_stage, failure_phase_label = _failure_phase(
             message,
@@ -1673,8 +1945,14 @@ def _repair_failure_evidence(
             "message": message,
             "failure_stage": failure_stage,
             "failure_phase_label": failure_phase_label,
-            "failure_substage": str(plan_summary.get("moveit_failure_kind", "")),
-            "failure_substage_label": str(plan_summary.get("moveit_failure_label", "")),
+            "failure_substage": str(
+                real_preflight_summary.get("connected_preflight_failure_segment", "")
+                or plan_summary.get("moveit_failure_kind", "")
+            ),
+            "failure_substage_label": str(
+                real_preflight_summary.get("connected_preflight_failure_segment_label", "")
+                or plan_summary.get("moveit_failure_label", "")
+            ),
             "image_path": image_path,
             "image_error": image_error,
         }
@@ -2211,7 +2489,11 @@ def _write_html(
             )
         else:
             media_html = '<div class="no-video">No recording or scene image</div>'
-        message = str(record.get("moveit_primary_failure_message", "") or record.get("message", ""))
+        message = str(
+            record.get("connected_preflight_primary_failure_message", "")
+            or record.get("moveit_primary_failure_message", "")
+            or record.get("message", "")
+        )
         fallback_message = str(record.get("moveit_fallback_failure_message", "")).strip()
         failure_key = _failure_key(record)
         failure_label = _failure_label(record)
@@ -2267,6 +2549,7 @@ def _write_html(
                 "failure_substage_label",
                 "moveit_primary_failure_message",
                 "moveit_fallback_failure_message",
+                "connected_preflight_primary_failure_message",
                 "holder_arm",
                 "inserter_arm",
                 "pair_id",
@@ -2395,6 +2678,8 @@ def _write_csv(path: Path, specs: tuple[dict[str, object], ...], latest: Mapping
         "inserter_arm",
         "status",
         "success",
+        "planning_only",
+        "real_preflight_only",
         "failure_stage",
         "failure_phase_label",
         "failure_substage",
@@ -2403,6 +2688,10 @@ def _write_csv(path: Path, specs: tuple[dict[str, object], ...], latest: Mapping
         "moveit_primary_failure_message",
         "moveit_fallback_failure_kind",
         "moveit_fallback_failure_message",
+        "connected_preflight_candidates_checked",
+        "connected_preflight_selected_rank",
+        "connected_preflight_failure_segment",
+        "connected_preflight_primary_failure_message",
         "result_status",
         "duration_s",
         "pair_id",
@@ -2461,6 +2750,97 @@ def _refresh_outputs(
     _write_html(output_dir / "index.html", specs=specs, latest=latest, output_dir=output_dir)
 
 
+def _run_selected_cases(
+    *,
+    args: argparse.Namespace,
+    payload: Mapping[str, object],
+    output_dir: Path,
+    specs: tuple[dict[str, object], ...],
+    latest: dict[str, dict[str, object]],
+    events_path: Path,
+) -> int:
+    retry_failed = bool(args.retry_failed)
+    for index, spec in enumerate(specs, start=1):
+        case_id = str(spec["case_id"])
+        prior = latest.get(case_id, {})
+        prior_status = str(prior.get("status", ""))
+        if prior_status == "success" or (prior_status == "failed" and not retry_failed):
+            print(f"[DUAL-BENCH] Skip {index}/{len(specs)} {case_id}: {prior_status}", flush=True)
+            continue
+        paths = _case_paths(output_dir, spec)
+        running = {
+            **spec,
+            "status": "running",
+            "success": False,
+            "message": (
+                "Real connected motion preflight is active; execution is disabled."
+                if args.real_preflight_only
+                else "MoveIt candidate planning is active."
+                if args.planning_only
+                else "Planning/Isaac execution is active."
+            ),
+            "planning_only": bool(args.planning_only),
+            "real_preflight_only": bool(args.real_preflight_only),
+            "ik_only": bool(args.ik_only),
+            "ik_collision_diagnostics_enabled": bool(args.ik_collision_diagnostics),
+            "started_at": datetime.now(tz=timezone.utc).isoformat(),
+            "plan_json": str(paths["plan"]),
+            "attempt_json": "" if args.planning_only else str(paths["attempt"]),
+            "video_path": "" if (args.planning_only or args.real_preflight_only) else str(paths["video"]),
+            "image_path": "",
+            "log_path": str(paths["log"]),
+        }
+        _append_jsonl(events_path, running)
+        latest[case_id] = running
+        _refresh_outputs(output_dir=output_dir, specs=specs, latest=latest)
+        print(
+            f"[DUAL-BENCH] Run {index}/{len(specs)} {case_id} "
+            f"holder={spec['holder_arm']} inserter={spec['inserter_arm']}",
+            flush=True,
+        )
+        record, interrupted = _run_case(
+            payload=payload,
+            spec=spec,
+            paths=paths,
+            planning_only=bool(args.planning_only),
+            ik_only=bool(args.ik_only),
+            ik_collision_diagnostics=bool(args.ik_collision_diagnostics),
+            real_preflight_only=bool(args.real_preflight_only),
+        )
+        _append_jsonl(events_path, record)
+        latest[case_id] = record
+        _refresh_outputs(output_dir=output_dir, specs=specs, latest=latest)
+        print(
+            f"[DUAL-BENCH] Saved {case_id}: status={record['status']} duration={float(record['duration_s']):.1f}s",
+            flush=True,
+        )
+        if _is_existing_stack_ownership_conflict(record.get("message", "")):
+            print(
+                "[DUAL-BENCH] Aborting remaining cases: this ROS domain is owned by an "
+                "existing dual MoveIt stack. The failed setup case was recorded; stop the "
+                "other stack or select a different benchmark.ros_domain_id before rerunning.",
+                flush=True,
+            )
+            return 2
+        if args.real_preflight_only and _is_reused_stack_unavailable(record.get("message", "")):
+            print(
+                "[DUAL-BENCH] Aborting remaining cases: the explicitly reused MoveIt stack "
+                "is not ready on the selected ROS domain.",
+                flush=True,
+            )
+            return 2
+        if interrupted:
+            print(
+                f"[DUAL-BENCH] Partial benchmark is safe at {output_dir / 'index.html'}. "
+                "Run the same command to resume.",
+                flush=True,
+            )
+            return 130
+
+    print(f"[DUAL-BENCH] Complete. Open {output_dir / 'index.html'}", flush=True)
+    return 0
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -2469,6 +2849,12 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Override benchmark.artifact_root for case generation and every execution command.",
+    )
+    parser.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=None,
+        help="Override benchmark.ros_domain_id for every case.",
     )
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--parts", nargs="*", default=None)
@@ -2497,6 +2883,22 @@ def _parse_args() -> argparse.Namespace:
         "--planning-only",
         action="store_true",
         help="Stop each case after a complete MoveIt candidate plan; do not launch Isaac.",
+    )
+    parser.add_argument(
+        "--real-preflight-only",
+        action="store_true",
+        help=(
+            "Run the real executor's complete connected OMPL/Cartesian preflight with one "
+            "managed mock MoveIt stack; never execute trajectories or launch Isaac."
+        ),
+    )
+    parser.add_argument(
+        "--reuse-moveit",
+        action="store_true",
+        help=(
+            "With --real-preflight-only, reuse a caller-managed mock or hardware MoveIt "
+            "stack instead of starting one managed mock stack for the benchmark."
+        ),
     )
     parser.add_argument(
         "--ik-only",
@@ -2529,6 +2931,12 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    if args.reuse_moveit and not args.real_preflight_only:
+        raise ValueError("--reuse-moveit requires --real-preflight-only.")
+    if args.real_preflight_only and (args.planning_only or args.ik_only or args.ik_collision_diagnostics):
+        raise ValueError(
+            "--real-preflight-only cannot be combined with --planning-only, --ik-only, or --ik-collision-diagnostics."
+        )
     if args.ik_collision_diagnostics and not args.ik_only:
         raise ValueError("--ik-collision-diagnostics requires --ik-only.")
     if args.ik_only:
@@ -2539,6 +2947,13 @@ def main() -> int:
         payload = dict(payload)
         benchmark = dict(payload.get("benchmark", {}) or {})
         benchmark["artifact_root"] = str(args.artifact_root.expanduser())
+        payload["benchmark"] = benchmark
+    if args.ros_domain_id is not None:
+        if args.ros_domain_id < 0:
+            raise ValueError("--ros-domain-id must be non-negative.")
+        payload = dict(payload)
+        benchmark = dict(payload.get("benchmark", {}) or {})
+        benchmark["ros_domain_id"] = int(args.ros_domain_id)
         payload["benchmark"] = benchmark
     output_dir = _output_dir(payload, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2574,6 +2989,8 @@ def main() -> int:
         "failed_from_summary": "" if failed_from_summary is None else str(failed_from_summary),
         "failure_stages": sorted(failure_stages or set()),
         "planning_only": bool(args.planning_only),
+        "real_preflight_only": bool(args.real_preflight_only),
+        "reuse_moveit": bool(args.reuse_moveit),
         "ik_only": bool(args.ik_only),
         "ik_collision_diagnostics": bool(args.ik_collision_diagnostics),
         "cases": list(specs),
@@ -2623,73 +3040,35 @@ def main() -> int:
         )
         return 0
 
-    retry_failed = bool(args.retry_failed)
-    for index, spec in enumerate(specs, start=1):
-        case_id = str(spec["case_id"])
-        prior = latest.get(case_id, {})
-        prior_status = str(prior.get("status", ""))
-        if prior_status == "success" or (prior_status == "failed" and not retry_failed):
-            print(f"[DUAL-BENCH] Skip {index}/{len(specs)} {case_id}: {prior_status}", flush=True)
-            continue
-        paths = _case_paths(output_dir, spec)
-        running = {
-            **spec,
-            "status": "running",
-            "success": False,
-            "message": (
-                "MoveIt candidate planning is active." if args.planning_only else "Planning/Isaac execution is active."
-            ),
-            "planning_only": bool(args.planning_only),
-            "ik_only": bool(args.ik_only),
-            "ik_collision_diagnostics_enabled": bool(args.ik_collision_diagnostics),
-            "started_at": datetime.now(tz=timezone.utc).isoformat(),
-            "plan_json": str(paths["plan"]),
-            "attempt_json": "" if args.planning_only else str(paths["attempt"]),
-            "video_path": "" if args.planning_only else str(paths["video"]),
-            "image_path": "",
-            "log_path": str(paths["log"]),
-        }
-        _append_jsonl(events_path, running)
-        latest[case_id] = running
-        _refresh_outputs(output_dir=output_dir, specs=specs, latest=latest)
-        print(
-            f"[DUAL-BENCH] Run {index}/{len(specs)} {case_id} "
-            f"holder={spec['holder_arm']} inserter={spec['inserter_arm']}",
-            flush=True,
-        )
-        record, interrupted = _run_case(
+    try:
+        if args.real_preflight_only:
+            with _connected_preflight_moveit(
+                payload=payload,
+                output_dir=output_dir,
+                reuse_moveit=bool(args.reuse_moveit),
+            ):
+                return _run_selected_cases(
+                    args=args,
+                    payload=payload,
+                    output_dir=output_dir,
+                    specs=specs,
+                    latest=latest,
+                    events_path=events_path,
+                )
+        return _run_selected_cases(
+            args=args,
             payload=payload,
-            spec=spec,
-            paths=paths,
-            planning_only=bool(args.planning_only),
-            ik_only=bool(args.ik_only),
-            ik_collision_diagnostics=bool(args.ik_collision_diagnostics),
+            output_dir=output_dir,
+            specs=specs,
+            latest=latest,
+            events_path=events_path,
         )
-        _append_jsonl(events_path, record)
-        latest[case_id] = record
-        _refresh_outputs(output_dir=output_dir, specs=specs, latest=latest)
+    except KeyboardInterrupt:
         print(
-            f"[DUAL-BENCH] Saved {case_id}: status={record['status']} duration={float(record['duration_s']):.1f}s",
+            f"\n[DUAL-BENCH] Interrupted. Partial results are safe at {output_dir / 'index.html'}.",
             flush=True,
         )
-        if _is_existing_stack_ownership_conflict(record.get("message", "")):
-            print(
-                "[DUAL-BENCH] Aborting remaining cases: this ROS domain is owned by an "
-                "existing dual MoveIt stack. The failed setup case was recorded; stop the "
-                "other stack or select a different benchmark.ros_domain_id before rerunning.",
-                flush=True,
-            )
-            return 2
-        if interrupted:
-            print(
-                f"[DUAL-BENCH] Partial benchmark is safe at {output_dir / 'index.html'}. "
-                "Run the same command to resume.",
-                flush=True,
-            )
-            return 130
-
-    print(f"[DUAL-BENCH] Complete. Open {output_dir / 'index.html'}", flush=True)
-    return 0
+        return 130
 
 
 if __name__ == "__main__":

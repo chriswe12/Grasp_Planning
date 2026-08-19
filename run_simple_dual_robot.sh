@@ -80,9 +80,14 @@ Simulation options:
   --gripper-contact-preload-m M Minimum inward preload after contact. Default: 0.0004
 
 Real options:
-  --execute                     Without this, only non-moving target IK is checked
+  --execute                     Without this, the connected motion preflight is non-moving
   --allow-objectless-planning   Allow a legacy task without phase-aware part collisions
   --stop-after PHASE            Default: holder_pregrasp
+  --cartesian-max-step-m M      Linear TCP path spacing. Default: 0.005
+  --cartesian-revolute-jump-threshold-rad RAD
+                                Reject Cartesian joint jumps above this value. Default: 0.35
+  --execution-start-tolerance-rad RAD
+                                Abort if either arm drifts from preflight. Default: 0.05
   --skip-grippers               Only valid through holder_pregrasp
   --yes                         Skip typed confirmation
 EOF
@@ -147,6 +152,9 @@ GRIPPER_CONTACT_PRELOAD="0.0004"
 EXECUTE_REAL=0
 ALLOW_OBJECTLESS=0
 STOP_AFTER="holder_pregrasp"
+CARTESIAN_MAX_STEP_M="0.005"
+CARTESIAN_REVOLUTE_JUMP_THRESHOLD_RAD="0.35"
+EXECUTION_START_TOLERANCE_RAD="0.05"
 SKIP_GRIPPERS=0
 ASSUME_YES=0
 MOVEIT_PID=""
@@ -293,6 +301,9 @@ while [[ $# -gt 0 ]]; do
     --execute) EXECUTE_REAL=1; shift ;;
     --allow-objectless-planning) ALLOW_OBJECTLESS=1; shift ;;
     --stop-after) STOP_AFTER="${2:-}"; shift 2 ;;
+    --cartesian-max-step-m) CARTESIAN_MAX_STEP_M="${2:-}"; shift 2 ;;
+    --cartesian-revolute-jump-threshold-rad) CARTESIAN_REVOLUTE_JUMP_THRESHOLD_RAD="${2:-}"; shift 2 ;;
+    --execution-start-tolerance-rad) EXECUTION_START_TOLERANCE_RAD="${2:-}"; shift 2 ;;
     --skip-grippers) SKIP_GRIPPERS=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -540,6 +551,7 @@ fi
 TASK_PATH="${TASK_OUTPUT:-${SELECTED_ARTIFACT_DIR}/simple_dual_robot_real_task${OUTPUT_SUFFIX}.json}"
 TASK_BUILD_ARGS=(
   "${COMMON_TASK_ARGS[@]}"
+  --inserter-arm "${INSERTER_ARM}"
   --max-pair-candidates "${MAX_PAIR_ATTEMPTS}"
   --output "${TASK_PATH}"
 )
@@ -551,6 +563,13 @@ python3 scripts/build_simple_dual_robot_task.py "${TASK_BUILD_ARGS[@]}"
 REAL_ARGS=(
   --plan-json "${TASK_PATH}"
   --stop-after "${STOP_AFTER}"
+  --ik-timeout-s "${IK_TIMEOUT}"
+  --exact-ik-candidates "${EXACT_IK_CANDIDATES}"
+  --exact-ik-beam-width "${EXACT_IK_BEAM_WIDTH}"
+  --exact-ik-seed-perturbation-rad "${EXACT_IK_SEED_PERTURBATION}"
+  --cartesian-max-step-m "${CARTESIAN_MAX_STEP_M}"
+  --cartesian-revolute-jump-threshold-rad "${CARTESIAN_REVOLUTE_JUMP_THRESHOLD_RAD}"
+  --execution-start-tolerance-rad "${EXECUTION_START_TOLERANCE_RAD}"
   --attempt-artifact
   "${ATTEMPT_OUTPUT:-${SELECTED_ARTIFACT_DIR}/simple_dual_robot_real_attempt${OUTPUT_SUFFIX}.json}"
 )

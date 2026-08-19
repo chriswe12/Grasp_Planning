@@ -23,6 +23,8 @@ from grasp_planning.pipeline.dual_robot_planning_debug import (  # noqa: E402
 from grasp_planning.pipeline.dual_robot_simple_sim import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_FLOOR_Z_WORLD_M,
+    DEFAULT_HOLDER_BASE_WORLD,
+    DEFAULT_INSERTER_BASE_WORLD,
     DEFAULT_RUNTIME_PAIR_CANDIDATE_LIMIT,
     load_simple_dual_robot_pair_tasks,
     resolve_dual_robot_step_selection,
@@ -77,6 +79,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--pickup-pitch-deg", type=float, default=0.0)
     parser.add_argument("--pickup-yaw-deg", type=float, default=0.0)
     parser.add_argument(
+        "--inserter-arm",
+        choices=("auto", "lbr_one", "lbr_two"),
+        default="lbr_two",
+        help=(
+            "Physical arm assigned to pickup. 'auto' selects lbr_one below "
+            "assembly Y and lbr_two otherwise."
+        ),
+    )
+    parser.add_argument(
         "--floor-z",
         type=float,
         default=DEFAULT_FLOOR_Z_WORLD_M,
@@ -108,6 +119,14 @@ def main() -> int:
     if args.max_pair_candidates < 1:
         raise ValueError("--max-pair-candidates must be at least 1.")
     assembly_z = float(args.floor_z) if args.assembly_z is None else float(args.assembly_z)
+    inserter_robot = str(getattr(args, "inserter_arm", "lbr_two"))
+    if inserter_robot == "auto":
+        inserter_robot = "lbr_one" if float(args.pickup_y) < float(args.assembly_y) else "lbr_two"
+    holder_robot = "lbr_two" if inserter_robot == "lbr_one" else "lbr_one"
+    robot_bases = {
+        "lbr_one": DEFAULT_HOLDER_BASE_WORLD,
+        "lbr_two": DEFAULT_INSERTER_BASE_WORLD,
+    }
     selection = resolve_dual_robot_step_selection(
         assembly=args.assembly,
         incoming_part_id=args.incoming_part_id,
@@ -166,6 +185,10 @@ def main() -> int:
                 ),
                 pickup_floor_z_world_m=float(args.floor_z),
                 transport_clearance_m=float(args.transport_clearance_m),
+                holder_robot_name=holder_robot,
+                inserter_robot_name=inserter_robot,
+                holder_robot_base_world=robot_bases[holder_robot],
+                inserter_robot_base_world=robot_bases[inserter_robot],
                 retained_only=False,
                 include_nonretained_identity_fallbacks=(_include_nonretained_identity_fallbacks(str(args.pair_id))),
             )

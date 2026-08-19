@@ -80,6 +80,7 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - Regrasp fallback artifacts are split: `*_regrasp_plan.json/html` explain candidate resting poses and grasps; the MuJoCo attempt artifact records ranked `planned_candidates`, execution `attempts`, and trajectory diagnostics.
 - Isaac execution uses MoveIt-planned joint waypoints; do not reintroduce local Isaac-side direct controllers without an explicit request.
 - Dual-arm runtime queues are producer-ranked by safety/corridor tiers, not globally by raw score. Preserve explicit `candidate_rank`, and execute the exact collision-aware IK joints accepted during preflight.
+- Propagate `--inserter-arm` into real task construction and consume task-declared roles in the executor; `auto` swaps holder/inserter across the assembly-Y line, so hard-coded logical roles invalidate half of a symmetric benchmark.
 - Dual-arm pickup filtering grounds the rotated incoming mesh on the configured world floor (default `z=-0.030 m`) before testing the gripper. Real-mode live debugging must start before this filter so an empty queue still reports its diagnostics.
 - Dual-arm Isaac streams the MoveIt polyline with critically damped drives and releases the pickup fixture after bilateral intended-object contact; do not pin the incoming part during loaded transport.
 - Isaac execution generates a collision-enabled bundle-local USD from the stage-2 bundle by default; only use a provided USD if it is already authored in the saved bundle-local frame.

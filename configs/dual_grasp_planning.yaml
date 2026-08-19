@@ -26,9 +26,9 @@ grasp_assembly_action:
   maximum_assembly_tilt_deg: 5.0
   holder_robot: "left"
   inserter_robot: "right"
-  # Last executed and preflighted phase for dual real goals.
-  # This closes both grippers without lifting or moving to pre-insertion.
-  stop_after: "inserter_pickup_grasp"
+  # Last connected-preplanned and executed phase for dual real goals.
+  # The guarded slice stops at pre-insertion; insertion/release stay disabled.
+  stop_after: "inserter_preinsertion"
   headless: false
 
 planning:

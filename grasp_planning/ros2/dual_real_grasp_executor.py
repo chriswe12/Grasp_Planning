@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
 )
+from grasp_planning.ros2.kuka_ik_seeds import kuka_iiwa_ik_seed_candidates
 from grasp_planning.ros2.moveit_pose_commander import (
     MoveItPoseCommander,
     MoveItPoseCommanderConfig,
@@ -27,20 +28,34 @@ from grasp_planning.start_poses import (
     kuka_moveit_gripper_state,
 )
 
-ROLE_SPECS = {
-    "holder": {
+ARM_SPEC_BY_ROBOT = {
+    "lbr_one": {
         "robot": "lbr_one",
         "planning_group": "arm_one",
         "pose_link": "lbr_one_gripper_tcp",
         "joint_names": tuple(f"lbr_one_A{index}" for index in range(1, 8)),
     },
-    "inserter": {
+    "lbr_two": {
         "robot": "lbr_two",
         "planning_group": "arm_two",
         "pose_link": "lbr_two_gripper_tcp",
         "joint_names": tuple(f"lbr_two_A{index}" for index in range(1, 8)),
     },
 }
+ROLE_SPECS = {
+    "holder": ARM_SPEC_BY_ROBOT["lbr_one"],
+    "inserter": ARM_SPEC_BY_ROBOT["lbr_two"],
+}
+
+
+def _role_spec(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
+    roles = plan.get("roles")
+    if not isinstance(roles, dict) or not isinstance(roles.get(role), dict):
+        raise ValueError(f"Dual plan is missing role '{role}'.")
+    robot = str(roles[role].get("robot", ""))
+    if robot not in ARM_SPEC_BY_ROBOT:
+        raise ValueError(f"Dual plan role '{role}' has unsupported robot {robot!r}.")
+    return ARM_SPEC_BY_ROBOT[robot]
 MOTION_SEQUENCE = (
     ("holder", "holder_pregrasp"),
     ("holder", "holder_grasp"),
@@ -55,6 +70,14 @@ GRIPPER_CLOSE_AFTER = {
     "holder_grasp": "holder",
     "inserter_pickup_grasp": "inserter",
 }
+CARTESIAN_TARGETS = frozenset(
+    {
+        "holder_grasp",
+        "inserter_pickup_grasp",
+        "inserter_pickup_lift",
+        "inserter_preinsertion",
+    }
+)
 
 
 def _motion_sequence_through(
@@ -72,10 +95,17 @@ class DualRealExecutionConfig:
     frame_id: str = "base_link"
     wait_for_moveit_timeout_s: float = 20.0
     ik_timeout_s: float = 2.0
+    ik_candidate_count: int = 7
+    ik_beam_width: int = 4
+    ik_seed_perturbation_rad: float = 0.60
+    ik_solution_dedup_tolerance_rad: float = 0.05
     planning_time_s: float = 8.0
     num_planning_attempts: int = 8
     velocity_scale: float = 0.05
     acceleration_scale: float = 0.05
+    cartesian_max_step_m: float = 0.005
+    cartesian_revolute_jump_threshold_rad: float = 0.35
+    execution_start_tolerance_rad: float = 0.05
     execute_timeout_s: float = 120.0
     post_execute_sleep_s: float = 0.5
     execute: bool = False
@@ -111,6 +141,14 @@ class DualRealExecutionResult:
     attempt_artifact_path: Path
 
 
+@dataclass(frozen=True)
+class PreplannedDualSequence:
+    trajectories: Mapping[str, object]
+    joint_targets: Mapping[str, tuple[float, ...]]
+    segment_modes: Mapping[str, str]
+    start_states: Mapping[str, Mapping[str, float]]
+
+
 def _validate_dual_plan_payload(
     payload: Mapping[str, object],
     *,
@@ -130,7 +168,9 @@ def _validate_dual_plan_payload(
     roles = payload.get("roles")
     if not isinstance(roles, dict):
         raise ValueError(f"{context} is missing its roles object.")
-    for role, expected in ROLE_SPECS.items():
+    assigned_robots = set()
+    for role in ROLE_SPECS:
+        expected = _role_spec(payload, role)
         actual = roles.get(role)
         if not isinstance(actual, dict):
             raise ValueError(f"{context} is missing role '{role}'.")
@@ -140,6 +180,9 @@ def _validate_dual_plan_payload(
                 raise ValueError(
                     f"{context} role '{role}' has {key}={actual.get(key)!r}; expected {expected[expected_key]!r}."
                 )
+        assigned_robots.add(str(actual["robot"]))
+    if assigned_robots != set(ARM_SPEC_BY_ROBOT):
+        raise ValueError("Dual plan must assign lbr_one and lbr_two exactly once.")
 
 
 def _ranked_candidate_plans(
@@ -354,8 +397,9 @@ def _make_commander(
     *,
     role: str,
     config: DualRealExecutionConfig,
+    plan: Mapping[str, object],
 ):
-    spec = ROLE_SPECS[role]
+    spec = _role_spec(plan, role)
     return MoveItPoseCommander(
         MoveItPoseCommanderConfig(
             planning_group=str(spec["planning_group"]),
@@ -618,31 +662,32 @@ def _preflight_targets(
                 if stop_on_failure:
                     break
                 continue
-        joints, message = commanders[role].compute_ik(target)
-        if joints is None:
-            fallback_seed_state = dict(finger_state)
-            fallback_seed_state.update(
-                zip(ROLE_SPECS[role]["joint_names"], KUKA_MOVEIT_ARM_START_JOINT_VALUES)
-            )
+        joints = None
+        messages: list[str] = []
+        for seed_index, seed in enumerate(
+            kuka_iiwa_ik_seed_candidates(KUKA_MOVEIT_ARM_START_JOINT_VALUES)
+        ):
+            seed_state = dict(finger_state)
+            seed_state.update(zip(_role_spec(plan, role)["joint_names"], seed))
             try:
-                fallback_joints, fallback_message = commanders[role].compute_ik(
-                    target,
-                    seed_robot_state=fallback_seed_state,
+                candidate_joints, seed_message = _compute_ik_with_complete_seed(
+                    commanders[role], target, seed_state
                 )
             except TypeError as exc:
                 if "seed_robot_state" not in str(exc):
                     raise
-                # Compatibility for lightweight test adapters and older sourced
-                # ROS workspaces; production uses the complete state above.
-                fallback_joints, fallback_message = commanders[role].compute_ik(
-                    target,
-                    seed_joint_positions=KUKA_MOVEIT_ARM_START_JOINT_VALUES,
+                candidate_joints, seed_message = commanders[role].compute_ik(
+                    target, seed_joint_positions=seed
                 )
-            if fallback_joints is not None:
-                joints = fallback_joints
-                message = f"live-state IK failed ({message}); start-seeded alternate IK succeeded"
-            else:
-                message = f"live-state IK failed ({message}); start-seeded alternate IK failed ({fallback_message})"
+            messages.append(f"seed {seed_index}: {seed_message}")
+            if candidate_joints is not None:
+                joints = candidate_joints
+                break
+        message = (
+            f"multi-seed IK succeeded after {len(messages)} attempts"
+            if joints is not None
+            else f"multi-seed IK exhausted {len(messages)} attempts: {'; '.join(messages)}"
+        )
         ok = joints is not None
         if joints is not None and resolved_joint_targets is not None:
             resolved_joint_targets[target_name] = tuple(float(value) for value in joints)
@@ -656,7 +701,7 @@ def _preflight_targets(
             candidate_state = dict(closed_finger_state)
             candidate_state.update(
                 (str(name), float(value))
-                for name, value in zip(ROLE_SPECS[role]["joint_names"], joints)
+                for name, value in zip(_role_spec(plan, role)["joint_names"], joints)
             )
             check_validity = getattr(commanders[role], "check_state_validity", None)
             if callable(check_validity):
@@ -799,26 +844,454 @@ def _role_target_signature(
     return tuple(values)
 
 
+def _trajectory_terminal_state(
+    trajectory,
+    *,
+    current_state: Mapping[str, float],
+    required_joint_names: Sequence[str],
+) -> tuple[dict[str, float] | None, str]:
+    joint_trajectory = getattr(trajectory, "joint_trajectory", None)
+    names = tuple(str(value) for value in getattr(joint_trajectory, "joint_names", ()))
+    points = tuple(getattr(joint_trajectory, "points", ()))
+    if not names or not points:
+        return None, "trajectory contains no named joint points"
+    positions = tuple(float(value) for value in getattr(points[-1], "positions", ()))
+    if len(names) != len(positions):
+        return None, "trajectory terminal point does not match its joint names"
+    terminal = dict(current_state)
+    terminal.update(zip(names, positions))
+    missing = [str(name) for name in required_joint_names if str(name) not in terminal]
+    if missing:
+        return None, f"trajectory terminal state is missing active joints: {missing}"
+    return terminal, "ok"
+
+
+def _trajectory_joint_path_cost(trajectory) -> float:
+    joint_trajectory = getattr(trajectory, "joint_trajectory", None)
+    points = tuple(getattr(joint_trajectory, "points", ()))
+    positions = [tuple(float(value) for value in getattr(point, "positions", ())) for point in points]
+    return sum(
+        sum(abs(right - left) for left, right in zip(first, second))
+        for first, second in zip(positions, positions[1:])
+    )
+
+
+def _compute_ik_with_complete_seed(commander, target, seed_state):
+    try:
+        return commander.compute_ik(target, seed_robot_state=seed_state, avoid_collisions=False)
+    except TypeError as exc:
+        if "avoid_collisions" not in str(exc):
+            raise
+        return commander.compute_ik(target, seed_robot_state=seed_state)
+
+
+def _plan_free_space_with_multi_seed_ik(
+    *, commander, target: PoseTarget, target_name: str, role: str,
+    current_state: Mapping[str, float], config: DualRealExecutionConfig,
+    plan: Mapping[str, object],
+    kinematic_ik_cache: dict[tuple[object, ...], tuple[tuple[float, ...] | None, str]] | None = None,
+) -> tuple[object | None, tuple[float, ...] | None, str]:
+    """Try every distinct collision-valid IK branch before rejecting a pose."""
+
+    joint_names = tuple(str(name) for name in _role_spec(plan, role)["joint_names"])
+    start_joints = tuple(float(current_state[name]) for name in joint_names)
+    seeds = kuka_iiwa_ik_seed_candidates(
+        start_joints,
+        candidate_count=config.ik_candidate_count,
+        perturbation_rad=config.ik_seed_perturbation_rad,
+    )
+    solutions: list[tuple[float, ...]] = []
+    plans: list[tuple[float, int, object, tuple[float, ...], str]] = []
+    diagnostics: list[str] = []
+    for seed_index, seed in enumerate(seeds):
+        seed_state = dict(current_state)
+        seed_state.update(zip(joint_names, seed))
+        cache_key = (
+            role,
+            target.frame_id,
+            *(round(float(value), 9) for value in (*target.position_xyz, *target.orientation_xyzw)),
+            *(round(float(value), 9) for value in seed),
+        )
+        cached = None if kinematic_ik_cache is None else kinematic_ik_cache.get(cache_key)
+        if cached is None:
+            raw_joints, ik_message = _compute_ik_with_complete_seed(commander, target, seed_state)
+            joints = None if raw_joints is None else tuple(float(value) for value in raw_joints)
+            if kinematic_ik_cache is not None:
+                kinematic_ik_cache[cache_key] = (joints, str(ik_message))
+        else:
+            joints, cached_message = cached
+            ik_message = f"cached: {cached_message}"
+        if joints is None:
+            diagnostics.append(f"seed {seed_index}: IK failed ({ik_message})")
+            continue
+        solution = tuple(float(value) for value in joints)
+        if any(max(abs(a - b) for a, b in zip(solution, old)) < config.ik_solution_dedup_tolerance_rad for old in solutions):
+            continue
+        solutions.append(solution)
+        candidate_state = dict(current_state)
+        candidate_state.update(zip(joint_names, solution))
+        check_validity = getattr(commander, "check_state_validity", None)
+        if callable(check_validity):
+            validity, validity_message = check_validity(candidate_state, group_name="")
+            if validity is None or not bool(validity.get("valid", False)):
+                diagnostics.append(f"seed {seed_index}: IK state invalid ({validity_message})")
+                continue
+        trajectory, motion_message = commander.plan_to_joint_positions(
+            solution, label=target_name, start_robot_state=current_state
+        )
+        if trajectory is None:
+            diagnostics.append(f"seed {seed_index}: motion failed ({motion_message})")
+            continue
+        plans.append((_trajectory_joint_path_cost(trajectory), seed_index, trajectory, solution, motion_message))
+        if len(plans) >= max(1, int(config.ik_beam_width)):
+            break
+    if not plans:
+        detail = "; ".join(diagnostics) or "no distinct IK solutions"
+        return None, None, f"multi-seed IK exhausted {len(seeds)} seeds and {len(solutions)} solutions: {detail}"
+    _cost, seed_index, trajectory, solution, motion_message = min(plans, key=lambda item: (item[0], item[1]))
+    return trajectory, solution, (
+        f"multi-seed IK selected seed {seed_index} from {len(seeds)} seeds, "
+        f"{len(solutions)} distinct solutions, and {len(plans)} motion-valid branches; motion: {motion_message}"
+    )
+
+
+def _same_orientation(first: PoseTarget, second: PoseTarget, *, tolerance: float = 1.0e-6) -> bool:
+    dot = abs(
+        sum(
+            left * right
+            for left, right in zip(
+                first.orientation_xyzw,
+                second.orientation_xyzw,
+            )
+        )
+    )
+    return 1.0 - min(dot, 1.0) <= float(tolerance)
+
+
+def _preplan_connected_candidate(
+    *,
+    plan: Mapping[str, object],
+    commanders: Mapping[str, object],
+    initial_robot_state: Mapping[str, float],
+    config: DualRealExecutionConfig,
+    record: Callable[..., None],
+    stop_after: str,
+    candidate_rank: int,
+    pair_id: str,
+    kinematic_ik_cache: dict[tuple[object, ...], tuple[tuple[float, ...] | None, str]] | None = None,
+) -> tuple[PreplannedDualSequence | None, str]:
+    """Plan every connected segment from one live complete robot state."""
+
+    targets = plan.get("targets")
+    assert isinstance(targets, dict)
+    current_state = {str(name): float(value) for name, value in initial_robot_state.items()}
+    required_arm_joints = tuple(
+        str(name)
+        for role in ("holder", "inserter")
+        for name in _role_spec(plan, role)["joint_names"]
+    )
+    missing = [name for name in required_arm_joints if name not in current_state]
+    if missing:
+        return None, f"live MoveIt state is missing dual-arm joints: {missing}"
+
+    trajectories: dict[str, object] = {}
+    joint_targets: dict[str, tuple[float, ...]] = {}
+    segment_modes: dict[str, str] = {}
+    start_states: dict[str, dict[str, float]] = {}
+    contact_roles: set[str] = set()
+    attached_objects = _attached_collision_objects(plan)
+    incoming_attached = False
+    previous_target_by_role: dict[str, PoseTarget] = {}
+    failure = ""
+
+    try:
+        for role, target_name in _motion_sequence_through(stop_after):
+            finger_state = _moveit_gripper_state_for_plan(
+                plan,
+                contact_roles=frozenset(contact_roles),
+            )
+            state_ok, state_message = _apply_moveit_gripper_state(commanders["holder"], finger_state)
+            record(
+                name=f"preflight_{target_name}_gripper_state",
+                role="shared",
+                ok=state_ok,
+                message=state_message,
+                candidate_rank=candidate_rank,
+                pair_id=pair_id,
+            )
+            if not state_ok:
+                raise RuntimeError(f"{target_name}: could not apply gripper state: {state_message}")
+            current_state.update(finger_state)
+
+            target = _target_from_payload(targets[target_name], frame_id=str(config.frame_id))
+            active_aabbs = _pregrasp_aabb_obstacles(plan, target_name=target_name)
+            if active_aabbs:
+                scene_ok, scene_message = commanders["holder"].apply_planning_scene_obstacles(
+                    active_aabbs,
+                    default_frame_id=str(config.frame_id),
+                )
+                record(
+                    name=f"preflight_apply_{target_name}_part_aabbs",
+                    role="shared",
+                    ok=scene_ok,
+                    message=scene_message,
+                    candidate_rank=candidate_rank,
+                    pair_id=pair_id,
+                )
+                if not scene_ok:
+                    raise RuntimeError(
+                        f"{target_name}: could not apply phase obstacles: {scene_message}"
+                    )
+            try:
+                start_states[target_name] = dict(current_state)
+                if target_name in CARTESIAN_TARGETS:
+                    previous_target = previous_target_by_role.get(role)
+                    if previous_target is None:
+                        trajectory = None
+                        plan_message = "Cartesian segment has no preceding target"
+                    elif not _same_orientation(previous_target, target):
+                        trajectory = None
+                        plan_message = "Cartesian segment changes TCP orientation"
+                    else:
+                        trajectory, plan_message = commanders[role].plan_cartesian_to_pose(
+                            target,
+                            label=target_name,
+                            start_robot_state=current_state,
+                            max_step_m=float(config.cartesian_max_step_m),
+                            revolute_jump_threshold_rad=float(
+                                config.cartesian_revolute_jump_threshold_rad
+                            ),
+                        )
+                    segment_mode = "cartesian_linear"
+                else:
+                    trajectory, joints, plan_message = _plan_free_space_with_multi_seed_ik(
+                        commander=commanders[role],
+                        target=target,
+                        target_name=target_name,
+                        role=role,
+                        current_state=current_state,
+                        config=config,
+                        plan=plan,
+                        kinematic_ik_cache=kinematic_ik_cache,
+                    )
+                    segment_mode = "free_space"
+
+                if trajectory is None:
+                    failure = f"{target_name}: connected {segment_mode} planning failed: {plan_message}"
+                    record(
+                        name=f"preflight_plan_{target_name}",
+                        role=role,
+                        ok=False,
+                        message=failure,
+                        target=target,
+                        candidate_rank=candidate_rank,
+                        pair_id=pair_id,
+                    )
+                    break
+                terminal_state, terminal_message = _trajectory_terminal_state(
+                    trajectory,
+                    current_state=current_state,
+                    required_joint_names=_role_spec(plan, role)["joint_names"],
+                )
+                if terminal_state is None:
+                    failure = f"{target_name}: {terminal_message}"
+                    record(
+                        name=f"preflight_plan_{target_name}",
+                        role=role,
+                        ok=False,
+                        message=failure,
+                        target=target,
+                        candidate_rank=candidate_rank,
+                        pair_id=pair_id,
+                    )
+                    break
+                current_state = terminal_state
+                trajectories[target_name] = trajectory
+                joint_targets[target_name] = tuple(
+                    current_state[str(name)] for name in _role_spec(plan, role)["joint_names"]
+                )
+                segment_modes[target_name] = segment_mode
+                previous_target_by_role[role] = target
+                record(
+                    name=f"preflight_plan_{target_name}",
+                    role=role,
+                    ok=True,
+                    message=f"{segment_mode} connected plan ready: {plan_message}",
+                    target=target,
+                    candidate_rank=candidate_rank,
+                    pair_id=pair_id,
+                )
+            finally:
+                if active_aabbs:
+                    remove_ok, remove_message = commanders["holder"].remove_planning_scene_obstacles(
+                        [str(obstacle["id"]) for obstacle in active_aabbs],
+                        default_frame_id=str(config.frame_id),
+                    )
+                    record(
+                        name=f"preflight_remove_{target_name}_part_aabbs",
+                        role="shared",
+                        ok=remove_ok,
+                        message=remove_message,
+                        candidate_rank=candidate_rank,
+                        pair_id=pair_id,
+                    )
+                    if not remove_ok:
+                        raise RuntimeError(
+                            f"Could not remove temporary AABBs after preplanning {target_name}: {remove_message}"
+                        )
+            if failure:
+                break
+
+            close_role = GRIPPER_CLOSE_AFTER.get(target_name)
+            if close_role is not None:
+                contact_roles.add(close_role)
+                closed_state = _moveit_gripper_state_for_plan(
+                    plan,
+                    contact_roles=frozenset(contact_roles),
+                )
+                current_state.update(closed_state)
+                validity, validity_message = commanders[role].check_state_validity(
+                    current_state,
+                    group_name="",
+                )
+                if validity is None or not bool(validity["valid"]):
+                    contacts = [] if validity is None else validity.get("contacts", [])
+                    failure = (
+                        f"{target_name}: closed complete state is invalid: "
+                        f"{validity_message}; contacts={contacts}"
+                    )
+                    break
+                closed_ok, closed_message = _apply_moveit_gripper_state(
+                    commanders["holder"],
+                    closed_state,
+                )
+                if not closed_ok:
+                    raise RuntimeError(
+                        f"{target_name}: could not apply closed gripper state: {closed_message}"
+                    )
+                if close_role == "inserter" and attached_objects:
+                    attach_ok, attach_message = _apply_attached_collision_objects(
+                        commanders["holder"],
+                        attached_objects,
+                        frame_id=str(config.frame_id),
+                    )
+                    record(
+                        name="preflight_attach_incoming_collision",
+                        role="shared",
+                        ok=attach_ok,
+                        message=attach_message,
+                        candidate_rank=candidate_rank,
+                        pair_id=pair_id,
+                    )
+                    if not attach_ok:
+                        raise RuntimeError(
+                            f"Could not attach incoming collision geometry: {attach_message}"
+                        )
+                    incoming_attached = True
+    finally:
+        if incoming_attached:
+            detach_ok, detach_message = _remove_attached_collision_objects(
+                commanders["holder"],
+                attached_objects,
+                frame_id=str(config.frame_id),
+            )
+            record(
+                name="preflight_cleanup_attached_incoming_collision",
+                role="shared",
+                ok=detach_ok,
+                message=detach_message,
+                candidate_rank=candidate_rank,
+                pair_id=pair_id,
+            )
+            if not detach_ok:
+                raise RuntimeError(
+                    f"Could not clean up incoming attached collision geometry: {detach_message}"
+                )
+
+    if failure:
+        return None, failure
+    expected_names = tuple(name for _role, name in _motion_sequence_through(stop_after))
+    if tuple(trajectories) != expected_names:
+        return None, "connected preflight did not produce every requested trajectory segment"
+    return (
+        PreplannedDualSequence(
+            trajectories=trajectories,
+            joint_targets=joint_targets,
+            segment_modes=segment_modes,
+            start_states=start_states,
+        ),
+        "ok",
+    )
+
+
 def _select_ranked_preflight_candidate(
     *,
     plan: Mapping[str, object],
     commanders: Mapping[str, object],
+    initial_robot_state: Mapping[str, float],
+    config: DualRealExecutionConfig,
     frame_id: str,
     record: Callable[..., None],
     stop_after: str = "inserter_preinsertion",
     update_debug: Callable[..., None] | None = None,
-) -> tuple[dict[str, object] | None, dict[str, object]]:
-    """Select the first producer-ranked pair passing all target IK checks."""
+) -> tuple[dict[str, object] | None, dict[str, object], PreplannedDualSequence | None]:
+    """Select the first producer-ranked pair with a complete connected plan."""
 
     candidates = _ranked_candidate_plans(plan)
-    role_cache: dict[
-        tuple[str, str, tuple[float, ...]],
-        tuple[bool, str, dict[str, tuple[float, ...]]],
-    ] = {}
     candidate_records: list[dict[str, object]] = []
     selected: dict[str, object] | None = None
     selected_rank: int | None = None
-    selected_joint_targets: dict[str, tuple[float, ...]] = {}
+    selected_preplanned: PreplannedDualSequence | None = None
+    # A transition expansion often repeats an identical holder/pickup prefix
+    # dozens of times. Cache only proven-failing connected prefixes; successful
+    # trajectories remain candidate-local because later phases can change the
+    # complete-state continuation and attached-object scene.
+    failed_prefixes: dict[str, str] = {}
+    kinematic_ik_cache: dict[
+        tuple[object, ...], tuple[tuple[float, ...] | None, str]
+    ] = {}
+    cached_prefix_rejections = 0
+
+    def prefix_signature(candidate: Mapping[str, object], through_target: str) -> str:
+        prefix = []
+        for role, target_name in _motion_sequence_through(through_target):
+            prefix.append(
+                {
+                    "role": role,
+                    "name": target_name,
+                    "target": candidate["targets"][target_name],
+                    "obstacles": _pregrasp_aabb_obstacles(candidate, target_name=target_name),
+                }
+            )
+        payload = {
+            "prefix": prefix,
+            # Only jaw widths affect the planning-scene finger state. Do not
+            # include the transition-specific ``inserter_preinsertion`` grasp
+            # payload when caching an earlier holder/pickup prefix.
+            "role_robots": {
+                role: candidate["roles"][role]["robot"]
+                for role in ("holder", "inserter")
+            },
+            "jaw_widths_m": {
+                role: _gripper_width_for_role(candidate, role, contact=True)
+                for role in ("holder", "inserter")
+            },
+            "attached_objects": (
+                _attached_collision_objects(candidate)
+                if STOP_AFTER_CHOICES.index(through_target)
+                >= STOP_AFTER_CHOICES.index("inserter_pickup_grasp")
+                else {}
+            ),
+            "initial_robot_state": sorted(
+                (str(name), round(float(value), 9))
+                for name, value in initial_robot_state.items()
+            ),
+            "ik_candidate_count": int(config.ik_candidate_count),
+            "ik_beam_width": int(config.ik_beam_width),
+            "ik_seed_perturbation_rad": float(config.ik_seed_perturbation_rad),
+            "ik_solution_dedup_tolerance_rad": float(config.ik_solution_dedup_tolerance_rad),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     for rank, candidate in enumerate(candidates, start=1):
         pair_id = str(candidate["pair_id"])
@@ -839,70 +1312,50 @@ def _select_ranked_preflight_candidate(
             update_debug(
                 candidate=candidate,
                 attempt_index=rank,
-                phase="ik_preflight",
+                phase="motion_preflight",
                 status="planning",
-                message="Checking exact holder and inserter target IK before hardware motion.",
+                message="Preplanning the complete connected dual-arm sequence before hardware motion.",
             )
-        role_records: dict[str, object] = {}
-        candidate_joint_targets: dict[str, tuple[float, ...]] = {}
-        candidate_ok = True
+        cached_failure = ""
+        for _role, prefix_target in _motion_sequence_through(stop_after):
+            cached_failure = failed_prefixes.get(prefix_signature(candidate, prefix_target), "")
+            if cached_failure:
+                break
+        if cached_failure:
+            cached_prefix_rejections += 1
+            preplanned = None
+            failure = f"cached identical connected-prefix failure: {cached_failure}"
+            print(
+                f"[DUAL-REAL] candidate={candidate_id} skipped: {failure}",
+                flush=True,
+            )
+        else:
+            preplanned, failure = _preplan_connected_candidate(
+                plan=candidate,
+                commanders=commanders,
+                initial_robot_state=initial_robot_state,
+                config=config,
+                record=record,
+                stop_after=stop_after,
+                candidate_rank=rank,
+                pair_id=pair_id,
+                kinematic_ik_cache=kinematic_ik_cache,
+            )
+            if preplanned is None:
+                failed_target = failure.split(":", 1)[0]
+                if failed_target in STOP_AFTER_CHOICES:
+                    failed_prefixes[prefix_signature(candidate, failed_target)] = failure
+        candidate_ok = preplanned is not None
         active_roles = tuple(dict.fromkeys(role for role, _ in _motion_sequence_through(stop_after)))
-        for role in active_roles:
-            grasp_id = _candidate_grasp_id(candidate, role=role)
-            cache_key = (
-                role,
-                grasp_id,
-                _role_target_signature(
-                    candidate,
-                    role=role,
-                    stop_after=stop_after,
-                ),
-            )
-            cache_hit = cache_key in role_cache
-            if cache_hit:
-                role_ok, failure, role_joint_targets = role_cache[cache_key]
-                record(
-                    name=f"preflight_{role}_cached",
-                    role=role,
-                    ok=role_ok,
-                    message=(
-                        f"Reused cached {'success' if role_ok else 'failure'} "
-                        f"for grasp {grasp_id}" + (f": {failure}" if failure else ".")
-                    ),
-                    candidate_rank=rank,
-                    pair_id=pair_id,
-                )
-            else:
-                role_joint_targets = {}
-                role_ok = _preflight_targets(
-                    plan=candidate,
-                    commanders=commanders,
-                    frame_id=frame_id,
-                    record=record,
-                    role_filter=role,
-                    stop_on_failure=True,
-                    candidate_rank=rank,
-                    pair_id=pair_id,
-                    stop_after=stop_after,
-                    resolved_joint_targets=role_joint_targets,
-                    initial_contact_roles=(frozenset({"holder"}) if role == "inserter" else frozenset()),
-                )
-                failure = "" if role_ok else "target IK failed"
-                role_cache[cache_key] = (
-                    role_ok,
-                    failure,
-                    dict(role_joint_targets),
-                )
-            candidate_joint_targets.update(role_joint_targets)
-            role_records[role] = {
-                "grasp_id": grasp_id,
-                "cache_hit": cache_hit,
-                "ok": role_ok,
+        role_records = {
+            role: {
+                "grasp_id": _candidate_grasp_id(candidate, role=role),
+                "cache_hit": bool(cached_failure),
+                "ok": candidate_ok,
                 "failure": failure,
             }
-            if not role_ok:
-                candidate_ok = False
-                break
+            for role in active_roles
+        }
 
         candidate_record = {
             "rank": rank,
@@ -930,7 +1383,7 @@ def _select_ranked_preflight_candidate(
             update_debug(
                 candidate=candidate,
                 attempt_index=rank,
-                phase="ik_preflight",
+                phase="motion_preflight",
                 status="succeeded" if candidate_ok else "failed",
                 message=(
                     f"Selected ranked pair {pair_id}."
@@ -941,11 +1394,11 @@ def _select_ranked_preflight_candidate(
         if candidate_ok:
             selected = candidate
             selected_rank = rank
-            selected_joint_targets = candidate_joint_targets
+            selected_preplanned = preplanned
             break
 
     summary = {
-        "policy": "producer_ranked_queue_collision_aware_ik_before_motion",
+        "policy": "producer_ranked_queue_connected_motion_preflight_before_motion",
         "candidate_count": len(candidates),
         "candidates_checked": len(candidate_records),
         "selected_rank": selected_rank,
@@ -961,12 +1414,70 @@ def _select_ranked_preflight_candidate(
             else ""
         ),
         "selected_transition_id": (str(selected.get("transition_id", "")) if selected is not None else ""),
-        "selected_joint_targets": {name: list(joints) for name, joints in selected_joint_targets.items()},
+        "selected_joint_targets": (
+            {
+                name: list(joints)
+                for name, joints in selected_preplanned.joint_targets.items()
+            }
+            if selected_preplanned is not None
+            else {}
+        ),
+        "preplanned_segments": (
+            [
+                {
+                    "name": name,
+                    "mode": selected_preplanned.segment_modes[name],
+                    "point_count": len(
+                        tuple(selected_preplanned.trajectories[name].joint_trajectory.points)
+                    ),
+                }
+                for name in selected_preplanned.trajectories
+            ]
+            if selected_preplanned is not None
+            else []
+        ),
         "records": candidate_records,
-        "cached_role_grasp_count": len(role_cache),
+        "cached_role_grasp_count": cached_prefix_rejections,
+        "cached_prefix_rejections": cached_prefix_rejections,
+        "kinematic_ik_cache_entries": len(kinematic_ik_cache),
         "stop_after": stop_after,
     }
-    return selected, summary
+    return selected, summary, selected_preplanned
+
+
+def _validate_preplanned_trajectory_start(
+    *,
+    commander,
+    trajectory,
+    expected_start_state: Mapping[str, float],
+    tolerance_rad: float,
+) -> tuple[bool, str]:
+    get_state = getattr(commander, "get_current_robot_state", None)
+    if not callable(get_state):
+        return True, "Live-state guard unavailable in lightweight test adapter."
+    current_state = get_state()
+    del trajectory
+    names = tuple(
+        str(name)
+        for role in ("holder", "inserter")
+        for name in ROLE_SPECS[role]["joint_names"]
+    )
+    missing = [name for name in names if name not in current_state or name not in expected_start_state]
+    if missing:
+        return False, f"Live or preplanned complete state is missing dual-arm joints: {missing}"
+    errors = {
+        name: abs(float(current_state[name]) - float(expected_start_state[name]))
+        for name in names
+    }
+    max_joint = max(errors, key=errors.get)
+    max_error = errors[max_joint]
+    if max_error > float(tolerance_rad):
+        return (
+            False,
+            f"Live start state drifted from preflight: {max_joint} error={max_error:.4f} rad "
+            f"> tolerance={float(tolerance_rad):.4f} rad.",
+        )
+    return True, f"Live start state matches preflight; max_error={max_error:.4f} rad."
 
 
 def _execute_sequence(
@@ -976,7 +1487,7 @@ def _execute_sequence(
     grippers: Mapping[str, object],
     config: DualRealExecutionConfig,
     record: Callable[..., None],
-    preferred_joint_targets: Mapping[str, Sequence[float]] | None = None,
+    preplanned_sequence: PreplannedDualSequence,
     candidate_rank: int | None = None,
     update_debug: Callable[..., None] | None = None,
 ) -> tuple[bool, str, str]:
@@ -986,6 +1497,10 @@ def _execute_sequence(
     contact_roles: set[str] = set()
     attached_objects = _attached_collision_objects(plan)
     incoming_attached = False
+    requested_targets = tuple(name for _role, name in _motion_sequence_through(config.stop_after))
+    missing_preplans = [name for name in requested_targets if name not in preplanned_sequence.trajectories]
+    if missing_preplans:
+        return False, "connected_motion_preflight_missing", ""
 
     def _finish(success: bool, status: str, completed: str) -> tuple[bool, str, str]:
         nonlocal incoming_attached
@@ -1060,7 +1575,10 @@ def _execute_sequence(
                 attempt_index=candidate_rank,
                 phase=target_name,
                 status="planning",
-                message=f"Planning and executing {role} target '{target_name}' on hardware.",
+                message=(
+                    f"Executing preplanned {preplanned_sequence.segment_modes[target_name]} "
+                    f"{role} target '{target_name}' on hardware."
+                ),
             )
         target = _target_from_payload(
             targets[target_name],
@@ -1088,27 +1606,32 @@ def _execute_sequence(
                     last_completed,
                 )
         try:
-            preferred_joints = None if preferred_joint_targets is None else preferred_joint_targets.get(target_name)
-            if preferred_joints is None:
-                ok, message = commanders[role].move_to_pose(
-                    target,
-                    label=target_name,
-                    execute=True,
-                )
+            trajectory = preplanned_sequence.trajectories[target_name]
+            start_ok, start_message = _validate_preplanned_trajectory_start(
+                commander=commanders[role],
+                trajectory=trajectory,
+                expected_start_state=preplanned_sequence.start_states[target_name],
+                tolerance_rad=float(config.execution_start_tolerance_rad),
+            )
+            record(
+                name=f"validate_{target_name}_start_state",
+                role=role,
+                ok=start_ok,
+                message=start_message,
+                target=target,
+            )
+            if not start_ok:
+                ok = False
+                message = start_message
             else:
-                trajectory, plan_message = commanders[role].plan_to_joint_positions(
-                    preferred_joints,
+                ok, execute_message = commanders[role].execute_trajectory(
+                    trajectory,
                     label=target_name,
                 )
-                if trajectory is None:
-                    ok = False
-                    message = f"{target_name}: planning to preflight IK target failed: {plan_message}"
-                else:
-                    ok, execute_message = commanders[role].execute_trajectory(
-                        trajectory,
-                        label=target_name,
-                    )
-                    message = f"preflight IK target planned ({plan_message}); {execute_message}"
+                message = (
+                    f"executed preplanned {preplanned_sequence.segment_modes[target_name]} trajectory; "
+                    f"{execute_message}"
+                )
             record(
                 name=target_name,
                 role=role,
@@ -1263,6 +1786,12 @@ def execute_dual_real_plan(
 ) -> DualRealExecutionResult:
     if config.stop_after not in STOP_AFTER_CHOICES:
         raise ValueError(f"stop_after must be one of {STOP_AFTER_CHOICES}; got {config.stop_after!r}.")
+    if float(config.cartesian_max_step_m) <= 0.0:
+        raise ValueError("cartesian_max_step_m must be positive.")
+    if float(config.cartesian_revolute_jump_threshold_rad) <= 0.0:
+        raise ValueError("cartesian_revolute_jump_threshold_rad must be positive.")
+    if float(config.execution_start_tolerance_rad) <= 0.0:
+        raise ValueError("execution_start_tolerance_rad must be positive.")
     source_plan = load_and_validate_dual_plan(plan_json)
     if config.execute and not _has_loaded_part_collision_geometry(source_plan) and not config.allow_objectless_planning:
         raise RuntimeError(
@@ -1284,7 +1813,7 @@ def execute_dual_real_plan(
     execution_plan = source_plan
     pair_id = ""
     pair_selection: dict[str, object] = {
-        "policy": "producer_ranked_queue_collision_aware_ik_before_motion",
+        "policy": "producer_ranked_queue_connected_motion_preflight_before_motion",
         "candidate_count": len(ranked_candidates),
         "candidates_checked": 0,
         "selected_rank": None,
@@ -1296,6 +1825,7 @@ def execute_dual_real_plan(
     commanders: dict[str, object] = {}
     grippers: dict[str, object] = {}
     skipped_gripper_roles: tuple[str, ...] = ()
+    preplanned_sequence: PreplannedDualSequence | None = None
     debug_server = None
     debug_scene_candidate_id = ""
     candidate_counts = dict(ranked_candidates[0].get("candidate_filter_diagnostics", {}))
@@ -1414,7 +1944,10 @@ def execute_dual_real_plan(
         if not rclpy.ok():
             rclpy.init()
             initialized_here = True
-        commanders = {role: _make_commander(role=role, config=config) for role in ROLE_SPECS}
+        commanders = {
+            role: _make_commander(role=role, config=config, plan=source_plan)
+            for role in ROLE_SPECS
+        }
         for commander in commanders.values():
             commander.wait_for_moveit(require_execute=bool(config.execute))
 
@@ -1432,9 +1965,12 @@ def execute_dual_real_plan(
         if not ok:
             raise RuntimeError(message)
 
-        selected_plan, pair_selection = _select_ranked_preflight_candidate(
+        initial_robot_state = commanders["holder"].get_current_robot_state()
+        selected_plan, pair_selection, preplanned_sequence = _select_ranked_preflight_candidate(
             plan=source_plan,
             commanders=commanders,
+            initial_robot_state=initial_robot_state,
+            config=config,
             frame_id=str(config.frame_id),
             record=_record,
             stop_after=str(config.stop_after),
@@ -1454,9 +1990,9 @@ def execute_dual_real_plan(
         if selected_plan is None:
             result = DualRealExecutionResult(
                 False,
-                "ik_preflight_failed",
+                "motion_preflight_failed",
                 (
-                    "No ranked grasp pair passed collision-aware target IK "
+                    "No ranked grasp pair passed complete connected motion "
                     f"preflight after checking "
                     f"{pair_selection['candidates_checked']} candidate(s); "
                     "no hardware motion was started."
@@ -1472,7 +2008,10 @@ def execute_dual_real_plan(
             result = DualRealExecutionResult(
                 True,
                 "preflight_ok",
-                (f"Ranked pair {pair_id} passed all target IK checks; hardware execution was not requested."),
+                (
+                    f"Ranked pair {pair_id} passed complete connected motion preflight; "
+                    "hardware execution was not requested."
+                ),
                 pair_id,
                 "",
                 output_path,
@@ -1513,17 +2052,15 @@ def execute_dual_real_plan(
                 record=_record,
             )
 
+        if preplanned_sequence is None:
+            raise RuntimeError("Connected motion preflight selected no executable trajectory sequence.")
         success, status, last_completed = _execute_sequence(
             plan=execution_plan,
             commanders=commanders,
             grippers=grippers,
             config=config,
             record=_record,
-            preferred_joint_targets=(
-                pair_selection.get("selected_joint_targets")
-                if isinstance(pair_selection.get("selected_joint_targets"), dict)
-                else None
-            ),
+            preplanned_sequence=preplanned_sequence,
             candidate_rank=(
                 int(pair_selection["selected_rank"]) if pair_selection.get("selected_rank") is not None else None
             ),
@@ -1582,7 +2119,9 @@ def execute_dual_real_plan(
             rclpy.shutdown()
         if debug_server is not None:
             terminal_phase = result.last_completed_phase or (
-                "ik_preflight" if result.status in {"preflight_ok", "ik_preflight_failed"} else "complete"
+                "motion_preflight"
+                if result.status in {"preflight_ok", "motion_preflight_failed"}
+                else "complete"
             )
             _update_debug(
                 candidate=execution_plan,

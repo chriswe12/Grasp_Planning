@@ -548,6 +548,35 @@ artifact is expected, and the resumable HTML/CSV report still records the
 candidate, timing, precise planning failure, and a static scene image for both
 successful and failed planner-only cases.
 
+To benchmark the stronger real-executor safety boundary offline, do not start
+MoveIt separately. The benchmark owns one shared mock stack for the complete
+run, reuses it across cases, and stops it on completion or Ctrl-C:
+
+```bash
+source ./setup_dual_robot_env.sh
+python3 scripts/run_dual_assembly_benchmark.py \
+  --real-preflight-only \
+  --ros-domain-id 43 \
+  --parts 0 \
+  --placements right_inner_middle \
+  --orientations upright_yaw_0 \
+  --output-dir artifacts/dual_assembly_benchmark/real_connected_preflight_smoke \
+  --no-resume
+```
+
+To plan from the physical robots' live current joint state instead, start the
+hardware MoveIt stack yourself and add `--reuse-moveit --ros-domain-id 0` to
+the benchmark command. Explicit reuse fails fast if that stack is unavailable.
+
+`--real-preflight-only` calls the real executor without `--execute`, plans all
+seven connected segments through
+`inserter_preinsertion`, and never launches Isaac. OMPL is used for free-space
+segments and the four approach/lift/insertion segments must be complete
+straight-line Cartesian paths. The attempt JSON and dashboard distinguish a
+`real_connected_preflight` failure and retain the exact failing segment. These
+benchmark poses come from the YAML matrix rather than live vision; use the
+action-server pipeline for the separate live-perception test.
+
 To separate single-arm pickup reachability from dual-arm coordination, first
 start the mock MoveIt stack and then run the isolated pickup A/B benchmark
 against an existing benchmark summary:
@@ -699,7 +728,8 @@ joints do not fall back to MoveIt's fully-open default.
 
 ### 4. Real dual-arm safety boundary
 
-Without `--execute`, real mode performs only non-moving target IK checks:
+Without `--execute`, real mode performs the complete non-moving connected
+motion preflight:
 
 ```bash
 ./run_simple_dual_robot.sh --mode real --incoming-part-id 0
@@ -710,13 +740,29 @@ identity-fallback queue as simulation. It writes at most 256 candidates to the
 preflight task by default; use `--max-pair-attempts N` to override that real-task
 bound. In simulation, the same option instead limits exact-IK-feasible candidates
 admitted to expensive path planning, after the broader pose-feasible pool has
-been screened. The collision-aware joint solutions selected during preflight are
-the exact joint targets sent to path planning during execution, including a
-solution found only by the known-start fallback seed. The ROS action reports
+been screened. Real preflight starts from MoveIt's complete live dual-arm state
+and plans every requested segment before motion. Free-space segments use OMPL;
+holder pregrasp-to-grasp, inserter pickup approach, pickup lift, and the final
+pre-insertion descent require complete collision-aware Cartesian paths with
+fixed TCP orientation. Each plan starts from the preceding trajectory endpoint,
+so disconnected endpoint IK cannot admit a candidate. Execution checks both
+arms against each saved segment start (default tolerance `0.05 rad`) and plays
+the exact preflight trajectories without replanning. Cartesian paths default to
+a `0.005 m` interpolation step and reject revolute jumps above `0.35 rad`; the
+real wrapper exposes `--cartesian-max-step-m`,
+`--cartesian-revolute-jump-threshold-rad`, and
+`--execution-start-tolerance-rad`. The ROS action reports
 success only after `inserter_preinsertion`; an intentionally earlier
 `stop_after` is returned as partial execution rather than a reached pose. When
 a later ranked candidate is selected, the action result pose comes from that
 candidate rather than the task's rank-1 compatibility fields.
+
+Real task construction preserves the selected physical roles. With
+`--inserter-arm auto`, pickup Y below assembly Y assigns `lbr_one` as inserter
+and `lbr_two` as holder; pickup Y at or above assembly Y assigns the reverse.
+The executor validates and uses the task-declared robot, MoveIt group, TCP, and
+joint names. Downstream real-execution paths must not hard-code logical
+holder/inserter roles.
 
 Real mode opens the same live browser debugger after the perception poses are
 resolved but before the pickup-floor filter runs. If every grasp is rejected,
