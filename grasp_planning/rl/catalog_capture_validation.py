@@ -16,6 +16,7 @@ from grasp_planning.d405_wrist_camera import (
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE
 from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE
 from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_PROFILE
+from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
 
 CatalogFileSignature = tuple[int, int, int]
 
@@ -116,6 +117,7 @@ def validate_fresh_goal_catalog_capture(
             "approach_gripper_profile": KUKA_Y_GRIPPER_APPROACH_PROFILE,
             "visual_material_profile": VISUAL_SERVO_MATERIAL_PROFILE,
             "visual_scene_profile": VISUAL_SERVO_SCENE_PROFILE,
+            "visual_tslot_profile": VISUAL_SERVO_TSLOT_PROFILE,
             "goal_camera_profile": D405_VISUAL_SERVO_CAMERA_PROFILE,
             "goal_observation_profile": D405_VISUAL_SERVO_OBSERVATION_PROFILE,
         }

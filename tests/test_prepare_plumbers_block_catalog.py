@@ -14,6 +14,7 @@ from grasp_planning.d405_wrist_camera import (
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE
 from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE
 from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_PROFILE
+from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
 from isaac_rl.scripts.prepare_plumbers_block_catalog import (
     _finalize_failed_isaac_capture,
     _write_target_subset_paths_asset,
@@ -112,6 +113,7 @@ def _write_failed_capture_fixture(data_root: Path) -> None:
         approach_gripper_profile=np.asarray(KUKA_Y_GRIPPER_APPROACH_PROFILE),
         visual_material_profile=np.asarray(VISUAL_SERVO_MATERIAL_PROFILE),
         visual_scene_profile=np.asarray(VISUAL_SERVO_SCENE_PROFILE),
+        visual_tslot_profile=np.asarray(VISUAL_SERVO_TSLOT_PROFILE),
         goal_camera_profile=np.asarray(D405_VISUAL_SERVO_CAMERA_PROFILE),
         goal_observation_profile=np.asarray(D405_VISUAL_SERVO_OBSERVATION_PROFILE),
     )

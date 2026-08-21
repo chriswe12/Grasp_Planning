@@ -1,0 +1,34 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.15, nodesep=0.26, ranksep=0.55,
+         fontname="Helvetica", fontsize=18, label="Heads, Losses, and Shared Gradients", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9,
+        color="#34495e", fillcolor="white", margin="0.12,0.07"];
+  edge [color="#34495e", penwidth=1.15, arrowsize=0.65, fontname="Helvetica", fontsize=8];
+
+  zv [label="Visual latent\nz_v [B,256]", fillcolor="#eee8fa"];
+  zg [label="Geometry latent\nz_g [B,128]", fillcolor="#eee8fa"];
+  prev [label="Previous action\n[B,6]", fillcolor="#eaf3fb"];
+  motion [label="MOTION HEAD\nconcat input [B,390]\nLinear 390->256->6, ELU + tanh\nmu [B,6], learned log sigma [6]", fillcolor="#dcecff"];
+  completion [label="COMPLETION HEAD\nconcat(z_v,z_g) [B,384]\nLinear 384->128->1\nlogit and p(stop)", fillcolor="#dcecff"];
+  pose [label="POSE HEAD\nz_g [B,128]\nLinear 128->128->6\npredicted pose error [B,6]", fillcolor="#dcecff"];
+  ppo [label="Clipped hybrid PPO policy loss", fillcolor="#fff7e8"];
+  bce [label="Masked completion BCE x 0.2\nlabel + valid mask [B,2]", fillcolor="#fff7e8"];
+  smooth [label="Position + rotation Smooth-L1 x 0.2\npose target [B,6]", fillcolor="#fff7e8"];
+  slow [label="Detached slowdown\np(stop) scales mu and sigma\nno motion gradient to completion", fillcolor="#fff1d6"];
+  shared [label="Losses are summed. Heads exchange no hidden state;\nthey share information only through z_v, z_g,\nand gradients into common trainable parameters.", fillcolor="#fffaf0", penwidth=1.6, color="#d17b00"];
+
+  zv -> zg;
+  zv -> motion; zg -> motion; prev -> motion;
+  zv -> completion; zg -> completion;
+  zg -> pose;
+  completion -> slow [style=dashed, color="#d17b00"];
+  slow -> motion [style=dashed, color="#d17b00"];
+  motion -> ppo [style=dashed, color="#d17b00"];
+  completion -> ppo [style=dashed, color="#d17b00"];
+  completion -> bce [style=dashed, color="#d17b00"];
+  pose -> smooth [style=dashed, color="#d17b00"];
+  ppo -> shared [style=dashed, color="#d17b00"];
+  bce -> shared [style=dashed, color="#d17b00"];
+  smooth -> shared [style=dashed, color="#d17b00"];
+  shared -> zv [style=dashed, color="#d17b00", label="backpropagation", constraint=false];
+}

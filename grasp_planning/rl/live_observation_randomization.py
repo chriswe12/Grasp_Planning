@@ -24,15 +24,35 @@ class LiveObservationRandomizationCfg:
     blur_mix: tuple[float, float] = (0.25, 0.60)
     depth_scale: tuple[float, float] = (0.99, 1.01)
     depth_bias_m: tuple[float, float] = (-0.002, 0.002)
-    depth_noise_std_m: tuple[float, float] = (0.0004, 0.0020)
-    depth_quantization_m: float = 0.001
+    depth_noise_std_m: tuple[float, float] = (0.0, 0.0002)
+    # Provisional D405 stereo model. Official D405 baseline is 18 mm; D400
+    # disparity has 1/32-pixel subpixel resolution. These conservative noise
+    # ranges are replaceable once device-specific plane captures are analyzed.
+    correlated_depth_enabled: bool = True
+    stereo_focal_length_px: float = 436.3104248046875
+    stereo_baseline_m: float = 0.018
+    disparity_bias_px: tuple[float, float] = (-0.04, 0.04)
+    disparity_independent_noise_std_px: tuple[float, float] = (0.01, 0.03)
+    disparity_spatial_noise_std_px: tuple[float, float] = (0.02, 0.07)
+    disparity_temporal_noise_std_px: tuple[float, float] = (0.01, 0.04)
+    disparity_temporal_correlation: tuple[float, float] = (0.60, 0.92)
+    spatial_field_shape: tuple[int, int] = (9, 16)
+    stereo_edge_mismatch_probability: float = 0.12
+    stereo_edge_horizontal_radius_px: int = 2
+    depth_quantization_m: float = 0.0001
     depth_dropout_probability: tuple[float, float] = (0.0, 0.004)
     depth_edge_dropout_probability: tuple[float, float] = (0.0, 0.035)
     depth_edge_threshold_m: float = 0.008
+    calibration_warp_enabled: bool = True
+    calibration_shift_x_px: tuple[float, float] = (-1.5, 1.5)
+    calibration_shift_y_px: tuple[float, float] = (-1.0, 1.0)
+    calibration_scale: tuple[float, float] = (0.99, 1.01)
+    calibration_roll_deg: tuple[float, float] = (-1.0, 1.0)
+    clean_episode_fraction: float = 0.0
     rgb_patch_occlusion_probability: float = 0.06
     depth_patch_dropout_probability: float = 0.04
     patch_area_fraction: tuple[float, float] = (0.005, 0.03)
-    depth_min_m: float = 0.04
+    depth_min_m: float = 0.07
     depth_max_m: float = 0.50
 
     def validate(self) -> None:
@@ -47,8 +67,17 @@ class LiveObservationRandomizationCfg:
             "depth_scale",
             "depth_bias_m",
             "depth_noise_std_m",
+            "disparity_bias_px",
+            "disparity_independent_noise_std_px",
+            "disparity_spatial_noise_std_px",
+            "disparity_temporal_noise_std_px",
+            "disparity_temporal_correlation",
             "depth_dropout_probability",
             "depth_edge_dropout_probability",
+            "calibration_shift_x_px",
+            "calibration_shift_y_px",
+            "calibration_scale",
+            "calibration_roll_deg",
         ):
             lower, upper = getattr(self, name)
             if lower > upper:
@@ -65,6 +94,18 @@ class LiveObservationRandomizationCfg:
             raise ValueError("patch_area_fraction must be ordered inside [0, 0.25].")
         if self.depth_quantization_m < 0.0:
             raise ValueError("depth_quantization_m cannot be negative.")
+        if self.stereo_focal_length_px <= 0.0 or self.stereo_baseline_m <= 0.0:
+            raise ValueError("Stereo focal length and baseline must be positive.")
+        if any(value < 0.0 or value >= 1.0 for value in self.disparity_temporal_correlation):
+            raise ValueError("Temporal disparity correlation must lie in [0, 1).")
+        if len(self.spatial_field_shape) != 2 or min(self.spatial_field_shape) < 2:
+            raise ValueError("spatial_field_shape must contain two dimensions >= 2.")
+        if not 0.0 <= self.stereo_edge_mismatch_probability <= 1.0:
+            raise ValueError("stereo_edge_mismatch_probability must lie in [0, 1].")
+        if not 0.0 <= self.clean_episode_fraction <= 1.0:
+            raise ValueError("clean_episode_fraction must lie in [0, 1].")
+        if self.stereo_edge_horizontal_radius_px < 0:
+            raise ValueError("stereo_edge_horizontal_radius_px cannot be negative.")
         if self.depth_edge_threshold_m <= 0.0:
             raise ValueError("depth_edge_threshold_m must be positive.")
         if self.depth_min_m >= self.depth_max_m:
@@ -103,8 +144,20 @@ class LiveObservationRandomizer:
         self.depth_scale = torch.ones_like(self.exposure_gain)
         self.depth_bias_m = torch.zeros_like(self.exposure_gain)
         self.depth_noise_std_m = torch.zeros_like(self.exposure_gain)
+        self.disparity_bias_px = torch.zeros_like(self.exposure_gain)
+        self.disparity_independent_noise_std_px = torch.zeros_like(self.exposure_gain)
+        self.disparity_spatial_noise_std_px = torch.zeros_like(self.exposure_gain)
+        self.disparity_temporal_noise_std_px = torch.zeros_like(self.exposure_gain)
+        self.disparity_temporal_correlation = torch.zeros_like(self.exposure_gain)
         self.depth_dropout_probability = torch.zeros_like(self.exposure_gain)
         self.depth_edge_dropout_probability = torch.zeros_like(self.exposure_gain)
+        self.calibration_shift_x_px = torch.zeros((self.num_envs,), device=self.device)
+        self.calibration_shift_y_px = torch.zeros_like(self.calibration_shift_x_px)
+        self.calibration_scale = torch.ones_like(self.calibration_shift_x_px)
+        self.calibration_roll_rad = torch.zeros_like(self.calibration_shift_x_px)
+        field_height, field_width = cfg.spatial_field_shape
+        self.disparity_fixed_field = torch.zeros((self.num_envs, 1, field_height, field_width), device=self.device)
+        self.disparity_temporal_field = torch.zeros_like(self.disparity_fixed_field)
         self.randomization_strength = torch.ones_like(self.exposure_gain)
         self.rgb_patch_enabled = torch.zeros((self.num_envs,), dtype=torch.bool, device=self.device)
         self.depth_patch_enabled = torch.zeros_like(self.rgb_patch_enabled)
@@ -113,6 +166,8 @@ class LiveObservationRandomizer:
         self.patch_area_fraction = torch.zeros_like(self.patch_center_x)
         self.patch_aspect_log = torch.zeros_like(self.patch_center_x)
         self._vignette_cache: dict[tuple[int, int], torch.Tensor] = {}
+        self.last_disparity_error_abs_mean_px = torch.zeros((), device=self.device)
+        self.last_depth_invalid_fraction = torch.zeros((), device=self.device)
         self.sample(torch.arange(self.num_envs, device=self.device))
 
     def _uniform(self, env_ids: torch.Tensor, value_range: tuple[float, float], *, channels: int = 1) -> torch.Tensor:
@@ -138,6 +193,9 @@ class LiveObservationRandomizer:
             strength_tensor = strength_tensor.expand(len(env_ids))
         if strength_tensor.shape != (len(env_ids),) or torch.any((strength_tensor < 0.0) | (strength_tensor > 1.0)):
             raise ValueError("Randomization strength must lie in [0, 1] per environment.")
+        if self.cfg.enabled and self.cfg.clean_episode_fraction > 0.0:
+            clean = torch.rand(len(env_ids), device=self.device) < float(self.cfg.clean_episode_fraction)
+            strength_tensor = torch.where(clean, torch.zeros_like(strength_tensor), strength_tensor)
         self.randomization_strength[env_ids] = strength_tensor.reshape(-1, 1, 1, 1)
         if not self.cfg.enabled:
             self.exposure_gain[env_ids] = 1.0
@@ -150,6 +208,17 @@ class LiveObservationRandomizer:
             self.depth_scale[env_ids] = 1.0
             self.depth_bias_m[env_ids] = 0.0
             self.depth_noise_std_m[env_ids] = 0.0
+            self.disparity_bias_px[env_ids] = 0.0
+            self.disparity_independent_noise_std_px[env_ids] = 0.0
+            self.disparity_spatial_noise_std_px[env_ids] = 0.0
+            self.disparity_temporal_noise_std_px[env_ids] = 0.0
+            self.disparity_temporal_correlation[env_ids] = 0.0
+            self.disparity_fixed_field[env_ids] = 0.0
+            self.disparity_temporal_field[env_ids] = 0.0
+            self.calibration_shift_x_px[env_ids] = 0.0
+            self.calibration_shift_y_px[env_ids] = 0.0
+            self.calibration_scale[env_ids] = 1.0
+            self.calibration_roll_rad[env_ids] = 0.0
             self.depth_dropout_probability[env_ids] = 0.0
             self.depth_edge_dropout_probability[env_ids] = 0.0
             self.randomization_strength[env_ids] = 0.0
@@ -170,8 +239,28 @@ class LiveObservationRandomizer:
         self.depth_scale[env_ids] = self._uniform(env_ids, self.cfg.depth_scale)
         self.depth_bias_m[env_ids] = self._uniform(env_ids, self.cfg.depth_bias_m)
         self.depth_noise_std_m[env_ids] = self._uniform(env_ids, self.cfg.depth_noise_std_m)
+        self.disparity_bias_px[env_ids] = self._uniform(env_ids, self.cfg.disparity_bias_px)
+        self.disparity_independent_noise_std_px[env_ids] = self._uniform(
+            env_ids, self.cfg.disparity_independent_noise_std_px
+        )
+        self.disparity_spatial_noise_std_px[env_ids] = self._uniform(env_ids, self.cfg.disparity_spatial_noise_std_px)
+        self.disparity_temporal_noise_std_px[env_ids] = self._uniform(env_ids, self.cfg.disparity_temporal_noise_std_px)
+        self.disparity_temporal_correlation[env_ids] = self._uniform(env_ids, self.cfg.disparity_temporal_correlation)
+        self.disparity_fixed_field[env_ids] = torch.randn_like(self.disparity_fixed_field[env_ids])
+        self.disparity_temporal_field[env_ids] = torch.randn_like(self.disparity_temporal_field[env_ids])
         self.depth_dropout_probability[env_ids] = self._uniform(env_ids, self.cfg.depth_dropout_probability)
         self.depth_edge_dropout_probability[env_ids] = self._uniform(env_ids, self.cfg.depth_edge_dropout_probability)
+        if self.cfg.calibration_warp_enabled:
+            self.calibration_shift_x_px[env_ids] = self._uniform(env_ids, self.cfg.calibration_shift_x_px).flatten()
+            self.calibration_shift_y_px[env_ids] = self._uniform(env_ids, self.cfg.calibration_shift_y_px).flatten()
+            self.calibration_scale[env_ids] = self._uniform(env_ids, self.cfg.calibration_scale).flatten()
+            roll_deg = self._uniform(env_ids, self.cfg.calibration_roll_deg).flatten()
+            self.calibration_roll_rad[env_ids] = torch.deg2rad(roll_deg)
+        else:
+            self.calibration_shift_x_px[env_ids] = 0.0
+            self.calibration_shift_y_px[env_ids] = 0.0
+            self.calibration_scale[env_ids] = 1.0
+            self.calibration_roll_rad[env_ids] = 0.0
         strength_flat = strength_tensor
         self.rgb_patch_enabled[env_ids] = torch.rand(len(env_ids), device=self.device) < (
             self.cfg.rgb_patch_occlusion_probability * strength_flat
@@ -207,6 +296,111 @@ class LiveObservationRandomizer:
         )
         return ((horizontal + vertical) / float(threshold_m)).clamp(0.0, 1.0)
 
+    def _warp_live_rgbd(self, rgb: torch.Tensor, depth_m: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply one small episode-stable calibration warp to both modalities."""
+
+        if not self.cfg.calibration_warp_enabled:
+            return rgb, depth_m
+        height, width = rgb.shape[1:3]
+        cosine = torch.cos(self.calibration_roll_rad) / self.calibration_scale
+        sine = torch.sin(self.calibration_roll_rad) / self.calibration_scale
+        theta = torch.zeros((self.num_envs, 2, 3), device=self.device, dtype=rgb.dtype)
+        theta[:, 0, 0] = cosine
+        theta[:, 0, 1] = -sine
+        theta[:, 1, 0] = sine
+        theta[:, 1, 1] = cosine
+        theta[:, 0, 2] = 2.0 * self.calibration_shift_x_px / max(width - 1, 1)
+        theta[:, 1, 2] = 2.0 * self.calibration_shift_y_px / max(height - 1, 1)
+        grid = F.affine_grid(
+            theta,
+            size=(self.num_envs, 1, height, width),
+            align_corners=False,
+        )
+        warped_rgb = F.grid_sample(
+            rgb.permute(0, 3, 1, 2),
+            grid,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=False,
+        ).permute(0, 2, 3, 1)
+        warped_depth = F.grid_sample(
+            depth_m.permute(0, 3, 1, 2),
+            grid,
+            mode="nearest",
+            padding_mode="border",
+            align_corners=False,
+        ).permute(0, 2, 3, 1)
+        return warped_rgb, warped_depth
+
+    def _apply_correlated_disparity_error(self, depth_m: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply episode, spatial, temporal, and pixel stereo errors in disparity."""
+
+        if not self.cfg.correlated_depth_enabled:
+            return depth_m, torch.zeros_like(depth_m)
+        height, width = depth_m.shape[1:3]
+        rho = self.disparity_temporal_correlation
+        innovation_scale = torch.sqrt((1.0 - rho.square()).clamp_min(0.0))
+        self.disparity_temporal_field.mul_(rho).add_(torch.randn_like(self.disparity_temporal_field) * innovation_scale)
+        fixed_field = F.interpolate(
+            self.disparity_fixed_field,
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        ).permute(0, 2, 3, 1)
+        temporal_field = F.interpolate(
+            self.disparity_temporal_field,
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        ).permute(0, 2, 3, 1)
+        disparity_error = (
+            self.disparity_bias_px
+            + fixed_field * self.disparity_spatial_noise_std_px
+            + temporal_field * self.disparity_temporal_noise_std_px
+            + torch.randn_like(depth_m) * self.disparity_independent_noise_std_px
+        )
+        focal_baseline = float(self.cfg.stereo_focal_length_px * self.cfg.stereo_baseline_m)
+        disparity = focal_baseline / depth_m.clamp_min(float(self.cfg.depth_min_m))
+        minimum_disparity = focal_baseline / float(self.cfg.depth_max_m)
+        maximum_disparity = focal_baseline / float(self.cfg.depth_min_m)
+        noisy_disparity = (disparity + disparity_error).clamp(minimum_disparity, maximum_disparity)
+        return focal_baseline / noisy_disparity, disparity_error
+
+    def _apply_stereo_edge_mismatch(self, original_depth: torch.Tensor, randomized_depth: torch.Tensor) -> torch.Tensor:
+        """Mix foreground, background, and invalid values around stereo boundaries."""
+
+        probability = float(self.cfg.stereo_edge_mismatch_probability)
+        if probability <= 0.0:
+            return randomized_depth
+        left = torch.cat((original_depth[:, :, :1], original_depth[:, :, :-1]), dim=2)
+        right = torch.cat((original_depth[:, :, 1:], original_depth[:, :, -1:]), dim=2)
+        edge_strength = (
+            torch.maximum(
+                (original_depth - left).abs(),
+                (original_depth - right).abs(),
+            )
+            .div(float(self.cfg.depth_edge_threshold_m))
+            .clamp(0.0, 1.0)
+        )
+        radius = int(self.cfg.stereo_edge_horizontal_radius_px)
+        if radius > 0:
+            edge_strength = F.max_pool2d(
+                edge_strength.permute(0, 3, 1, 2),
+                kernel_size=(1, 2 * radius + 1),
+                stride=1,
+                padding=(0, radius),
+            ).permute(0, 2, 3, 1)
+        mismatch = torch.rand_like(edge_strength) < edge_strength * probability
+        near_depth = torch.minimum(original_depth, torch.minimum(left, right))
+        far_depth = torch.maximum(original_depth, torch.maximum(left, right))
+        selection = torch.rand_like(edge_strength)
+        replacement = torch.where(
+            selection < 0.50,
+            randomized_depth.new_full((), float(self.cfg.depth_max_m)),
+            torch.where(selection < 0.75, near_depth, far_depth),
+        )
+        return torch.where(mismatch, replacement, randomized_depth)
+
     def apply(self, rgb: torch.Tensor, depth_m: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Randomize live tensors shaped ``[env, height, width, channels]``."""
 
@@ -221,8 +415,9 @@ class LiveObservationRandomizer:
 
         original_rgb = rgb
         original_depth = depth_m
-        rgb_mean = rgb.mean(dim=(1, 2), keepdim=True)
-        randomized_rgb = (rgb - rgb_mean) * self.contrast + rgb_mean
+        warped_rgb, warped_depth = self._warp_live_rgbd(rgb, depth_m)
+        rgb_mean = warped_rgb.mean(dim=(1, 2), keepdim=True)
+        randomized_rgb = (warped_rgb - rgb_mean) * self.contrast + rgb_mean
         randomized_rgb = randomized_rgb * self.exposure_gain * self.white_balance_gain
         randomized_rgb = randomized_rgb.clamp(0.0, 1.0).pow(self.gamma)
         randomized_rgb = randomized_rgb * (
@@ -237,10 +432,12 @@ class LiveObservationRandomizer:
         randomized_rgb = torch.lerp(randomized_rgb, blurred, self.blur_mix)
         randomized_rgb = (randomized_rgb + torch.randn_like(randomized_rgb) * self.rgb_noise_std).clamp(0.0, 1.0)
 
-        edge_strength = self._depth_edges(depth_m, self.cfg.depth_edge_threshold_m)
-        randomized_depth = depth_m * self.depth_scale + self.depth_bias_m
+        edge_strength = self._depth_edges(warped_depth, self.cfg.depth_edge_threshold_m)
+        randomized_depth, disparity_error = self._apply_correlated_disparity_error(warped_depth)
+        randomized_depth = randomized_depth * self.depth_scale + self.depth_bias_m
         depth_noise_scale = self.depth_noise_std_m * (1.0 + edge_strength)
         randomized_depth = randomized_depth + torch.randn_like(randomized_depth) * depth_noise_scale
+        randomized_depth = self._apply_stereo_edge_mismatch(warped_depth, randomized_depth)
         if self.cfg.depth_quantization_m > 0.0:
             quantum = float(self.cfg.depth_quantization_m)
             randomized_depth = torch.round(randomized_depth / quantum) * quantum
@@ -253,6 +450,16 @@ class LiveObservationRandomizer:
             randomized_depth.new_full((), self.cfg.depth_max_m),
             randomized_depth,
         ).clamp(self.cfg.depth_min_m, self.cfg.depth_max_m)
+        outside_reliable_range = (
+            (warped_depth < float(self.cfg.depth_min_m))
+            | (warped_depth >= float(self.cfg.depth_max_m))
+            | ~torch.isfinite(warped_depth)
+        )
+        randomized_depth = torch.where(
+            outside_reliable_range,
+            randomized_depth.new_full((), float(self.cfg.depth_max_m)),
+            randomized_depth,
+        )
         height, width = rgb.shape[1:3]
         aspect = torch.exp(self.patch_aspect_log)
         patch_height = torch.round(height * torch.sqrt(self.patch_area_fraction / aspect)).long()
@@ -285,6 +492,8 @@ class LiveObservationRandomizer:
         )
 
         strength = self.randomization_strength
+        self.last_disparity_error_abs_mean_px = disparity_error.abs().mean().detach()
+        self.last_depth_invalid_fraction = (randomized_depth >= float(self.cfg.depth_max_m)).float().mean().detach()
         return (
             torch.lerp(original_rgb, randomized_rgb, strength),
             torch.lerp(original_depth, randomized_depth, strength),

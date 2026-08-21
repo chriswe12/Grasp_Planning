@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=euler.env
 source "${SCRIPT_DIR}/euler.env"
 
@@ -116,9 +117,16 @@ while true; do
                 eta_seconds=0
                 rollout_batch="$(
                     ssh "${EULER_LOGIN}" \
-                        "grep -m1 -oE 'RL-Games rollout batch=[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/.*=//'" \
+                        "grep -m1 -oE 'global rollout batch=[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/.*=//'" \
                         2>/dev/null || true
                 )"
+                if [[ ! "${rollout_batch}" =~ ^[1-9][0-9]*$ ]]; then
+                    rollout_batch="$(
+                        ssh "${EULER_LOGIN}" \
+                            "grep -m1 -oE 'RL-Games rollout batch=[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/.*=//'" \
+                            2>/dev/null || true
+                    )"
+                fi
                 eta=calculating
                 if [[ "${fps}" =~ ^[1-9][0-9]*$ && "${rollout_batch}" =~ ^[1-9][0-9]*$ ]]; then
                     eta_seconds=$(((total_epochs - current_epoch) * rollout_batch / fps))
@@ -162,6 +170,30 @@ done
 
 if [[ "${state}" != COMPLETED* ]]; then
     echo "[ERROR] Results were downloaded, but job ${job_id} did not complete successfully" >&2
+    exit 1
+fi
+
+local_stdout="${REPO_ROOT}/logs/euler/slurm-${job_id}.out"
+mode=""
+if [[ -f "${local_stdout}" ]]; then
+    mode="$(sed -n 's/^\[INFO\] Running mode=\([^:]*\):.*/\1/p' "${local_stdout}" | head -n 1)"
+fi
+case "${mode}" in
+    smoke)
+        completion_pattern='^\[SMOKE\] steps='
+        ;;
+    probe|train)
+        completion_pattern='^Training time: '
+        ;;
+    *)
+        echo "[ERROR] Could not determine the mode or completion marker for job ${job_id}" >&2
+        echo "[ERROR] Inspect ${local_stdout} and ${REPO_ROOT}/logs/euler/slurm-${job_id}.err" >&2
+        exit 1
+        ;;
+esac
+if ! grep -q "${completion_pattern}" "${local_stdout}"; then
+    echo "[ERROR] Slurm reported COMPLETED, but the ${mode} completion marker is absent" >&2
+    echo "[ERROR] Inspect ${local_stdout} and ${REPO_ROOT}/logs/euler/slurm-${job_id}.err" >&2
     exit 1
 fi
 

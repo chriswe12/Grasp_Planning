@@ -35,11 +35,13 @@ def test_fixed_photometric_and_depth_calibration_apply_only_to_live_input() -> N
         depth_scale=(1.10, 1.10),
         depth_bias_m=(0.01, 0.01),
         depth_noise_std_m=(0.0, 0.0),
+        correlated_depth_enabled=False,
         depth_quantization_m=0.0,
         depth_dropout_probability=(0.0, 0.0),
         depth_edge_dropout_probability=(0.0, 0.0),
         rgb_patch_occlusion_probability=0.0,
         depth_patch_dropout_probability=0.0,
+        calibration_warp_enabled=False,
     )
     randomizer = LiveObservationRandomizer(cfg, num_envs=1, device="cpu")
     live_rgb = torch.full((1, 6, 8, 3), 0.20)
@@ -125,12 +127,14 @@ def test_live_patch_occlusion_never_changes_goal_input_contract() -> None:
         depth_scale=(1.0, 1.0),
         depth_bias_m=(0.0, 0.0),
         depth_noise_std_m=(0.0, 0.0),
+        correlated_depth_enabled=False,
         depth_quantization_m=0.0,
         depth_dropout_probability=(0.0, 0.0),
         depth_edge_dropout_probability=(0.0, 0.0),
         rgb_patch_occlusion_probability=1.0,
         depth_patch_dropout_probability=1.0,
         patch_area_fraction=(0.04, 0.04),
+        calibration_warp_enabled=False,
     )
     randomizer = LiveObservationRandomizer(cfg, num_envs=1, device="cpu")
     randomizer.patch_center_x[:] = 0.5
@@ -150,3 +154,63 @@ def test_live_patch_occlusion_never_changes_goal_input_contract() -> None:
     assert (randomized_depth == cfg.depth_max_m).any()
     assert torch.equal(goal_rgb, original_goal_rgb)
     assert torch.equal(goal_depth, original_goal_depth)
+
+
+def test_disparity_error_produces_larger_metric_error_at_longer_range() -> None:
+    cfg = LiveObservationRandomizationCfg(
+        exposure_stops=(0.0, 0.0),
+        contrast=(1.0, 1.0),
+        gamma=(1.0, 1.0),
+        white_balance_gain=(1.0, 1.0),
+        vignette_strength=(0.0, 0.0),
+        rgb_noise_std=(0.0, 0.0),
+        blur_probability=0.0,
+        depth_scale=(1.0, 1.0),
+        depth_bias_m=(0.0, 0.0),
+        depth_noise_std_m=(0.0, 0.0),
+        disparity_bias_px=(0.05, 0.05),
+        disparity_independent_noise_std_px=(0.0, 0.0),
+        disparity_spatial_noise_std_px=(0.0, 0.0),
+        disparity_temporal_noise_std_px=(0.0, 0.0),
+        disparity_temporal_correlation=(0.0, 0.0),
+        stereo_edge_mismatch_probability=0.0,
+        depth_quantization_m=0.0,
+        depth_dropout_probability=(0.0, 0.0),
+        depth_edge_dropout_probability=(0.0, 0.0),
+        rgb_patch_occlusion_probability=0.0,
+        depth_patch_dropout_probability=0.0,
+        calibration_warp_enabled=False,
+    )
+    randomizer = LiveObservationRandomizer(cfg, num_envs=1, device="cpu")
+    rgb = torch.full((1, 2, 2, 3), 0.5)
+    depth = torch.tensor([[[[0.10], [0.10]], [[0.40], [0.40]]]])
+
+    _, noisy_depth = randomizer.apply(rgb, depth)
+
+    near_error = (noisy_depth[:, 0] - depth[:, 0]).abs().mean()
+    far_error = (noisy_depth[:, 1] - depth[:, 1]).abs().mean()
+    assert far_error > near_error * 8.0
+
+
+def test_depth_below_d405_reliable_range_becomes_invalid() -> None:
+    cfg = LiveObservationRandomizationCfg(
+        correlated_depth_enabled=False,
+        calibration_warp_enabled=False,
+        depth_scale=(1.0, 1.0),
+        depth_bias_m=(0.0, 0.0),
+        depth_noise_std_m=(0.0, 0.0),
+        depth_quantization_m=0.0,
+        stereo_edge_mismatch_probability=0.0,
+        depth_dropout_probability=(0.0, 0.0),
+        depth_edge_dropout_probability=(0.0, 0.0),
+        rgb_patch_occlusion_probability=0.0,
+        depth_patch_dropout_probability=0.0,
+    )
+    randomizer = LiveObservationRandomizer(cfg, num_envs=1, device="cpu")
+    rgb = torch.full((1, 2, 2, 3), 0.5)
+    depth = torch.tensor([[[[0.05], [0.07]], [[0.20], [0.50]]]])
+
+    _, noisy_depth = randomizer.apply(rgb, depth)
+
+    assert noisy_depth[0, 0, 0, 0] == cfg.depth_max_m
+    assert noisy_depth[0, 0, 1, 0] == cfg.depth_min_m

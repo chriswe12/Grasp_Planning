@@ -5,9 +5,15 @@ copying the local training-log tree. The immutable Apptainer image holds Isaac
 Sim and Isaac Lab. The external `isaac_rl` project is synchronized separately
 and made importable through `PYTHONPATH` at job startup.
 
-The configured Slurm job stays within the `mavt-pdz-euler-student` limits on
-the `es_meboldt` share: 8 CPU cores, 24 GiB system RAM, and one GPU. It asks for
-a GPU with at least 20 GiB of memory because the task uses RGB-D cameras.
+The deployment uses the `gimenol` staff login and the `es_meboldt` shareholder
+allocation. The safe default is still 8 CPU cores, 24 GiB system RAM, and one
+RTX 4090, while `submit.sh` accepts explicit GPU, memory, CPU, and time selectors
+for controlled capacity probes. The six-GPU, 48-core, and 144-GiB allocation is
+an aggregate ceiling. For two or more GPUs, the wrapper launches one Slurm task,
+Isaac Sim process, and RL-Games rank per GPU; gradients are synchronized by
+RL-Games, while each rank owns its own simulator, environment batch, policy
+replica, and VRAM allocation. Slurm isolates each renderer in a one-GPU task
+cgroup before Apptainer or Vulkan starts.
 
 ## What happens in each layer
 
@@ -22,7 +28,8 @@ a GPU with at least 20 GiB of memory because the task uses RGB-D cameras.
    command; Slurm queues the job until those resources are available.
 4. `job.sbatch` copies the large SIF and caches to node-local `$TMPDIR`, starts
    a one-second GPU-memory sampler, then launches the requested test or train
-   command through Apptainer.
+   command through Apptainer. Training also records allocator and whole-device
+   VRAM once per PPO epoch for long-run leak detection.
 5. The source checkout is mounted read-only, but its `logs/` directory is
    replaced by a writable bind mount to persistent Euler scratch. Checkpoints,
    TensorBoard events, Slurm logs, and GPU measurements therefore survive the
@@ -33,7 +40,7 @@ a GPU with at least 20 GiB of memory because the task uses RGB-D cameras.
 Verify SSH authentication first:
 
 ```bash
-ssh cwellan@euler.ethz.ch
+ssh euler-gimenol
 ```
 
 Enter the ETH password when prompted, then run `exit`. For repeated project
@@ -66,9 +73,9 @@ steps it ten times, but does not initialize PPO or save weights:
 The command prints `Submitted batch job JOB_ID`. Monitor it with:
 
 ```bash
-ssh cwellan@euler.ethz.ch 'squeue --me'
-ssh cwellan@euler.ethz.ch 'tail -n 100 /cluster/scratch/cwellan/grasping-rl-runs/slurm-JOB_ID.out'
-ssh cwellan@euler.ethz.ch 'tail -n 100 /cluster/scratch/cwellan/grasping-rl-runs/slurm-JOB_ID.err'
+ssh euler-gimenol 'squeue --me'
+ssh euler-gimenol 'tail -n 100 /cluster/scratch/gimenol/grasping-rl-runs/slurm-JOB_ID.out'
+ssh euler-gimenol 'tail -n 100 /cluster/scratch/gimenol/grasping-rl-runs/slurm-JOB_ID.err'
 ```
 
 A successful smoke log contains several `[SMOKE]` lines and a final line with
@@ -101,7 +108,7 @@ Run them progressively rather than all at once. After a probe completes, read
 its peak memory:
 
 ```bash
-ssh cwellan@euler.ethz.ch 'cat /cluster/scratch/cwellan/grasping-rl-runs/metrics/gpu-JOB_ID.summary.txt'
+ssh euler-gimenol 'cat /cluster/scratch/gimenol/grasping-rl-runs/metrics/gpu-JOB_ID.summary.txt'
 ```
 
 There is no reliable environment count that can be calculated in advance:
@@ -112,9 +119,64 @@ all scale linearly. Choose the largest count that completes with roughly
 count is more useful than the count that merely fills the most VRAM. The
 one-second sampler can miss a very short peak, so do not use the last few MiB.
 
-The job requests at least 20 GiB, not a specific GPU model. The job log records
-the exact assigned GPU and its total memory. Compare probes from the same GPU
-memory class before using their results to size a full run.
+The default requests an RTX 4090 and at least 20 GiB. Override the resource
+selector before the training arguments, for example:
+
+```bash
+./euler/submit.sh probe \
+    --gpu-type rtx_pro_6000 \
+    --gpu-memory 90G \
+    --time-limit 00:30:00 \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --num_envs 1024 \
+    --max_iterations 5 \
+    --headless \
+    --enable_cameras
+```
+
+`--gpu-type`, `--gpu-count`, `--gpu-memory`, `--cpus-per-gpu`,
+`--memory-per-cpu`, and `--time-limit` configure Slurm; all remaining flags are
+forwarded unchanged to the Isaac training script. The job log records the
+requested and assigned GPU. See [GPU_BENCHMARKS.md](GPU_BENCHMARKS.md) for the
+measured environment counts and active target-GPU probes.
+
+`--num_envs` is **per GPU** when `--gpu-count` is greater than one. For example,
+this two-GPU probe simulates 448 environments and collects a global
+`448 * 64 = 28,672`-sample rollout per PPO iteration:
+
+```bash
+./euler/submit.sh probe \
+    --gpu-type rtx_4090 \
+    --gpu-count 2 \
+    --gpu-memory 20G \
+    --time-limit 00:30:00 \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --num_envs 224 \
+    --max_iterations 5 \
+    --headless \
+    --enable_cameras
+```
+
+Do not add `--distributed`; the wrapper adds it and creates the matching Slurm
+tasks automatically. Each rank gets a distinct seed and an isolated GPU.
+RL-Games aggregates gradients and reports global throughput from rank zero.
+The batch job verifies every rank's completion marker and records peak VRAM for
+every allocated GPU. Multi-GPU does not combine GPU memory into one pool.
+
+Distributed training changes the global rollout and effective gradient batch.
+The configured 1,024-sample minibatch is treated as the target effective global
+batch, so four ranks automatically use 256 samples each. This keeps optimizer
+updates proportional to the larger rollout instead of silently making every
+gradient four times larger. The resolved local/global batch sizes and updates
+per epoch are printed and saved in `params/{agent,sim2real_profile}.yaml`.
+Independent one-GPU seeds and hyperparameter jobs remain preferable when the
+goal is more experimental evidence rather than lower wall-clock time for one policy.
+
+For a group of benchmark submissions from one unchanged checkout, perform the
+first submission normally. `EULER_SKIP_SYNC=1 ./euler/submit.sh ...` may then
+reuse that exact remote source snapshot. Never use this shortcut after editing
+the local project: a running job mounts the synchronized checkout read-only,
+and a later sync would change what queued jobs execute.
 
 The five-iteration probes normally do not produce weights: the current agent
 configuration starts best-model saving after iteration 20 and saves periodic
@@ -122,6 +184,68 @@ checkpoints every 50 iterations. Their purpose is task, PPO, and VRAM
 validation. Probe RL-Games and Hydra artifacts are written to node-local
 `$TMPDIR` and discarded when the allocation ends; only their Slurm output and
 GPU metrics remain in global scratch.
+
+A five-iteration probe proves only that the initial allocation fits. Use a
+long probe to prove that 256 environments per RTX 4090 remain stable:
+
+```bash
+./euler/submit.sh probe \
+    --gpu-type rtx_4090 \
+    --gpu-count 4 \
+    --gpu-memory 20G \
+    --time-limit 02:00:00 \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --num_envs 256 \
+    --max_iterations 200 \
+    --headless \
+    --enable_cameras
+```
+
+The automatic report is pulled to
+`logs/euler/metrics/gpu-JOB_ID.training-memory.json`. A `PASS` result means all
+ranks retained at least 1 GiB free and their fitted post-warm-up growth stayed
+below 0.50 MiB per epoch. This is a targeted regression check: the previous
+approximately 2 MiB/epoch growth is large enough to detect over the 175
+post-warm-up samples. Ordinary five-epoch probes report
+`INSUFFICIENT_SAMPLES`; this is not a failure, but it is also not a stability
+result.
+
+The rank-asymmetric growth came from the stock Isaac RL-Games observer retaining
+CUDA-backed episode dictionaries on nonzero ranks, which never execute the
+rank-zero-only statistics callback. The training entrypoint uses a rank-safe
+observer that skips those unused statistics on worker ranks while preserving
+rank-zero TensorBoard output.
+
+Two controlled full-training variants are selectable without changing the
+task or goal catalog:
+
+```bash
+# Combined baseline plus peripheral RGB-D clutter in 60% of environments.
+./euler/submit.sh train \
+    --gpu-type rtx_4090 --gpu-count 4 --gpu-memory 20G \
+    --time-limit 16:00:00 \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --num_envs 256 --global_minibatch_size 1024 \
+    --max_iterations 2500 --seed 43 \
+    --sim2real_profile combined_clutter \
+    --headless --enable_cameras
+
+# Combined baseline with stronger structured depth corruption and no clutter.
+./euler/submit.sh train \
+    --gpu-type rtx_4090 --gpu-count 4 --gpu-memory 20G \
+    --time-limit 16:00:00 \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --num_envs 256 --global_minibatch_size 1024 \
+    --max_iterations 2500 --seed 44 \
+    --sim2real_profile combined_depth_robust \
+    --headless --enable_cameras
+```
+
+Each collects the same approximately 163.84 million transitions as the
+four-GPU 2,500-iteration combined baseline. The clutter is render/depth-only
+and peripheral; it does not replace real-robot collision checking. The depth
+variant changes only depth-error ranges, retaining the baseline RGB,
+appearance, camera-warp, timing, control, reset, reward, and PPO settings.
 
 `sync_project.sh` also downloads the TorchVision ResNet-18 weights once into
 `.cache/euler/torch/`, verifies their checksum, and stages them in the Euler
@@ -158,8 +282,11 @@ new architecture, then start this revision without `--checkpoint`:
 ```bash
 ./euler/submit.sh train \
     --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0 \
+    --gpu-type rtx_4090 \
+    --gpu-count 4 \
+    --gpu-memory 20G \
     --num_envs 256 \
-    --max_iterations 10000 \
+    --max_iterations 3000 \
     --headless \
     --enable_cameras
 ```
@@ -169,7 +296,7 @@ new architecture, then start this revision without `--checkpoint`:
 All durable run output is written directly to:
 
 ```text
-/cluster/scratch/cwellan/grasping-rl-runs/
+/cluster/scratch/gimenol/grasping-rl-runs/
 ├── rl_games/grasp_visual_servo_rgbd/<timestamp>/
 │   ├── nn/*.pth                 policy checkpoints
 │   ├── params/{agent,env}.yaml exact run configuration
@@ -178,6 +305,8 @@ All durable run output is written directly to:
 │   └── ...                      multi-part policy artifacts
 ├── metrics/gpu-JOB_ID.csv       one-second GPU samples
 ├── metrics/gpu-JOB_ID.summary.txt
+├── metrics/gpu-JOB_ID.training-memory.json
+├── metrics/memory-JOB_ID/gpu_memory_rank_*.csv
 ├── slurm-JOB_ID.out             stdout
 └── slurm-JOB_ID.err             stderr
 ```
@@ -205,8 +334,10 @@ terminal to wait for Slurm and pull results automatically, for example:
 ```
 
 The watcher downloads results after both successful and failed jobs, then
-returns a failure status when Slurm did not report `COMPLETED`. The local PC
-must remain powered on, awake, network-connected, and able to SSH to Euler.
+returns a failure status when Slurm did not report `COMPLETED` or the expected
+application completion marker is absent. This second check matters because an
+Isaac Sim launcher can mask a child Python failure and still return zero. The
+local PC must remain powered on, awake, network-connected, and able to SSH to Euler.
 While training is active it reports the current/total epoch, percentage,
 total FPS, and an ETA estimated from observed progress. The first estimate
 includes simulator startup and becomes more accurate after another poll. It
@@ -237,6 +368,11 @@ artifacts. While training is active, the watcher reports epoch progress, FPS,
 training ETA, and the next validation epoch with its remaining epoch distance.
 `local_policy.sh` and the full benchmark prefer the selected checkpoint
 automatically.
+
+If Slurm reports `COMPLETED` but the application failed before creating an
+RL-Games run, the validation-aware watcher exits with an error and points to
+the pulled `logs/euler/slurm-JOB_ID.{out,err}` files instead of printing an
+empty result directory.
 
 Euler scratch is not backed up and files older than 15 days are purged. Treat
 it as persistent across compute jobs, not as archival storage.

@@ -18,6 +18,7 @@ from grasp_planning.rl.catalog_capture_validation import (
     validate_fresh_goal_catalog_capture,
 )
 from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_PROFILE
+from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
 
 
 def _write_paths(path: Path) -> None:
@@ -51,6 +52,7 @@ def _write_catalog(path: Path, *, scene_profile: str = VISUAL_SERVO_SCENE_PROFIL
         approach_gripper_profile=np.asarray(KUKA_Y_GRIPPER_APPROACH_PROFILE),
         visual_material_profile=np.asarray(VISUAL_SERVO_MATERIAL_PROFILE),
         visual_scene_profile=np.asarray(scene_profile),
+        visual_tslot_profile=np.asarray(VISUAL_SERVO_TSLOT_PROFILE),
         goal_camera_profile=np.asarray(D405_VISUAL_SERVO_CAMERA_PROFILE),
         goal_observation_profile=np.asarray(D405_VISUAL_SERVO_OBSERVATION_PROFILE),
     )

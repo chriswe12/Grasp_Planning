@@ -14,7 +14,7 @@ from grasp_planning.d405_wrist_camera import (
     VISUAL_SERVO_RENDER_WIDTH,
     D405WristCameraConfig,
     camera_pose_in_link7,
-    nominal_focal_lengths_from_fov,
+    camera_rotation_in_link7,
 )
 
 
@@ -24,7 +24,9 @@ def test_visual_servo_render_profile_keeps_native_intrinsic_reference() -> None:
     assert (config.width, config.height) == (848, 480)
     assert (VISUAL_SERVO_RENDER_WIDTH, VISUAL_SERVO_RENDER_HEIGHT) == (256, 144)
     assert (VISUAL_SERVO_OBSERVATION_WIDTH, VISUAL_SERVO_OBSERVATION_HEIGHT) == (128, 72)
-    assert "native_848x480_intrinsics" in D405_VISUAL_SERVO_CAMERA_PROFILE
+    assert "color_848x480_intrinsics_260322275185" in D405_VISUAL_SERVO_CAMERA_PROFILE
+    assert "hand_eye_link7_ee35mm" in D405_VISUAL_SERVO_CAMERA_PROFILE
+    assert "z180" in D405_VISUAL_SERVO_CAMERA_PROFILE
     assert "area_128x72" in D405_VISUAL_SERVO_OBSERVATION_PROFILE
 
 
@@ -39,38 +41,44 @@ def _quat_wxyz_to_matrix(quaternion: tuple[float, ...]) -> np.ndarray:
     )
 
 
-def test_nominal_d405_intrinsics_match_published_fov_placeholder() -> None:
-    fx, fy = nominal_focal_lengths_from_fov(
-        width=848,
-        height=480,
-        horizontal_fov_deg=84.0,
-        vertical_fov_deg=58.0,
+def test_deployed_d405_color_intrinsics_and_distortion_are_preserved() -> None:
+    config = D405WristCameraConfig()
+    assert config.fx == pytest.approx(436.3104248046875)
+    assert config.fy == pytest.approx(435.6492614746094)
+    assert config.cx == pytest.approx(418.62664794921875)
+    assert config.cy == pytest.approx(236.5121307373047)
+    assert config.distortion_model == "plumb_bob"
+    assert config.distortion_coefficients == pytest.approx(
+        (-0.05201759934425354, 0.05433472618460655, 0.0002693705027922988, 0.0008704775245860219, -0.017724450677633286)
     )
-    assert fx == pytest.approx(470.900, abs=1.0e-3)
-    assert fy == pytest.approx(432.971, abs=1.0e-3)
+    assert config.stereo_baseline_m == pytest.approx(0.018)
+    assert config.reliable_depth_range_m == pytest.approx((0.07, 0.50))
+    assert config.depth_unit_m == pytest.approx(0.0001)
 
 
-def test_cad_flange_to_camera_pose_is_used_directly_in_link7() -> None:
+def test_hand_eye_camera_pose_uses_link7_ee_offset_and_mount_z180_correction() -> None:
     config = D405WristCameraConfig()
     position_link7, quaternion_link7_camera = camera_pose_in_link7(config)
     rotation_camera_in_link7 = _quat_wxyz_to_matrix(quaternion_link7_camera)
     rotation_camera_in_ee = np.asarray(config.rotation_camera_in_calibration_parent).reshape(3, 3)
 
-    np.testing.assert_allclose(rotation_camera_in_link7, rotation_camera_in_ee, atol=1.0e-7)
+    mount_correction = np.diag((-1.0, -1.0, 1.0))
+    np.testing.assert_allclose(rotation_camera_in_link7, mount_correction @ rotation_camera_in_ee, atol=1.0e-7)
     np.testing.assert_allclose(
         rotation_camera_in_link7,
         (
-            (0.0, -np.sqrt(3.0) / 2.0, -0.5),
-            (1.0, 0.0, 0.0),
-            (0.0, -0.5, np.sqrt(3.0) / 2.0),
+            (-0.002321764157194206, 0.8654223294953782, -0.5010377241505786),
+            (-0.9994952228900846, 0.013866922434525808, 0.028583349735374547),
+            (0.03168452037033634, 0.5008511755731314, 0.8649532883895603),
         ),
         atol=1.0e-9,
     )
     np.testing.assert_allclose(
         position_link7,
-        (0.055667, 0.009, 0.070776),
+        (0.0556666756801677, 0.008999999999999992, 0.10577648943349074),
         atol=1.0e-9,
     )
+    np.testing.assert_allclose(rotation_camera_in_link7, camera_rotation_in_link7(config), atol=1.0e-9)
 
 
 def test_intrinsic_matrix_is_row_major() -> None:
@@ -83,10 +91,17 @@ def test_camera_parent_is_link7() -> None:
 
 
 def test_isaac_runner_has_no_detached_world_recording_camera() -> None:
-    runner = (Path(__file__).resolve().parents[1] / "scripts/run_fabrica_grasp_in_isaac.py").read_text(
-        encoding="utf-8"
-    )
+    runner = (Path(__file__).resolve().parents[1] / "scripts/run_fabrica_grasp_in_isaac.py").read_text(encoding="utf-8")
     assert "/World/ExecutionBenchmarkVideo/CameraSensor" not in runner
     assert "Attached D405 wrist camera under" in runner
     assert "if wrist_camera is not None and args_cli.record_video is not None:" in runner
     assert "grasp_observation_callback=_capture_visual_servo_goal" in runner
+
+
+def test_rl_action_frame_uses_the_same_corrected_camera_rotation_as_rendering() -> None:
+    environment = (
+        Path(__file__).resolve().parents[1] / "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
+    ).read_text(encoding="utf-8")
+
+    assert "camera_rotation_in_link7(self.camera_config)" in environment
+    assert "D405WristCameraConfig().rotation_camera_in_calibration_parent" not in environment

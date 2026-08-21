@@ -26,7 +26,7 @@ from grasp_planning.isaac_visual_scene import (
     VISUAL_SERVO_KEY_ROTATION_WXYZ,
 )
 
-LIVE_SCENE_APPEARANCE_PROFILE = "physical_light_shadow_material_randomization_v1"
+LIVE_SCENE_APPEARANCE_PROFILE = "physical_light_shadow_plus_per_env_workspace_randomization_v3"
 _SAMPLE_VALUE_COUNT = 13
 
 
@@ -101,11 +101,11 @@ class SceneAppearanceRandomizationCfg:
     )
     dome_intensity_scale: tuple[float, float] = (0.75, 1.25)
     light_temperature_shift: tuple[float, float] = (-0.08, 0.08)
-    part_color_scale: tuple[float, float] = (0.80, 1.20)
-    part_hue_shift_deg: tuple[float, float] = (-18.0, 18.0)
+    part_color_scale: tuple[float, float] = (0.90, 1.10)
+    part_hue_shift_deg: tuple[float, float] = (-5.0, 5.0)
     part_roughness: tuple[float, float] = (
         VISUAL_SERVO_PART_ROUGHNESS - 0.15,
-        VISUAL_SERVO_PART_ROUGHNESS + 0.15,
+        VISUAL_SERVO_PART_ROUGHNESS + 0.10,
     )
     finger_color_scale: tuple[float, float] = (0.80, 1.20)
     ground_color_scale: tuple[float, float] = (0.75, 1.25)
@@ -220,7 +220,12 @@ def sample_scene_appearance(
 
 
 class SceneAppearanceRandomizer:
-    """Update the shared Isaac light/material prims without touching goal RGB-D."""
+    """Update shared light/finger prims without touching goal RGB-D.
+
+    Part and T-slot colors are authored per environment by
+    :class:`LiveWorkspaceAppearanceRandomizer`; changing their shared canonical
+    materials here would incorrectly correlate all cloned environments.
+    """
 
     def __init__(
         self,
@@ -242,11 +247,11 @@ class SceneAppearanceRandomizer:
 
         self.stage = omni.usd.get_context().get_stage()
         required_lights = {"dome", "key"}
-        required_materials = {"brown_pla", "black_pla", "work_surface"}
+        required_materials = {"black_pla", "work_surface"}
         if not required_lights.issubset(self.light_paths):
             raise ValueError("Scene appearance randomization requires dome and key lights.")
         if not required_materials.issubset(self.material_paths):
-            raise ValueError("Scene appearance randomization requires part, finger, and work-surface materials.")
+            raise ValueError("Scene appearance randomization requires the shared finger material.")
 
     def _prim(self, path: str):
         prim = self.stage.GetPrimAtPath(path)
@@ -302,7 +307,6 @@ class SceneAppearanceRandomizer:
 
         key = self._prim(self.light_paths["key"])
         dome = self._prim(self.light_paths["dome"])
-        part = self._prim(f"{self.material_paths['brown_pla']}/Shader")
         finger = self._prim(f"{self.material_paths['black_pla']}/Shader")
         ground = self._prim(f"{self.material_paths['work_surface']}/Shader")
         w, x, y, z = sample.key_orientation_wxyz
@@ -317,8 +321,6 @@ class SceneAppearanceRandomizer:
             self._set_attribute(key, "inputs:color", sample.key_color)
             self._set_attribute(dome, "inputs:intensity", sample.dome_intensity)
             self._set_attribute(dome, "inputs:color", sample.dome_color)
-            self._set_attribute(part, "inputs:diffuseColor", sample.part_color)
-            self._set_attribute(part, "inputs:roughness", sample.part_roughness)
             self._set_attribute(finger, "inputs:diffuseColor", sample.finger_color)
             self._set_attribute(finger, "inputs:roughness", VISUAL_SERVO_FINGER_ROUGHNESS)
             self._set_attribute(ground, "inputs:diffuseColor", sample.ground_color)

@@ -86,7 +86,7 @@ APPTAINERENV_PYTHONPATH="${EULER_CONTAINER_PYTHONPATH}" \
     --bind "${REPO_ROOT}:/workspace/grasping_rl:ro" \
     "${local_image}" \
     /isaac-sim/python.sh -c \
-    "import importlib.util; assert importlib.util.find_spec('isaaclab'); assert importlib.util.find_spec('isaac_rl'); print('Isaac Lab and isaac_rl package paths OK')"
+    "import importlib.util; import grasp_planning; assert importlib.util.find_spec('isaaclab'); assert importlib.util.find_spec('isaac_rl'); print('Isaac Lab, isaac_rl, and grasp_planning package paths OK')"
 
 smoke_dir="$(mktemp -d /tmp/isaaclab-euler-smoke.XXXXXX)"
 mkdir -p \
@@ -118,6 +118,7 @@ APPTAINERENV_TERM=xterm \
     --pwd /workspace/grasping_rl \
     "${local_image}" \
     /isaac-sim/python.sh isaac_rl/scripts/smoke_env.py \
+    --task Grasp-Visual-Servo-RGBD-MultiPart-Direct-Play-v0 \
     --steps 1 --num_envs 1 --headless
 
 remote_image_dir="$(dirname "${EULER_IMAGE_PATH}")"

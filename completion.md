@@ -1,9 +1,120 @@
 # Visual-Servo Training Revision Completion
 
-Date: 2026-08-14
+Date: 2026-08-14 through 2026-08-21
 Source branch: `grasping-rl`
 Source commit at start: `5159a1959c0cba818e4210d9e517f25c323df47f`
-Change status: local-only in an already dirty worktree
+Change status at start: local-only in an already dirty worktree
+
+## 2026-08-21 Final Verification And Publication
+
+The nested `isaac_rl` repository was committed as `93365b9` on its `master`
+branch. The parent `grasping-rl` branch contains the camera, observation,
+sim-to-real profile, visual workspace, Euler deployment, diagnostics, assets,
+tests, plans, and architecture documentation that support that environment.
+
+Final host verification completed with 360 passing tests and two expected
+RL-Games dependency skips. The nested Isaac test suite completed in the Isaac
+Python environment with 25 passing tests and one optional skip. Ruff, Python
+compilation, shell syntax, and Git whitespace checks passed. During this final
+pass, the standalone T-slot preview helper's late-import boundary was corrected
+so STEP-to-USD conversion receives `schemas_cfg` explicitly instead of relying
+on a function-local import.
+
+Four-GPU baseline job `11417200` supplied the first live check of the
+distributed-observer memory fix. Across epochs 29--34, all four ranks remained
+flat at approximately 9,972--9,996 MiB PyTorch allocated, with 2.58--2.78 GiB
+device memory free. In particular, ranks one through three no longer showed
+the previous approximately 2.2 MiB/epoch asymmetric growth. This is strong
+early evidence rather than the formal long-run verdict: the analyzer requires
+150 post-warm-up samples before reporting `PASS`.
+
+## 2026-08-20 Euler launch reliability fix
+
+Euler job `11219636` did not create a training run. Its pulled stderr showed
+`ModuleNotFoundError: No module named 'grasp_planning'`, while Isaac Sim's
+`python.sh` masked the child failure and caused Slurm to record `COMPLETED 0:0`.
+
+The deployment now exports `/workspace/grasping_rl` in the container
+`PYTHONPATH`, bootstraps the repository root in the train, evaluation, and smoke
+entrypoints, and validates `grasp_planning` before simulator startup. Batch jobs
+also require explicit import and application completion markers, so a masked
+Python failure returns a failed Slurm status. Both watcher variants reject a
+Slurm-only success when the expected run or completion marker is missing and
+point to the pulled stdout/stderr logs.
+
+## 2026-08-21 T-slot scale correction
+
+The canonical T-slot workspace remains active for goal capture, training,
+playback, and evaluation. The previous prototype's 10 mm slots, 41 mm lands,
+and 51 mm pitch appeared too large in the close wrist view. The authored land
+centers now use 25.5 mm pitch while retaining 20.5 mm-wide aluminum lands,
+leaving approximately 5 mm dark slots. Collision remains the flat z=0 plane.
+
+The visual material, scene, workspace, and sim-to-real profile identifiers were
+bumped. The multipart catalog/contact sheet were regenerated with the smaller
+canonical T-slot.
+
+## 2026-08-21 Distributed episode-statistics memory leak fix
+
+Four-GPU job `11408451` showed that the earlier reusable gradient buffers were
+not the complete memory fix. Rank zero remained flat at approximately
+9,972 MiB allocated, while ranks one through three retained approximately
+2.2 MiB per PPO epoch. The asymmetry traced the remaining leak to RL-Games'
+stock `IsaacAlgoObserver`: every rank appended CUDA-backed episode dictionaries,
+but RL-Games calls the statistics writer and its `ep_infos.clear()` only on
+global rank zero.
+
+Training now uses a distributed-safe observer. Nonzero ranks do not collect
+episode logging tensors because they have no writer, while rank zero preserves
+the existing TensorBoard metrics and clears all observer state normally. A
+behavior test verifies that an episode tensor presented to rank two is not
+retained. Job `11408451` was cancelled and its partial checkpoints and logs
+were pulled before the fix.
+
+The corrected small-pitch catalog and actual `combined_sim2real` task were also
+rendered through the complete 72 x 128 x 8 policy preprocessing path. The
+verification stage contained zero clutter/distractor prims; clutter remains a
+preview-only experiment and is not part of baseline training.
+
+## 2026-08-20 T-slot workspace and live appearance integration
+
+> Updated on 2026-08-21: the T-slot remains canonical, but its rendered pattern
+> is now half-scale. See the correction above.
+
+The accepted T-slot/palette preview has been moved out of `.cache` and wired
+into goal capture and the actual RL environment. The canonical reference now
+uses muted brown PLA parts, matte yellow fingers, and a neutral aluminum plate
+with 10 mm slots, 41 mm lands, and 51 mm pitch. The tracked plate USD has no
+physics or collision schema. `/World/GroundPlane` is invisible to the renderer
+but remains the sole flat z=0 workspace collision surface, so grooves affect RGB
+and depth without creating reset or policy collisions.
+
+Training-only part color is selected independently per environment from a
+weighted 24-color muted FDM palette. Each selected part preset also receives
+bounded continuous HSV/value and roughness jitter. The live aluminum response
+is mostly neutral with rarer cool/dim and warm/bright presets plus independent
+continuous color/roughness jitter. T-slot geometry is sampled once per cloned
+environment as 60% nominal, 20% phase-shifted, and 20% continuously rotated
+through the unique -90 to +90 degree range. The stress profile broadens that to
+40/25/35. This models changes in table-relative appearance as the movable part
+is presented at different yaw angles while retaining one flat collision plane.
+The target catalog is never randomized and always uses the canonical part,
+background, and layout.
+Existing bounded key-light rotation continues to move shadow direction over
+training, while the calibrated camera uncertainty remains at +/-1% scale,
++/-1.5 pixels, and +/-1 degree rather than the preview's excessive 3--5% idea.
+
+The material, scene, and workspace profile identifiers were bumped and the
+full 1,256-image goal catalog was regenerated. All targets passed: zero pose,
+rotation, or image-quality failures, with worst capture mismatch 0.588 mm and
+0.0969 degrees. The new contact sheet is under
+`artifacts/plumbers_block_catalog_debug/goal_rgb_contact_sheet.png`.
+
+Verification: 346 repository tests passed with one optional RL-Games import
+skip outside Isaac; Ruff passed. A four-target canonical capture and the full
+1,256-target capture both passed. An eight-environment combined-profile smoke
+selected distinct part colors plus nominal, phase-shifted, and rotated T-slot
+layouts, completed one policy step, and reported zero collisions.
 
 ## Outcome
 
@@ -17,6 +128,81 @@ held-out periodic validation/checkpoint-selection workflow.
 
 This is an architecture and observation-contract change. Training must start
 fresh; checkpoints from before this revision are not load-compatible.
+
+## 2026-08-19 D405 Sim-to-Real Extension
+
+The active camera and observation contract is now v7/v3. Rendering and
+camera-frame control share the same corrected hand-eye rotation, and live plus
+goal RGB-D pass through one validity-aware area-resize/normalization path. The
+full multipart catalogue was rerendered after freezing this contract: all
+1,256 targets passed, with 1,012 train, 125 validation, and 119 test targets;
+the worst capture mismatch was 0.588 mm and 0.0969 degrees.
+
+The live-only D405 model no longer treats metric depth pixels as independent.
+It perturbs disparity with episode-stable low-frequency structure, an AR-like
+temporal component, and a smaller independent residual, then applies
+quantization, range invalidation, sparse/edge dropout, and horizontal stereo
+boundary failures. A coupled RGB-D affine warp approximates bounded intrinsic
+and small hand-eye uncertainty until device-specific calibration is measured.
+
+At the 30 Hz policy boundary, the environment now samples live-frame latency
+and rare repeats, motion-command delay, actuator response scale/bias/filtering,
+and arm stiffness/damping. Completion hold remains immediate and is never put
+through the motion delay. Fifteen percent of combined-profile environments are
+clean. Object mass and contact friction are intentionally unchanged because
+the part is kinematic and this policy terminates before grasp contact.
+
+Nine named profiles make ablation and stress results reproducible:
+`nominal`, `sensor_only`, `camera_uncertainty`, `timing_control`, `appearance`,
+`combined_sim2real`, `combined_clutter`, `combined_depth_robust`, and
+`stress_test`. Training defaults to the combined
+profile; evaluation defaults to nominal. Exact overrides, camera profile, and
+observation profile are written to run YAML and TensorBoard text and embedded
+in evaluation JSON/Markdown/CSV outputs.
+
+The provisional profile is based on documented D405/D400 properties: 18 mm
+stereo baseline, 7--50 cm operating range, 1/32-pixel subpixel disparity, and
+0.1 mm close-range depth units. It is versioned
+`d405_documented_provisional_v5`; real plane captures should later replace the
+range values without changing the observation interface.
+
+New diagnostics include
+`scripts/render_d405_randomization_grid.py` and
+`artifacts/d405_randomization/provisional_sensor_grid.png`. The exact remaining
+recording-dependent work is fitting the real sensor distribution, checking
+persistent bracket/cable silhouettes, offline real-frame policy replay, and
+safe closed-loop robot validation.
+
+Verification for this extension: 329 repository tests passed with one optional
+RL-Games import skip outside the Isaac environment; Ruff passed; a four-
+environment multipart Isaac smoke completed two steps with zero collisions.
+The additional forced full-strength smoke mode was added, but its second GPU
+launch was blocked by the execution service's approval/usage limit.
+
+## 2026-08-21 Controlled Clutter And Depth-Robust Training Variants
+
+Two controlled variants now extend the unchanged `combined_sim2real` baseline.
+`combined_clutter` places one to three deterministic peripheral colored props
+in 60% of cloned environments while retaining 40% clean environments. Props
+affect rendered RGB and depth but have no collision or rigid-body schemas; they
+remain outside the nominal target/approach corridor and the workspace collision
+surface stays the flat `/World/GroundPlane`. This is visual distractor training,
+not a physical-clutter avoidance controller.
+
+`combined_depth_robust` keeps clutter disabled and changes only depth-error
+ranges. It moderately expands metric scale/bias/residual noise, structured
+fixed and temporal disparity error, stereo-boundary mismatch, sparse/edge
+dropout, and depth-patch loss. It preserves 15% clean episodes plus the current
+RGB, camera-warp, timing, control, appearance, reset, reward, and PPO settings.
+The stronger values bracket uncertainty before the two real D405 units are
+measured and are not claimed as camera specifications.
+
+The active profile namespace is now
+`d405_documented_provisional_v5`. Exact one-environment scene/policy renders
+are saved under `artifacts/training_visual_check_clutter/` and
+`artifacts/training_visual_check_depth_robust/`. Four-environment, two-step
+Isaac smokes completed for both variants; clutter instantiated in two of four
+environments with five total props, and both runs reported zero collision rate.
 
 ## Implementation Plan Used
 
@@ -320,10 +506,53 @@ ISAAC_RL_POLICY=multipart ./euler/local_policy.sh evaluate \
   policy action collision-free or introduce arbitrary arm-link SDF shaping.
 - Online failure scores are not checkpoint state; a restarted training process
   relearns them.
-- Physical material/light randomization is global across cloned environments at
-  each cadence because the rendered materials and lights are shared.
+- Key-light direction and intensity remain global at each slow cadence. Part
+  palette and T-slot appearance are now independent per environment and stable
+  for the episode.
 - Validation runs require the local PC and GPU to remain available. They do not
   consume the one-GPU Euler allocation and therefore can overlap cluster
   training.
 - The new run should be compared by held-out validation success and termination
   breakdown, not training return alone.
+
+## 2026-08-20 Euler GPU Selection And Capacity Probes
+
+Euler deployment now targets the `gimenol` staff login and persistent paths in
+`/cluster/home/gimenol` and `/cluster/scratch/gimenol`. `euler/submit.sh`
+accepts per-job GPU type/count, minimum GPU memory, CPU-per-GPU,
+memory-per-CPU, and time-limit selectors while retaining one RTX 4090 as the
+safe default. The submission validates the six-GPU/48-core shareholder ceiling
+before calling `sbatch` and logs both requested and assigned hardware. GPU counts
+greater than one now launch one Slurm task and RL-Games process per allocated
+GPU on the same node. Each task receives a one-GPU cgroup before Apptainer and
+Vulkan start; each rank owns `--num_envs` environments, a simulator, rollout
+buffer, and model replica, while RL-Games synchronizes gradients. The job uses
+one shared rank-stable experiment name, writes configuration/checkpoints from rank zero,
+requires a completion marker from every rank, samples VRAM on every GPU, and
+reports the global rollout batch for watcher ETA calculations.
+
+Two matched single-node probes completed from the same synchronized snapshot.
+Job `11327083` used two RTX 4090 GPUs with 224 envs per rank (448 total),
+completed both ranks, averaged 2,243 FPS over epochs 2--5, and peaked at
+21,992--22,328 MiB per GPU. Job `11327086` used four GPUs with 224 envs per
+rank (896 total), completed all four ranks, averaged 4,506 FPS, and peaked at
+21,874--22,354 MiB. Relative to the 1,263 FPS one-GPU baseline these are 1.78x
+and 3.57x aggregate throughput, with essentially unchanged FPS per simulated
+environment.
+
+An earlier torchrun design exposed multiple Vulkan GPUs to every Isaac process,
+which fails for the USD-RT RGB-D camera when a process selects logical GPU 1.
+Remapping inside a torchrun child was also too late for Vulkan. The corrected
+launcher uses `srun --gpus-per-task=1 --gpu-bind=single:1`, forwards each task's
+rank and one-GPU visibility through Apptainer, and lets every renderer use its
+private logical `cuda:0` while RL-Games/NCCL retain the global ranks.
+
+The current camera-enabled multipart randomization completed a five-iteration,
+256-environment RTX 4090 probe in job `11319881`: peak VRAM was 22,656 of
+24,564 MiB, stable total throughput was 1,249--1,281 FPS, and PPO training time
+was 75.9 seconds. This confirms 256 envs can run but leaves only 7.8% memory;
+224 envs is the long-run recommendation on a 24 GB card. Target probes are
+queued for RTX PRO 6000 96 GB at 512, 1,024, and 1,280 envs and for A100 80 GB
+at 256 envs. Their measured results, rather than proportional VRAM scaling,
+will determine the larger production setting. The durable benchmark table and
+commands live in `euler/GPU_BENCHMARKS.md`.

@@ -21,9 +21,10 @@ from grasp_planning.rl.visual_servo_dataset import MmapVisualServoFrameDataset
 from scripts.build_visual_servo_training_cache import _area_resize
 
 
-def test_canonical_scene_is_dark_matte_with_a_stronger_shape_key() -> None:
+def test_canonical_scene_is_small_tslot_with_yellow_fingers_and_a_stronger_shape_key() -> None:
     assert "dome_directional_dlaa" in VISUAL_SERVO_SCENE_PROFILE
-    assert "readable_black_fingers" in VISUAL_SERVO_MATERIAL_PROFILE
+    assert "small_tslot" in VISUAL_SERVO_SCENE_PROFILE
+    assert "yellow_fingers" in VISUAL_SERVO_MATERIAL_PROFILE
     assert max(VISUAL_SERVO_GROUND_COLOR) <= 0.10
     assert VISUAL_SERVO_KEY_INTENSITY > VISUAL_SERVO_DOME_INTENSITY
 
@@ -67,4 +68,4 @@ def test_legacy_nearest_sampled_training_cache_is_rejected(tmp_path) -> None:
 
 
 def test_observation_profile_records_area_filtered_policy_shape() -> None:
-    assert D405_VISUAL_SERVO_OBSERVATION_PROFILE == "rgbd_render_256x144_area_128x72_v2"
+    assert D405_VISUAL_SERVO_OBSERVATION_PROFILE == "rgbd_render_256x144_valid_area_128x72_d405_range_v3"
