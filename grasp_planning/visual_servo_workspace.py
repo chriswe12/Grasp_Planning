@@ -24,6 +24,12 @@ VISUAL_SERVO_TSLOT_PROFILE = "aluminum_tslot_half_scale_5mm_slot_20p5mm_land_fla
 VISUAL_SERVO_TSLOT_CENTER = (0.425, 0.05, 0.0)
 VISUAL_SERVO_TSLOT_PITCH_M = 0.0255
 VISUAL_SERVO_TSLOT_SCALE = (1.0, 1.0, 1.0)
+VISUAL_SERVO_TSLOT_ALUMINUM_COLOR = (0.58, 0.61, 0.64)
+VISUAL_SERVO_TSLOT_ALUMINUM_METALLIC = 1.0
+VISUAL_SERVO_TSLOT_ALUMINUM_ROUGHNESS = 0.25
+VISUAL_SERVO_TSLOT_SLOT_COLOR = (0.055, 0.065, 0.075)
+VISUAL_SERVO_TSLOT_SLOT_METALLIC = 0.55
+VISUAL_SERVO_TSLOT_SLOT_ROUGHNESS = 0.42
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,12 @@ class SurfaceAppearance:
 
 
 VISUAL_SERVO_TSLOT_BACKGROUNDS: tuple[TSlotBackgroundAppearance, ...] = (
-    TSlotBackgroundAppearance("neutral", (0.58, 0.61, 0.64), 0.25, 0.75),
+    TSlotBackgroundAppearance(
+        "neutral",
+        VISUAL_SERVO_TSLOT_ALUMINUM_COLOR,
+        VISUAL_SERVO_TSLOT_ALUMINUM_ROUGHNESS,
+        0.75,
+    ),
     TSlotBackgroundAppearance("cool_dim", (0.46, 0.52, 0.60), 0.27, 0.15),
     TSlotBackgroundAppearance("warm_bright", (0.64, 0.57, 0.48), 0.48, 0.10),
 )
@@ -434,11 +445,17 @@ __all__ = [
     "TSlotLayoutVariant",
     "VISUAL_SERVO_CANONICAL_TSLOT_BACKGROUND_INDEX",
     "VISUAL_SERVO_TSLOT_ASSET",
+    "VISUAL_SERVO_TSLOT_ALUMINUM_COLOR",
+    "VISUAL_SERVO_TSLOT_ALUMINUM_METALLIC",
+    "VISUAL_SERVO_TSLOT_ALUMINUM_ROUGHNESS",
     "VISUAL_SERVO_TSLOT_BACKGROUNDS",
     "VISUAL_SERVO_TSLOT_CENTER",
     "VISUAL_SERVO_TSLOT_PITCH_M",
     "VISUAL_SERVO_TSLOT_PROFILE",
     "VISUAL_SERVO_TSLOT_SCALE",
+    "VISUAL_SERVO_TSLOT_SLOT_COLOR",
+    "VISUAL_SERVO_TSLOT_SLOT_METALLIC",
+    "VISUAL_SERVO_TSLOT_SLOT_ROUGHNESS",
     "sample_tslot_layout_variants",
     "sample_surface_appearance",
     "sample_weighted_tslot_background_index",

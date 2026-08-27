@@ -7,13 +7,13 @@ planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
   num_surface_samples: 256
-  min_jaw_width: 0.002
-  max_jaw_width: 0.084
+  min_jaw_width: 0.012
+  max_jaw_width: 0.062
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
-  detailed_finger_contact_gap_m: 0.002
-  gripper_collision_model: "kuka_y_gripper"
+  detailed_finger_contact_gap_m: 0.005
+  gripper_collision_model: "pdz_gripper"
   floor_clearance_margin_m: 0.01
   top_grasp_score_weight: 0.35
   regrasp_transfer_top_grasp_score_weight: 0.70
@@ -52,12 +52,12 @@ isaac_execution:
   enabled: true
   python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
   part_usd: ""  # optional; runner generates a bundle-local USD by default
-  fr3_usd: "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
+  fr3_usd: "assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd"
   controller: "moveit"
   grasp_id: "g1973"
   pregrasp_offset: 0.10
   gripper_width_clearance: 0.01
-  contact_gap_m: 0.002
+  contact_gap_m: 0.005
   lift_height_m: 0.08
   success_height_margin_m: 0.05
   close_width: 0.0
@@ -103,7 +103,7 @@ isaac_execution:
   moveit_frame_id: "lbr_link_0"
   moveit_target_position_signs: [1.0, 1.0, 1.0]
   moveit_planning_group: "arm"
-  moveit_pose_link: "gripper_tcp"
+  moveit_pose_link: "pdz_gripper_tcp"
   moveit_namespace: "/lbr"
   moveit_joint_names:
     - "lbr_A1"

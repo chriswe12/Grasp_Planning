@@ -11,8 +11,11 @@ VISUAL_SERVO_RENDER_WIDTH = 256
 VISUAL_SERVO_RENDER_HEIGHT = 144
 VISUAL_SERVO_OBSERVATION_WIDTH = 128
 VISUAL_SERVO_OBSERVATION_HEIGHT = 72
+D405_LEGACY_HAND_EYE_MOUNT_PROFILE = "legacy_hand_eye_link7_ee35mm_z180_v7"
+D405_PDZ_NAMED_FRAME_MOUNT_PROFILE = "pdz_named_frame_link7_mount35mm_rpy30_0_180_v1"
 D405_VISUAL_SERVO_CAMERA_PROFILE = (
-    "d405_color_848x480_intrinsics_260322275185_render_256x144_hand_eye_link7_ee35mm_z180_v7"
+    "d405_color_848x480_intrinsics_260322275185_render_256x144_"
+    f"{D405_PDZ_NAMED_FRAME_MOUNT_PROFILE}"
 )
 D405_VISUAL_SERVO_OBSERVATION_PROFILE = "rgbd_render_256x144_valid_area_128x72_d405_range_v3"
 
@@ -49,6 +52,10 @@ class D405WristCameraConfig:
     depth_unit_m: float = 0.0001
     update_period_s: float = 0.0
     include_privileged_mask: bool = True
+    # The RL and deployment contract now uses the camera frame authored by the
+    # physical PDZ gripper model. The legacy hand-eye profile remains
+    # selectable for old Y-gripper pipeline diagnostics.
+    mount_profile: str = D405_PDZ_NAMED_FRAME_MOUNT_PROFILE
     # Hand-eye calibration for RealSense serial 260322275185 maps the camera
     # optical frame into MoveIt's lbr_link_ee.  MoveIt defines lbr_link_ee as
     # a fixed child of link7 at +35 mm local Z, with identity rotation.
@@ -105,6 +112,15 @@ def nominal_focal_lengths_from_fov(
 def camera_pose_in_link7(config: D405WristCameraConfig) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """Return the camera pose expressed in Isaac's flange/link7 frame."""
 
+    if config.mount_profile == D405_PDZ_NAMED_FRAME_MOUNT_PROFILE:
+        # Exact composed link7 -> PDZ-base (+35 mm) -> D405 optical transform
+        # audited against the named URDF frame. This is the optical/sensor
+        # origin, not the camera housing centre.
+        position = (0.009, -0.050560254038, 0.097927071163)
+        rotation = _rpy_xyz_to_rotation_matrix(math.pi / 6.0, 0.0, math.pi)
+        return position, _rotation_matrix_to_quaternion_wxyz(rotation)
+    if config.mount_profile != D405_LEGACY_HAND_EYE_MOUNT_PROFILE:
+        raise ValueError(f"Unsupported D405 mount profile '{config.mount_profile}'.")
     translation_camera_in_calibration_parent = np.asarray(
         config.translation_camera_in_calibration_parent_m, dtype=float
     )
@@ -120,6 +136,10 @@ def camera_pose_in_link7(config: D405WristCameraConfig) -> tuple[tuple[float, ..
 def camera_rotation_in_link7(config: D405WristCameraConfig) -> np.ndarray:
     """Return the corrected camera-to-link7 rotation used by render and control."""
 
+    if config.mount_profile == D405_PDZ_NAMED_FRAME_MOUNT_PROFILE:
+        return _rpy_xyz_to_rotation_matrix(math.pi / 6.0, 0.0, math.pi)
+    if config.mount_profile != D405_LEGACY_HAND_EYE_MOUNT_PROFILE:
+        raise ValueError(f"Unsupported D405 mount profile '{config.mount_profile}'.")
     calibrated_rotation = np.asarray(config.rotation_camera_in_calibration_parent, dtype=float).reshape(3, 3)
     if not np.allclose(calibrated_rotation.T @ calibrated_rotation, np.eye(3), atol=1.0e-5):
         raise ValueError("D405 EE-to-camera rotation must be orthonormal.")
@@ -133,6 +153,22 @@ def camera_rotation_in_link7(config: D405WristCameraConfig) -> np.ndarray:
         dtype=float,
     )
     return correction @ calibrated_rotation
+
+
+def _rpy_xyz_to_rotation_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """Return the URDF fixed-axis XYZ rotation matrix."""
+
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    return np.asarray(
+        (
+            (cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
+            (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
+            (-sp, cp * sr, cp * cr),
+        ),
+        dtype=float,
+    )
 
 
 def _rotation_matrix_to_quaternion_wxyz(rotation: np.ndarray) -> tuple[float, float, float, float]:

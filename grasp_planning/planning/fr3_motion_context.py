@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import torch
@@ -9,6 +10,8 @@ import torch
 from grasp_planning.start_poses import (
     KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
     KUKA_Y_GRIPPER_TRAVEL_M,
+    PDZ_GRIPPER_CLOSED_WIDTH_M,
+    PDZ_GRIPPER_TRAVEL_M,
     gripper_max_open_width,
     is_gripper_command_joint_name,
 )
@@ -148,6 +151,7 @@ class FR3MotionContext:
 
     _EE_PATTERNS = (
         r"gripper_tcp",
+        r"pdz_gripper_tcp",
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
@@ -160,9 +164,23 @@ class FR3MotionContext:
     )
     _EE_TO_TCP_OFFSETS = {
         "panda_hand": (0.0, 0.0, 0.107),
+        # Isaac's URDF importer collapses the fixed TCP child into the PDZ
+        # gripper-base body. Reapply the named-frame transform here.
+        "pdz_gripper_base_link": (0.0, 0.0, 0.1355),
+    }
+    _EE_TO_TCP_QUAT_WXYZ = {
+        "pdz_gripper_base_link": (
+            math.sqrt(0.5),
+            0.0,
+            0.0,
+            -math.sqrt(0.5),
+        ),
     }
     _ARM_JOINT_PATTERN = r"(?:(?:panda|fr3)_joint[1-7]|joint[1-7])"
-    _HAND_JOINT_PATTERN = r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint)"
+    _HAND_JOINT_PATTERN = (
+        r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint|"
+        r"pdz_gripper_(?:left|right)_finger_joint)"
+    )
     _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _EE_POSITION_CORRECTION_GAIN = 2.0
@@ -176,6 +194,7 @@ class FR3MotionContext:
         self.sim = sim
         self.ee_body_name, self.ee_body_idx = self._resolve_ee_body()
         self.ee_to_tcp_offset = self._resolve_ee_to_tcp_offset(self.ee_body_name)
+        self.ee_to_tcp_quat_wxyz = self._resolve_ee_to_tcp_quat(self.ee_body_name)
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
         self.arm_joint_names, self.arm_joint_ids = self._resolve_joint_ids(self._ARM_JOINT_PATTERN)
         self.hand_joint_names, self.hand_joint_ids = self._resolve_joint_ids(self._HAND_JOINT_PATTERN)
@@ -249,14 +268,26 @@ class FR3MotionContext:
         ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
         ee_pos_w = ee_pose_w[:, :3]
         ee_quat_w = ee_pose_w[:, 3:7]
-        if self.ee_to_tcp_offset is None:
+        if self.ee_to_tcp_offset is None and self.ee_to_tcp_quat_wxyz is None:
             return ee_pos_w.clone(), ee_quat_w.clone()
 
-        from isaaclab.utils.math import quat_apply
+        from isaaclab.utils.math import quat_apply, quat_mul
 
-        offset_b = self._ee_to_tcp_offset_tensor()
-        tcp_pos_w = ee_pos_w + quat_apply(ee_quat_w, offset_b)
-        return tcp_pos_w.clone(), ee_quat_w.clone()
+        tcp_pos_w = ee_pos_w
+        if self.ee_to_tcp_offset is not None:
+            tcp_offset = self._ee_to_tcp_offset_tensor().expand(
+                ee_quat_w.shape[0], -1
+            )
+            tcp_pos_w = tcp_pos_w + quat_apply(
+                ee_quat_w, tcp_offset
+            )
+        tcp_quat_w = ee_quat_w
+        if self.ee_to_tcp_quat_wxyz is not None:
+            tcp_rotation = self._ee_to_tcp_quat_tensor().expand(
+                ee_quat_w.shape[0], -1
+            )
+            tcp_quat_w = quat_mul(ee_quat_w, tcp_rotation)
+        return tcp_pos_w.clone(), tcp_quat_w.clone()
 
     def get_body_positions_w(self, body_names: tuple[str, ...]) -> dict[str, torch.Tensor]:
         positions: dict[str, torch.Tensor] = {}
@@ -408,6 +439,13 @@ class FR3MotionContext:
                 targets[:, index] = (
                     -close_distance if name == "right_finger_joint" else close_distance
                 )
+            elif name in {
+                "pdz_gripper_left_finger_joint",
+                "pdz_gripper_right_finger_joint",
+            }:
+                targets[:, index] = (
+                    0.5 * (widths - PDZ_GRIPPER_CLOSED_WIDTH_M)
+                ).clamp(min=0.0, max=PDZ_GRIPPER_TRAVEL_M)
             else:
                 targets[:, index] = widths
         return targets
@@ -502,7 +540,12 @@ class FR3MotionContext:
         )
         desired_tcp_quat_w = quat_mul(desired_grasp_quat_w, grasp_to_tcp_quat_w)
         desired_tcp_position_w = desired_grasp_position_w - quat_apply(desired_tcp_quat_w, tcp_to_grasp_center_b)
-        desired_ee_position_w = self._tcp_position_to_ee_position_w(desired_tcp_position_w, desired_tcp_quat_w)
+        desired_ee_quat_w = self._tcp_orientation_to_ee_orientation_w(
+            desired_tcp_quat_w
+        )
+        desired_ee_position_w = self._tcp_position_to_ee_position_w(
+            desired_tcp_position_w, desired_ee_quat_w
+        )
 
         ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
         ee_pos_w = ee_pose_w[:, :3]
@@ -513,7 +556,7 @@ class FR3MotionContext:
 
         ee_pos_b, ee_quat_b = subtract_frame_transforms(root_pos_w, root_quat_w, ee_pos_w, ee_quat_w)
         desired_pos_b, desired_quat_b = subtract_frame_transforms(
-            root_pos_w, root_quat_w, desired_ee_position_w, desired_tcp_quat_w
+            root_pos_w, root_quat_w, desired_ee_position_w, desired_ee_quat_w
         )
         desired_pose_b = torch.cat((desired_pos_b, desired_quat_b), dim=1)
         ik_controller.set_command(desired_pose_b)
@@ -554,8 +597,11 @@ class FR3MotionContext:
         desired_tcp_position_w = desired_grasp_position_w - quat_apply(
             desired_tcp_quat_w, tcp_to_grasp_center_b
         )
+        desired_ee_quat_w = self._tcp_orientation_to_ee_orientation_w(
+            desired_tcp_quat_w
+        )
         desired_ee_position_w = self._tcp_position_to_ee_position_w(
-            desired_tcp_position_w, desired_tcp_quat_w
+            desired_tcp_position_w, desired_ee_quat_w
         )
 
         ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
@@ -571,7 +617,7 @@ class FR3MotionContext:
             root_pos_w,
             root_quat_w,
             desired_ee_position_w,
-            desired_tcp_quat_w,
+            desired_ee_quat_w,
         )
         ik_controller.set_command(torch.cat((desired_pos_b, desired_quat_b), dim=1))
 
@@ -636,18 +682,50 @@ class FR3MotionContext:
     def _resolve_ee_to_tcp_offset(self, body_name: str) -> tuple[float, float, float] | None:
         return self._EE_TO_TCP_OFFSETS.get(body_name)
 
+    def _resolve_ee_to_tcp_quat(
+        self, body_name: str
+    ) -> tuple[float, float, float, float] | None:
+        return self._EE_TO_TCP_QUAT_WXYZ.get(body_name)
+
     def _ee_to_tcp_offset_tensor(self) -> torch.Tensor:
         offset = self.ee_to_tcp_offset
         if offset is None:
             return torch.zeros((1, 3), dtype=torch.float32, device=self.device)
         return torch.tensor([offset], dtype=torch.float32, device=self.device)
 
-    def _tcp_position_to_ee_position_w(self, tcp_position_w: torch.Tensor, tcp_quat_w: torch.Tensor) -> torch.Tensor:
+    def _ee_to_tcp_quat_tensor(self) -> torch.Tensor:
+        quat = self.ee_to_tcp_quat_wxyz
+        if quat is None:
+            return torch.tensor(
+                [[1.0, 0.0, 0.0, 0.0]],
+                dtype=torch.float32,
+                device=self.device,
+            )
+        return torch.tensor([quat], dtype=torch.float32, device=self.device)
+
+    def _tcp_orientation_to_ee_orientation_w(
+        self, tcp_quat_w: torch.Tensor
+    ) -> torch.Tensor:
+        if self.ee_to_tcp_quat_wxyz is None:
+            return tcp_quat_w
+        from isaaclab.utils.math import quat_inv, quat_mul
+
+        ee_to_tcp = self._ee_to_tcp_quat_tensor().expand(
+            tcp_quat_w.shape[0], -1
+        )
+        return quat_mul(tcp_quat_w, quat_inv(ee_to_tcp))
+
+    def _tcp_position_to_ee_position_w(
+        self, tcp_position_w: torch.Tensor, ee_quat_w: torch.Tensor
+    ) -> torch.Tensor:
         if self.ee_to_tcp_offset is None:
             return tcp_position_w
         from isaaclab.utils.math import quat_apply
 
-        return tcp_position_w - quat_apply(tcp_quat_w, self._ee_to_tcp_offset_tensor())
+        tcp_offset = self._ee_to_tcp_offset_tensor().expand(
+            ee_quat_w.shape[0], -1
+        )
+        return tcp_position_w - quat_apply(ee_quat_w, tcp_offset)
 
     def _resolve_jacobi_body_idx(self, body_idx: int) -> int:
         if getattr(self.robot, "is_fixed_base", False):

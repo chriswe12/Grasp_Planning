@@ -65,7 +65,7 @@ def test_part_palette_is_muted_weighted_and_canonical_brown_is_dominant() -> Non
     assert all(0.0 <= channel <= 0.5 for entry in VISUAL_SERVO_PART_PALETTE for channel in entry.color)
     assert sample_weighted_part_palette_index(0.0) == VISUAL_SERVO_CANONICAL_PART_INDEX
     assert sample_weighted_part_palette_index(1.0) == len(VISUAL_SERVO_PART_PALETTE) - 1
-    assert VISUAL_SERVO_FINGER_COLOR == pytest.approx((0.35, 0.25, 0.02))
+    assert VISUAL_SERVO_FINGER_COLOR == pytest.approx((0.025, 0.030, 0.035))
 
 
 def test_background_sampler_keeps_neutral_dominant() -> None:

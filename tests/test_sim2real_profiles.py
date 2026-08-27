@@ -30,10 +30,14 @@ def test_combined_profile_uses_small_tslot_with_sensor_and_appearance_randomizat
     assert cfg.scene_tslot_geometry_randomization_enabled
     assert cfg.scene_tslot_nominal_fraction == pytest.approx(0.60)
     assert cfg.scene_tslot_phase_fraction == pytest.approx(0.20)
-    assert cfg.live_observation_delay_max_steps == 2
-    assert cfg.motion_action_delay_max_steps == 2
+    assert cfg.live_observation_delay_max_steps == 1
+    assert cfg.motion_action_delay_max_steps == 1
+    assert cfg.motion_action_two_step_probability == 0.0
+    assert cfg.motion_response_alpha == pytest.approx((0.91, 1.0))
     assert not cfg.scene_clutter_enabled
     assert cfg.scene_clutter_environment_fraction == 0.0
+    assert not cfg.scene_busy_background_enabled
+    assert cfg.scene_busy_background_environment_fraction == 0.0
 
 
 def test_clutter_profile_changes_only_clutter_fields_from_combined() -> None:
@@ -86,6 +90,35 @@ def test_depth_robust_profile_strengthens_depth_only_from_combined() -> None:
     assert depth_cfg.live_disparity_spatial_noise_std_px == pytest.approx((0.04, 0.12))
     assert depth_cfg.live_depth_edge_dropout_probability == pytest.approx((0.0, 0.07))
     assert not depth_cfg.scene_clutter_enabled
+
+
+def test_busy_background_profile_adds_background_and_denser_clutter_only() -> None:
+    combined_cfg = _config_with_all_fields()
+    background_cfg = _config_with_all_fields()
+    apply_sim2real_profile(combined_cfg, "combined_sim2real")
+    apply_sim2real_profile(background_cfg, "combined_busy_background")
+
+    differing = {
+        key
+        for key in vars(combined_cfg)
+        if getattr(combined_cfg, key) != getattr(background_cfg, key)
+    }
+    assert differing == {
+        "sim2real_randomization_profile",
+        "scene_clutter_enabled",
+        "scene_clutter_environment_fraction",
+        "scene_clutter_min_objects",
+        "scene_busy_background_enabled",
+        "scene_busy_background_environment_fraction",
+        "scene_busy_background_min_people",
+    }
+    assert background_cfg.scene_clutter_enabled
+    assert background_cfg.scene_clutter_environment_fraction == pytest.approx(0.80)
+    assert background_cfg.scene_clutter_min_objects == 2
+    assert background_cfg.scene_busy_background_enabled
+    assert background_cfg.scene_busy_background_environment_fraction == pytest.approx(0.70)
+    assert background_cfg.scene_busy_background_min_people == 4
+    assert background_cfg.scene_busy_background_max_people == 4
 
 
 def test_nominal_profile_removes_sensor_and_timing_variation() -> None:

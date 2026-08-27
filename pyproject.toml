@@ -25,6 +25,11 @@ training = [
     "torch>=2.7",
     "torchvision>=0.22",
 ]
+deployment = [
+    "rl-games==1.6.1",
+    "torch>=2.7",
+    "torchvision>=0.22",
+]
 dev = [
     "pre-commit>=3.7",
     "ruff>=0.11",

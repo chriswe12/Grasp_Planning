@@ -19,11 +19,15 @@ Implemented without real-camera recordings:
   training and evaluation, with exact parameters saved in YAML, TensorBoard,
   Markdown, JSON, and CSV artifacts.
 - Unit/source-contract coverage and a complete repository test pass.
+- A fail-closed real deployment path that keeps stage-2/MoveIt planning to
+  pregrasp, runs deterministic D405 policy twists through collision-checking
+  MoveIt Servo until learned completion, and independently gates gripper close.
+  The checked-in sink remains dry-run and hardware acceptance is still pending.
 
 Provisional assumptions use the documented 18 mm D405 stereo baseline,
 7--50 cm operating range, D400 1/32-pixel subpixel disparity behavior, and a
 0.1 mm close-range depth unit. These values are intentionally versioned as
-`d405_documented_provisional_v5` and must later be replaced by measurements of
+`d405_documented_provisional_v6_15hz` and must later be replaced by measurements of
 the actual serial-numbered camera.
 
 Official references used for the provisional envelope:
@@ -80,7 +84,8 @@ action-frame correctness
 
 The multipart task already contains:
 
-- Continuous collision-safe position and rotation resets.
+- Continuous collision-safe nominal-to-actual part-frame error: stable
+  support-plane XY/yaw perturbations plus authored gripper-rotation resets.
 - No-noise, ready, boundary, and already-successful reset cases.
 - Variable episode durations.
 - Curriculum-driven reset and visual-randomization strength.
@@ -346,14 +351,14 @@ Implement in the direct RL environment.
 ### 5.1 Observation history
 
 - Maintain a short live RGB-D history.
-- Sample a delay of zero to two policy steps.
+- Sample a delay of zero to one 15 Hz policy step.
 - Repeat an old frame with approximately 1 to 3 percent probability.
 - Never delay the static goal image.
 
 ### 5.2 Motion-command history
 
-- Sample a normal delay of zero to one steps.
-- Occasionally use a two-step delay.
+- Sample a delay of zero to one 15 Hz policy step.
+- Do not add a two-step delay to the provisional 15 Hz profile.
 - Delay the six motion commands, not the immediate completion hold.
 
 ### 5.3 Controller response
@@ -448,6 +453,12 @@ After camera and preprocessing behavior is frozen:
 5. Confirm train, validation, and test counts.
 6. Reject v5/v6 catalogues automatically.
 7. Keep goals canonical, without live observation randomization.
+
+The physical part always starts from a validated stable catalog resting pose.
+Pose-estimate error may change only support-plane XY and yaw; it must not change
+world Z or roll/pitch. The live render and physics use this stable actual pose,
+the robot path represents the nominal estimate, the final TCP target remains
+rigidly attached to the actual part, and the canonical goal stays unchanged.
 
 Rotation and position reset assets require regeneration only if collision or
 robot/part geometry changes.

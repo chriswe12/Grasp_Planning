@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from grasp_planning.rl.policy_timing import POLICY_RATE_HZ
 from grasp_planning.rl.visual_servo_curriculum import (
     VisualServoCurriculumConfig,
     alignment_funnel_expert_twist,
@@ -12,6 +13,13 @@ from grasp_planning.rl.visual_servo_curriculum import (
     smooth_trajectory_progress,
     write_episode_npz,
 )
+
+
+def test_curriculum_uses_shared_policy_rate() -> None:
+    config = VisualServoCurriculumConfig()
+
+    assert config.policy_hz == POLICY_RATE_HZ
+    assert config.policy_dt_s == 1.0 / POLICY_RATE_HZ
 
 
 def test_interpolate_pose_endpoints_and_midpoint() -> None:

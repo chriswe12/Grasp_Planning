@@ -494,6 +494,16 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
     stop_after = str(raw.get("stop_after", "pregrasp")).strip().lower()
     if stop_after not in {"pregrasp", "grasp", "lift", "full"}:
         raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
+    grasp_approach_controller = str(raw.get("grasp_approach_controller", "moveit_pose")).strip().lower()
+    if grasp_approach_controller not in {"moveit_pose", "d405_policy"}:
+        raise ValueError(
+            "real_execution.grasp_approach_controller must be 'moveit_pose' or 'd405_policy'."
+        )
+    visual_servo_config = str(raw.get("visual_servo_config", "")).strip()
+    if grasp_approach_controller == "d405_policy" and not visual_servo_config:
+        raise ValueError(
+            "real_execution.visual_servo_config is required when grasp_approach_controller=d405_policy."
+        )
     planning_scene_obstacles_raw = raw.get("planning_scene_obstacles", ())
     if planning_scene_obstacles_raw is None:
         planning_scene_obstacles: tuple[dict[str, object], ...] = ()
@@ -523,6 +533,8 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         lift_height_m=float(raw.get("lift_height_m", 0.08)),
         require_confirmation=bool(raw.get("require_confirmation", True)),
         stop_after=stop_after,
+        grasp_approach_controller=grasp_approach_controller,
+        visual_servo_config=visual_servo_config,
         allow_collisions=bool(raw.get("allow_collisions", False)),
         planning_scene_obstacles=planning_scene_obstacles,
         gripper_enabled=bool(raw.get("gripper_enabled", False)),

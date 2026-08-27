@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-SIM2REAL_PROFILE_VERSION = "d405_documented_provisional_v5"
+SIM2REAL_PROFILE_VERSION = "d405_documented_provisional_v6_15hz"
 SIM2REAL_PROFILE_NAMES = (
     "nominal",
     "sensor_only",
@@ -20,6 +20,7 @@ SIM2REAL_PROFILE_NAMES = (
     "appearance",
     "combined_sim2real",
     "combined_clutter",
+    "combined_busy_background",
     "combined_depth_robust",
     "stress_test",
 )
@@ -111,12 +112,12 @@ _CAMERA_UNCERTAINTY: dict[str, Any] = {
 }
 
 _DOCUMENTED_TIMING: dict[str, Any] = {
-    "live_observation_delay_max_steps": 2,
+    "live_observation_delay_max_steps": 1,
     "live_observation_repeat_probability": 0.02,
-    "motion_action_delay_max_steps": 2,
-    "motion_action_two_step_probability": 0.08,
+    "motion_action_delay_max_steps": 1,
+    "motion_action_two_step_probability": 0.0,
     "motion_response_scale": (0.88, 1.12),
-    "motion_response_alpha": (0.70, 1.0),
+    "motion_response_alpha": (0.91, 1.0),
     "motion_bias": (-0.015, 0.015),
     "physics_joint_stiffness_scale": (0.90, 1.10),
     "physics_joint_damping_scale": (0.90, 1.10),
@@ -140,6 +141,10 @@ _CLUTTER_DISABLED: dict[str, Any] = {
     "scene_clutter_environment_fraction": 0.0,
     "scene_clutter_min_objects": 1,
     "scene_clutter_max_objects": 3,
+    "scene_busy_background_enabled": False,
+    "scene_busy_background_environment_fraction": 0.0,
+    "scene_busy_background_min_people": 2,
+    "scene_busy_background_max_people": 4,
 }
 
 _PERIPHERAL_CLUTTER: dict[str, Any] = {
@@ -147,6 +152,21 @@ _PERIPHERAL_CLUTTER: dict[str, Any] = {
     "scene_clutter_environment_fraction": 0.60,
     "scene_clutter_min_objects": 1,
     "scene_clutter_max_objects": 3,
+    "scene_busy_background_enabled": False,
+    "scene_busy_background_environment_fraction": 0.0,
+    "scene_busy_background_min_people": 2,
+    "scene_busy_background_max_people": 4,
+}
+
+_BUSY_BACKGROUND: dict[str, Any] = {
+    "scene_clutter_enabled": True,
+    "scene_clutter_environment_fraction": 0.80,
+    "scene_clutter_min_objects": 2,
+    "scene_clutter_max_objects": 3,
+    "scene_busy_background_enabled": True,
+    "scene_busy_background_environment_fraction": 0.70,
+    "scene_busy_background_min_people": 4,
+    "scene_busy_background_max_people": 4,
 }
 
 
@@ -291,6 +311,27 @@ _PROFILES: dict[str, Sim2RealProfile] = {
             _PERIPHERAL_CLUTTER,
         ),
         "Combined profile plus render/depth-only peripheral clutter in 60% of environments.",
+    ),
+    "combined_busy_background": Sim2RealProfile(
+        "combined_busy_background",
+        _merged(
+            _DOCUMENTED_SENSOR,
+            _CAMERA_UNCERTAINTY,
+            _DOCUMENTED_TIMING,
+            _DOCUMENTED_APPEARANCE,
+            {
+                "live_observation_randomization_enabled": True,
+                "scene_appearance_randomization_enabled": True,
+                "scene_tslot_surface_enabled": True,
+                "scene_tslot_geometry_randomization_enabled": True,
+            },
+            _BUSY_BACKGROUND,
+        ),
+        (
+            "Combined profile plus a clean mixture of tall, highly varied four-sided procedural "
+            "office/factory walls, balanced perimeter storage, panels, cables, people, and "
+            "table-edge coworker reaches."
+        ),
     ),
     "combined_depth_robust": Sim2RealProfile(
         "combined_depth_robust",

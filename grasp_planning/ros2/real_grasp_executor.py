@@ -67,6 +67,8 @@ def _confirmation_text(*, input_json: Path, config, world_grasp: WorldFrameGrasp
         f"  grasp_id:      {world_grasp.grasp_id}\n"
         f"  frame_id:      {config.frame_id}\n"
         f"  stop_after:    {config.stop_after}\n"
+        f"  approach:      {config.grasp_approach_controller}\n"
+        f"  policy_config: {config.visual_servo_config or 'disabled'}\n"
         f"  pregrasp_xyz:  {tuple(round(v, 4) for v in world_grasp.pregrasp_position_w)}\n"
         f"  grasp_xyz:     {tuple(round(v, 4) for v in world_grasp.position_w)}\n"
         "Type 'yes' to continue: "
@@ -96,6 +98,8 @@ def _write_attempt_artifact(
         "config": {
             "frame_id": config.frame_id,
             "stop_after": config.stop_after,
+            "grasp_approach_controller": str(config.grasp_approach_controller),
+            "visual_servo_config": str(config.visual_servo_config),
             "pregrasp_offset_m": float(config.pregrasp_offset_m),
             "gripper_width_clearance_m": float(config.gripper_width_clearance_m),
             "lift_height_m": float(config.lift_height_m),
@@ -249,6 +253,7 @@ def _execute_selected_world_grasp(
     world_grasp: WorldFrameGraspCandidate,
     config,
     attempt_artifact_path: Path,
+    visual_servo_runner=None,
 ) -> tuple[RealExecutionResult, list[dict[str, object]]]:
     targets = world_grasp_pose_targets(world_grasp, frame_id=config.frame_id, lift_height_m=config.lift_height_m)
     pregrasp_reached = False
@@ -314,24 +319,103 @@ def _execute_selected_world_grasp(
             steps,
         )
 
-    ok, message = commander.move_to_pose(targets["grasp"], label="grasp", execute=True)
-    _record_step("grasp", ok=ok, message=message, target=targets["grasp"])
-    if not ok:
-        return (
-            RealExecutionResult(
-                success=False,
-                status="grasp_failed",
-                message=message,
+    policy_result = None
+    if str(config.grasp_approach_controller) == "d405_policy":
+        if visual_servo_runner is None:
+            message = "D405 policy approach was selected without a visual-servo runner."
+            _record_step("d405_policy_approach", ok=False, message=message)
+            return (
+                RealExecutionResult(
+                    success=False,
+                    status="visual_servo_unavailable",
+                    message=message,
+                    grasp_id=world_grasp.grasp_id,
+                    pregrasp_reached=pregrasp_reached,
+                    grasp_reached=False,
+                    lift_reached=False,
+                    attempt_artifact_path=attempt_artifact_path,
+                ),
+                steps,
+            )
+        policy_result = visual_servo_runner()
+        _record_step(
+            "d405_policy_approach",
+            ok=bool(policy_result.completed),
+            message=str(policy_result.message),
+        )
+        steps[-1].update(
+            {
+                "state": str(policy_result.state),
+                "target_id": str(policy_result.target_id),
+                "motion_applied": bool(policy_result.motion_applied),
+                "allow_gripper_close": bool(policy_result.allow_gripper_close),
+                "policy_step_count": int(policy_result.step_count),
+                "run_directory": str(policy_result.run_directory),
+            }
+        )
+        if not bool(policy_result.completed):
+            return (
+                RealExecutionResult(
+                    success=False,
+                    status="visual_servo_failed",
+                    message=str(policy_result.message),
+                    grasp_id=world_grasp.grasp_id,
+                    pregrasp_reached=pregrasp_reached,
+                    grasp_reached=False,
+                    lift_reached=False,
+                    attempt_artifact_path=attempt_artifact_path,
+                ),
+                steps,
+            )
+        if not bool(policy_result.motion_applied):
+            result = RealExecutionResult(
+                success=True,
+                status="visual_servo_dry_run_completed",
+                message="Policy completion gate passed in dry-run; no robot motion or gripper close was executed.",
                 grasp_id=world_grasp.grasp_id,
                 pregrasp_reached=pregrasp_reached,
                 grasp_reached=False,
                 lift_reached=False,
                 attempt_artifact_path=attempt_artifact_path,
-            ),
-            steps,
-        )
-    grasp_reached = True
+            )
+            _record_step("close_gripper", ok=True, message="Skipped because the policy command sink was dry-run.")
+            return result, steps
+        grasp_reached = True
+    else:
+        ok, message = commander.move_to_pose(targets["grasp"], label="grasp", execute=True)
+        _record_step("grasp", ok=ok, message=message, target=targets["grasp"])
+        if not ok:
+            return (
+                RealExecutionResult(
+                    success=False,
+                    status="grasp_failed",
+                    message=message,
+                    grasp_id=world_grasp.grasp_id,
+                    pregrasp_reached=pregrasp_reached,
+                    grasp_reached=False,
+                    lift_reached=False,
+                    attempt_artifact_path=attempt_artifact_path,
+                ),
+                steps,
+            )
+        grasp_reached = True
     if gripper is not None:
+        if policy_result is not None and not bool(policy_result.allow_gripper_close):
+            message = "Policy completed, but deployment configuration does not approve gripper closure."
+            _record_step("close_gripper", ok=False, message=message)
+            return (
+                RealExecutionResult(
+                    success=False,
+                    status="gripper_close_not_approved",
+                    message=message,
+                    grasp_id=world_grasp.grasp_id,
+                    pregrasp_reached=pregrasp_reached,
+                    grasp_reached=grasp_reached,
+                    lift_reached=False,
+                    attempt_artifact_path=attempt_artifact_path,
+                ),
+                steps,
+            )
         ok, message = gripper.close(width=world_grasp.jaw_width)
         _record_step("close_gripper", ok=ok, message=message)
         if not ok:
@@ -542,6 +626,20 @@ def execute_real_grasp_from_bundle(*, input_json: Path, config) -> RealExecution
             gripper = _make_gripper_client(commander=commander, config=config)
             gripper.wait_for_server(timeout_s=float(config.wait_for_moveit_timeout_s))
 
+        visual_servo_runner = None
+        if str(config.grasp_approach_controller) == "d405_policy":
+            from grasp_planning.ros2.d405_visual_servo import run_d405_policy_visual_servo
+
+            expected_part_id = Path(str(bundle.target_mesh_path)).stem
+
+            def visual_servo_runner():
+                return run_d405_policy_visual_servo(
+                    config_path=Path(str(config.visual_servo_config)),
+                    expected_grasp_id=world_grasp.grasp_id,
+                    expected_part_id=expected_part_id,
+                    allow_real_motion=True,
+                )
+
         try:
             result, execution_steps = _execute_selected_world_grasp(
                 commander=commander,
@@ -549,6 +647,7 @@ def execute_real_grasp_from_bundle(*, input_json: Path, config) -> RealExecution
                 world_grasp=world_grasp,
                 config=config,
                 attempt_artifact_path=attempt_artifact_path,
+                visual_servo_runner=visual_servo_runner,
             )
         except KeyboardInterrupt:
             _best_effort_stop_gripper(gripper, reason="keyboard interrupt")

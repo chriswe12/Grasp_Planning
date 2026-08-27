@@ -41,10 +41,23 @@ KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = (
     2.0 * KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
 )
 KUKA_Y_GRIPPER_APPROACH_PROFILE = "jaw_width_plus_10mm_v1"
+PDZ_GRIPPER_CLOSED_WIDTH_M = 0.012
+PDZ_GRIPPER_TRAVEL_M = 0.032
+PDZ_GRIPPER_OPEN_WIDTH_M = PDZ_GRIPPER_CLOSED_WIDTH_M + 2.0 * PDZ_GRIPPER_TRAVEL_M
+# Preserve the already-reviewed RL approach contract: the rendered/reset hand
+# is the selected grasp width plus 5 mm on each side, not fully open.
+PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
+PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = (
+    2.0 * PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
+)
+PDZ_GRIPPER_APPROACH_PROFILE = "pdz_jaw_width_plus_10mm_v1"
+VISUAL_SERVO_GRIPPER_PROFILE = "kuka_iiwa7_pdz_gripper_slim8_v1"
 DEFAULT_HAND_START_JOINT_POS = {
     "panda_finger_joint.*": 0.04,
     "left_finger_joint": 0.0,
     "right_finger_joint": 0.0,
+    "pdz_gripper_left_finger_joint": PDZ_GRIPPER_TRAVEL_M,
+    "pdz_gripper_right_finger_joint": PDZ_GRIPPER_TRAVEL_M,
 }
 DEFAULT_MOVEIT_ARM_JOINT_NAMES = tuple(f"fr3_joint{index}" for index in range(1, 8))
 DEFAULT_ARM_START_JOINT_VALUES = tuple(DEFAULT_ARM_START_JOINT_POS[f"panda_joint{index}"] for index in range(1, 8))
@@ -59,6 +72,12 @@ def gripper_joint_target_from_width(joint_name: str, width_m: float) -> float:
     if str(joint_name) == "right_finger_joint":
         close_distance = 0.5 * (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - float(width_m))
         return -max(0.0, min(KUKA_Y_GRIPPER_TRAVEL_M, close_distance))
+    if str(joint_name) in {
+        "pdz_gripper_left_finger_joint",
+        "pdz_gripper_right_finger_joint",
+    }:
+        outward_travel = 0.5 * (float(width_m) - PDZ_GRIPPER_CLOSED_WIDTH_M)
+        return max(0.0, min(PDZ_GRIPPER_TRAVEL_M, outward_travel))
     return float(width_m)
 
 
@@ -84,11 +103,35 @@ def kuka_y_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
     return approach_width
 
 
+def pdz_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
+    """Return the PDZ approach aperture with 5 mm clearance per finger."""
+
+    jaw_width = float(jaw_width_m)
+    if not math.isfinite(jaw_width) or jaw_width < PDZ_GRIPPER_CLOSED_WIDTH_M:
+        raise ValueError(
+            "PDZ jaw width must be finite and at least its 12 mm closed gap, "
+            f"got {jaw_width_m}."
+        )
+    approach_width = jaw_width + PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M
+    if approach_width > PDZ_GRIPPER_OPEN_WIDTH_M + 1.0e-9:
+        raise ValueError(
+            "PDZ approach aperture exceeds the physical opening: "
+            f"jaw={jaw_width:.6f} m, approach={approach_width:.6f} m, "
+            f"maximum={PDZ_GRIPPER_OPEN_WIDTH_M:.6f} m."
+        )
+    return approach_width
+
+
 def gripper_max_open_width(joint_name: str) -> float:
     """Return the width command that fully opens the named gripper joint family."""
 
     if str(joint_name) in {"left_finger_joint", "right_finger_joint"}:
         return KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M
+    if str(joint_name) in {
+        "pdz_gripper_left_finger_joint",
+        "pdz_gripper_right_finger_joint",
+    }:
+        return PDZ_GRIPPER_OPEN_WIDTH_M
     return DEFAULT_HAND_OPEN_WIDTH
 
 
@@ -99,6 +142,8 @@ def is_gripper_joint_name(joint_name: str) -> bool:
     return name.startswith(("panda_finger_joint", "fr3_finger_joint")) or name in {
         "left_finger_joint",
         "right_finger_joint",
+        "pdz_gripper_left_finger_joint",
+        "pdz_gripper_right_finger_joint",
     }
 
 
@@ -141,11 +186,19 @@ __all__ = [
     "KUKA_Y_GRIPPER_APPROACH_PROFILE",
     "KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M",
     "KUKA_Y_GRIPPER_TRAVEL_M",
+    "PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M",
+    "PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M",
+    "PDZ_GRIPPER_APPROACH_PROFILE",
+    "PDZ_GRIPPER_CLOSED_WIDTH_M",
+    "PDZ_GRIPPER_OPEN_WIDTH_M",
+    "PDZ_GRIPPER_TRAVEL_M",
+    "VISUAL_SERVO_GRIPPER_PROFILE",
     "gripper_joint_target_from_width",
     "gripper_max_open_width",
     "is_gripper_command_joint_name",
     "is_gripper_joint_name",
     "kuka_y_gripper_approach_width_from_jaw_width",
+    "pdz_gripper_approach_width_from_jaw_width",
     "kuka_isaac_to_moveit_joint_positions",
     "kuka_moveit_to_isaac_joint_positions",
 ]

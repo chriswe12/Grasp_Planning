@@ -22,6 +22,7 @@ gpu_memory="${EULER_GPUMEM:-20G}"
 cpus_per_gpu="${EULER_CPUS_PER_GPU:-8}"
 memory_per_cpu="${EULER_MEM_PER_CPU:-3G}"
 requested_time=""
+job_label=""
 training_args=()
 while (( $# > 0 )); do
     case "${1}" in
@@ -53,6 +54,11 @@ while (( $# > 0 )); do
         --time-limit)
             [[ $# -ge 2 ]] || { echo "[ERROR] --time-limit requires a value" >&2; exit 2; }
             requested_time="${2}"
+            shift 2
+            ;;
+        --job-label)
+            [[ $# -ge 2 ]] || { echo "[ERROR] --job-label requires a value" >&2; exit 2; }
+            job_label="${2}"
             shift 2
             ;;
         *)
@@ -100,6 +106,13 @@ if ! ssh "${EULER_LOGIN}" "test -f '${EULER_IMAGE_PATH}'"; then
 fi
 
 job_name="grasp-rgbd-${mode}-${gpu_count}gpu"
+if [[ -n "${job_label}" ]]; then
+    if [[ ! "${job_label}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        echo "[ERROR] --job-label may contain only letters, digits, dot, underscore, and hyphen" >&2
+        exit 2
+    fi
+    job_name="grasp-${job_label}"
+fi
 time_limit="${EULER_TRAIN_TIME_LIMIT:-2-00:00:00}"
 if [[ "${mode}" == "smoke" ]]; then
     time_limit=00:30:00

@@ -21,8 +21,19 @@ parser.add_argument("--target-index", type=int, default=0)
 parser.add_argument("--seed", type=int, default=19)
 parser.add_argument("--settle-steps", type=int, default=20)
 parser.add_argument(
+    "--reset-progress",
+    type=float,
+    default=None,
+    help="Optional fixed approach-path progress in [0, 1]; default renders the exact successful pose.",
+)
+parser.add_argument(
     "--sim2real-profile",
-    choices=("combined_sim2real", "combined_clutter", "combined_depth_robust"),
+    choices=(
+        "combined_sim2real",
+        "combined_clutter",
+        "combined_busy_background",
+        "combined_depth_robust",
+    ),
     default="combined_sim2real",
 )
 parser.add_argument(
@@ -89,6 +100,10 @@ def _make_sheet(
     *,
     profile: str,
     clutter_count: int,
+    background_count: int,
+    people_count: int,
+    worker_reach_count: int,
+    background_styles: dict[str, int],
 ) -> None:
     canvas = Image.new("RGB", (1280, 1050), (16, 19, 24))
     draw = ImageDraw.Draw(canvas)
@@ -99,7 +114,11 @@ def _make_sheet(
     draw.text((1000, 58), "External check camera", fill=(230, 235, 241))
     draw.text((1000, 82), "Not given to policy", fill=(165, 176, 190))
     draw.text((1000, 112), f"Clutter prims: {clutter_count}", fill=(115, 220, 150))
-    draw.text((1000, 136), "Collision: flat plane", fill=(165, 176, 190))
+    draw.text((1000, 136), f"Background prims: {background_count}", fill=(115, 220, 150))
+    draw.text((1000, 160), f"Standing people: {people_count}", fill=(230, 190, 115))
+    draw.text((1000, 184), f"Table-edge coworkers: {worker_reach_count}", fill=(230, 190, 115))
+    draw.text((1000, 208), f"Styles: {background_styles}", fill=(165, 176, 190))
+    draw.text((1000, 232), "Collision: flat plane", fill=(165, 176, 190))
 
     raw = Image.fromarray(wrist_raw).resize((384, 216), Image.Resampling.LANCZOS)
     canvas.paste(raw, (20, 620))
@@ -128,6 +147,8 @@ def main() -> None:
         raise ValueError("--target-index must be non-negative.")
     if args.settle_steps < 1:
         raise ValueError("--settle-steps must be positive.")
+    if args.reset_progress is not None and not 0.0 <= args.reset_progress <= 1.0:
+        raise ValueError("--reset-progress must lie in [0, 1].")
 
     cfg = parse_env_cfg(TASK_ID, device=args.device, num_envs=1)
     profile = apply_sim2real_profile(cfg, args.sim2real_profile)
@@ -139,11 +160,18 @@ def main() -> None:
     cfg.training_curriculum_enabled = False
     cfg.training_reset_mixture_enabled = False
     cfg.variable_reset_timeouts_enabled = False
-    cfg.completion_positive_reset_fraction = 1.0
-    cfg.reset_ready_exact_fraction = 1.0
+    if args.reset_progress is None:
+        cfg.completion_positive_reset_fraction = 1.0
+        cfg.reset_ready_exact_fraction = 1.0
+    else:
+        cfg.completion_positive_reset_fraction = 0.0
+        cfg.reset_ready_exact_fraction = 0.0
+        cfg.reset_progress_min = float(args.reset_progress)
+        cfg.reset_progress_max = float(args.reset_progress)
     cfg.failure_replay_fraction = 0.0
     cfg.reset_rotation_randomization_enabled = False
     cfg.reset_position_randomization_enabled = False
+    cfg.reset_object_yaw_randomization_enabled = False
     cfg.require_rotation_reset_data = False
     # Use the most common training layout so the corrected 5 mm slots can be
     # judged directly. Appearance and D405 sensor randomization remain active.
@@ -154,6 +182,13 @@ def main() -> None:
         env = gym.make(TASK_ID, cfg=cfg)
         env.reset()
         task = env.unwrapped
+        print(
+            "[MATERIALS] "
+            f"source={task.visual_material_bindings['robot_material_source']} "
+            f"finger_geometry={len(task.visual_material_bindings['finger_geometry'])} "
+            f"contact_pads={len(task.visual_material_bindings['contact_pads'])}",
+            flush=True,
+        )
         with torch.inference_mode():
             for _ in range(args.settle_steps):
                 task.scene.write_data_to_sim()
@@ -170,11 +205,24 @@ def main() -> None:
             for prim in stage.Traverse()
             if "/VisualClutter/Object_" in str(prim.GetPath())
         )
-        if args.sim2real_profile == "combined_clutter" and not clutter_prims:
-            raise RuntimeError("combined_clutter did not author any visual clutter prims.")
-        if args.sim2real_profile != "combined_clutter" and clutter_prims:
+        busy_background_prims = tuple(
+            str(prim.GetPath())
+            for prim in stage.Traverse()
+            if "/BusyBackground/Slot_" in str(prim.GetPath())
+        )
+        clutter_profiles = {"combined_clutter", "combined_busy_background"}
+        if args.sim2real_profile in clutter_profiles and not clutter_prims:
+            raise RuntimeError(f"{args.sim2real_profile} did not author any visual clutter prims.")
+        if args.sim2real_profile not in clutter_profiles and clutter_prims:
             raise RuntimeError(
                 f"Profile {args.sim2real_profile} unexpectedly contains clutter/distractor prims: {clutter_prims}"
+            )
+        if args.sim2real_profile == "combined_busy_background" and not busy_background_prims:
+            raise RuntimeError("combined_busy_background did not author any busy-background prims.")
+        if args.sim2real_profile != "combined_busy_background" and busy_background_prims:
+            raise RuntimeError(
+                f"Profile {args.sim2real_profile} unexpectedly contains busy-background prims: "
+                f"{busy_background_prims}"
             )
 
         overview = _rgb_uint8(task.debug_camera.data.output["rgb"])[0]
@@ -202,12 +250,20 @@ def main() -> None:
             output_dir / "training_visual_check.png",
             profile=profile.identifier,
             clutter_count=len(clutter_prims),
+            background_count=len(task.busy_background_visual_bindings["prim_paths"]),
+            people_count=int(task.busy_background_visual_bindings["people_count"]),
+            worker_reach_count=int(
+                task.busy_background_visual_bindings["worker_reach_count"]
+            ),
+            background_styles=dict(task.busy_background_visual_bindings["style_counts"]),
         )
         metadata = {
             "task": TASK_ID,
             "target_index": int(args.target_index),
-            "target_id": task.target_ids[int(task.target_index[0])],
+            "target_id": task.target_ids[int(args.target_index)],
             "seed": int(args.seed),
+            "requested_reset_progress": args.reset_progress,
+            "realized_reset_progress": float(task.reset_progress[0]),
             "sim2real_profile": profile.identifier,
             "material_profile": VISUAL_SERVO_MATERIAL_PROFILE,
             "scene_profile": VISUAL_SERVO_SCENE_PROFILE,
@@ -217,6 +273,16 @@ def main() -> None:
             "clutter_profile": task.clutter_visual_bindings["profile"],
             "clutter_prim_count": len(task.clutter_visual_bindings["prim_paths"]),
             "clutter_active_environment_count": task.clutter_visual_bindings["active_environment_count"],
+            "busy_background_profile": task.busy_background_visual_bindings["profile"],
+            "busy_background_prim_count": len(task.busy_background_visual_bindings["prim_paths"]),
+            "busy_background_active_environment_count": task.busy_background_visual_bindings[
+                "active_environment_count"
+            ],
+            "busy_background_people_count": task.busy_background_visual_bindings["people_count"],
+            "busy_background_worker_reach_count": task.busy_background_visual_bindings[
+                "worker_reach_count"
+            ],
+            "busy_background_style_counts": task.busy_background_visual_bindings["style_counts"],
             "collision_surface": task.tslot_visual_bindings["collision_surface"],
         }
         (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -233,5 +299,10 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        raise
     finally:
         app.close()

@@ -18,6 +18,7 @@ from grasp_planning.isaac_visual_scene import (
     make_visual_servo_dome_light_cfg,
     make_visual_servo_key_light_cfg,
 )
+from grasp_planning.start_poses import PDZ_GRIPPER_TRAVEL_M
 
 from .fr3_cube_env import (
     DEFAULT_ARM_START_JOINT_POS,
@@ -63,7 +64,16 @@ def _is_kuka_lbr_asset(asset_path: str) -> bool:
     return "kuka" in normalized or "iiwa" in normalized or "lbr" in normalized
 
 
+def _is_pdz_gripper_asset(asset_path: str) -> bool:
+    return "pdz_gripper" in str(asset_path).lower()
+
+
 def _hand_start_joint_pos_for_asset(asset_path: str) -> dict[str, float]:
+    if _is_pdz_gripper_asset(asset_path):
+        return {
+            "pdz_gripper_left_finger_joint": PDZ_GRIPPER_TRAVEL_M,
+            "pdz_gripper_right_finger_joint": PDZ_GRIPPER_TRAVEL_M,
+        }
     if _is_kuka_lbr_asset(asset_path):
         return {
             "left_finger_joint": DEFAULT_HAND_START_JOINT_POS["left_finger_joint"],
@@ -175,25 +185,48 @@ def _robot_actuators_for_asset(
     kuka_arm_damping_override: float | None = None,
 ) -> dict[str, ImplicitActuatorCfg]:
     if _is_kuka_lbr_asset(asset_path):
+        if _is_pdz_gripper_asset(asset_path):
+            hand_actuators = {
+                # The imported URDF exposes its mimic follower as a second DOF,
+                # so both sides receive identical source-closed travel targets.
+                "hand_left": ImplicitActuatorCfg(
+                    joint_names_expr=["pdz_gripper_left_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=100.0,
+                    velocity_limit_sim=0.05,
+                ),
+                "hand_right": ImplicitActuatorCfg(
+                    joint_names_expr=["pdz_gripper_right_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=100.0,
+                    velocity_limit_sim=0.05,
+                ),
+            }
+        else:
+            hand_actuators = {
+                "hand_driver": ImplicitActuatorCfg(
+                    joint_names_expr=["left_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=40.0,
+                    velocity_limit_sim=0.04,
+                ),
+                "hand_passive": ImplicitActuatorCfg(
+                    joint_names_expr=["right_finger_joint"],
+                    stiffness=0.0,
+                    damping=0.0,
+                    effort_limit_sim=1.0,
+                    velocity_limit_sim=0.04,
+                ),
+            }
         return {
             **_kuka_arm_actuators(
                 kuka_arm_actuator_profile,
                 damping_override=kuka_arm_damping_override,
             ),
-            "hand_driver": ImplicitActuatorCfg(
-                joint_names_expr=["left_finger_joint"],
-                stiffness=7500.0,
-                damping=173.0,
-                effort_limit_sim=40.0,
-                velocity_limit_sim=0.04,
-            ),
-            "hand_passive": ImplicitActuatorCfg(
-                joint_names_expr=["right_finger_joint"],
-                stiffness=0.0,
-                damping=0.0,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=0.04,
-            ),
+            **hand_actuators,
         }
     return {
         "panda_shoulder": ImplicitActuatorCfg(

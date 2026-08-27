@@ -1,0 +1,95 @@
+visual_servo:
+  # Fill these from one trained run before even dry-run inference. The metadata
+  # sidecar is mandatory and binds the checkpoint to the catalogue/profiles.
+  checkpoint_path: ""
+  checkpoint_metadata_path: ""
+  agent_config_path: "../isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/agents/rl_games_multipart_ppo_cfg.yaml"
+  goal_catalog_path: "../isaac_rl/data/plumbers_block/goal_catalog.npz"
+  target_id: ""
+  model_device: "cuda:0"
+
+  expected_camera_serial: "260322275185"
+  expected_camera_profile: "d405_color_848x480_intrinsics_260322275185_render_256x144_hand_eye_link7_ee35mm_z180_v7"
+  expected_observation_profile: "rgbd_render_256x144_valid_area_128x72_d405_range_v3"
+  color_topic: "/realsense_1/camera/color/image_rect"
+  depth_topic: "/realsense_1/camera/aligned_depth_to_color/image_rect"
+  color_camera_info_topic: "/realsense_1/camera/color/camera_info"
+  depth_camera_info_topic: "/realsense_1/camera/aligned_depth_to_color/camera_info"
+  camera_parameter_node: "/realsense_1/camera"
+  camera_serial_parameter: "serial_no"
+  camera_optical_frame: "realsense_1_color_optical_frame"
+
+  pose_topic: "/left/ee_pose"
+  joint_state_topic: "/lbr/joint_states"
+  # Set this to the reviewed WrenchStamped topic before real motion.
+  force_topic: ""
+  # Both operator Bool topics must be live heartbeats, not one-shot/latching
+  # messages. Loss of either heartbeat holds motion.
+  deadman_topic: "/d405_visual_servo/deadman"
+  emergency_stop_topic: "/d405_visual_servo/emergency_stop"
+
+  # Safe checked-in state. Switch to moveit_servo only after dry-run review.
+  command_sink: "dry_run"
+  real_motion_approved: false
+  allow_gripper_close_on_completion: false
+  command_frame: "lbr_link_0"
+  moveit_servo_twist_topic: "/lbr/servo_node/delta_twist_cmds"
+  moveit_servo_status_topic: "/lbr/servo_node/status"
+  moveit_servo_start_service: "/lbr/servo_node/start_servo"
+  moveit_servo_stop_service: "/lbr/servo_node/stop_servo"
+
+  # Training action contract, followed by an independent 25% first-test cap.
+  linear_action_scale_m_s: 0.04
+  angular_action_scale_rad_s: 0.24
+  # Camera streams remain 30 Hz; policy inference/commands consume every
+  # other synchronized frame and run at exactly 15 Hz.
+  policy_rate_hz: 15.0
+  action_delta_limit: 0.50
+  first_test_speed_fraction: 0.25
+
+  startup_timeout_s: 30.0
+  transform_timeout_s: 0.05
+  intrinsics_tolerance_px: 3.0
+  max_image_age_s: 0.15
+  max_image_skew_s: 0.010
+  max_pose_age_s: 0.15
+  max_tf_age_s: 0.15
+  max_servo_status_age_s: 0.25
+  max_joint_state_age_s: 0.15
+  max_force_age_s: 0.15
+  max_operator_signal_age_s: 0.25
+  minimum_valid_depth_fraction: 0.20
+  maximum_trial_duration_s: 15.0
+
+  completion_probability_threshold: 0.95
+  completion_required_consecutive_steps: 4
+  completion_max_linear_speed_m_s: 0.005
+  completion_max_angular_speed_rad_s: 0.03
+
+  # These are deliberately conservative starter values, not a hardware-site
+  # approval. Review them around the actual cell before setting real_motion_approved.
+  workspace_min_xyz_m: [0.20, -0.60, 0.02]
+  workspace_max_xyz_m: [0.80, 0.60, 0.90]
+  expected_joint_names:
+    - "lbr_A1"
+    - "lbr_A2"
+    - "lbr_A3"
+    - "lbr_A4"
+    - "lbr_A5"
+    - "lbr_A6"
+    - "lbr_A7"
+  joint_position_limits_rad:
+    - [-2.97, 2.97]
+    - [-2.09, 2.09]
+    - [-2.97, 2.97]
+    - [-2.09, 2.09]
+    - [-2.97, 2.97]
+    - [-2.09, 2.09]
+    - [-3.05, 3.05]
+  max_joint_velocity_rad_s: [0.43, 0.43, 0.44, 0.57, 0.61, 0.79, 0.79]
+  max_joint_acceleration_rad_s2: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  force_abort_threshold_n: 10.0
+  require_deadman: true
+  require_force_measurement: false
+
+  output_root: "../artifacts/d405_visual_servo_runs"

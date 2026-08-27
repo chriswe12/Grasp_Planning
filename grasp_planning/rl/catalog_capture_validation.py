@@ -1,4 +1,4 @@
-"""Postconditions for Isaac-rendered visual-servo goal catalogs."""
+"""Postconditions for synthetic visual-servo goal catalogs."""
 
 from __future__ import annotations
 
@@ -15,7 +15,11 @@ from grasp_planning.d405_wrist_camera import (
 )
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE
 from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE
-from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_PROFILE
+from grasp_planning.rl.goal_catalog_profiles import MUJOCO_GOAL_RENDERER_PROFILE
+from grasp_planning.start_poses import (
+    PDZ_GRIPPER_APPROACH_PROFILE,
+    VISUAL_SERVO_GRIPPER_PROFILE,
+)
 from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
 
 CatalogFileSignature = tuple[int, int, int]
@@ -55,11 +59,11 @@ def validate_fresh_goal_catalog_capture(
     current_signature = catalog_file_signature(catalog)
     if current_signature is None:
         raise RuntimeError(
-            f"Isaac capture returned without creating the goal catalog: {catalog}."
+            f"Goal rendering returned without creating the catalog: {catalog}."
         )
     if previous_signature is not None and current_signature == previous_signature:
         raise RuntimeError(
-            "Isaac capture returned without replacing the existing goal catalog. "
+            "Goal rendering returned without replacing the existing goal catalog. "
             "The renderer likely stopped before Python capture code ran (for example, "
             "because no CUDA/Vulkan device was available); the stale catalog was left "
             f"untouched at {catalog}."
@@ -114,7 +118,9 @@ def validate_fresh_goal_catalog_capture(
                 )
 
         expected_profiles = {
-            "approach_gripper_profile": KUKA_Y_GRIPPER_APPROACH_PROFILE,
+            "robot_profile": VISUAL_SERVO_GRIPPER_PROFILE,
+            "approach_gripper_profile": PDZ_GRIPPER_APPROACH_PROFILE,
+            "goal_renderer_profile": MUJOCO_GOAL_RENDERER_PROFILE,
             "visual_material_profile": VISUAL_SERVO_MATERIAL_PROFILE,
             "visual_scene_profile": VISUAL_SERVO_SCENE_PROFILE,
             "visual_tslot_profile": VISUAL_SERVO_TSLOT_PROFILE,

@@ -60,6 +60,7 @@ ssh "${EULER_LOGIN}" \
      test -f '${EULER_PROJECT_DIR}/isaac_rl/data/plumbers_block/usd/part_2_bundle_local.usd' && \
      test -f '${EULER_PROJECT_DIR}/isaac_rl/data/plumbers_block/usd/part_3_bundle_local.usd' && \
      test -f '${EULER_PROJECT_DIR}/isaac_rl/data/plumbers_block/usd/part_4_bundle_local.usd' && \
+     test -f '${EULER_PROJECT_DIR}/assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd' && \
      test -f '${EULER_PROJECT_DIR}/assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda' && \
      test -f '${EULER_PROJECT_DIR}/artifacts/isaac_bundle_assets/pipeline_stage2_ground_feasible_bundle_local.usd' && \
      echo '[INFO] Required Euler project files are present'"

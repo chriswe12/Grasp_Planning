@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from grasp_planning.d405_wrist_camera import (
+    D405_LEGACY_HAND_EYE_MOUNT_PROFILE,
+    D405_PDZ_NAMED_FRAME_MOUNT_PROFILE,
     D405_VISUAL_SERVO_CAMERA_PROFILE,
     D405_VISUAL_SERVO_OBSERVATION_PROFILE,
     VISUAL_SERVO_OBSERVATION_HEIGHT,
@@ -25,8 +27,8 @@ def test_visual_servo_render_profile_keeps_native_intrinsic_reference() -> None:
     assert (VISUAL_SERVO_RENDER_WIDTH, VISUAL_SERVO_RENDER_HEIGHT) == (256, 144)
     assert (VISUAL_SERVO_OBSERVATION_WIDTH, VISUAL_SERVO_OBSERVATION_HEIGHT) == (128, 72)
     assert "color_848x480_intrinsics_260322275185" in D405_VISUAL_SERVO_CAMERA_PROFILE
-    assert "hand_eye_link7_ee35mm" in D405_VISUAL_SERVO_CAMERA_PROFILE
-    assert "z180" in D405_VISUAL_SERVO_CAMERA_PROFILE
+    assert "pdz_named_frame_link7_mount35mm" in D405_VISUAL_SERVO_CAMERA_PROFILE
+    assert config.mount_profile == D405_PDZ_NAMED_FRAME_MOUNT_PROFILE
     assert "area_128x72" in D405_VISUAL_SERVO_OBSERVATION_PROFILE
 
 
@@ -56,29 +58,35 @@ def test_deployed_d405_color_intrinsics_and_distortion_are_preserved() -> None:
     assert config.depth_unit_m == pytest.approx(0.0001)
 
 
-def test_hand_eye_camera_pose_uses_link7_ee_offset_and_mount_z180_correction() -> None:
+def test_pdz_named_frame_camera_pose_matches_audited_sensor_origin() -> None:
     config = D405WristCameraConfig()
     position_link7, quaternion_link7_camera = camera_pose_in_link7(config)
     rotation_camera_in_link7 = _quat_wxyz_to_matrix(quaternion_link7_camera)
-    rotation_camera_in_ee = np.asarray(config.rotation_camera_in_calibration_parent).reshape(3, 3)
-
-    mount_correction = np.diag((-1.0, -1.0, 1.0))
-    np.testing.assert_allclose(rotation_camera_in_link7, mount_correction @ rotation_camera_in_ee, atol=1.0e-7)
     np.testing.assert_allclose(
         rotation_camera_in_link7,
         (
-            (-0.002321764157194206, 0.8654223294953782, -0.5010377241505786),
-            (-0.9994952228900846, 0.013866922434525808, 0.028583349735374547),
-            (0.03168452037033634, 0.5008511755731314, 0.8649532883895603),
+            (-1.0, 0.0, 0.0),
+            (0.0, -np.sqrt(3.0) / 2.0, 0.5),
+            (0.0, 0.5, np.sqrt(3.0) / 2.0),
         ),
         atol=1.0e-9,
     )
     np.testing.assert_allclose(
         position_link7,
-        (0.0556666756801677, 0.008999999999999992, 0.10577648943349074),
+        (0.009, -0.050560254038, 0.097927071163),
         atol=1.0e-9,
     )
     np.testing.assert_allclose(rotation_camera_in_link7, camera_rotation_in_link7(config), atol=1.0e-9)
+
+
+def test_legacy_hand_eye_mount_remains_explicitly_selectable() -> None:
+    config = D405WristCameraConfig(mount_profile=D405_LEGACY_HAND_EYE_MOUNT_PROFILE)
+    position_link7, _ = camera_pose_in_link7(config)
+    np.testing.assert_allclose(
+        position_link7,
+        (0.0556666756801677, 0.008999999999999992, 0.10577648943349074),
+        atol=1.0e-9,
+    )
 
 
 def test_intrinsic_matrix_is_row_major() -> None:

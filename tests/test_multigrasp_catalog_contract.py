@@ -6,9 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from grasp_planning.rl.goal_catalog_profiles import MUJOCO_GOAL_RENDERER_PROFILE
 from grasp_planning.start_poses import (
-    KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
-    KUKA_Y_GRIPPER_APPROACH_PROFILE,
+    PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
+    PDZ_GRIPPER_APPROACH_PROFILE,
+    VISUAL_SERVO_GRIPPER_PROFILE,
 )
 
 MODULE_PATH = (
@@ -54,9 +56,11 @@ def _catalog_payload() -> dict[str, np.ndarray]:
         "reset_path_progress": np.asarray([0.0, 1.0], dtype=np.float32),
         "moveit_plan_validated": np.ones(1, dtype=np.bool_),
         "isaac_goal_rgbd_captured": np.ones(1, dtype=np.bool_),
-        "approach_gripper_profile": np.asarray(KUKA_Y_GRIPPER_APPROACH_PROFILE),
+        "robot_profile": np.asarray(VISUAL_SERVO_GRIPPER_PROFILE),
+        "goal_renderer_profile": np.asarray(MUJOCO_GOAL_RENDERER_PROFILE),
+        "approach_gripper_profile": np.asarray(PDZ_GRIPPER_APPROACH_PROFILE),
         "approach_clearance_per_finger_m": np.asarray(
-            KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M, dtype=np.float32
+            PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M, dtype=np.float32
         ),
         "grasp_jaw_widths_m": np.asarray([0.042], dtype=np.float32),
         "approach_gripper_widths_m": np.asarray([0.052], dtype=np.float32),
@@ -72,7 +76,7 @@ def _catalog_payload() -> dict[str, np.ndarray]:
     }
 
 
-def test_schema_three_catalog_requires_jaw_plus_ten_mm(tmp_path: Path) -> None:
+def test_pdz_catalog_requires_jaw_plus_ten_mm(tmp_path: Path) -> None:
     path = tmp_path / "catalog.npz"
     payload = _catalog_payload()
     np.savez_compressed(path, **payload)
@@ -82,7 +86,7 @@ def test_schema_three_catalog_requires_jaw_plus_ten_mm(tmp_path: Path) -> None:
 
     payload["approach_gripper_widths_m"] = np.asarray([0.084], dtype=np.float32)
     np.savez_compressed(path, **payload)
-    with pytest.raises(ValueError, match="final jaw width plus 10 mm"):
+    with pytest.raises(ValueError, match="physical gripper opening"):
         load_multigrasp_catalog(path)
 
 
@@ -101,6 +105,8 @@ def _rotation_payload() -> dict[str, np.ndarray]:
         "collision_validation_profile": np.asarray(
             ROTATION_COLLISION_VALIDATION_PROFILE
         ),
+        "robot_profile": np.asarray(VISUAL_SERVO_GRIPPER_PROFILE),
+        "approach_gripper_profile": np.asarray(PDZ_GRIPPER_APPROACH_PROFILE),
         "minimum_collision_clearance_m": np.asarray(0.001, dtype=np.float32),
         "collision_validated": np.ones((1, 2, 2), dtype=np.bool_),
         "collision_clearance_m": np.full((1, 2, 2), 0.002, dtype=np.float32),

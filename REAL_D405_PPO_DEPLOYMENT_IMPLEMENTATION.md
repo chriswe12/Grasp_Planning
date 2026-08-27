@@ -2,14 +2,28 @@
 
 ## Status and purpose
 
+Repository implementation status (2026-08-24):
+
+- The lightweight deterministic policy runtime, strict goal provider,
+  synchronized RGB-D intake, TF action transform, completion/safety supervisor,
+  persistent step artifacts, dry-run sink, and MoveIt Servo sink are
+  implemented.
+- Real execution can now plan normally to the stage-2 pregrasp, use the policy
+  only for pregrasp-to-grasp alignment, return on learned completion, and gate
+  gripper closure before an optional MoveIt lift.
+- The aligned LBR launch has an opt-in Servo node configured for speed-unit
+  commands at `gripper_tcp` with shared-scene collision checking.
+- Hardware acceptance, live-camera soak/replay, checkpoint parity in the
+  production Isaac environment, approved cell limits, and the external
+  `mv_launch` stream-profile changes remain required before real motion.
+
 This document is an implementation handoff for running the trained multipart
 RGB-D PPO visual-servo policy on the physical KUKA iiwa7/Y-gripper system with
 RealSense D405 serial `260322275185` (`realsense_1`).
 
-The camera streams described below are compatible with the policy, but this
-repository does **not** yet contain the complete ROS2 inference and real-time
-command path. The implementation branch must add that path and satisfy the
-acceptance tests in this document before robot motion is enabled.
+The camera streams described below are compatible with the implemented policy
+path. Robot motion remains disabled by checked-in defaults until the remaining
+acceptance tests and site-specific approvals in this document are satisfied.
 
 This specification is narrower than `SIM2REAL_IMPLEMENTATION_PLAN.md`. That
 file covers training-time randomization and sim-to-real evaluation. This file
@@ -88,6 +102,7 @@ RealSense D405 serial 260322275185
   -> 848x480 RGB8 at approximately 30 Hz
   -> 848x480 aligned Z16 depth at approximately 30 Hz
   -> RGB/depth timestamp synchronization
+  -> timestamp gate accepts at most 15 synchronized frames per second
   -> Z16 millimetres to float metres
   -> validity-aware shared preprocessing to 128x72 RGB-D
   -> select canonical 128x72 goal RGB-D by target_id
@@ -614,7 +629,9 @@ Add a live diagnostic display or low-rate preview showing:
 - requested/applied command;
 - current runtime state and safety reason.
 
-Diagnostic rendering must not block the 30 Hz command loop.
+Diagnostic rendering must not block the 15 Hz policy/command loop. Camera
+receipt and freshness monitoring remain at the native approximately 30 Hz
+stream rate.
 
 ## 14. Tests required before hardware motion
 
@@ -661,7 +678,8 @@ Using recorded or synthetic publishers:
 With the robot command sink disabled:
 
 - run for at least ten minutes;
-- confirm approximately 30 Hz accepted observations;
+- confirm approximately 30 Hz synchronized camera receipt and 15 Hz accepted
+  policy observations;
 - measure end-to-end image-to-output latency and jitter;
 - confirm no growing message queue or memory use;
 - confirm the observed depth range and invalid fraction are plausible;

@@ -222,6 +222,22 @@ The URDF above is the KUKA kinematic source of truth. Its calibrated `gripper_tc
 
 For `gripper_collision_model: kuka_y_gripper`, saved bundles identify `robot_model: kuka_iiwa7`, `gripper_model: kuka_y_gripper`, and `tcp_link: gripper_tcp`.
 
+The visual-servo RL task uses the PDZ parallel gripper instead. Its source
+URDF and meshes are under `assets/urdf/kuka_iiwa7_pdz_gripper/` and
+`assets/urdf/pdz_gripper_description/`, and its Isaac asset is
+`assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd`. The aperture
+is 12--76 mm; goal contacts are limited to 62 mm so the approach command can
+add 5 mm per finger. The named TCP is 135.5 mm above the PDZ base and rotated
+-90 degrees about local Z. The checked-in MoveIt xacro and SRDF use that same
+named frame, and `configs/grasp_generation_benchmark_pdz.yaml` records the
+matching collision-generation contract.
+
+RL goal RGB-D is generated from the collision-validated PDZ trajectories with
+MuJoCo Filament via `python3 isaac_rl/scripts/prepare_plumbers_block_catalog.py
+--stage mujoco`. The renderer uses the deployed D405 intrinsics and wrist
+transform, hides only the camera enclosure surfaces that contain the optical
+origin, and retains the visible gripper fingers/pads, part, and T-slot surface.
+
 ### Copying Local State To A New Worktree
 
 Tracked assets are checked out by Git, but the MuJoCo cache, pinned ROS2 source dependency, and `colcon` build/install/log directories are ignored local state. After creating a new worktree, copy those directories from this worktree with:
@@ -273,6 +289,108 @@ bundle contains `metadata.execution_world_pose`.
 
 Real hardware execution config:
 - `real_execution` block inside `configs/grasp_pipeline_real.yaml`
+
+### D405 policy-assisted real grasp approach
+
+The real executor can keep normal MoveIt IK/path planning for the selected
+stage-2 pregrasp and replace only the final pregrasp-to-grasp segment with the
+trained D405 PPO policy:
+
+```text
+stage-2 bundle target
+-> MoveIt plan/execute to pregrasp
+-> synchronized D405 RGB-D + explicit catalogue target
+-> deterministic policy twists
+-> live optical-frame TF into lbr_link_0
+-> safety supervisor
+-> collision-checking MoveIt Servo
+-> four-frame learned completion hold
+-> explicitly approved gripper close
+-> optional MoveIt lift
+```
+
+Set these fields in the selected real-pipeline YAML:
+
+```yaml
+real_execution:
+  grasp_approach_controller: "d405_policy"
+  visual_servo_config: "configs/visual_servo_real_d405.yaml"
+  stop_after: "grasp"
+```
+
+Then fill the checkpoint, checkpoint-metadata sidecar, and exact `target_id` in
+`configs/visual_servo_real_d405.yaml`. Startup fails if the target's part or
+grasp ID differs from the selected stage-2 bundle, if the D405 serial/profile
+does not match, or if the checkpoint/catalogue hashes and observation/action
+contracts do not match the sidecar.
+
+After reviewing and selecting a checkpoint, create its sidecar with:
+
+```bash
+python3 scripts/write_d405_checkpoint_metadata.py \
+  --checkpoint /path/to/reviewed-checkpoint.pth \
+  --output /path/to/reviewed-checkpoint.deployment.json \
+  --source-commit "$(git rev-parse HEAD)"
+```
+
+The robot-side Python environment needs the lightweight policy dependencies but
+does not need Isaac Sim:
+
+```bash
+python3 -m pip install -e '.[deployment]'
+```
+
+The checked-in deployment config is intentionally non-moving:
+`command_sink: dry_run`, `real_motion_approved: false`, and
+`allow_gripper_close_on_completion: false`. Start the aligned LBR stack with
+the opt-in Servo node for dry-run/status checks and later staged motion:
+
+```bash
+./start_lbr_moveit.sh --mode hardware --servo
+python3 scripts/run_d405_ppo_visual_servo.py \
+  --config configs/visual_servo_real_d405.yaml \
+  --expected-part-id 0 \
+  --expected-grasp-id g1973
+```
+
+The dry-run preflight also requires fresh deadman and E-stop heartbeats. For a
+stationary, non-moving dry-run only, these can be synthetic publishers in two
+additional terminals:
+
+```bash
+ros2 topic pub -r 10 /d405_visual_servo/deadman std_msgs/msg/Bool '{data: true}'
+ros2 topic pub -r 10 /d405_visual_servo/emergency_stop std_msgs/msg/Bool '{data: false}'
+```
+
+Do not use synthetic operator signals for real motion. Connect those topics to
+the reviewed physical operator controls, set a real `WrenchStamped`
+`force_topic`, and keep all three streams publishing as heartbeats; stale
+joint, force, deadman, or E-stop data latches a zero-motion hold.
+
+MoveIt Servo consumes speed-unit `TwistStamped` commands on
+`/lbr/servo_node/delta_twist_cmds`, commands `gripper_tcp` in `lbr_link_0`, and
+monitors the same planning scene published by MoveGroup. It therefore applies
+joint/singularity and self/scene-collision slowdown or halt behavior during the
+learned approach. A full motion planner is still used for pregrasp and lift;
+calling a global planner for every 15 Hz policy step is not supported.
+
+Real Servo output additionally requires `command_sink: moveit_servo`,
+`real_motion_approved: true`, the CLI/caller real-motion confirmation, live
+deadman and emergency-stop topics, reviewed workspace/joint/force limits, and
+a healthy Servo status/command subscriber. Gripper closing occurs only after
+the learned completion probability is at least `0.95` for four consecutive
+low-speed frames and both `gripper_enabled` and
+`allow_gripper_close_on_completion` are true.
+
+After the standalone dry-run and guarded no-close trials pass, select
+`d405_policy` in `configs/grasp_pipeline_real_lbr_iiwa7.yaml` and run the normal
+real pipeline. It performs MoveIt pregrasp planning first, starts the policy
+approach, closes only after the completion gate, deactivates Servo, and then
+uses MoveIt for the configured lift:
+
+```bash
+./run_pipeline.sh --mode real --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+```
 
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
 - `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.

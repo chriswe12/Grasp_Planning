@@ -19,6 +19,26 @@ class RunGraspPipelineRealTests(unittest.TestCase):
         self.assertEqual(config.stop_after, "grasp")
         self.assertEqual(config.frame_id, "base")
         self.assertAlmostEqual(config.velocity_scale, 0.05)
+        self.assertEqual(config.grasp_approach_controller, "moveit_pose")
+
+    def test_real_execution_config_parses_d405_policy_approach(self) -> None:
+        config = run_grasp_pipeline._real_execution_config(
+            {
+                "real_execution": {
+                    "grasp_approach_controller": "d405_policy",
+                    "visual_servo_config": "configs/visual_servo_real_d405.yaml",
+                }
+            }
+        )
+
+        self.assertEqual(config.grasp_approach_controller, "d405_policy")
+        self.assertEqual(config.visual_servo_config, "configs/visual_servo_real_d405.yaml")
+
+    def test_real_execution_config_requires_policy_config_for_d405_approach(self) -> None:
+        with self.assertRaises(ValueError):
+            run_grasp_pipeline._real_execution_config(
+                {"real_execution": {"grasp_approach_controller": "d405_policy"}}
+            )
 
     def test_real_execution_config_parses_lbr_moveit_settings(self) -> None:
         config = run_grasp_pipeline._real_execution_config(

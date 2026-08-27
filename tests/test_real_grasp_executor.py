@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from grasp_planning.grasping.grasp_transforms import WorldFrameGraspCandidate
@@ -148,6 +149,86 @@ def test_execute_selected_world_grasp_runs_full_sequence_with_gripper() -> None:
     assert commander.calls == [("pregrasp", "base"), ("grasp", "base"), ("lift", "base")]
     assert gripper.calls == [("open", 0.08), ("close", 0.02)]
     assert [step["name"] for step in steps] == ["open_gripper", "pregrasp", "grasp", "close_gripper", "lift"]
+
+
+def test_d405_policy_replaces_only_pregrasp_to_grasp_and_then_closes() -> None:
+    commander = _FakeCommander()
+    gripper = _FakeGripper()
+    config = RealExecutionConfig(
+        enabled=True,
+        stop_after="grasp",
+        frame_id="base",
+        gripper_enabled=True,
+        grasp_approach_controller="d405_policy",
+        visual_servo_config="configs/visual_servo_real_d405.yaml",
+    )
+    policy_result = SimpleNamespace(
+        completed=True,
+        state="COMPLETED_HOLD",
+        message="learned completion gate satisfied",
+        target_id="part_0__current__g0001",
+        motion_applied=True,
+        allow_gripper_close=True,
+        step_count=12,
+        run_directory=Path("artifacts/policy-run"),
+    )
+
+    result, steps = real_grasp_executor._execute_selected_world_grasp(
+        commander=commander,
+        gripper=gripper,
+        world_grasp=_world_grasp(),
+        config=config,
+        attempt_artifact_path=Path("attempt.json"),
+        visual_servo_runner=lambda: policy_result,
+    )
+
+    assert result.success
+    assert result.grasp_reached
+    assert commander.calls == [("pregrasp", "base")]
+    assert gripper.calls == [("open", 0.08), ("close", 0.02)]
+    assert [step["name"] for step in steps] == [
+        "open_gripper",
+        "pregrasp",
+        "d405_policy_approach",
+        "close_gripper",
+    ]
+
+
+def test_d405_policy_dry_run_never_closes_gripper() -> None:
+    commander = _FakeCommander()
+    gripper = _FakeGripper()
+    config = RealExecutionConfig(
+        enabled=True,
+        stop_after="grasp",
+        frame_id="base",
+        gripper_enabled=True,
+        grasp_approach_controller="d405_policy",
+        visual_servo_config="configs/visual_servo_real_d405.yaml",
+    )
+    policy_result = SimpleNamespace(
+        completed=True,
+        state="COMPLETED_HOLD",
+        message="dry run",
+        target_id="part_0__current__g0001",
+        motion_applied=False,
+        allow_gripper_close=False,
+        step_count=4,
+        run_directory=Path("artifacts/policy-run"),
+    )
+
+    result, _steps = real_grasp_executor._execute_selected_world_grasp(
+        commander=commander,
+        gripper=gripper,
+        world_grasp=_world_grasp(),
+        config=config,
+        attempt_artifact_path=Path("attempt.json"),
+        visual_servo_runner=lambda: policy_result,
+    )
+
+    assert result.success
+    assert result.status == "visual_servo_dry_run_completed"
+    assert not result.grasp_reached
+    assert gripper.calls == [("open", 0.08)]
 
 
 def test_make_gripper_client_can_select_generic_gripper_command_client() -> None:

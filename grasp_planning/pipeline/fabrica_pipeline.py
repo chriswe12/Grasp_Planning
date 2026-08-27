@@ -332,6 +332,8 @@ class RealExecutionConfig:
     lift_height_m: float = 0.08
     require_confirmation: bool = True
     stop_after: str = "pregrasp"
+    grasp_approach_controller: str = "moveit_pose"
+    visual_servo_config: str = ""
     allow_collisions: bool = False
     planning_scene_obstacles: tuple[dict[str, object], ...] = ()
     gripper_enabled: bool = False

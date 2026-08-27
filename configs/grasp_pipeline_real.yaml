@@ -53,6 +53,8 @@ ros2:
 
 real_execution:
   enabled: false
+  grasp_approach_controller: "moveit_pose"
+  visual_servo_config: "configs/visual_servo_real_d405.yaml"
   grasp_id: ""
   attempt_artifact: "artifacts/real_robot_pick_attempt.json"
   planning_group: "fr3_arm"

@@ -55,6 +55,9 @@ grasp_assembly_action:
 
 real_execution:
   enabled: true
+  # Change to d405_policy only after filling and dry-running visual_servo_config.
+  grasp_approach_controller: "moveit_pose"
+  visual_servo_config: "configs/visual_servo_real_d405.yaml"
   grasp_id: ""
   attempt_artifact: "artifacts/real_lbr_robot_pick_attempt.json"
   planning_group: "arm"

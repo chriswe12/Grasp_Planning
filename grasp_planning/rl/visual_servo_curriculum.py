@@ -8,10 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
+from grasp_planning.rl.policy_timing import POLICY_RATE_HZ
+
 
 @dataclass(frozen=True)
 class VisualServoCurriculumConfig:
-    policy_hz: float = 30.0
+    policy_hz: float = POLICY_RATE_HZ
     approach_duration_s: float = 2.0
     capture_duration_s: float = 1.50
     settle_duration_s: float = 1.0

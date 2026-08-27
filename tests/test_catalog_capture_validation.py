@@ -17,7 +17,11 @@ from grasp_planning.rl.catalog_capture_validation import (
     catalog_file_signature,
     validate_fresh_goal_catalog_capture,
 )
-from grasp_planning.start_poses import KUKA_Y_GRIPPER_APPROACH_PROFILE
+from grasp_planning.rl.goal_catalog_profiles import MUJOCO_GOAL_RENDERER_PROFILE
+from grasp_planning.start_poses import (
+    PDZ_GRIPPER_APPROACH_PROFILE,
+    VISUAL_SERVO_GRIPPER_PROFILE,
+)
 from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
 
 
@@ -49,7 +53,9 @@ def _write_catalog(path: Path, *, scene_profile: str = VISUAL_SERVO_SCENE_PROFIL
         ),
         moveit_plan_validated=np.ones(target_count, dtype=np.bool_),
         isaac_goal_rgbd_captured=np.ones(target_count, dtype=np.bool_),
-        approach_gripper_profile=np.asarray(KUKA_Y_GRIPPER_APPROACH_PROFILE),
+        robot_profile=np.asarray(VISUAL_SERVO_GRIPPER_PROFILE),
+        approach_gripper_profile=np.asarray(PDZ_GRIPPER_APPROACH_PROFILE),
+        goal_renderer_profile=np.asarray(MUJOCO_GOAL_RENDERER_PROFILE),
         visual_material_profile=np.asarray(VISUAL_SERVO_MATERIAL_PROFILE),
         visual_scene_profile=np.asarray(scene_profile),
         visual_tslot_profile=np.asarray(VISUAL_SERVO_TSLOT_PROFILE),

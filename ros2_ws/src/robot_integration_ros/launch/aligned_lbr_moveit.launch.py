@@ -8,6 +8,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventH
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
 from lbr_bringup.description import LBRDescriptionMixin
 from lbr_bringup.moveit import LBRMoveGroupMixin
 from lbr_bringup.ros2_control import LBRROS2ControlMixin
@@ -22,6 +23,7 @@ def _resolved_package_path(package_name: str, relative_path: str) -> str:
 def _launch_setup(context: LaunchContext):
     mode = LaunchConfiguration("mode").perform(context)
     robot_name = LaunchConfiguration("robot_name").perform(context)
+    gripper_model = LaunchConfiguration("gripper_model").perform(context)
     system_config_path = _resolved_package_path(
         LaunchConfiguration("sys_cfg_pkg").perform(context),
         LaunchConfiguration("sys_cfg").perform(context),
@@ -32,11 +34,15 @@ def _launch_setup(context: LaunchContext):
     )
     description_path = _resolved_package_path(
         "robot_integration_ros",
-        "urdf/iiwa7_y_gripper_moveit.urdf.xacro",
+        f"urdf/iiwa7_{gripper_model}_moveit.urdf.xacro",
     )
     semantic_description_path = _resolved_package_path(
         "robot_integration_ros",
-        "config/iiwa7_y_gripper.srdf.xacro",
+        f"config/iiwa7_{gripper_model}.srdf.xacro",
+    )
+    servo_config_path = _resolved_package_path(
+        "robot_integration_ros",
+        "config/iiwa7_y_gripper_moveit_servo.yaml",
     )
 
     moveit_configs = (
@@ -100,6 +106,22 @@ def _launch_setup(context: LaunchContext):
             {"use_sim_time": False},
         ],
     )
+    servo_node = Node(
+        package="moveit_servo",
+        executable="servo_node_main",
+        name="servo_node",
+        namespace=robot_name,
+        output="screen",
+        parameters=[
+            moveit_configs.robot_description,
+            moveit_configs.robot_description_semantic,
+            moveit_configs.robot_description_kinematics,
+            moveit_configs.joint_limits,
+            servo_config_path,
+            {"use_sim_time": False},
+        ],
+        condition=IfCondition(LaunchConfiguration("servo")),
+    )
     rviz = RVizMixin.node_rviz(
         rviz_cfg_pkg="iiwa7_moveit_config",
         rviz_cfg="config/moveit.rviz",
@@ -123,7 +145,7 @@ def _launch_setup(context: LaunchContext):
         ],
         condition=IfCondition(LaunchConfiguration("rviz")),
     )
-    return [robot_state_publisher, ros2_control_node, controller_event_handler, move_group, rviz]
+    return [robot_state_publisher, ros2_control_node, controller_event_handler, move_group, servo_node, rviz]
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -137,7 +159,23 @@ def generate_launch_description() -> LaunchDescription:
         )
     )
     description.add_action(LBRDescriptionMixin.arg_robot_name())
+    description.add_action(
+        DeclareLaunchArgument(
+            "gripper_model",
+            default_value="pdz_gripper",
+            choices=["y_gripper", "pdz_gripper"],
+            description="Select the end-effector geometry and calibrated TCP used by MoveIt.",
+        )
+    )
     description.add_action(RVizMixin.arg_rviz())
+    description.add_action(
+        DeclareLaunchArgument(
+            "servo",
+            default_value="false",
+            choices=["true", "false"],
+            description="Start collision-checking MoveIt Servo for D405 policy approach commands.",
+        )
+    )
     description.add_action(LBRROS2ControlMixin.arg_sys_cfg_pkg())
     description.add_action(LBRROS2ControlMixin.arg_sys_cfg())
     description.add_action(LBRROS2ControlMixin.arg_init_jnt_pos())

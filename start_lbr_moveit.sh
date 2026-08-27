@@ -15,7 +15,9 @@ Options:
   --lbr-ws PATH               LBR ROS2 workspace. Default: /home/pdz/lbr-stack
   --model NAME                LBR model. Default: iiwa7
   --mode MODE                 mock or hardware. Default: mock
+  --gripper-model NAME        y_gripper or pdz_gripper. Default: pdz_gripper
   --rviz                      Launch RViz with the aligned MoveIt description.
+  --servo                     Start collision-checking MoveIt Servo (not activated until a client arms it).
   --robot-name NAME           ROS namespace used by the control stack. Default: lbr
   --skip-ros-graph-check      Start even if LBR/MoveIt nodes already exist.
   -h, --help                  Show this help.
@@ -26,7 +28,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LBR_WS="/home/pdz/lbr-stack"
 MODEL="iiwa7"
 MODE="mock"
+GRIPPER_MODEL="pdz_gripper"
 RVIZ=0
+SERVO=0
 ROBOT_NAME="lbr"
 CHECK_ROS_GRAPH=1
 PIDS=()
@@ -87,8 +91,16 @@ while [[ $# -gt 0 ]]; do
       MODE="${2:-}"
       shift 2
       ;;
+    --gripper-model)
+      GRIPPER_MODEL="${2:-}"
+      shift 2
+      ;;
     --rviz)
       RVIZ=1
+      shift
+      ;;
+    --servo)
+      SERVO=1
       shift
       ;;
     --robot-name)
@@ -121,6 +133,10 @@ if [[ "${MODEL}" != "iiwa7" ]]; then
 fi
 if [[ "${MODE}" != "mock" && "${MODE}" != "hardware" ]]; then
   echo "[LBR-MOVEIT] --mode must be 'mock' or 'hardware'." >&2
+  exit 1
+fi
+if [[ "${GRIPPER_MODEL}" != "y_gripper" && "${GRIPPER_MODEL}" != "pdz_gripper" ]]; then
+  echo "[LBR-MOVEIT] --gripper-model must be 'y_gripper' or 'pdz_gripper'." >&2
   exit 1
 fi
 
@@ -158,7 +174,9 @@ trap cleanup EXIT INT TERM
 echo "[LBR-MOVEIT] Starting aligned ${MODEL} ${MODE} control and MoveIt stack."
 ros2 launch robot_integration_ros aligned_lbr_moveit.launch.py \
   mode:="${MODE}" \
+  gripper_model:="${GRIPPER_MODEL}" \
   robot_name:="${ROBOT_NAME}" \
+  servo:="$([[ "${SERVO}" -eq 1 ]] && printf true || printf false)" \
   rviz:="$([[ "${RVIZ}" -eq 1 ]] && printf true || printf false)" &
 PIDS+=("$!")
 
