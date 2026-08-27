@@ -25,9 +25,13 @@ from grasp_planning.rl.d405_deployment_config import (  # noqa: E402
 )
 from grasp_planning.rl.policy_registry import (  # noqa: E402
     load_policy_registry,
-    load_yaml_mapping as _load_yaml_mapping,
-    resolve_policy_assets,
     resolve_policy_reference,
+)
+from grasp_planning.rl.policy_registry import (
+    load_yaml_mapping as _load_yaml_mapping,
+)
+from grasp_planning.rl.policy_registry import (
+    resolve_policy_assets as resolve_policy_assets,
 )
 from grasp_planning.subprocess_lifecycle import run_process_group
 

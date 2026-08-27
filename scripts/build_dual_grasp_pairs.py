@@ -17,6 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from grasp_planning.grasping.fabrica_grasp_debug import CandidateStatus  # noqa: E402
+from grasp_planning.grasping.mesh_io import load_triangle_mesh  # noqa: E402
 from grasp_planning.pipeline import (  # noqa: E402
     DualGraspPairConfig,
     compile_assembly_sequence,
@@ -32,21 +34,16 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_dual_grasp_pair_step_json,
     write_dual_grasp_pair_summary_json,
     write_holder_grasp_library_artifacts,
-    write_holder_state_feasibility_json,
     write_holder_state_debug_artifacts,
+    write_holder_state_feasibility_json,
     write_inserter_grasp_library,
 )
+from grasp_planning.pipeline.fabrica_pipeline import _mesh_in_source_frame  # noqa: E402
 from grasp_planning.pipeline.holder_grasp_debug_html import (  # noqa: E402
     write_holder_grasp_debug_html,
 )
 from grasp_planning.pipeline.inserter_unary_debug_html import (  # noqa: E402
     write_inserter_unary_debug_html,
-)
-from grasp_planning.pipeline.fabrica_pipeline import _mesh_in_source_frame  # noqa: E402
-from grasp_planning.grasping.mesh_io import load_triangle_mesh  # noqa: E402
-from grasp_planning.grasping.fabrica_grasp_debug import CandidateStatus  # noqa: E402
-from scripts.run_grasp_generation_benchmark import (  # noqa: E402
-    _write_all_generated_grasps_overview_html,
 )
 from scripts.build_holder_grasp_library import (  # noqa: E402
     DEFAULT_CONFIG_PATH,
@@ -55,6 +52,9 @@ from scripts.build_holder_grasp_library import (  # noqa: E402
 )
 from scripts.build_holder_state_feasibility import (  # noqa: E402
     _holder_feasibility_config,
+)
+from scripts.run_grasp_generation_benchmark import (  # noqa: E402
+    _write_all_generated_grasps_overview_html,
 )
 from scripts.run_grasp_pipeline import _planning_config  # noqa: E402
 

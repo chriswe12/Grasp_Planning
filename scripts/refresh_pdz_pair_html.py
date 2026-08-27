@@ -18,7 +18,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.pipeline.holder_state_debug_html import _gripper_payload
 
-
 OLD_DRAW = '''function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];items.forEach(([comp,shift])=>records.push(...faceRecords(componentWorld(comp,c,shift,translation),comp.faces,color)));drawFaces(records,alpha)}'''
 PDZ_DRAW = '''function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=data.gripper.model==="pdz_gripper"?[[data.gripper.base,0],[data.gripper.left_finger,-Math.max(0,(c.jaw_width-.012)/2)],[data.gripper.right_finger,Math.max(0,(c.jaw_width-.012)/2)]]:[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];items.forEach(([comp,shift])=>records.push(...faceRecords(componentWorld(comp,c,shift,translation),comp.faces,color)));drawFaces(records,alpha)}'''
 

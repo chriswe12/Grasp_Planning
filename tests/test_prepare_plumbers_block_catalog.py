@@ -20,6 +20,7 @@ from grasp_planning.start_poses import (
     VISUAL_SERVO_GRIPPER_PROFILE,
 )
 from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE
+
 SCRIPT = Path(__file__).resolve().parents[1] / "isaac_rl/scripts/prepare_plumbers_block_catalog.py"
 SPEC = importlib.util.spec_from_file_location("prepare_plumbers_block_catalog", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None

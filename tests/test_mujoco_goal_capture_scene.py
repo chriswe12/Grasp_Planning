@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "isaac_rl/scripts/capture_multigrasp_goal_catalog_mujoco.py"
 SPEC = importlib.util.spec_from_file_location("_mujoco_goal_capture_scene", SCRIPT_PATH)

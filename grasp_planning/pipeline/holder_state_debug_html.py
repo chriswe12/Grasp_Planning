@@ -7,18 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
+from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_PDZ, normalize_gripper_collision_model_name
 from grasp_planning.grasping.fabrica_grasp_debug import (
     KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
     _load_kuka_y_gripper_visual_mesh_tcp,
     quat_to_rotmat_xyzw,
     rotmat_to_quat_xyzw,
 )
-from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_PDZ, normalize_gripper_collision_model_name
-
-from .holder_grasp_debug_html import _pdz_component_payload
 
 from .assembly_sequence import AssemblySequence
 from .assembly_sequence_debug_html import assembly_sequence_visual_payload
+from .holder_grasp_debug_html import _pdz_component_payload
 from .holder_state_feasibility import HolderStateFeasibilityResult
 
 

@@ -7,13 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_PDZ
 from grasp_planning.grasping.fabrica_grasp_debug import quat_to_rotmat_xyzw, rotmat_to_quat_xyzw
 
 from .assembly_sequence import AssemblySequence
 from .assembly_sequence_debug_html import assembly_sequence_visual_payload
 from .holder_state_debug_html import _gripper_payload
-
 
 _TABLE_REASONS = {"inserter_table_collision"}
 _CLEARANCE_REASONS = {"inserter_clearance_margin_failed"}

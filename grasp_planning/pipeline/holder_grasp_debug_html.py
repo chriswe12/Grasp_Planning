@@ -7,17 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
+from grasp_planning.grasping.collision import (
+    _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M,
+    _PDZ_GRIPPER_BODY_ROTATION_TCP,
+    GRIPPER_COLLISION_MODEL_PDZ,
+    _load_pdz_gripper_collision_hull,
+    normalize_gripper_collision_model_name,
+)
 from grasp_planning.grasping.fabrica_grasp_debug import (
     KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
     SavedGraspCandidate,
     _load_kuka_y_gripper_visual_mesh_tcp,
-)
-from grasp_planning.grasping.collision import (
-    GRIPPER_COLLISION_MODEL_PDZ,
-    _PDZ_GRIPPER_BODY_ROTATION_TCP,
-    _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M,
-    _load_pdz_gripper_collision_hull,
-    normalize_gripper_collision_model_name,
 )
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 

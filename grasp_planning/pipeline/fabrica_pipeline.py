@@ -13,9 +13,9 @@ import numpy as np
 
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator
 from grasp_planning.grasping.collision import (
-    GRIPPER_COLLISION_MODEL_PDZ,
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    GRIPPER_COLLISION_MODEL_PDZ,
     KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
     normalize_gripper_collision_model_name,
 )

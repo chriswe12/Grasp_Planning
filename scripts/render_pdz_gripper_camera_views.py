@@ -52,7 +52,6 @@ from isaacsim.core.prims import SingleArticulation
 from PIL import Image
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROBOT_PRIM = "/World/Robot"
 CAMERA_NAME = "Camera"

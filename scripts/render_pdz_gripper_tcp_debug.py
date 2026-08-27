@@ -12,7 +12,6 @@ import numpy as np
 from isaaclab.app import AppLauncher
 from PIL import Image, ImageDraw
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -44,7 +43,6 @@ from grasp_planning.envs.fr3_part_env import (  # noqa: E402
 )
 from grasp_planning.isaac_visual_materials import apply_visual_servo_materials  # noqa: E402
 from grasp_planning.isaac_visual_scene import make_visual_servo_render_cfg  # noqa: E402
-
 
 ROBOT_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd"
 PART_USD = REPO_ROOT / "isaac_rl/data/plumbers_block/usd/part_0_bundle_local.usd"

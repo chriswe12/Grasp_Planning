@@ -20,6 +20,7 @@ from grasp_planning.isaac_visual_materials import (  # noqa: E402
     VISUAL_SERVO_CONTACT_PAD_COLOR,
     VISUAL_SERVO_FINGER_COLOR,
 )
+
 KUKA_SOURCE = (
     REPO_ROOT
     / "assets"
