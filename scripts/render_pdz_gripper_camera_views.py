@@ -418,7 +418,7 @@ def main() -> None:
     table_pose.SetTranslateOnly(Gf.Vec3d(*table_target))
     part_poses["07_part_table_axis"] = table_pose
 
-    debug_root = UsdGeom.Xform.Define(stage, "/World/DebugGeometry")
+    UsdGeom.Xform.Define(stage, "/World/DebugGeometry")
     tcp_marker = _sphere(
         stage,
         "/World/DebugGeometry/TcpMarker",
