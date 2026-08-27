@@ -76,7 +76,6 @@ def _add_tcp_marker(
     print("[TCP-DEBUG] authoring marker root", flush=True)
     stage = omni.usd.get_context().get_stage()
     position = position_w.detach().cpu().numpy()
-    quaternion = orientation_wxyz_w.detach().cpu().numpy()
     root = UsdGeom.Xform.Define(stage, "/World/PDZTCPDebug")
     root.GetPrim().SetMetadata(
         "documentation",
@@ -221,7 +220,7 @@ def main() -> None:
         tcp_yaw_base_rad=np.asarray(TCP_YAW_BASE_RAD, dtype=np.float32),
     )
     print(f"[TCP-DEBUG] robot USD: {ROBOT_USD}", flush=True)
-    print(f"[TCP-DEBUG] body: pdz_gripper_base_link", flush=True)
+    print("[TCP-DEBUG] body: pdz_gripper_base_link", flush=True)
     print(f"[TCP-DEBUG] local TCP: xyz={TCP_OFFSET_BASE_M} yaw={math.degrees(TCP_YAW_BASE_RAD):.1f} deg", flush=True)
     print(f"[TCP-DEBUG] wrote: {output_dir / 'tcp_views.png'}", flush=True)
 
