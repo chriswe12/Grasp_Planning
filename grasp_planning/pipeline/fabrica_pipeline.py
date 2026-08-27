@@ -13,6 +13,7 @@ import numpy as np
 
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator
 from grasp_planning.grasping.collision import (
+    GRIPPER_COLLISION_MODEL_PDZ,
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
     KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
@@ -128,6 +129,13 @@ def _robot_metadata_for_planning(planning: PlanningConfig) -> dict[str, object]:
             "gripper_model": GRIPPER_COLLISION_MODEL_KUKA_Y,
             "tcp_link": "gripper_tcp",
             "tcp_offset_m": [0.0, 0.0, 0.1455],
+        }
+    if planning.gripper_collision_model == GRIPPER_COLLISION_MODEL_PDZ:
+        return {
+            "robot_model": "kuka_iiwa7",
+            "gripper_model": GRIPPER_COLLISION_MODEL_PDZ,
+            "tcp_link": "pdz_gripper_tcp",
+            "tcp_offset_m": [0.0, 0.0, 0.1355],
         }
     return {
         "robot_model": "franka_fr3",
@@ -325,6 +333,8 @@ class RealExecutionConfig:
     lift_height_m: float = 0.08
     require_confirmation: bool = True
     stop_after: str = "pregrasp"
+    grasp_approach_controller: str = "moveit_pose"
+    visual_servo_config: str = ""
     allow_collisions: bool = False
     planning_scene_obstacles: tuple[dict[str, object], ...] = ()
     gripper_enabled: bool = False
@@ -334,9 +344,14 @@ class RealExecutionConfig:
     gripper_command_action: str = "/gripper_controller/gripper_cmd"
     gripper_command_position_mode: str = "width"
     gripper_command_max_effort: float = 30.0
-    gripper_trigger_open_service: str = "/gripper_controller/open"
-    gripper_trigger_close_service: str = "/gripper_controller/close"
-    gripper_trigger_stop_service: str = "/gripper_controller/stop"
+    gripper_trigger_open_service: str = "/left/gripper_controller/open"
+    gripper_trigger_close_service: str = "/left/gripper_controller/close"
+    gripper_trigger_stop_service: str = "/left/gripper_controller/stop"
+    gripper_position_command_topic: str = "/left/gripper_controller/position_command"
+    gripper_position_feedback_topic: str = "/left/gripper_controller/position"
+    gripper_position_feedback_tolerance: float = 0.02
+    moveit_gripper_joint_name: str = ""
+    gripper_closed_width: float = 0.0
     gripper_open_width: float = 0.08
     gripper_grasp_speed: float = 0.03
     gripper_grasp_force: float = 30.0
@@ -550,7 +565,12 @@ def _stage1_cache_key_payload(
             KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION
             if normalize_gripper_collision_model_name(planning.gripper_collision_model)
             == GRIPPER_COLLISION_MODEL_KUKA_Y
-            else "franka_hand_geometry_v1"
+            else (
+                "pdz_gripper_slim_8mm_collision_v5_floor_and_contact_offsets"
+                if normalize_gripper_collision_model_name(planning.gripper_collision_model)
+                == GRIPPER_COLLISION_MODEL_PDZ
+                else "franka_hand_geometry_v1"
+            )
         ),
         "geometry": {
             "target_mesh": _path_cache_record(geometry.target_mesh_path),

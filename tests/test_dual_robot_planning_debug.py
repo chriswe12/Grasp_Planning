@@ -300,3 +300,28 @@ def test_live_debug_server_reports_candidate_and_phase(
     assert next_state["candidate_counts"]["pickup_grasps_checked"] == 783
     assert next_state["candidate_counts"]["exact_ik_pair_tasks_checked"] == 6
     assert next_scene["execution_candidate_id"] == scene["execution_candidate_id"]
+
+
+def test_static_debug_html_uses_nonblocking_browser_thread(tmp_path, monkeypatch) -> None:
+    events = []
+
+    class FakeThread:
+        def __init__(self, *, target, args, kwargs, daemon) -> None:
+            events.append((target, args, kwargs, daemon))
+
+        def start(self) -> None:
+            events.append("started")
+
+    monkeypatch.setattr(debug_module.threading, "Thread", FakeThread)
+    debug_path = tmp_path / "part frame.html"
+
+    url = debug_module.open_debug_html_in_browser(debug_path)
+
+    assert url == debug_path.resolve().as_uri()
+    assert events[0] == (
+        debug_module.webbrowser.open,
+        (url,),
+        {"new": 2},
+        True,
+    )
+    assert events[1] == "started"

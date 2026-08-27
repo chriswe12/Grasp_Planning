@@ -74,10 +74,10 @@ def _find_repo_root(explicit_root: Path | None = None) -> Path:
             *source_path.parents,
         )
     for candidate in candidates:
-        if (candidate / "run_simple_dual_robot.sh").is_file() and (candidate / "configs").is_dir():
+        if (candidate / "run_pipeline.sh").is_file() and (candidate / "configs").is_dir():
             return candidate
     raise FileNotFoundError(
-        "Could not locate the grasp-planning repo root containing run_simple_dual_robot.sh and configs/."
+        "Could not locate the grasp-planning repo root containing run_pipeline.sh and configs/."
     )
 
 
@@ -207,6 +207,12 @@ class DualPipelineRunner:
         allow_objectless_planning: bool = False,
         headless: bool = False,
         pair_id: str = "",
+        robots: str = "both",
+        single_role: str = "inserter",
+        stop_after: str = "",
+        policy: str = "",
+        left_camera: str = "realsense_1",
+        right_camera: str = "realsense_2",
     ) -> None:
         self.repo_root = _find_repo_root(repo_root)
         _ensure_repo_import_path(self.repo_root)
@@ -222,11 +228,18 @@ class DualPipelineRunner:
         self.allow_objectless_planning = bool(allow_objectless_planning)
         self.headless = bool(headless)
         self.pair_id = str(pair_id)
+        self.robots = str(robots)
+        self.single_role = str(single_role)
+        self.policy = str(policy).strip()
+        self.left_camera = str(left_camera)
+        self.right_camera = str(right_camera)
+        if self.robots not in {"left", "right", "both"}:
+            raise ValueError("robots must be left, right, or both.")
+        if self.single_role not in {"holder", "inserter"}:
+            raise ValueError("single_role must be holder or inserter.")
         self.stop_after = str(
-            _action_config(self.base_payload).get(
-                "stop_after",
-                DEFAULT_DUAL_REAL_STOP_AFTER,
-            )
+            stop_after
+            or _action_config(self.base_payload).get("stop_after", DEFAULT_DUAL_REAL_STOP_AFTER)
         )
         if self.stop_after not in DUAL_REAL_STOP_AFTER_CHOICES:
             raise ValueError(
@@ -247,7 +260,7 @@ class DualPipelineRunner:
 
     @property
     def description(self) -> str:
-        return f"dual-{self.mode}"
+        return f"dual-{self.mode}-{self.robots}"
 
     @property
     def debug_aabb_topic(self) -> str:
@@ -720,9 +733,13 @@ class DualPipelineRunner:
             "dual_real_attempt.json" if self.mode == "real" else "dual_pitl_isaac_attempt.json"
         )
         command = [
-            str(self.repo_root / "run_simple_dual_robot.sh"),
+            str(self.repo_root / "run_pipeline.sh"),
             "--mode",
-            "real" if self.mode == "real" else "sim",
+            self.mode,
+            "--robots",
+            self.robots,
+            "--role",
+            self.single_role,
             "--reuse-moveit",
             "--artifact-dir",
             str(artifact_dir),
@@ -760,6 +777,17 @@ class DualPipelineRunner:
         ]
         if self.pair_id:
             command.extend(("--pair-id", self.pair_id))
+        if self.policy:
+            command.extend(
+                (
+                    "--policy",
+                    self.policy,
+                    "--left-camera",
+                    self.left_camera,
+                    "--right-camera",
+                    self.right_camera,
+                )
+            )
         if self.mode == "pitl":
             command.extend(("--plan-output", str(task_path)))
             if self.headless or bool(action.get("headless", False)):

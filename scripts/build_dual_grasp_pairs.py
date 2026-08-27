@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import html
+import json
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -29,7 +33,20 @@ from grasp_planning.pipeline import (  # noqa: E402
     write_dual_grasp_pair_summary_json,
     write_holder_grasp_library_artifacts,
     write_holder_state_feasibility_json,
+    write_holder_state_debug_artifacts,
     write_inserter_grasp_library,
+)
+from grasp_planning.pipeline.holder_grasp_debug_html import (  # noqa: E402
+    write_holder_grasp_debug_html,
+)
+from grasp_planning.pipeline.inserter_unary_debug_html import (  # noqa: E402
+    write_inserter_unary_debug_html,
+)
+from grasp_planning.pipeline.fabrica_pipeline import _mesh_in_source_frame  # noqa: E402
+from grasp_planning.grasping.mesh_io import load_triangle_mesh  # noqa: E402
+from grasp_planning.grasping.fabrica_grasp_debug import CandidateStatus  # noqa: E402
+from scripts.run_grasp_generation_benchmark import (  # noqa: E402
+    _write_all_generated_grasps_overview_html,
 )
 from scripts.build_holder_grasp_library import (  # noqa: E402
     DEFAULT_CONFIG_PATH,
@@ -42,8 +59,222 @@ from scripts.build_holder_state_feasibility import (  # noqa: E402
 from scripts.run_grasp_pipeline import _planning_config  # noqa: E402
 
 
+def _write_index_html(*, output_dir: Path, result, summary_html: Path, step_htmls: tuple[Path, ...]) -> Path:
+    """Write the stable offline-build landing page expected by benchmark users."""
+
+    rows = []
+    for step in result.steps:
+        metadata = step.metadata
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(step.step_id)}</td>"
+            f"<td>{int(metadata['holder_shortlist_count'])}</td>"
+            f"<td>{int(metadata['inserter_shortlist_count'])}</td>"
+            f"<td>{int(metadata['compatible_pair_count'])}</td>"
+            f"<td>{int(metadata['retained_pair_count'])}</td>"
+            f"<td><a href=\"{html.escape(pair_artifact_name(step).replace('.json', '.html'))}\">pairs</a> · "
+            f"<a href=\"inserter_population_{html.escape(step.step_id)}.html\">all unary grasps</a> · "
+            f"<a href=\"inserter_unary_debug_{html.escape(step.step_id)}.html\">constraint debugger</a> · "
+            f"<a href=\"inserter_failures_{html.escape(step.step_id)}.html\">unary failures</a></td>"
+            "</tr>"
+        )
+    page = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>PDZ offline grasp build</title>
+<style>body{{font:15px system-ui;margin:3rem;max-width:900px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:.55rem;border-bottom:1px solid #ddd;text-align:left}}a{{color:#0759b5}}</style></head>
+<body><h1>{html.escape(result.assembly)} offline grasp build</h1>
+<p>Three-stage PDZ collision planning: Stage 1 grasps, Stage 2 holder-state feasibility, Stage 3 insertion and pair checks.</p>
+<p><a href=\"{summary_html.name}\">Stage 3 summary</a> · <a href=\"holder_base_candidates.html\">Stage 1 holder grasps</a> · <a href=\"holder_validity_matrix.html\">Stage 2 holder-state debugger</a></p>
+<p><small>\"holders\" is the Stage-2 holder-state pass count only. \"inserters\" is the Stage-3 unary insertion pass count; zero inserters means that assembly step cannot proceed.</small></p>
+<table><thead><tr><th>Assembly step</th><th>holders<br><small>Stage 2</small></th><th>inserters<br><small>Stage 3 unary</small></th><th>compatible</th><th>retained</th><th></th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+</body></html>"""
+    path = output_dir / "index.html"
+    path.write_text(page, encoding="utf-8")
+    return path
+
+
+def _failure_sort_key(status) -> tuple[float, float, str]:
+    """Show the least-penetrating failures first, then the best grasp score."""
+
+    clearance = status.minimum_clearance_m
+    penetration = float("inf") if clearance is None else max(0.0, -float(clearance))
+    score = float(status.candidate.score) if status.candidate.score is not None else float("-inf")
+    return (penetration, -score, status.grasp_id)
+
+
+def _diverse_failure_statuses(library, *, per_reason: int = 60):
+    """Keep an inspectable, spatially diverse slice of rejected unary grasps."""
+
+    selected = []
+    by_reason = {}
+    for status in library.candidate_statuses:
+        if status.status == "rejected":
+            by_reason.setdefault(status.reason, []).append(status)
+    for reason in sorted(by_reason):
+        used_bins = set()
+        for status in sorted(by_reason[reason], key=_failure_sort_key):
+            candidate = status.candidate
+            # Preserve contact-normal families as well as position/roll.  A
+            # single rounded or highly scored region must not hide valid flat
+            # face grasp families in the failure debugger.
+            cell = tuple(int(np.floor(float(value) / 0.025)) for value in candidate.grasp_position_obj)
+            def normal_family(normal) -> tuple[int, int]:
+                value = np.asarray(normal, dtype=float)
+                axis = int(np.argmax(np.abs(value)))
+                return axis, 1 if value[axis] >= 0.0 else -1
+            contacts = tuple(sorted((normal_family(candidate.contact_normal_a_obj), normal_family(candidate.contact_normal_b_obj))))
+            key = (cell, int(np.floor(float(candidate.roll_angle_rad) / (np.pi / 6.0))), contacts)
+            if key in used_bins:
+                continue
+            used_bins.add(key)
+            selected.append(status)
+            if sum(item.reason == reason for item in selected) >= per_reason:
+                break
+    return tuple(sorted(selected, key=lambda status: (status.reason, *_failure_sort_key(status))))
+
+
+def _failure_candidate_payload(status, rank: int) -> dict[str, object]:
+    candidate = status.candidate
+    return {
+        "rank": rank,
+        "grasp_id": candidate.grasp_id,
+        "position": list(candidate.grasp_position_obj),
+        "orientation_xyzw": list(candidate.grasp_orientation_xyzw_obj),
+        "contact_a": list(candidate.contact_point_a_obj),
+        "contact_b": list(candidate.contact_point_b_obj),
+        "jaw_width": candidate.jaw_width,
+        "roll_angle_rad": candidate.roll_angle_rad,
+        "score": candidate.score,
+        "reason": status.reason,
+        "minimum_clearance_m": status.minimum_clearance_m,
+        "penetration_m": None if status.minimum_clearance_m is None else max(0.0, -status.minimum_clearance_m),
+        "details": status.details,
+    }
+
+
+def _write_inserter_failure_debug(*, library, sequence, planning, output_dir: Path) -> tuple[Path, Path]:
+    """Persist the failed unary grasps that normal bundle serialization omits."""
+
+    failures = _diverse_failure_statuses(library)
+    json_path = output_dir / f"inserter_failures_{library.step_id}.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "kind": "inserter_unary_failure_debug",
+                "step_id": library.step_id,
+                "incoming_part_id": library.incoming_part_id,
+                "selection": {
+                    "per_reason_limit": 60,
+                    "ranking": "least penetration first, then grasp score",
+                    "diversity": "one grasp per 25 mm grasp-center cell, 30 degree roll bin, and contact-normal family per reason",
+                },
+                "reason_counts": library.reason_counts,
+                "failures": [_failure_candidate_payload(status, rank) for rank, status in enumerate(failures, start=1)],
+            },
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    # The existing grasp viewer provides a quick visual inspection of the
+    # candidate and the exact PDZ collision hulls.  Keep the unary failure
+    # information inside the candidate metadata shown in its details panel.
+    visual_candidates = tuple(
+        replace(
+            status.candidate,
+            metadata={
+                **(status.candidate.metadata or {}),
+                "unary_failure": {
+                    "reason": status.reason,
+                    "minimum_clearance_m": status.minimum_clearance_m,
+                    "penetration_m": None if status.minimum_clearance_m is None else max(0.0, -status.minimum_clearance_m),
+                    "details": status.details,
+                },
+            },
+        )
+        for status in failures
+    )
+    source = library.source_frame_pose_assembly
+    # Candidates are in Stage-1's canonical source frame, not the raw OBJ
+    # frame.  Render that same mesh frame so sampled contacts lie on the mesh.
+    mesh = _mesh_in_source_frame(
+        load_triangle_mesh(library.bundle.target_mesh_path, scale=library.bundle.mesh_scale),
+        source,
+    )
+    table_corners_world = np.asarray(
+        [[-0.5, -0.5, sequence.table_z_assembly_m], [-0.5, 0.5, sequence.table_z_assembly_m], [0.5, 0.5, sequence.table_z_assembly_m], [0.5, -0.5, sequence.table_z_assembly_m]],
+        dtype=float,
+    )
+    table_corners_local = (source.rotation_world_from_object.T @ (table_corners_world - source.translation_world).T).T.tolist()
+    html_path = output_dir / f"inserter_failures_{library.step_id}.html"
+    write_holder_grasp_debug_html(
+        title=f"Inserter unary failures: {library.step_id}",
+        subtitle="Diverse rejected candidates; table is shown in the incoming-part source frame.",
+        mesh_local=mesh,
+        candidates=visual_candidates,
+        output_html=html_path,
+        metadata_lines=[
+            f"raw candidates: {library.raw_candidate_count}",
+            f"rejected candidates shown: {len(visual_candidates)}",
+            "ranked by least known penetration; one candidate per spatial/roll bin",
+        ],
+        table_plane_local=table_corners_local,
+        gripper_collision_model=planning.gripper_collision_model,
+    )
+    return json_path, html_path
+
+
+def _write_inserter_population_debug(*, library, sequence, output_dir: Path) -> Path:
+    """Write the all-grasp marker viewer with pass/fail and percentage controls."""
+
+    source = library.source_frame_pose_assembly
+    mesh = _mesh_in_source_frame(
+        load_triangle_mesh(library.bundle.target_mesh_path, scale=library.bundle.mesh_scale), source
+    )
+    statuses = [
+        CandidateStatus(
+            grasp=status.candidate,
+            status=("accepted" if status.status == "accepted" else "rejected"),
+            reason=status.reason,
+        )
+        for status in library.candidate_statuses
+        if status.status != "not_evaluated"
+    ]
+    path = output_dir / f"inserter_population_{library.step_id}.html"
+    _write_all_generated_grasps_overview_html(
+        path,
+        title=f"{sequence.assembly} / {library.step_id} inserter population",
+        subtitle="All unary-evaluated grasps. Use the pass/fail buttons and Shown slider to inspect the full population.",
+        mesh_local=mesh,
+        candidate_statuses=statuses,
+        object_pose_world=source,
+        metadata_lines=[
+            f"raw candidates: {library.raw_candidate_count}",
+            f"unary evaluated: {len(statuses)}",
+            f"unary accepted: {len(library.accepted_candidates)}",
+            "red/amber markers rejected; green markers passed all unary constraints",
+        ],
+    )
+    return path
+
+
+def _write_inserter_unary_constraint_debug(*, library, sequence, planning, pair_config, output_dir: Path) -> Path:
+    """Write the full Stage-3 explorer: overview filters plus a detailed scene."""
+
+    path = output_dir / f"inserter_unary_debug_{library.step_id}.html"
+    write_inserter_unary_debug_html(
+        library=library,
+        sequence=sequence,
+        planning=planning,
+        pair_config=pair_config,
+        output_path=path,
+    )
+    return path
+
+
 def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
     raw = dict(payload.get("pair_planning", {}))
+    contact_pairs = tuple(
+        tuple(float(value) for value in pair)
+        for pair in raw.get("inserter_contact_offset_pairs_m", DualGraspPairConfig().inserter_contact_offset_pairs_m)
+    )
     return DualGraspPairConfig(
         max_holder_candidates_per_step=int(raw.get("max_holder_candidates_per_step", 80)),
         max_inserter_candidates_per_step=int(raw.get("max_inserter_candidates_per_step", 512)),
@@ -87,6 +318,7 @@ def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
         ),
         exact_pair_clearance_ranking=bool(raw.get("exact_pair_clearance_ranking", True)),
         stage3_worker_count=int(raw.get("stage3_worker_count", 1)),
+        inserter_contact_offset_pairs_m=contact_pairs,
     )
 
 
@@ -238,10 +470,33 @@ def main(argv: list[str] | None = None) -> int:
         holder_feasibility,
         holder_source,
     )
+    write_holder_state_debug_artifacts(
+        holder_feasibility,
+        sequence,
+        output_dir,
+    )
     for library in inserter_libraries:
         write_inserter_grasp_library(
             library,
             output_dir / inserter_artifact_name(library),
+        )
+        _write_inserter_failure_debug(
+            library=library,
+            sequence=sequence,
+            planning=planning,
+            output_dir=output_dir,
+        )
+        _write_inserter_population_debug(
+            library=library,
+            sequence=sequence,
+            output_dir=output_dir,
+        )
+        _write_inserter_unary_constraint_debug(
+            library=library,
+            sequence=sequence,
+            planning=planning,
+            pair_config=pair_config,
+            output_dir=output_dir,
         )
     for step in result.steps:
         write_dual_grasp_pair_step_json(
@@ -257,6 +512,12 @@ def main(argv: list[str] | None = None) -> int:
         sequence,
         output_dir,
     )
+    index_html = _write_index_html(
+        output_dir=output_dir,
+        result=result,
+        summary_html=summary_html,
+        step_htmls=tuple(step_htmls),
+    )
 
     print(f"assembly: {result.assembly}", flush=True)
     for step in result.steps:
@@ -271,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(f"summary json: {summary_json}", flush=True)
     print(f"summary html: {summary_html}", flush=True)
+    print(f"index html: {index_html}", flush=True)
     print(f"step html files: {len(step_htmls)}", flush=True)
     return 0
 

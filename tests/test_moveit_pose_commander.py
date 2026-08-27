@@ -342,6 +342,58 @@ def test_remove_planning_scene_obstacles_sends_remove_operations() -> None:
     assert all(value.header.frame_id == "base_link" for value in objects)
 
 
+def test_apply_planning_scene_retries_once_after_fastdds_response_timeout() -> None:
+    commander = object.__new__(MoveItPoseCommander)
+    commander._config = MoveItPoseCommanderConfig(
+        moveit_namespace="/lbr",
+        wait_for_moveit_timeout_s=15.0,
+        planning_scene_apply_attempts=2,
+        planning_scene_first_attempt_timeout_s=2.0,
+    )
+    commander._apply_planning_scene_client = mock.Mock()
+    commander._apply_planning_scene_client.wait_for_service.return_value = True
+    commander._apply_planning_scene_client.call_async.side_effect = [object(), object()]
+    commander._wait_for_future = mock.Mock(
+        side_effect=[
+            TimeoutError("first response was not delivered"),
+            SimpleNamespace(success=True),
+        ]
+    )
+    logger = mock.Mock()
+    commander.get_logger = mock.Mock(return_value=logger)
+
+    with mock.patch.dict(
+        MoveItPoseCommander.apply_planning_scene_obstacles.__globals__,
+        {
+            "CollisionObject": _FakeCollisionObject,
+            "PlanningScene": _FakePlanningScene,
+            "ApplyPlanningScene": _FakeApplyPlanningScene,
+            "Pose": _FakePose,
+            "SolidPrimitive": _FakeSolidPrimitive,
+        },
+    ):
+        ok, message = commander.apply_planning_scene_obstacles(
+            [
+                {
+                    "id": "floor",
+                    "type": "box",
+                    "size_m": [2.0, 2.0, 0.02],
+                    "xyz": [0.0, 0.0, -0.01],
+                }
+            ],
+            default_frame_id="lbr_link_0",
+        )
+
+    assert ok is True
+    assert message == "Applied 1 planning-scene obstacle(s)."
+    assert commander._apply_planning_scene_client.call_async.call_count == 2
+    assert [call.kwargs["timeout_s"] for call in commander._wait_for_future.call_args_list] == [
+        2.0,
+        15.0,
+    ]
+    logger.warning.assert_called_once()
+
+
 def test_apply_and_remove_attached_collision_box_uses_robot_state_diff() -> None:
     commander = object.__new__(MoveItPoseCommander)
     commander._config = MoveItPoseCommanderConfig(moveit_namespace="/lbr_dual_arm")

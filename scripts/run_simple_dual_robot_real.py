@@ -45,6 +45,18 @@ def _parse_args() -> argparse.Namespace:
         choices=STOP_AFTER_CHOICES,
         default="holder_pregrasp",
     )
+    parser.add_argument(
+        "--active-roles",
+        default="holder,inserter",
+        help="Comma-separated task roles to move: holder, inserter, or holder,inserter.",
+    )
+    parser.add_argument(
+        "--policy",
+        default="",
+        help="Policy registry name used for every active pregrasp-to-grasp approach.",
+    )
+    parser.add_argument("--left-camera", choices=("realsense_1", "realsense_2"), default="realsense_1")
+    parser.add_argument("--right-camera", choices=("realsense_1", "realsense_2"), default="realsense_2")
     parser.add_argument("--yes", action="store_true", help="Skip the final typed confirmation.")
     parser.add_argument(
         "--skip-grippers",
@@ -79,32 +91,37 @@ def _parse_args() -> argparse.Namespace:
         help="Reuse an existing debug browser tab instead of opening another one.",
     )
     parser.set_defaults(debug_gui_open_browser=True)
-    for role, robot in (("holder", "lbr_one"), ("inserter", "lbr_two")):
+    for side in ("left", "right"):
         parser.add_argument(
-            f"--{role}-gripper-open-service",
-            default=f"/{robot}/gripper_controller/open",
+            f"--{side}-gripper-open-service",
+            default=f"/{side}/gripper_controller/open",
         )
         parser.add_argument(
-            f"--{role}-gripper-close-service",
-            default=f"/{robot}/gripper_controller/close",
+            f"--{side}-gripper-close-service",
+            default=f"/{side}/gripper_controller/close",
         )
         parser.add_argument(
-            f"--{role}-gripper-stop-service",
-            default=f"/{robot}/gripper_controller/stop",
+            f"--{side}-gripper-stop-service",
+            default=f"/{side}/gripper_controller/stop",
         )
         parser.add_argument(
-            f"--{role}-gripper-position-command-topic",
-            default=f"/{robot}/gripper_controller/position_command",
+            f"--{side}-gripper-position-command-topic",
+            default=f"/{side}/gripper_controller/position_command",
         )
         parser.add_argument(
-            f"--{role}-gripper-position-feedback-topic",
-            default=f"/{robot}/gripper_controller/position",
+            f"--{side}-gripper-position-feedback-topic",
+            default=f"/{side}/gripper_controller/position",
         )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
+    active_roles = tuple(
+        dict.fromkeys(role.strip() for role in str(args.active_roles).split(",") if role.strip())
+    )
+    if not active_roles or any(role not in {"holder", "inserter"} for role in active_roles):
+        raise ValueError("--active-roles must be holder, inserter, or holder,inserter.")
     if not 0.0 < args.velocity_scale <= 0.20:
         raise ValueError("--velocity-scale must be in (0, 0.20] for this hardware runner.")
     if not 0.0 < args.acceleration_scale <= 0.20:
@@ -139,20 +156,24 @@ def main() -> int:
         require_confirmation=not bool(args.yes),
         allow_objectless_planning=bool(args.allow_objectless_planning),
         stop_after=str(args.stop_after),
+        active_roles=active_roles,
+        policy=str(args.policy).strip(),
+        left_camera=str(args.left_camera),
+        right_camera=str(args.right_camera),
         grippers_enabled=not bool(args.skip_grippers),
         gripper_timeout_s=float(args.gripper_timeout_s),
         grasp_settle_time_s=float(args.grasp_settle_time_s),
         gripper_position_feedback_tolerance=float(args.gripper_position_feedback_tolerance),
-        holder_gripper_open_service=str(args.holder_gripper_open_service),
-        holder_gripper_close_service=str(args.holder_gripper_close_service),
-        holder_gripper_stop_service=str(args.holder_gripper_stop_service),
-        holder_gripper_position_command_topic=str(args.holder_gripper_position_command_topic),
-        holder_gripper_position_feedback_topic=str(args.holder_gripper_position_feedback_topic),
-        inserter_gripper_open_service=str(args.inserter_gripper_open_service),
-        inserter_gripper_close_service=str(args.inserter_gripper_close_service),
-        inserter_gripper_stop_service=str(args.inserter_gripper_stop_service),
-        inserter_gripper_position_command_topic=str(args.inserter_gripper_position_command_topic),
-        inserter_gripper_position_feedback_topic=str(args.inserter_gripper_position_feedback_topic),
+        left_gripper_open_service=str(args.left_gripper_open_service),
+        left_gripper_close_service=str(args.left_gripper_close_service),
+        left_gripper_stop_service=str(args.left_gripper_stop_service),
+        left_gripper_position_command_topic=str(args.left_gripper_position_command_topic),
+        left_gripper_position_feedback_topic=str(args.left_gripper_position_feedback_topic),
+        right_gripper_open_service=str(args.right_gripper_open_service),
+        right_gripper_close_service=str(args.right_gripper_close_service),
+        right_gripper_stop_service=str(args.right_gripper_stop_service),
+        right_gripper_position_command_topic=str(args.right_gripper_position_command_topic),
+        right_gripper_position_feedback_topic=str(args.right_gripper_position_feedback_topic),
         debug_gui=bool(args.debug_gui),
         debug_gui_port=int(args.debug_gui_port),
         debug_gui_open_browser=bool(args.debug_gui_open_browser),

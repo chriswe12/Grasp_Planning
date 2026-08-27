@@ -364,7 +364,9 @@ def _command(
     benchmark = dict(payload.get("benchmark", {}) or {})
     physics = dict(payload.get("physics", {}) or {})
     command = [
-        str(REPO_ROOT / "run_simple_dual_robot.sh"),
+        str(REPO_ROOT / "run_pipeline.sh"),
+        "--workflow",
+        "dual",
         "--mode",
         "real" if real_preflight_only else "sim",
         "--assembly",
@@ -404,6 +406,13 @@ def _command(
         "--headless",
         "--no-planning-debug-gui",
     ]
+    if benchmark.get("gripper_model"):
+        command.extend(("--gripper-model", str(benchmark["gripper_model"])))
+    if benchmark.get("robot_usd"):
+        robot_usd = Path(str(benchmark["robot_usd"])).expanduser()
+        if not robot_usd.is_absolute():
+            robot_usd = REPO_ROOT / robot_usd
+        command.extend(("--robot-usd", str(robot_usd.resolve())))
 
     if real_preflight_only:
         command.extend(
@@ -436,6 +445,10 @@ def _command(
             ]
         )
         return command
+
+    # Public pipeline runs reuse persistent MoveIt by default. Simulation
+    # benchmark cases remain self-contained and explicitly own their stack.
+    command.append("--start-moveit")
 
     pickup_pregrasp_offsets = benchmark.get(
         "pickup_pregrasp_offsets_m",
@@ -1004,6 +1017,7 @@ def _failure_phase(
         for token in (
             "moveit stack",
             "pass --reuse-moveit",
+            "--start-moveit",
             "service unavailable",
             "failed to connect",
             "ros domain",
@@ -1030,6 +1044,9 @@ def _is_existing_stack_ownership_conflict(message: object) -> bool:
     normalized = str(message).lower()
     return "a dual moveit stack already exists" in normalized or (
         "stop it first" in normalized and "pass --reuse-moveit" in normalized
+    ) or (
+        "stop it before using --start-moveit" in normalized
+        and "persistent-stack reuse" in normalized
     )
 
 
@@ -1037,6 +1054,8 @@ def _is_reused_stack_unavailable(message: object) -> bool:
     normalized = str(message).lower()
     return (
         "--reuse-moveit was requested" in normalized and "services are not ready" in normalized
+    ) or (
+        "no reusable dual moveit stack is ready" in normalized
     ) or (
         "missing /lbr_dual_arm/compute_ik" in normalized
         and "/lbr_dual_arm/plan_kinematic_path" in normalized
@@ -1444,10 +1463,15 @@ def _managed_mock_moveit_command(
     process_group_file: Path,
 ) -> list[str]:
     benchmark = dict(payload.get("benchmark", {}) or {})
-    return [
-        str(REPO_ROOT / "start_dual_lbr_moveit.sh"),
+    command = [
+        str(REPO_ROOT / "run_pipeline.sh"),
+        "--workflow",
+        "dual",
         "--mode",
-        "mock",
+        "sim",
+        "--robots",
+        "both",
+        "--bringup-only",
         "--ros-domain-id",
         str(benchmark.get("ros_domain_id", 0)),
         "--ik-solver",
@@ -1455,6 +1479,9 @@ def _managed_mock_moveit_command(
         "--process-group-file",
         str(process_group_file),
     ]
+    if benchmark.get("gripper_model"):
+        command.extend(("--gripper-model", str(benchmark["gripper_model"])))
+    return command
 
 
 def _wait_for_managed_moveit(

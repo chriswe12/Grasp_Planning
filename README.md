@@ -1,8 +1,8 @@
 # Fabrica Grasp Planning And Dual-Arm Assembly
 
 This repository plans collision-checked parallel-jaw grasps for Fabrica parts
-and executes them with Franka Research 3 or KUKA iiwa7 robots. It contains two
-related workflows:
+and executes them with Franka Research 3 or KUKA iiwa7 robots. One public
+command exposes two related workflows:
 
 1. The **single-object pipeline** generates grasps, filters them at a known
    world pose, and can execute a selected stage-2 bundle in MuJoCo, Isaac, or
@@ -17,19 +17,30 @@ was selected and why alternatives were rejected. Generated artifacts under
 
 ## Start Here
 
-Choose the entrypoint that matches the job:
+Use one environment and one entrypoint:
+
+```bash
+source ./setup_robot_env.sh
+./run_pipeline.sh --help
+```
 
 | Goal | Entrypoint | Main config |
 | --- | --- | --- |
-| Generate and execute one grasp | `./run_pipeline.sh --mode sim` | `configs/grasp_pipeline_sim.yaml` |
-| Use a ROS2 perception pose in simulation | `./run_pipeline.sh --mode pitl` | `configs/grasp_pipeline_pitl.yaml` |
-| Plan or execute one real-robot pickup | `./run_pipeline.sh --mode real` | `configs/grasp_pipeline_real.yaml` |
+| Dual real grasp, lift, and move to pre-insertion | `./run_pipeline.sh --mode real --robots both --execute` | `configs/dual_grasp_planning.yaml` |
+| Dual real grasp and lift only | `./run_pipeline.sh --mode real --robots both --grasp-only --execute` | `configs/dual_grasp_planning.yaml` |
+| One active real robot | `./run_pipeline.sh --mode real --robots left --grasp-only --execute` | `configs/dual_grasp_planning.yaml` |
+| Use one policy for every active grasp approach | `./run_pipeline.sh --mode real --policy clutter-v5 --execute` | policy registry/metadata |
+| Bring up one or both physical arms | `./run_pipeline.sh --mode real --robots both --bringup-only --rviz` | ROS2 MoveIt config |
+| Generate and execute one legacy single-object grasp | `./run_pipeline.sh --workflow single-object --mode sim` | `configs/grasp_pipeline_sim.yaml` |
+| Use a ROS2 perception pose in simulation | `./run_pipeline.sh --workflow single-object --mode pitl` | `configs/grasp_pipeline_pitl.yaml` |
 | Build dual holder/inserter planning artifacts | `scripts/build_dual_grasp_pairs.py` | `configs/dual_grasp_planning.yaml` |
-| Plan and run the dual-arm vertical slice in Isaac | `./run_simple_dual_robot.sh --mode sim` | `configs/dual_grasp_planning.yaml` |
-| Benchmark every dual assembly step with videos | `scripts/run_dual_assembly_benchmark.py` | `configs/dual_assembly_benchmark.yaml` |
-| Preflight or run the guarded dual-arm hardware slice | `./run_simple_dual_robot.sh --mode real` | `configs/dual_grasp_planning.yaml` |
-| Evaluate grasp generation without execution | `scripts/run_grasp_generation_benchmark.py` | `configs/grasp_generation_benchmark.yaml` |
-| Execute saved benchmark grasps | `scripts/run_grasp_execution_benchmark.py` | `configs/grasp_execution_benchmark.yaml` |
+| Run the dual-arm vertical slice in Isaac | `./run_pipeline.sh --mode sim --robots both` | `configs/dual_grasp_planning.yaml` |
+| Benchmark every dual assembly step | `./run_pipeline.sh --benchmark dual-assembly` | `configs/dual_assembly_benchmark.yaml` |
+| Evaluate grasp generation without execution | `./run_pipeline.sh --benchmark grasp-generation` | `configs/grasp_generation_benchmark.yaml` |
+| Execute saved benchmark grasps | `./run_pipeline.sh --benchmark grasp-execution` | `configs/grasp_execution_benchmark.yaml` |
+
+See [EXECUTION_PATHS.md](EXECUTION_PATHS.md) for the complete single-object,
+policy, dual-arm, ROS action, and benchmark execution map.
 
 The single-object and dual-arm pipelines share grasp generation and collision
 geometry, but their numbered stages are different. When this README says
@@ -155,14 +166,13 @@ colcon build --packages-select fp_debug_msgs robot_integration_ros --symlink-ins
 cd ..
 ```
 
-Source the dual-arm environment helper in terminals where commands are run
-manually:
+Source the repository environment helper in every ROS terminal:
 
 ```bash
-source ./setup_dual_robot_env.sh
+source ./setup_robot_env.sh
 ```
 
-The one-command dual runner sources the standard locations itself.
+The older setup helpers are compatibility shims to this file.
 
 ## Single-Object Quick Start
 
@@ -176,11 +186,11 @@ The user-facing single-object entrypoint has three modes:
   optionally execute on hardware.
 
 ```bash
-./run_pipeline.sh --mode sim
-./run_pipeline.sh --mode pitl
-./run_pipeline.sh --mode real
-./run_pipeline.sh --mode sim --headless
-./run_pipeline.sh --mode sim --backend isaac --headless
+./run_pipeline.sh --workflow single-object --mode sim
+./run_pipeline.sh --workflow single-object --mode pitl
+./run_pipeline.sh --workflow single-object --mode real
+./run_pipeline.sh --workflow single-object --mode sim --headless
+./run_pipeline.sh --workflow single-object --mode sim --backend isaac --headless
 ```
 
 Default configs are `configs/grasp_pipeline_sim.yaml`,
@@ -197,7 +207,7 @@ pregrasp, and gripper actuation is disabled.
 The default sim config reproduces corrected KUKA execution-benchmark run 3:
 `plumbers_block/0` at stable `orientation_002`. Start
 `./start_lbr_moveit.sh` in another terminal, then run
-`./run_pipeline.sh --mode sim`. Pass `--headless` when the Isaac GUI is not
+`./run_pipeline.sh --workflow single-object --mode sim`. Pass `--headless` when the Isaac GUI is not
 wanted.
 
 For `pitl` and `real`, the planning local frame is the OBJ frame translated by
@@ -314,16 +324,23 @@ assembled parts, and the other gripper.
 
 ### 2. Run the dual-arm Isaac vertical slice
 
-For the first holder-active step, run:
+For the first holder-active step, keep mock MoveIt in one terminal:
 
 ```bash
-./run_simple_dual_robot.sh \
+./run_pipeline.sh --mode sim --robots both --bringup-only --rviz
+```
+
+Then run the task from a second terminal:
+
+```bash
+./run_pipeline.sh \
   --mode sim \
+  --robots both \
   --assembly plumbers_block \
   --incoming-part-id 0
 ```
 
-This one command starts the shared dual-arm mock MoveIt stack and pre-plans the
+The task reuses the shared dual-arm mock MoveIt stack and pre-plans the
 first eight inserter transitions in joint space. Stage 3 retains up to 256
 complete pair/transition candidates. After the actual-pose floor check, the
 runtime queue is split into a strict non-crossing phase followed by a crossed
@@ -403,7 +420,9 @@ already exited. On success, planner failure, Isaac failure, Ctrl-C, or shell
 exit, cleanup sends TERM and then KILL only to that validated group. The
 benchmark applies the same ownership-aware teardown and stops after the first
 explicit existing-stack conflict instead of recording the rest of the matrix as
-planner failures. A normal rerun therefore does not require `--reuse-moveit`.
+planner failures. Persistent-stack reuse is the normal behavior. Pass
+`--start-moveit` only for an intentionally temporary, wrapper-owned stack;
+`--keep-moveit` is valid only with that option.
 
 During visible simulation and guarded real execution, a localhost browser
 debugger opens before candidate preflight or Isaac. In real mode it starts
@@ -436,9 +455,9 @@ intentionally skips the inserter transport and pre-insertion phases.
 The other selected-order incoming parts are `3`, `1`, and `4`:
 
 ```bash
-./run_simple_dual_robot.sh --mode sim --incoming-part-id 3
-./run_simple_dual_robot.sh --mode sim --incoming-part-id 1
-./run_simple_dual_robot.sh --mode sim --incoming-part-id 4
+./run_pipeline.sh --mode sim --robots both --incoming-part-id 3
+./run_pipeline.sh --mode sim --robots both --incoming-part-id 1
+./run_pipeline.sh --mode sim --robots both --incoming-part-id 4
 ```
 
 The plan and attempt artifacts are written next to the Stage-3 artifacts. For
@@ -484,13 +503,13 @@ positive-Y pickups assign `lbr_two`, and the opposite arm holds the assembly.
 Start with a small smoke slice:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py --limit-cases 4
+./run_pipeline.sh --benchmark dual-assembly --limit-cases 4
 ```
 
 Named filters make a single matrix cell reproducible without changing YAML:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py \
+./run_pipeline.sh --benchmark dual-assembly \
   --parts 3 \
   --placements right_inner_middle \
   --orientations upright_yaw_0
@@ -499,7 +518,7 @@ python3 scripts/run_dual_assembly_benchmark.py \
 Then run or resume the complete benchmark:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py
+./run_pipeline.sh --benchmark dual-assembly
 ```
 
 Each case has its own plan JSON, Isaac attempt JSON, combined log,
@@ -521,7 +540,7 @@ To measure fixes without mixing old successes into the new report, select the
 failed case IDs from a completed summary and write them to a separate output:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py \
+./run_pipeline.sh --benchmark dual-assembly \
   --failed-from-summary artifacts/dual_assembly_benchmark/plumbers_block_384_positions/summary.json \
   --output-dir artifacts/dual_assembly_benchmark/plumbers_block_failed_retry \
   --no-resume
@@ -534,7 +553,7 @@ For a fast planner-only regression, skip Isaac entirely and select just the
 cases that previously failed during MoveIt candidate planning:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py \
+./run_pipeline.sh --benchmark dual-assembly \
   --failed-from-summary artifacts/dual_assembly_benchmark/plumbers_block_384_positions/summary.json \
   --failure-stages moveit_candidate_planning \
   --planning-only \
@@ -553,8 +572,8 @@ MoveIt separately. The benchmark owns one shared mock stack for the complete
 run, reuses it across cases, and stops it on completion or Ctrl-C:
 
 ```bash
-source ./setup_dual_robot_env.sh
-python3 scripts/run_dual_assembly_benchmark.py \
+source ./setup_robot_env.sh
+./run_pipeline.sh --benchmark dual-assembly \
   --real-preflight-only \
   --ros-domain-id 43 \
   --parts 0 \
@@ -565,8 +584,9 @@ python3 scripts/run_dual_assembly_benchmark.py \
 ```
 
 To plan from the physical robots' live current joint state instead, start the
-hardware MoveIt stack yourself and add `--reuse-moveit --ros-domain-id 0` to
-the benchmark command. Explicit reuse fails fast if that stack is unavailable.
+hardware MoveIt stack yourself and use `--ros-domain-id 0` for the benchmark.
+Persistent-stack reuse is already the default and fails fast if that stack is
+unavailable.
 
 `--real-preflight-only` calls the real executor without `--execute`, plans all
 seven connected segments through
@@ -585,7 +605,7 @@ against an existing benchmark summary:
 ./start_dual_lbr_moveit.sh --mode mock --ros-domain-id 43
 
 # In a sourced second terminal on the same ROS domain:
-ROS_DOMAIN_ID=43 python3 scripts/run_solo_pickup_ik_ab_benchmark.py \
+ROS_DOMAIN_ID=43 ./run_pipeline.sh --benchmark solo-pickup-ik \
   --baseline-summary artifacts/dual_assembly_benchmark/plumbers_block_ik_after_gripper_fix_20260811/summary.json \
   --output-dir artifacts/dual_assembly_benchmark/solo_pickup_ik_ab_20260812
 ```
@@ -688,8 +708,8 @@ For a completed report, these commands repair browser video paths/posters and
 backfill failure-stage scene stills without rerunning MoveIt or Isaac:
 
 ```bash
-python3 scripts/run_dual_assembly_benchmark.py --repair-videos
-python3 scripts/run_dual_assembly_benchmark.py --repair-failure-evidence
+./run_pipeline.sh --benchmark dual-assembly --repair-videos
+./run_pipeline.sh --benchmark dual-assembly --repair-failure-evidence
 ```
 
 ### 3. Inspect or run MoveIt separately
@@ -697,7 +717,7 @@ python3 scripts/run_dual_assembly_benchmark.py --repair-failure-evidence
 To keep MoveIt running for RViz or repeated planner calls:
 
 ```bash
-./start_dual_lbr_moveit.sh --mode mock --rviz
+./run_pipeline.sh --mode sim --robots both --bringup-only --rviz
 ```
 
 The default solver is `kdl`; use `--ik-solver pick_ik` for an explicit global
@@ -708,9 +728,9 @@ requested solver first.
 In another terminal:
 
 ```bash
-source ./setup_dual_robot_env.sh
+source ./setup_robot_env.sh
 python3 scripts/smoke_test_dual_lbr_moveit.py
-./run_simple_dual_robot.sh --mode sim --reuse-moveit --incoming-part-id 0
+./run_pipeline.sh --mode sim --robots both --incoming-part-id 0
 ```
 
 The shared MoveIt model contains `arm_one`, `arm_two`, and `both_arms` in one
@@ -720,7 +740,12 @@ Simulation can pass `--inserter-arm auto` to swap those logical roles according
 to pickup Y; the saved task, debugger, MoveIt group, and Isaac scene retain the
 resolved physical-arm provenance.
 
-MoveIt is given the selected candidate's finger state explicitly. It uses the
+Hardware MoveIt continuously receives the measured physical gripper closure
+from `/left/gripper_controller/position` and
+`/right/gripper_controller/position`. The bridge republishes the last valid
+reading at 20 Hz, including after the gripper stops moving; before the first
+reading it uses the fully-open model envelope and warns. Candidate planning
+then sets the exact requested finger state explicitly. It uses the
 5-mm-per-finger approach opening through pregrasp/grasp IK and planning, then
 switches that gripper to the selected contact width after the grasp. Both states
 are checked against the complete shared planning scene; unspecified finger
@@ -732,7 +757,7 @@ Without `--execute`, real mode performs the complete non-moving connected
 motion preflight:
 
 ```bash
-./run_simple_dual_robot.sh --mode real --incoming-part-id 0
+./run_pipeline.sh --mode real --robots both --incoming-part-id 0
 ```
 
 Real mode uses the same pose-dependent pickup-floor filter and retained-first,
@@ -783,7 +808,7 @@ the incoming part becomes an attached TCP-frame collision body after pickup so
 MoveIt checks its loaded lift and pre-insertion path. The carved regions admit
 only the selected gripper-contact and insertion corridors. The legacy
 `--allow-objectless-planning` flag is needed only to run an older task artifact
-that lacks this geometry. Review `./run_simple_dual_robot.sh --help` and the
+that lacks this geometry. Review `./run_pipeline.sh --help` and the
 KUKA hardware runbook below before enabling motion.
 
 Candidate cleanup detaches that incoming collision body and then explicitly
@@ -794,23 +819,27 @@ candidates are not evaluated and their collision results are not cached against
 an unknown scene.
 
 The dual real executor publishes normalized positions to
-`/lbr_one/gripper_controller/position_command` and
-`/lbr_two/gripper_controller/position_command` (`std_msgs/msg/Float64`): `0`
-is fully open and `1` is fully closed. It calls each namespaced `open` Trigger
-service once at startup to establish the multi-turn zero, commands the same
-candidate-specific approach/contact widths used by MoveIt, and monitors the
-matching `/position` feedback topic. Repeated identical positions are not
-republished. The namespaced `open`, `close`, and `stop` Trigger services remain
-available for homing, recovery, and emergency interruption.
+`/left/gripper_controller/position_command` for `lbr_one` and
+`/right/gripper_controller/position_command` for `lbr_two`
+(`std_msgs/msg/Float64`): `0` is 74 mm fully open and `1` is 7 mm fully closed.
+Each side must first be calibrated separately with empty jaws. Execution calls
+each namespaced `open` Trigger service at startup, commands the same
+candidate-specific approach width used by MoveIt, and monitors the matching
+`/position` feedback topic. The grasp then uses that side's `close` endpoint so
+motor contact can stop it before 7 mm. Repeated identical positions are not
+republished; `stop` remains the emergency interruption endpoint.
 
-Gripper availability is role-local during dual real execution. The executor
-checks both controllers before homing either one, homes and commands every
-controller that is present, and records an unavailable holder or inserter as a
-skipped hardware gripper while continuing the same arm trajectory. MoveIt still
+Gripper availability is physical-side-local during dual real execution. The executor
+checks both controllers before opening either one, opens and commands every
+controller that is present, and resolves holder/inserter through the current
+plan's robot assignment (`lbr_one -> left`, `lbr_two -> right`). Thus automatic
+holder/inserter role swaps cannot send a command to the other robot's gripper.
+An unavailable physical side is recorded against its current task role while
+the same arm trajectory continues. MoveIt still
 uses the planned finger state and attached incoming-part collision body. Thus a
 missing inserter controller produces an empty-arm motion diagnostic, not a
 physical pickup, even though the arm can continue through pre-insertion. Once a
-controller is discovered, a later home, position, feedback, or stop failure is
+controller is discovered, a later open, position, feedback, or stop failure is
 still treated as a real gripper fault rather than an optional absence.
 
 ## Grasp Generation Benchmark
@@ -818,8 +847,8 @@ still treated as a real gripper fault rather than an optional absence.
 Run the standalone benchmark to evaluate grasp generation over Fabrica OBJ parts and robust stable orientations without executing in MuJoCo, Isaac, MoveIt, or hardware:
 
 ```bash
-python scripts/run_grasp_generation_benchmark.py --limit-parts 1
-python scripts/run_grasp_generation_benchmark.py --assembly plumbers_block --clean
+./run_pipeline.sh --benchmark grasp-generation --limit-parts 1
+./run_pipeline.sh --benchmark grasp-generation --assembly plumbers_block --clean
 ```
 
 The default config is `configs/grasp_generation_benchmark.yaml`; outputs go to `artifacts/grasp_generation_benchmark/` with `results.json`, `summary.csv`, `summary.md`, `index.html`, per-part stage artifacts, stable-orientation metadata, and optional generation-only fallback plans. The benchmark requires the same collision backend as normal stage-1 filtering.
@@ -829,10 +858,10 @@ The default config is `configs/grasp_generation_benchmark.yaml`; outputs go to `
 After running the generation benchmark, execute selected stage-2 feasible grasps in MuJoCo and/or Isaac with per-attempt artifacts and videos:
 
 ```bash
-python scripts/run_grasp_execution_benchmark.py --assembly beam --part 0 --limit-orientations 1 --max-grasps-per-orientation 2
-python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 1
-python scripts/run_grasp_execution_benchmark.py --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 9 --placement-xy-world 0.5,0.0 --no-resume
-python scripts/run_grasp_execution_benchmark.py --backend mujoco --record-video all --limit-attempts 10
+./run_pipeline.sh --benchmark grasp-execution --assembly beam --part 0 --limit-orientations 1 --max-grasps-per-orientation 2
+./run_pipeline.sh --benchmark grasp-execution --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 1
+./run_pipeline.sh --benchmark grasp-execution --backend both --assembly beam --part 0 --orientation orientation_003 --max-grasps-per-orientation 9 --placement-xy-world 0.5,0.0 --no-resume
+./run_pipeline.sh --benchmark grasp-execution --backend mujoco --record-video all --limit-attempts 10
 ```
 
 For the KUKA iiwa7 Isaac path, start the LBR mock state/controller stack and namespaced MoveIt planning server in one terminal:
@@ -841,7 +870,7 @@ For the KUKA iiwa7 Isaac path, start the LBR mock state/controller stack and nam
 ./start_lbr_moveit.sh
 ```
 
-The helper launches `robot_state_publisher`, mock `ros2_control`, and MoveGroup together. They all receive a repo-local MoveIt description derived from the same authoritative URDF as the Isaac USD, so MoveIt plans to `gripper_tcp` without the former target-Y reflection or 35 mm TCP compensation.
+The helper launches `robot_state_publisher`, mock `ros2_control`, and MoveGroup together. The default `pdz_gripper` embodiment is derived from the same URDF used by current policy training, so MoveIt plans to `pdz_gripper_tcp`. Pass `--gripper-model y_gripper` only for a legacy Y-gripper policy or artifact.
 
 Then execute the highest-scored direct grasp for every `plumbers_block` orientation that has a stage-2 feasible grasp:
 
@@ -850,7 +879,7 @@ export ROS_LOG_DIR=/tmp/ros-log
 source /opt/ros/humble/setup.bash
 source /home/pdz/lbr-stack/install/setup.bash
 source ros2_ws/install/setup.bash
-python3 scripts/run_grasp_execution_benchmark.py \
+./run_pipeline.sh --benchmark grasp-execution \
   --backend isaac \
   --assembly plumbers_block \
   --max-grasps-per-orientation 1 \
@@ -1000,12 +1029,17 @@ Override `FP_DEBUG_MSGS_REMOTE` and `FP_DEBUG_MSGS_REF` if you need to bootstrap
 The pipeline expects the vendored Franka hand collision mesh at:
 - `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`
 
-The KUKA iiwa7 Y-gripper configs use the local gripper meshes and generated robot USD/URDF:
+The current KUKA iiwa7 PDZ-gripper configs use the trained local gripper meshes and generated robot USD/URDF:
+- `assets/urdf/kuka_iiwa7_pdz_gripper/meshes/`
+- `assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf`
+- `assets/usd/kuka_iiwa7_pdz_gripper/configuration/kuka_iiwa7_pdz_gripper_base.usd`
+
+The legacy Y-gripper remains available for older bundles and checkpoints:
 - `assets/urdf/kuka_iiwa7_y_gripper/meshes/{hand.STL,left_finger.STL,right_finger.STL}`
 - `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`
 - `assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda`
 
-The URDF above is the KUKA kinematic source of truth. Its calibrated `gripper_tcp` is `0.1763 m` along local Z from `link7`: `0.0308 m` from link 7 to the gripper base plus `0.1455 m` from the gripper base to the TCP. The physical gripper body and camera are mounted with a `pi` rotation around tool Z. A matching `pi` rotation at the fixed TCP child preserves the previous link-7-to-TCP position and orientation, so saved grasp targets do not change while visual and collision geometry use the flipped body. `python3 scripts/build_kuka_iiwa7_gripper_assets.py` regenerates the authoritative URDF and Isaac USD; `python3 scripts/build_kuka_moveit_description.py` then regenerates both repo-local MoveIt/ros2_control xacros used by mock simulation and real hardware. The checked-in Isaac USD and MoveIt descriptions are covered by FK-equivalence and mount-contract regression tests.
+The PDZ URDF is the current kinematic source of truth. Its calibrated `pdz_gripper_tcp` is `0.1705 m` along local Z from `lbr_link_7`, and it carries the named D405 mount used by the new training runs. `python3 scripts/build_kuka_moveit_description.py` regenerates both repo-local MoveIt/ros2_control xacros used by mock simulation and real hardware. The checked-in USD and MoveIt descriptions are covered by FK-equivalence and mount-contract regression tests.
 
 Changing the physical mount also changes collision geometry. The KUKA Stage-1 cache key includes a mount-geometry version, so rebuild the dual artifacts before sim or real testing rather than reusing grasps checked against the old hand orientation.
 
@@ -1125,7 +1159,7 @@ Run MuJoCo sim with cuMotion-backed MoveIt planning:
 
 The default sim config uses Isaac execution; other configs can opt in with `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
 
-For the KUKA iiwa7 Y-gripper path, use the default sim config, `configs/grasp_pipeline_sim_isaac.yaml`, `configs/grasp_pipeline_gazebo_lbr_iiwa7.yaml`, or `configs/grasp_pipeline_real_lbr_iiwa7.yaml`. These configs use `gripper_collision_model: kuka_y_gripper`; the grasp-generation benchmark config uses the same gripper model and a 3x3 contact-offset grid with max lateral offset `0.002916666666666667 m` and max approach offset `0.0030833333333333333 m`.
+The real, single-arm policy, dual-arm, and PDZ benchmark configs now use `gripper_collision_model: pdz_gripper`, `pdz_gripper_tcp`, and the trained 62 mm contact-width limit. Legacy Y-gripper configs and `--gripper-model y_gripper` remain available for old artifacts; do not mix those with a PDZ checkpoint.
 
 ### KUKA iiwa7 Real Hardware Runbook
 
@@ -1140,8 +1174,8 @@ All ROS2 processes on `.1` and `.3` must start with the same `ROS_DOMAIN_ID`, no
 On the pipeline computer, source the repository helper in every new ROS2 terminal:
 
 ```bash
-cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
-source ./setup_ros2_hardware_env.sh
+cd /media/pdz/Elements1/Grasp_Planning_hold_grasping
+source ./setup_robot_env.sh
 ```
 
 It sources ROS Humble, `/home/pdz/lbr-stack`, and the repository overlay, then selects domain `0`, network discovery, and Fast DDS. It also sets `GRASP_KEEP_ROS_DISCOVERY_ENV=1` so `run_pipeline.sh` preserves this hardware network configuration.
@@ -1151,126 +1185,347 @@ Before launching ROS, start the FRI client application from the KUKA SmartPAD wi
 Terminal 1 on `.1`: start the physical robot, trajectory controller, robot-state publisher, and namespaced MoveIt server from the aligned description.
 
 ```bash
-cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
-source ./setup_ros2_hardware_env.sh
-./start_lbr_moveit.sh --mode hardware
+cd /media/pdz/Elements1/Grasp_Planning_hold_grasping
+source ./setup_robot_env.sh
+./run_pipeline.sh --mode real --robots left --bringup-only --rviz
 ```
 
-Terminal 1 on the gripper computer `.3`: start the endpoint gripper controller. Put these exports in its launch wrapper or service environment to avoid repeating them manually.
+Terminal 2 on the gripper computer: start both new persistent controllers. The
+verified adapter mapping is `left/lbr_one -> 5B3D047592` and
+`right/lbr_two -> 5B3D044069`; both servos use ID 1.
 
 ```bash
-cd /home/s3c/Workspaces
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+cd ~/Workspaces/new_gripper/ros2
+source servo_gripper/setup_gripper_env.sh
 
-export ROS_DOMAIN_ID=0
-export ROS_LOCALHOST_ONLY=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-unset ROS_DISCOVERY_SERVER ROS_STATIC_PEERS ROS_AUTOMATIC_DISCOVERY_RANGE
-unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
-
-ros2 launch servo_gripper gripper.launch.py
+ros2 launch servo_gripper dual_grippers.launch.py
 ```
 
-Terminal 3 on `.1`: for the fixed corrected-benchmark run-3 test pose, publish the expected Fabrica `plumbers_block/0` perception pose. The temporary left-robot correction in `configs/grasp_pipeline_real_lbr_iiwa7.yaml` subtracts `0.840 m` from the received world Y coordinate before planning, so the example perception Y of `0.840 m` becomes a MoveIt target Y of `0.0 m`.
+Calibrate each controller separately with empty jaws before its first pickup;
+the pipeline deliberately does not recalibrate automatically:
 
 ```bash
-cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
-source ./setup_ros2_hardware_env.sh
+cd ~/Workspaces/new_gripper/ros2
+source servo_gripper/setup_gripper_env.sh
+ros2 service call /left/gripper_controller/calibrate std_srvs/srv/Trigger "{}"
+ros2 service call /right/gripper_controller/calibrate std_srvs/srv/Trigger "{}"
+```
+
+MoveIt bringup subscribes to both normalized `position` topics and republishes
+the last measured passive finger coordinates at 20 Hz. The value therefore
+remains available after motion finishes even if the gripper only reports on a
+change. Before the first feedback sample, the scene uses a warned fully-open
+fallback.
+
+Terminal 3 on `.1`: publish the expected Fabrica `plumbers_block/0`
+perception pose in the shared dual-cell `base_link` frame. Standalone
+`lbr_one` is mounted at `base_link` Y=`-0.420 m`, so
+`configs/grasp_pipeline_real_lbr_iiwa7.yaml` adds `+0.420 m` to the received Y
+coordinate to express the pose in the single-arm `lbr_link_0` frame.
+
+```bash
+cd /media/pdz/Elements1/Grasp_Planning_hold_grasping
+source ./setup_robot_env.sh
 ros2 topic pub -r 2 \
   /perception/fp/pose_base/fused/assembly \
   fp_debug_msgs/msg/DebugPoseItem \
-  "{assembly_name: plumbers_block, part_id: 0, mode: config_test, score: 1.0, pose_base: {pose: {position: {x: 0.5, y: 0.84, z: 0.04}, orientation: {x: -0.7071067811865475, y: 0.0, z: 0.0, w: 0.7071067811865476}}}}"
+  "{assembly_name: plumbers_block, part_id: 0, mode: config_test, score: 1.0, pose_base: {pose: {position: {x: 0.5, y: 0.0, z: 0.04}, orientation: {x: -0.7071067811865475, y: 0.0, z: 0.0, w: 0.7071067811865476}}}}"
 ```
 
 Terminal 4 on `.1`: verify discovery before enabling hardware execution.
 
 ```bash
-cd /media/pdz/Elements1/Grasp_Planning_kuka_iiwa_7
-source ./setup_ros2_hardware_env.sh
+cd /media/pdz/Elements1/Grasp_Planning_hold_grasping
+source ./setup_robot_env.sh
 
-ros2 service type /gripper_controller/open
-ros2 service type /gripper_controller/close
-ros2 service type /gripper_controller/stop
+ros2 service type /left/gripper_controller/calibrate
+ros2 service type /left/gripper_controller/open
+ros2 service type /left/gripper_controller/close
+ros2 service type /left/gripper_controller/stop
+ros2 topic type /left/gripper_controller/position_command
+ros2 topic type /left/gripper_controller/position
+ros2 service type /right/gripper_controller/calibrate
+ros2 service type /right/gripper_controller/open
+ros2 service type /right/gripper_controller/close
+ros2 service type /right/gripper_controller/stop
+ros2 topic type /right/gripper_controller/position_command
+ros2 topic type /right/gripper_controller/position
 ros2 service list | grep -E '^/lbr/(compute_ik|plan_kinematic_path)$'
 ros2 action list | grep '^/lbr/execute_trajectory$'
 ros2 topic list | grep -E '^/(lbr/joint_states|perception/fp/pose_base/fused/assembly)$'
 ```
 
-All three gripper type commands must print `std_srvs/srv/Trigger`, and every `grep` must return its requested interface. Then run:
+All eight gripper services must print `std_srvs/srv/Trigger`; the command and
+feedback topics must print `std_msgs/msg/Float64`. Every `grep` must return its
+requested interface. Then run:
 
 ```bash
-./run_pipeline.sh \
-  --mode real \
-  --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+./run_pipeline.sh --mode real --robots left --grasp-only --execute
 ```
 
-Review the printed grasp target and type `yes` only when the workspace is clear. The current KUKA config opens the gripper, moves through pregrasp and grasp, closes, lifts `0.08 m`, and stops while holding the object. It retains confirmation and `0.05` velocity/acceleration scaling.
+Review the printed grasp target and type `yes` only when the workspace is
+clear. The current KUKA config positions the gripper to the selected approach
+opening, moves through pregrasp and grasp, closes through the endpoint service,
+lifts `0.08 m`, and stops while holding the object. It retains confirmation and
+`0.05` velocity/acceleration scaling.
 
-The ROS2 package also exposes `fp_debug_msgs/action/GraspAssembly`, whose success
-contract includes transporting the insertion part to its pre-assembly pose. The
-current real executor only implements pickup and lift, so the action server is
-deliberately blocked before any hardware subprocess or motion starts. You can
-start it for ROS graph and client-integration checks:
+### Single-arm D405 policy pickup on `lbr_one` (`192.170.10.2`)
+
+Eight PPO checkpoints are installed locally under `.cache/d405_policy_deployment/`
+and selected through `configs/d405_policy_registry.yaml`. The four legacy
+Y-gripper policies retain their recorded validation scores. The four current
+PDZ policies use the final epoch-3810 checkpoints; held-out selection is still
+marked pending in the registry rather than being presented as validated. List
+them without touching ROS or the robot:
 
 ```bash
-source ./setup_ros2_hardware_env.sh
-ros2 run robot_integration_ros grasp_assembly_action_server \
-  --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+./run_pipeline.sh --list-policies
 ```
 
-Then send a current single-robot goal:
+Build the updated hardware package once, then start only the `.10`-subnet arm
+as the physical member of the shared dual scene. `--servo` starts MoveIt Servo but
+does not activate it until the pickup process reaches the policy handoff. Stop
+`start_dual_lbr_moveit.sh` first: the standalone and dual control stacks cannot
+own the same `lbr_one` FRI UDP connection at the same time.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/pdz/lbr-stack/install/setup.bash
+cd ros2_ws
+colcon build --packages-select robot_integration_ros --symlink-install
+cd ..
+
+./run_pipeline.sh --mode real --robots left --policy velocity-rotation --bringup-only --rviz
+```
+
+This launch uses only FRI peer `192.170.10.2`; `lbr_two` remains a mock
+collision participant and does not claim a physical FRI connection.
+The robot-side Python environment also needs PyTorch and torchvision. The
+deployment actor is self-contained and does not import the RL-Games training
+framework:
+
+```bash
+python3 -m pip install -e '.[deployment]'
+```
+
+Start the calibrated `realsense_1` D405 stack. The single-arm profile consumes
+JPEG-compressed rectified color plus lossless `compressedDepth` aligned depth;
+both transports preserve the source timestamps used by the synchronizer. The
+runtime decodes them directly without `cv_bridge`. A live comparison on this
+cell measured about `1.7 ms` median RGB decode and `4.0 ms` median depth decode;
+compressed transport reduced median arrival age from roughly `604 ms` to
+`237 ms` for RGB and from `297 ms` to `243 ms` for depth. The generated profile
+therefore allows at most `0.50 s` image age and still holds Servo on longer
+stalls. Between policy frames, the runtime republishes only the last
+safety-approved twist at the Servo watchdog rate; it stops refreshing that
+command as soon as the original RGB-D source timestamp exceeds the same
+`0.50 s` bound.
+
+The required robot feedback is configured in
+`configs/visual_servo_real_d405.yaml`: the current `realsense_1` camera serial
+`260522275434`,
+`/lbr/joint_states`, the live `lbr_link_0 -> pdz_gripper_tcp` TF, and live TF from
+the camera optical frame into `lbr_link_0`. The runtime derives TCP pose and
+speed from the MoveIt robot TF tree; it no longer depends on the external
+`/left/ee_pose` topic. Real motion also consumes the estimated-wrench output at
+`/lbr/force_torque_broadcaster/wrench`; the single-arm hardware launch starts
+that broadcaster automatically.
+
+Application-level deadman and emergency-stop Bool topics are optional. The
+single-pick wrapper leaves them disabled because this cell uses its reviewed
+hardware safety chain. If physical operator controls are later connected, set
+`require_deadman: true` and configure both topics as fresh heartbeats. Do not
+use synthetic always-true/always-false `ros2 topic pub` processes as substitutes
+for physical controls during real motion.
+
+The wrapper does not contain stored grasp targets or stored policy goal
+images. It runs the ordinary stage-1/stage-2 pipeline for the perceived part,
+then passes every accepted stage-2 grasp to the real executor in score order.
+List every installed policy and its embodiment/context with:
+
+```bash
+./run_pipeline.sh --list-policies
+```
+
+The current PDZ-trained policies are `baseline`, `background`, `velocity`, and
+`velocity-rotation`. Run one guarded pickup with, for example:
+
+```bash
+./run_pipeline.sh --mode real --robots left --grasp-only --policy velocity-rotation --execute
+```
+
+Override the complete RGB-D source when the physical camera is currently under
+the other RealSense namespace:
+
+```bash
+./run_pipeline.sh --mode real --robots left --grasp-only \
+  --policy velocity-rotation --left-camera realsense_2 --execute
+```
+
+This switches compressed color, aligned compressed depth, both `CameraInfo`
+topics, the camera parameter node, and the serial provenance hint together.
+
+Part `0` is the default. Select another part with:
+
+```bash
+./run_pipeline.sh --workflow single-object --mode real --robots left \
+  --policy velocity-rotation --part-id 2
+```
+
+The command starts perception, planning, runtime rendering, and the real
+executor; the existing typed `yes` confirmation is still required before any
+arm or gripper motion. To validate policy assets and write the resolved YAML
+without starting perception, MoveIt, Isaac, or hardware, use:
+
+```bash
+./run_pipeline.sh --workflow single-object --mode real --robots left \
+  --policy velocity-rotation --part-id 2 --generate-config-only
+```
+
+For each accepted grasp, the executor first plans a collision-aware MoveIt path
+to its automatic 10 cm pregrasp. It then solves collision-aware grasp IK seeded
+from that retained pregrasp trajectory. A failure rejects only that grasp and
+the executor tries the next stage-2 grasp. Thus the first grasp used is the
+highest live-score grasp for which both operations succeed; there is no policy
+compatibility whitelist and no branch-specific target lookup.
+
+The new physical gripper is calibrated from 7 mm fully closed to 74 mm fully
+open. The single-arm planner rejects contact grasps outside that interval. It
+requests the contact width plus 10 mm total approach clearance and clamps the
+approach opening to 74 mm. The 84 mm aperture in the KUKA mesh is only the
+source geometry/model limit and is no longer treated as reachable hardware;
+for example, an 80.037 mm grasp is now rejected before MoveIt execution.
+
+Candidate-specific approach openings for single-arm `lbr_one` use
+`/left/gripper_controller/position_command`: `0.0` is 74 mm open and `1.0` is 7 mm
+closed, with linear interpolation between them. The final grasp uses
+`/left/gripper_controller/close` so the controller can stop on object contact. The
+matching `/left/gripper_controller/position` feedback is required before arm motion
+continues from an arbitrary approach command.
+
+Only after MoveIt accepts a grasp does the wrapper launch the same MuJoCo
+Filament goal-rendering path used by the RL branch's current training data. It
+rebuilds the current stage-2 bundle-local part mesh, places it at the live
+perceived pose, imports the configured robot URDF, sets the exact MoveIt grasp
+joints and approach aperture, and renders RGB plus aligned metric D405 depth
+from the calibrated wrist-camera pose. Because MuJoCo imports the MoveIt URDF
+joint axes directly, no Isaac A4 sign conversion is applied. The renderer
+validates the resulting TCP pose, camera/observation profiles, and depth
+variation, then writes one per-run `policy_goal_<grasp-id>.npz`. That file is
+the policy goal for this attempt; it is generated on demand and is not reused
+to select a grasp.
+
+The renderer launcher and the complete pickup pipeline each run inside a
+private process group. Success, failure, Ctrl-C, and timeout all terminate and
+reap that group, so renderer descendants cannot remain after the pickup
+command exits. The old Isaac/Kit launcher is not used by this entrypoint.
+
+The live left-arm wrist stream is D405 `realsense_1`, currently serial
+`260522275434` after the physical `realsense_1`/`realsense_2` swap.
+Small calibration differences between its rectified `CameraInfo` and the
+training intrinsics are reported as warnings and the policy continues with the
+live projection. Color and aligned depth must still use the same projection
+grid; a disagreement there remains a hard failure because the RGB-D pixels
+would no longer correspond.
+The serial query is retained only in the run artifact for provenance. A
+missing parameter service or future serial mismatch warns and continues;
+camera routing is defined by the `realsense_1` topics, live `CameraInfo`, and
+TF chain.
+
+Before stage 2, the perceived object pose is floor-settled by translating it
+in Z until the rotated mesh's lowest vertex lies on the configured table plane.
+This corrects estimated table penetration or hovering for collision checks and
+the runtime goal render. It deliberately does not invent corrections for XY or
+orientation errors in perception.
+
+A focused `policy_execution_debug.html` opens before confirmation and is
+refreshed after MoveIt selection and rendering. It shows the actual selected
+grasp/pregrasp together with the newly rendered goal RGB and depth images. The
+generic `part_frame.html` remains a secondary artifact. Pass
+`--no-planning-debug-gui` to suppress browser tabs while still writing both
+HTML artifacts.
+
+Execution is: normal MoveIt IK/path planning to pregrasp, policy twists from
+pregrasp until the learned four-frame completion gate returns, Servo stop,
+gripper close, and a normal MoveIt lift. The collision-aware pregrasp
+trajectory is planned before typed confirmation and retained; after confirmation
+the executor opens the physical gripper and executes that exact accepted plan
+instead of replanning after the first hardware command. MoveIt Servo consumes the same
+`move_group` planning scene with collision checking enabled, 10 mm self and
+20 mm scene proximity thresholds. A stale sensor/operator stream, collision
+halt, missing command consumer, timeout, joint/workspace violation, or policy
+failure commands zero motion and prevents gripper closure. The standard typed
+`yes` confirmation remains required before the initial gripper/pregrasp motion.
+The selected checkpoint is strict-loaded after the runtime goal is rendered
+and before confirmation or any gripper/arm command. An incompatible checkpoint,
+unavailable CUDA device, or broken CUDA/cuDNN runtime therefore still fails
+before hardware motion.
+The pregrasp is fully automatic: no separate pregrasp command is needed. The
+persistent bridge supplies MoveIt's passive
+`pdz_gripper_left_finger_joint` from normalized physical feedback and keeps
+publishing the final measured position after motion stops. Candidate planning
+still applies its exact selected approach/contact width. Planning-scene diffs
+are idempotent and retry once if the first Fast DDS service response is lost;
+the initial attempt is bounded at two seconds instead of waiting the full scene
+timeout. The pregrasp-to-grasp segment is deliberately generated online by the
+visual policy through MoveIt Servo.
+Before confirmation or any hardware command, MoveIt tries all surviving
+stage-2 candidates in live score order. An IK or path-planning failure rejects
+only that candidate; the first collision-aware pregrasp plan is retained and
+executed after confirmation. The focused debug page is rewritten for that
+actually planned candidate, including its world-frame grasp/pregrasp view and
+the goal RGB/depth images rendered for that run.
+
+The ROS2 package also exposes `fp_debug_msgs/action/GraspAssembly`. Start its
+adapter through the same public pipeline boundary:
+
+```bash
+source ./setup_robot_env.sh
+./run_pipeline.sh --mode real --robots both --serve-action --execute
+```
+
+Then send a dual task goal:
 
 ```bash
 ros2 action send_goal --feedback \
   /grasp_assembly \
   fp_debug_msgs/action/GraspAssembly \
-  "{assembly_name: plumbers_block, base_part_id: 4, insertion_part_id: 0, holder_robot: right, inserter_robot: left}"
+  "{assembly_name: plumbers_block, base_part_id: 2, insertion_part_id: 0, holder_robot: left, inserter_robot: right}"
 ```
 
-For now, goal validation uses only `assembly_name`, `insertion_part_id`, and
-`inserter_robot`, and requires `inserter_robot: left`; `base_part_id` and
-`holder_robot` remain reserved for the future assembly flow. Without `--execute`,
-valid goals abort with `EXECUTION_DISABLED`. Even with `--execute`, they abort
-with `TRANSPORT_UNSUPPORTED` before pose intake, planning, gripper commands, or
-arm motion. This prevents a pickup-only lift from being reported as successful
-completion of the stronger action contract. Use the direct real pipeline command
-above when intentionally testing pickup and lift before pre-assembly transport
-is implemented.
-
-The same entrypoint also exposes a dual holder/inserter adapter for the
-validated first `plumbers_block` step. Start the shared dual MoveIt stack
-separately, then run either perception-in-the-loop Isaac:
+The action adapter consumes both perception poses and delegates the task to
+`run_pipeline.sh`; it does not contain a second real executor. For
+perception-in-the-loop Isaac, use:
 
 ```bash
-ros2 run robot_integration_ros grasp_assembly_action_server \
-  --dual-mode pitl \
-  --config configs/dual_grasp_planning.yaml \
-  --headless
+./run_pipeline.sh --mode pitl --robots both --serve-action --headless
 ```
 
-or guarded real execution:
+For one active inserter that stops after lift and uses a policy:
 
 ```bash
-ros2 run robot_integration_ros grasp_assembly_action_server \
-  --dual-mode real \
-  --config configs/dual_grasp_planning.yaml \
-  --execute
+./run_pipeline.sh --mode real --robots left --serve-action --grasp-only \
+  --policy velocity-rotation --execute
 ```
 
-The dual adapter uses both base and insertion `DebugPoseItem` poses and all goal
-fields. Its current validated role mapping is `holder_robot: left` (`lbr_one`)
-and `inserter_robot: right` (`lbr_two`). It reaches pre-insertion but does not
-perform insertion, release, or retreat.
+The default dual action reaches pre-insertion but does not perform insertion,
+release, or retreat. `--grasp-only` ends at pickup lift with no transport.
 
 Manual gripper commands from any correctly configured ROS2 terminal:
 
 ```bash
 # Release the object.
-ros2 service call /gripper_controller/open std_srvs/srv/Trigger "{}"
+ros2 service call /left/gripper_controller/open std_srvs/srv/Trigger "{}"
+
+# Close toward the 7 mm endpoint; motor contact may stop it earlier.
+ros2 service call /left/gripper_controller/close std_srvs/srv/Trigger "{}"
+
+# Command an arbitrary closure fraction (0=open, 1=closed).
+ros2 topic pub --once /left/gripper_controller/position_command \
+  std_msgs/msg/Float64 "{data: 0.7}"
 
 # Stop the gripper motor immediately.
-ros2 service call /gripper_controller/stop std_srvs/srv/Trigger "{}"
+ros2 service call /left/gripper_controller/stop std_srvs/srv/Trigger "{}"
 ```
 
 Stop the pose publisher after the pipeline reports that it received the pose. Shut down the pipeline first, then MoveIt, the hardware launch, and finally the SmartPAD FRI application.
@@ -1319,8 +1574,9 @@ python3 scripts/smoke_test_dual_lbr_moveit.py
 
 The main source areas are:
 
-- `run_pipeline.sh` - single-object `sim`, `pitl`, and `real` wrapper;
-- `run_simple_dual_robot.sh` - one-command dual-arm sim/real vertical slice;
+- `run_pipeline.sh` - the one public dual/single, bringup, action, policy, and benchmark entrypoint;
+- `setup_robot_env.sh` - the one public sourced ROS environment;
+- `run_simple_dual_robot.sh` - compatibility shim to the unified dual workflow;
 - `start_lbr_moveit.sh` and `start_dual_lbr_moveit.sh` - single/shared MoveIt
   launchers;
 - `configs/` - single-object, benchmark, backend, and dual-arm YAML settings;
@@ -1351,4 +1607,4 @@ lab reference, not the architecture source of truth.
 
 - The default Fabrica OBJ scale in the pipeline configs is `0.01`.
 - The MuJoCo runner uses the exact `execution_world_pose` stored in the stage-2 bundle unless you override placement explicitly.
-- `pitl` and `real` use one ROS2 subscriber: set `ros2.pose_base_topic`, `ros2.assembly_name`, and numeric `ros2.part_id` in the pipeline YAML before running those modes. The configured topic must publish `fp_debug_msgs/msg/DebugPoseItem`. Optional `ros2.position_offset_m: [x, y, z]` adds a fixed world-axis translation to the received pose before planning; the left KUKA real config currently uses `[0.0, -0.840, 0.0]`.
+- `pitl` and `real` use one ROS2 subscriber: set `ros2.pose_base_topic`, `ros2.assembly_name`, and numeric `ros2.part_id` in the pipeline YAML before running those modes. The configured topic must publish `fp_debug_msgs/msg/DebugPoseItem`. Optional `ros2.position_offset_m: [x, y, z]` adds a fixed world-axis translation to the received pose before planning; the standalone `lbr_one` real config uses `[0.0, 0.420, 0.0]` to convert shared dual-cell `base_link` coordinates into `lbr_link_0` coordinates.

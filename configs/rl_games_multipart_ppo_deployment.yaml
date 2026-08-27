@@ -1,0 +1,89 @@
+params:
+  seed: 42
+  env:
+    clip_observations: 5.0
+    clip_actions: 1.0
+  algo:
+    name: grasp_completion_ppo
+  model:
+    name: grasp_completion_hybrid
+  network:
+    name: grasp_rgbd_resnet18
+    pretrained: true
+    image_height: 72
+    image_width: 128
+    image_channels: 8
+    policy_context_size: 6
+    pose_target_size: 6
+    pose_loss_weight: 0.2
+    completion_target_size: 2
+    motion_action_size: 6
+    geometry_feature_size: 128
+    completion_loss_weight: 0.2
+    completion_positive_weight: 3.0
+    completion_motion_slowdown_start: 0.70
+    completion_motion_speed_floor: 0.25
+    space:
+      continuous:
+        mu_activation: None
+        sigma_activation: None
+        mu_init: {name: default}
+        sigma_init: {name: const_initializer, val: -1.5}
+        fixed_sigma: true
+  load_checkpoint: false
+  load_path: ""
+  config:
+    name: grasp_visual_servo_rgbd_multipart
+    env_name: rlgpu
+    device: cuda:0
+    device_name: cuda:0
+    multi_gpu: false
+    ppo: true
+    mixed_precision: true
+    normalize_input: false
+    normalize_value: true
+    num_actors: -1
+    reward_shaper: {scale_value: 1.0}
+    normalize_advantage: true
+    gamma: 0.99
+    tau: 0.95
+    learning_rate: 5.0e-5
+    lr_schedule: linear
+    kl_threshold: 0.012
+    score_to_win: 1000000000.0
+    max_epochs: 10000
+    save_best_after: 50
+    save_frequency: 100
+    print_stats: True
+    grad_norm: 0.5
+    entropy_coef: 0.0
+    truncate_grads: true
+    e_clip: 0.1
+    horizon_length: 64
+    minibatch_size: 1024
+    mini_epochs: 2
+    critic_coef: 2
+    clip_value: true
+    seq_length: 4
+    bounds_loss_coef: 0.001
+    central_value_config:
+      minibatch_size: 1024
+      mini_epochs: 2
+      learning_rate: 5.0e-5
+      lr_schedule: linear
+      kl_threshold: 0.012
+      clip_value: true
+      normalize_input: true
+      truncate_grads: true
+      network:
+        name: actor_critic
+        central_value: true
+        mlp:
+          units: [256, 128, 64]
+          activation: elu
+          initializer: {name: default}
+          regularizer: {name: None}
+    player:
+      deterministic: true
+      games_num: 20
+      print_stats: true

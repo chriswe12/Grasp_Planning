@@ -581,7 +581,8 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
     assert "default=0.030" in isaac_runner
     assert "default=2.0" in isaac_runner
     assert '"--close-width"' in isaac_runner
-    assert "min(0.001, float(selected_jaw_width_m))" in isaac_runner
+    assert "min(float(selected_jaw_width_m), minimum_width_m)" in isaac_runner
+    assert "clearance_per_finger_m=args_cli.approach_clearance_per_finger_m" in isaac_runner
     assert '"tcp_position_error_m"' in isaac_runner
     assert '"duration_s"' in isaac_runner
     assert "inserter_pickup_lift" in isaac_runner
@@ -825,7 +826,11 @@ def test_part0_roll_pickup_uses_exact_symmetry_bridge_and_preserves_stage3_tcp()
 
     assert tasks
     counts = tasks[0].candidate_filter_diagnostics
-    assert counts["pickup_grasps_accepted"] == 0
+    # PDZ collision geometry admits one raw pickup here, but it still does not
+    # produce a pose-feasible direct execution candidate. The exact symmetry
+    # bridge remains the only executable path for this rolled placement.
+    assert counts["pickup_grasps_accepted"] > 0
+    assert counts["pose_feasible_direct_execution_candidates"] == 0
     assert counts["pickup_symmetry_bridge_status"] == "used"
     assert counts["pickup_symmetry_aliases_accepted"] > 0
     assert counts["pickup_symmetry_alias_destination_grasps"] > 0

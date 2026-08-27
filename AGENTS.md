@@ -16,7 +16,7 @@ Current scope:
 - internal ROS2 workspace for hardware-facing nodes in `ros2_ws/src/robot_integration_ros/`
 - MuJoCo robot model generation from Menagerie assets in `scripts/build_mujoco_fr3_hand_models.py`
 - standalone grasp-generation benchmark over Fabrica OBJ parts in `scripts/run_grasp_generation_benchmark.py`
-- dual-KUKA holder/inserter planning and execution through `run_simple_dual_robot.sh`
+- dual-KUKA holder/inserter planning and execution through `run_pipeline.sh --workflow dual`
 - resumable all-step dual-arm benchmark in `scripts/run_dual_assembly_benchmark.py`
 
 ## Companion Wiki

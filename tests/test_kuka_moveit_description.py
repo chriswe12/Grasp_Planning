@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from scripts import build_kuka_iiwa7_pdz_gripper_urdf as pdz_urdf_builder
 from grasp_planning.start_poses import KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS
 from scripts.build_kuka_moveit_description import (
     DEFAULT_SOURCE_URDF,
@@ -20,6 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ISAAC_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
 CHECKED_MOVEIT_XACRO = (
     REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_y_gripper_moveit.urdf.xacro"
+)
+PDZ_SOURCE_URDF = (
+    REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "urdf" / "kuka_iiwa7_pdz_gripper.urdf"
+)
+CHECKED_PDZ_MOVEIT_XACRO = (
+    REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_pdz_gripper_moveit.urdf.xacro"
 )
 KUKA_CONFIGS = (
     "configs/grasp_execution_benchmark.yaml",
@@ -181,6 +188,59 @@ def test_generated_moveit_xacro_uses_lbr_hardware_kinematics_and_grasp_tcp(tmp_p
     assert generated.find(f"{{{XACRO_NS}}}lbr_system_interface") is not None
 
 
+def test_generated_pdz_moveit_xacro_preserves_pdz_tcp_and_mesh_subdirectories(tmp_path: Path) -> None:
+    output = build_moveit_xacro(
+        source_urdf=PDZ_SOURCE_URDF,
+        output_xacro=tmp_path / "iiwa7_pdz_gripper_moveit.urdf.xacro",
+        package_mesh_prefix="package://robot_integration_ros/meshes/pdz_gripper/",
+        preserve_mesh_subdirectories=True,
+    )
+    assert output.read_text(encoding="utf-8") == CHECKED_PDZ_MOVEIT_XACRO.read_text(encoding="utf-8")
+    generated = ET.parse(output).getroot()
+    joints = {str(joint.get("name")): joint for joint in generated.findall("joint")}
+    assert joints["pdz_gripper_mount_joint"].find("origin").get("xyz") == "0 0 0.035"
+    assert joints["pdz_gripper_tcp_joint"].find("origin").get("xyz") == "0 0 0.1355"
+    assert math.isclose(
+        float(joints["pdz_gripper_tcp_joint"].find("origin").get("rpy").split()[2]),
+        -0.5 * math.pi,
+        abs_tol=1.0e-8,
+    )
+    assert generated.find("link[@name='pdz_gripper_tcp']") is not None
+    mesh_filenames = [str(mesh.get("filename")) for mesh in generated.iter("mesh")]
+    assert "package://robot_integration_ros/meshes/pdz_gripper/collision/base.stl" in mesh_filenames
+    assert "package://robot_integration_ros/meshes/pdz_gripper/visual/base.stl" in mesh_filenames
+
+
+def test_pdz_combined_mesh_build_removes_stale_vendor_meshes(tmp_path: Path, monkeypatch) -> None:
+    kuka_urdf = tmp_path / "kuka" / "urdf" / "robot.urdf"
+    kuka_meshes = tmp_path / "kuka" / "meshes"
+    kuka_urdf.parent.mkdir(parents=True)
+    kuka_meshes.mkdir()
+    kuka_urdf.write_text("<robot/>", encoding="utf-8")
+    (kuka_meshes / "link1.STL").write_bytes(b"arm")
+
+    pdz_root = tmp_path / "pdz"
+    for mesh_kind in ("visual", "collision"):
+        mesh_dir = pdz_root / "meshes" / mesh_kind
+        mesh_dir.mkdir(parents=True)
+        (mesh_dir / "base.stl").write_bytes(mesh_kind.encode())
+
+    output_root = tmp_path / "output"
+    stale = output_root / "meshes" / "visual" / "left_pad_14mm.stl"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"obsolete")
+
+    monkeypatch.setattr(pdz_urdf_builder, "KUKA_SOURCE", kuka_urdf)
+    monkeypatch.setattr(pdz_urdf_builder, "PDZ_SOURCE_ROOT", pdz_root)
+    monkeypatch.setattr(pdz_urdf_builder, "OUTPUT_ROOT", output_root)
+    pdz_urdf_builder._copy_meshes()
+
+    assert not stale.exists()
+    assert (output_root / "meshes" / "link1.STL").read_bytes() == b"arm"
+    assert (output_root / "meshes" / "visual" / "base.stl").read_bytes() == b"visual"
+    assert (output_root / "meshes" / "collision" / "base.stl").read_bytes() == b"collision"
+
+
 def test_hardware_canonical_urdf_fk_matches_generated_isaac_usd() -> None:
     source = ET.parse(DEFAULT_SOURCE_URDF).getroot()
     usd_text = ISAAC_USD.read_text(encoding="utf-8")
@@ -213,12 +273,31 @@ def test_aligned_launch_and_description_are_installed_by_ros_package() -> None:
     assert '"launch/aligned_lbr_moveit.launch.py"' in setup_text
     assert '"config/iiwa7_y_gripper.srdf.xacro"' in setup_text
     assert '"urdf/iiwa7_y_gripper_moveit.urdf.xacro"' in setup_text
+    assert '"urdf/iiwa7_pdz_gripper_moveit.urdf.xacro"' in setup_text
+    assert '"config/iiwa7_pdz_gripper.srdf.xacro"' in setup_text
     assert "MoveItConfigsBuilder" in launch_text
     assert "robot_description_semantic" in launch_text
     assert 'choices=["mock", "hardware"]' in launch_text
     assert "RVizMixin.arg_rviz()" in launch_text
     assert "moveit_configs.robot_description" in launch_text
     assert 'IfCondition(LaunchConfiguration("rviz"))' in launch_text
+    assert 'choices=["y_gripper", "pdz_gripper"]' in launch_text
+
+
+def test_pdz_srdf_allows_passive_finger_siblings_to_touch() -> None:
+    srdf = ET.parse(
+        REPO_ROOT
+        / "ros2_ws"
+        / "src"
+        / "robot_integration_ros"
+        / "config"
+        / "iiwa7_pdz_gripper.srdf.xacro"
+    ).getroot()
+    disabled_pairs = {
+        frozenset((str(entry.get("link1")), str(entry.get("link2"))))
+        for entry in srdf.findall("disable_collisions")
+    }
+    assert frozenset(("pdz_gripper_left_finger_link", "pdz_gripper_right_finger_link")) in disabled_pairs
 
 
 def test_start_lbr_moveit_wrapper_exposes_aligned_rviz_flag() -> None:

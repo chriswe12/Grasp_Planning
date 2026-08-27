@@ -123,8 +123,11 @@ def test_dual_controller_and_hardware_configs_are_separate_per_arm() -> None:
     controller_params = controllers["/**/controller_manager"]["ros__parameters"]
     assert "lbr_one_joint_trajectory_controller" in controller_params
     assert "lbr_two_joint_trajectory_controller" in controller_params
-    extra_joints = controllers["/**/joint_state_broadcaster"]["ros__parameters"]["extra_joints"]
-    assert extra_joints == ["lbr_one_left_finger_joint", "lbr_two_left_finger_joint"]
+    assert "/**/joint_state_broadcaster" not in controllers
+    launch = (PACKAGE_ROOT / "launch/dual_aligned_lbr_moveit.launch.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'executable="gripper_joint_state_bridge"' in launch
 
     one_joints = controllers["/**/lbr_one_joint_trajectory_controller"]["ros__parameters"]["joints"]
     two_joints = controllers["/**/lbr_two_joint_trajectory_controller"]["ros__parameters"]["joints"]

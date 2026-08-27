@@ -249,6 +249,13 @@ def main() -> int:
         candidate_payload["candidate_rank"] = rank
         candidate_payload["generated_by"] = "scripts/build_simple_dual_robot_task.py"
         candidate_payload["target_only"] = True
+        candidate_payload["source_artifacts"] = {
+            "artifact_dir": str(selection.artifact_dir),
+            "holder_stage2_bundle": str(selection.artifact_dir / "holder_base_candidates.json"),
+            "inserter_stage2_bundle": str(
+                selection.artifact_dir / f"inserter_candidates_{selection.step_id}.json"
+            ),
+        }
         candidate_payload["moveit"] = moveit_payload
         candidate_payloads.append(candidate_payload)
 

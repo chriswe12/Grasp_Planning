@@ -4,6 +4,8 @@ benchmark:
   output_dir: artifacts/dual_assembly_benchmark/plumbers_block
   ros_domain_id: 0
   isaac_python: /media/pdz/Elements1/IsaacLab/isaaclab.sh
+  gripper_model: pdz_gripper
+  robot_usd: assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd
   max_pair_attempts: 256
   # Exact IK screens the full finite pose-feasible pool by default. Set a
   # positive value only when an operational run needs a hard screening cap.

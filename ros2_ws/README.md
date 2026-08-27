@@ -45,7 +45,7 @@ For the physical KUKA, after starting the FRI client and completing the hardware
 ./start_lbr_moveit.sh --mode hardware
 ```
 
-Both modes use the same `gripper_tcp`, arm geometry, and joint origins as `assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf`. The overlay only maps the link/joint names onto the LBR ROS2 controller interface and adds `ros2_control`.
+Both modes default to the current PDZ description and `pdz_gripper_tcp`, with arm geometry and joint origins taken from `assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf`. The launch wrappers select the matching controller, SRDF, and Servo YAML together. Pass `--gripper-model y_gripper` only for legacy artifacts.
 
 Terminal 1: launch the FR3 MoveIt stack
 

@@ -5,17 +5,26 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from grasp_planning.gripper_profiles import (
+    SERVO_GRIPPER_CLOSED_WIDTH_M,
+    SERVO_GRIPPER_OPEN_WIDTH_M,
+)
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
     NoPoseFeasibleDualTasksError,
 )
+from grasp_planning.ros2 import dual_real_grasp_executor as dual_executor
 from grasp_planning.ros2.dual_real_grasp_executor import (
     CARTESIAN_TARGETS,
     MOTION_SEQUENCE,
     DualRealExecutionConfig,
     PreplannedDualSequence,
     _activate_available_grippers,
+    _command_gripper_width,
     _execute_sequence,
+    _gripper_side_for_role,
     _preflight_targets,
     _select_ranked_preflight_candidate,
     _validate_preplanned_trajectory_start,
@@ -326,6 +335,34 @@ def test_load_and_validate_dual_plan_accepts_saved_vertical_slice(
     assert payload["roles"]["inserter"]["robot"] == "lbr_two"
 
 
+def test_load_and_validate_dual_plan_accepts_pdz_tcp_and_passive_state(
+    tmp_path: Path,
+) -> None:
+    payload = _plan_payload()
+    payload["gripper_model"] = "pdz_gripper"
+    payload["roles"]["holder"]["tcp_link"] = "lbr_one_pdz_gripper_tcp"
+    payload["roles"]["inserter"]["tcp_link"] = "lbr_two_pdz_gripper_tcp"
+
+    loaded = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
+
+    assert dual_executor._role_spec(loaded, "holder")["pose_link"] == "lbr_one_pdz_gripper_tcp"
+    assert dual_executor._role_spec(loaded, "inserter")["pose_link"] == "lbr_two_pdz_gripper_tcp"
+    state = dual_executor._moveit_gripper_state_for_plan(loaded)
+    assert set(state) == {
+        "lbr_one_pdz_gripper_left_finger_joint",
+        "lbr_two_pdz_gripper_left_finger_joint",
+    }
+
+
+def test_dual_plan_infers_pdz_model_from_tcp_for_compatibility() -> None:
+    payload = _plan_payload()
+    payload["roles"]["holder"]["tcp_link"] = "lbr_one_pdz_gripper_tcp"
+    payload["roles"]["inserter"]["tcp_link"] = "lbr_two_pdz_gripper_tcp"
+
+    dual_executor._validate_dual_plan_payload(payload, context="PDZ compatibility plan")
+    assert dual_executor._gripper_model_for_plan(payload) == "pdz_gripper"
+
+
 def test_load_and_validate_dual_plan_rejects_internally_inconsistent_role(tmp_path: Path) -> None:
     payload = _plan_payload()
     payload["roles"]["holder"]["robot"] = "lbr_two"
@@ -356,6 +393,61 @@ def test_load_and_validate_dual_plan_accepts_complete_role_swap(tmp_path: Path) 
     loaded = load_and_validate_dual_plan(_write_plan(tmp_path, payload))
     assert loaded["roles"]["holder"]["robot"] == "lbr_two"
     assert loaded["roles"]["inserter"]["robot"] == "lbr_one"
+    assert _gripper_side_for_role(loaded, "holder") == "right"
+    assert _gripper_side_for_role(loaded, "inserter") == "left"
+
+
+def test_dual_gripper_clients_route_swapped_roles_by_physical_robot(monkeypatch) -> None:
+    plan = _plan_payload()
+    plan["roles"] = {
+        "holder": {
+            "robot": "lbr_two",
+            "planning_group": "arm_two",
+            "tcp_link": "lbr_two_gripper_tcp",
+        },
+        "inserter": {
+            "robot": "lbr_one",
+            "planning_group": "arm_one",
+            "tcp_link": "lbr_one_gripper_tcp",
+        },
+    }
+    created: list[dict[str, object]] = []
+
+    class _Client:
+        def __init__(self, node, **kwargs) -> None:
+            created.append({"node": node, **kwargs})
+
+    monkeypatch.setattr(dual_executor, "NormalizedPositionGripperClient", _Client)
+    config = DualRealExecutionConfig()
+    dual_executor._make_gripper(role="holder", plan=plan, commander="holder-node", config=config)
+    dual_executor._make_gripper(role="inserter", plan=plan, commander="inserter-node", config=config)
+
+    assert created[0]["position_command_topic"] == "/right/gripper_controller/position_command"
+    assert created[0]["close_service_name"] == "/right/gripper_controller/close"
+    assert created[1]["position_command_topic"] == "/left/gripper_controller/position_command"
+    assert created[1]["close_service_name"] == "/left/gripper_controller/close"
+    assert created[0]["closed_width_m"] == SERVO_GRIPPER_CLOSED_WIDTH_M
+    assert created[0]["open_width_m"] == SERVO_GRIPPER_OPEN_WIDTH_M
+
+
+def test_dual_gripper_uses_position_for_approach_and_close_service_for_contact() -> None:
+    calls: list[tuple[str, float]] = []
+
+    class _Client:
+        def command_width(self, width_m, *, wait_for_feedback, settle_after_command):
+            assert wait_for_feedback is True
+            assert settle_after_command is False
+            calls.append(("position", float(width_m)))
+            return True, "positioned"
+
+        def close(self, *, width):
+            calls.append(("close", float(width)))
+            return True, "closed"
+
+    client = _Client()
+    assert _command_gripper_width(client, 0.050, approach=True)[0]
+    assert _command_gripper_width(client, SERVO_GRIPPER_CLOSED_WIDTH_M, approach=False)[0]
+    assert calls == [("position", 0.050), ("close", SERVO_GRIPPER_CLOSED_WIDTH_M)]
 
 
 def test_ranked_plan_accepts_higher_score_after_retained_queue_boundary(
@@ -434,11 +526,11 @@ def test_execute_sequence_closes_each_gripper_and_stops_at_preinsertion(
     ]
     assert grippers["holder"].calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
-        ("close", plan["grasps"]["holder"]["jaw_width_m"]),
+        ("close", SERVO_GRIPPER_CLOSED_WIDTH_M),
     ]
     assert grippers["inserter"].calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["inserter_pickup"]["jaw_width_m"])),
-        ("close", plan["grasps"]["inserter_pickup"]["jaw_width_m"]),
+        ("close", SERVO_GRIPPER_CLOSED_WIDTH_M),
     ]
     assert steps[-1]["name"] == "inserter_preinsertion"
     assert any(update["phase"] == "holder_pregrasp" and update["status"] == "planning" for update in debug_updates)
@@ -483,6 +575,7 @@ def test_gripper_activation_skips_unavailable_role_after_probing_both() -> None:
         configured,
         timeout_s=20.0,
         record=record,
+        allow_missing=True,
     )
 
     assert tuple(available) == ("holder",)
@@ -491,8 +584,21 @@ def test_gripper_activation_skips_unavailable_role_after_probing_both() -> None:
     assert [step["name"] for step in steps] == [
         "wait_for_holder_gripper",
         "skip_inserter_gripper_unavailable",
-        "initialize_holder_gripper_open_zero",
+        "initialize_holder_gripper_open",
     ]
+
+
+def test_real_gripper_activation_requires_every_active_role_by_default() -> None:
+    configured = {
+        "inserter": _DiscoverableGripper("inserter", [], available=False),
+    }
+
+    with pytest.raises(RuntimeError, match="Required inserter gripper endpoint is unavailable"):
+        _activate_available_grippers(
+            configured,
+            timeout_s=20.0,
+            record=lambda **_kwargs: None,
+        )
 
 
 def test_execute_sequence_continues_when_inserter_gripper_is_unavailable(
@@ -534,7 +640,7 @@ def test_execute_sequence_continues_when_inserter_gripper_is_unavailable(
     ]
     assert holder_gripper.calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
-        ("close", plan["grasps"]["holder"]["jaw_width_m"]),
+        ("close", SERVO_GRIPPER_CLOSED_WIDTH_M),
     ]
     assert any(step["name"] == "skip_position_inserter_gripper_for_approach" for step in steps)
     assert any(step["name"] == "skip_position_inserter_gripper_for_contact" for step in steps)
@@ -689,8 +795,8 @@ def test_dual_gripper_launch_has_stable_namespaces_and_usb_ids() -> None:
     )
 
     assert "namespace=role" in source
-    assert '_gripper_node(role="lbr_one"' in source
-    assert '_gripper_node(role="lbr_two"' in source
+    assert '_gripper_node(role="left", port_argument="left_port")' in source
+    assert '_gripper_node(role="right", port_argument="right_port")' in source
     assert "usb-1a86_USB_Single_Serial_5B3D047592-if00" in source
     assert "usb-1a86_USB_Single_Serial_5B3D044069-if00" in source
 
@@ -698,7 +804,7 @@ def test_dual_gripper_launch_has_stable_namespaces_and_usb_ids() -> None:
 def test_dual_startup_scripts_force_one_shared_ros_domain() -> None:
     root = Path(__file__).resolve().parents[1]
     gripper_start = (root / "scripts/gripper_computer/start_dual_grippers.sh").read_text(encoding="utf-8")
-    dual_run = (root / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    dual_run = (root / "scripts/run_dual_pipeline.sh").read_text(encoding="utf-8")
     moveit_start = (root / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
 
     for source in (gripper_start, dual_run, moveit_start):
@@ -713,7 +819,10 @@ def test_dual_startup_scripts_force_one_shared_ros_domain() -> None:
 
 
 def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
-    source = (Path(__file__).resolve().parents[1] / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts/run_dual_pipeline.sh").read_text(encoding="utf-8")
+    public = (root / "run_pipeline.sh").read_text(encoding="utf-8")
+    compatibility = (root / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
 
     assert "scripts/plan_simple_dual_robot_sim.py" in source
     assert "scripts/run_simple_dual_robot_sim_in_isaac.py" in source
@@ -730,6 +839,8 @@ def test_one_command_runner_routes_fresh_sim_and_real_planning() -> None:
     assert 'PLANNING_DEBUG_GUI_PORT="${DUAL_REAL_PLANNING_DEBUG_GUI_PORT:-38825}"' in source
     assert "TASK_BUILD_ARGS+=(--debug-gui --debug-gui-port" in source
     assert "--no-debug-gui-open-browser" in source
+    assert "scripts/run_unified_pipeline.py" in public
+    assert 'exec "${SCRIPT_DIR}/run_pipeline.sh" --workflow dual "$@"' in compatibility
 
     moveit_start = (Path(__file__).resolve().parents[1] / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
     assert "ros2 node list --no-daemon" in moveit_start

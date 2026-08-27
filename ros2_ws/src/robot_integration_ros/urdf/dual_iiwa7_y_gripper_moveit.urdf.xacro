@@ -3,6 +3,8 @@
   <!-- Generated from assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf; both arms carry the calibrated Y-gripper; do not hand-edit. -->
   <xacro:include filename="$(find lbr_description)/ros2_control/lbr_system_interface.xacro" />
   <xacro:arg name="mode" default="mock" />
+  <xacro:arg name="lbr_one_mode" default="$(arg mode)" />
+  <xacro:arg name="lbr_two_mode" default="$(arg mode)" />
   <xacro:arg name="lbr_one_system_config_path" default="$(find robot_integration_ros)/config/lbr_one_system_config.yaml" />
   <xacro:arg name="lbr_two_system_config_path" default="$(find robot_integration_ros)/config/lbr_two_system_config.yaml" />
   <xacro:arg name="initial_joint_positions_path" default="$(find robot_integration_ros)/config/dual_lbr_initial_joint_positions.yaml" />
@@ -353,7 +355,7 @@
     <child link="lbr_one_link_ee" />
     <origin xyz="0 0 0.035" rpy="0 0 0" />
   </joint>
-  <xacro:lbr_system_interface robot_name="lbr_one" mode="$(arg mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_one_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
+  <xacro:lbr_system_interface robot_name="lbr_one" mode="$(arg lbr_one_mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_one_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
   <joint name="lbr_two_base_joint" type="fixed">
     <origin xyz="0 0.42 0" rpy="0 0 0" />
     <parent link="base_link" />
@@ -697,5 +699,5 @@
     <child link="lbr_two_link_ee" />
     <origin xyz="0 0 0.035" rpy="0 0 0" />
   </joint>
-  <xacro:lbr_system_interface robot_name="lbr_two" mode="$(arg mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_two_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
+  <xacro:lbr_system_interface robot_name="lbr_two" mode="$(arg lbr_two_mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_two_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
 </robot>

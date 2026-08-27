@@ -276,6 +276,8 @@ from grasp_planning.scene_defaults import ROBOT_BASE_ORIENTATION_XYZW, ROBOT_BAS
 from grasp_planning.start_poses import (  # noqa: E402
     DEFAULT_HAND_OPEN_WIDTH,
     KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    PDZ_GRIPPER_CLOSED_WIDTH_M,
+    PDZ_GRIPPER_OPEN_WIDTH_M,
     kuka_isaac_to_moveit_joint_positions,
     kuka_moveit_to_isaac_joint_positions,
 )
@@ -396,7 +398,9 @@ def _moveit_start_joint_positions_from_args() -> tuple[float, ...] | None:
 
 
 def _approach_open_gripper_width(selected_world_grasp=None) -> float:
-    del selected_world_grasp
+    if _using_pdz_gripper_usd():
+        selected_width = float(getattr(selected_world_grasp, "gripper_width", PDZ_GRIPPER_OPEN_WIDTH_M))
+        return max(PDZ_GRIPPER_CLOSED_WIDTH_M, min(PDZ_GRIPPER_OPEN_WIDTH_M, selected_width))
     if _using_kuka_lbr_moveit_joints():
         return float(KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
     return float(DEFAULT_HAND_OPEN_WIDTH)
@@ -438,6 +442,10 @@ def _prepare_robot_start_pose(sim, scene, *, hand_open_width: float, step_callba
 
 def _effective_close_gripper_width(selected_grasp) -> float:
     requested_close_width = float(args_cli.close_width)
+    if _using_pdz_gripper_usd():
+        if requested_close_width > 0.0:
+            return max(PDZ_GRIPPER_CLOSED_WIDTH_M, min(PDZ_GRIPPER_OPEN_WIDTH_M, requested_close_width))
+        return float(PDZ_GRIPPER_CLOSED_WIDTH_M)
     if requested_close_width > 0.0 or not _using_kuka_lbr_moveit_joints():
         return requested_close_width
     jaw_width = float(getattr(selected_grasp, "jaw_width", 0.0))
@@ -446,9 +454,13 @@ def _effective_close_gripper_width(selected_grasp) -> float:
     return min(0.001, jaw_width)
 
 
-def _is_generated_kuka_y_gripper_usd(path: str | Path) -> bool:
+def _using_pdz_gripper_usd() -> bool:
+    return "pdz_gripper" in str(args_cli.fr3_usd).replace("\\", "/").lower()
+
+
+def _is_generated_kuka_gripper_usd(path: str | Path) -> bool:
     resolved = str(path).replace("\\", "/")
-    return "kuka_iiwa7_y_gripper" in resolved
+    return "kuka_iiwa7_y_gripper" in resolved or "kuka_iiwa7_pdz_gripper" in resolved
 
 
 def resolve_fr3_usd_path() -> str:
@@ -857,9 +869,9 @@ def build_scene(
     print("[INFO]: Waiting for stage assets to finish loading...", flush=True)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
-    if _is_generated_kuka_y_gripper_usd(fr3_usd_path):
+    if _is_generated_kuka_gripper_usd(fr3_usd_path):
         print(
-            "[INFO]: Skipping Franka visual mesh collision exposure for generated KUKA/Y-gripper USD; "
+            "[INFO]: Skipping Franka visual mesh collision exposure for generated KUKA gripper USD; "
             "using authored collision hulls.",
             flush=True,
         )

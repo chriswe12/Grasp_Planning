@@ -22,6 +22,7 @@ import yaml
 from .dual_grasp_assembly_action_runner import (
     DEFAULT_DUAL_CONFIG,
     DUAL_MODES,
+    DUAL_REAL_STOP_AFTER_CHOICES,
     DualPipelineRunner,
 )
 
@@ -371,6 +372,8 @@ class RealPipelineRunner:
 
         command = [
             str(self.repo_root / "run_pipeline.sh"),
+            "--workflow",
+            "single-object",
             "--mode",
             "real",
             "--config",
@@ -771,6 +774,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional fixed dual grasp-pair ID; empty selects the ranked fallback.",
     )
+    parser.add_argument("--robots", choices=("left", "right", "both"), default="both")
+    parser.add_argument("--single-role", choices=("holder", "inserter"), default="inserter")
+    parser.add_argument("--stop-after", choices=DUAL_REAL_STOP_AFTER_CHOICES, default="")
+    parser.add_argument("--policy", default="")
+    parser.add_argument("--left-camera", choices=("realsense_1", "realsense_2"), default="realsense_1")
+    parser.add_argument("--right-camera", choices=("realsense_1", "realsense_2"), default="realsense_2")
     parser.add_argument(
         "--headless",
         action="store_true",
@@ -826,6 +835,12 @@ def main(argv: list[str] | None = None) -> int:
                 allow_objectless_planning=bool(args.allow_objectless_planning),
                 headless=bool(args.headless),
                 pair_id=str(args.pair_id),
+                robots=str(args.robots),
+                single_role=str(args.single_role),
+                stop_after=str(args.stop_after),
+                policy=str(args.policy),
+                left_camera=str(args.left_camera),
+                right_camera=str(args.right_camera),
             )
         else:
             if args.allow_objectless_planning:

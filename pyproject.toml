@@ -19,6 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+deployment = [
+    "Pillow>=10.0",
+    "torch>=2.7",
+    "torchvision>=0.22",
+]
 dev = [
     "pre-commit>=3.7",
     "ruff>=0.11",

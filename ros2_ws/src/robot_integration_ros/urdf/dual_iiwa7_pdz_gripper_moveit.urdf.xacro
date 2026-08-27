@@ -1,0 +1,895 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="lbr_dual_arm">
+  <!-- Generated from assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf; both arms carry the calibrated PDZ gripper; do not hand-edit. -->
+  <xacro:include filename="$(find lbr_description)/ros2_control/lbr_system_interface.xacro" />
+  <xacro:arg name="mode" default="mock" />
+  <xacro:arg name="lbr_one_mode" default="$(arg mode)" />
+  <xacro:arg name="lbr_two_mode" default="$(arg mode)" />
+  <xacro:arg name="lbr_one_system_config_path" default="$(find robot_integration_ros)/config/lbr_one_system_config.yaml" />
+  <xacro:arg name="lbr_two_system_config_path" default="$(find robot_integration_ros)/config/lbr_two_system_config.yaml" />
+  <xacro:arg name="initial_joint_positions_path" default="$(find robot_integration_ros)/config/dual_lbr_initial_joint_positions.yaml" />
+  <xacro:property name="PI" value="3.1415926535897931" />
+  <xacro:property name="joint_limits_path" value="$(find lbr_description)/urdf/iiwa7/joint_limits.yaml" />
+  <xacro:property name="joint_limits" value="${xacro.load_yaml(joint_limits_path)}" />
+  <link name="base_link" />
+  <joint name="lbr_one_base_joint" type="fixed">
+    <origin xyz="0 -0.42 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lbr_one_link_0" />
+  </joint>
+  <link name="lbr_one_link_0">
+    <inertial>
+      <origin xyz="-0.0128567641 7.05371085e-07 0.0679655593" rpy="0 0 0" />
+      <mass value="30.2763518" />
+      <inertia ixx="0.111239566" ixy="-3.81097437e-07" ixz="0.00486659751" iyy="0.139017104" iyz="7.87871532e-07" izz="0.133028622" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/base_link.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/base_link.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_1">
+    <inertial>
+      <origin xyz="-4.78790442e-07 -0.0348192059 0.120797868" rpy="0 0 0" />
+      <mass value="21.1627406" />
+      <inertia ixx="0.133321611" ixy="-5.38303163e-07" ixz="9.16989471e-07" iyy="0.127213841" iyz="0.0236704925" izz="0.0471553201" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.19" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link1.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.19" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link1.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_2">
+    <inertial>
+      <origin xyz="-5.29061672e-07 0.0392906957 0.0844460685" rpy="0 0 0" />
+      <mass value="25.1403147" />
+      <inertia ixx="0.197631242" ixy="-3.51963819e-07" ixz="-9.50708464e-08" iyy="0.18755727" iyz="0.0367196702" izz="0.0602720614" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0.0105 -0.0025" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link2.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0105 -0.0025" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link2.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_3">
+    <inertial>
+      <origin xyz="8.94264666e-07 0.0343188245 0.120097948" rpy="0 0 0" />
+      <mass value="21.1627874" />
+      <inertia ixx="0.133322418" ixy="-2.72387852e-07" ixz="-2.31579647e-07" iyy="0.127213838" iyz="-0.0236710393" izz="0.0471557501" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.1893" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link3.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.1893" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link3.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_4">
+    <inertial>
+      <origin xyz="9.93437855e-08 -0.0397907045 0.0837462343" rpy="0 0 0" />
+      <mass value="25.140329" />
+      <inertia ixx="0.19763084" ixy="-3.24564289e-07" ixz="3.90828878e-07" iyy="0.187556898" iyz="-0.0367195589" izz="0.0602723071" />
+    </inertial>
+    <visual>
+      <origin xyz="0 -0.0105 -0.0032" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link4.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.0105 -0.0032" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link4.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_5">
+    <inertial>
+      <origin xyz="-1.50596451e-07 -0.0298223596 0.0723663276" rpy="0 0 0" />
+      <mass value="9.53466993" />
+      <inertia ixx="0.0529038961" ixy="6.86274869e-08" ixz="3.57472027e-07" iyy="0.0444942714" iyz="0.0174914068" izz="0.0239916849" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.1886" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link5.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.1886" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link5.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_6">
+    <inertial>
+      <origin xyz="3.09820422e-06 0.0710485699 -0.00331157704" rpy="0 0 0" />
+      <mass value="14.2007599" />
+      <inertia ixx="0.0384515763" ixy="2.19173188e-06" ixz="6.70279498e-08" iyy="0.0368124807" iyz="0.00192249677" izz="0.028001094" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0.0707 -0.0039" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link6.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0707 -0.0039" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link6.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_link_7">
+    <inertial>
+      <origin xyz="5.28878934e-07 3.37199922e-07 0.00360718224" rpy="0 0 0" />
+      <mass value="2.47156969" />
+      <inertia ixx="0.00177365937" ixy="-1.24105214e-07" ixz="-2.95409039e-08" iyy="0.00177328723" iyz="-1.57567641e-08" izz="0.00272748711" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0311" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link7.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_one_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0311" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link7.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_pdz_gripper_base_link">
+    <inertial>
+      <origin xyz="-0.00447499847 -0.0244852962 0.0376887703" rpy="0 0 0" />
+      <mass value="0.8" />
+      <inertia ixx="0.00139698822" ixy="0" ixz="0" iyy="0.00217241519" iyz="0" izz="0.00259749349" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/base.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_one_pdz_gripper_dark_grey">
+        <color rgba="0.22 0.25 0.29 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/base.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_pdz_gripper_left_finger_link">
+    <inertial>
+      <origin xyz="-0.012 2.86102295e-09 0.100500038" rpy="0 0 0" />
+      <mass value="0.08" />
+      <inertia ixx="8.61067725e-05" ixy="0" ixz="0" iyy="7.05067684e-05" iyz="0" izz="2.32800041e-05" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_one_pdz_gripper_orange">
+        <color rgba="0.95 0.36 0.08 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/left_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <visual name="left_tpu_pad">
+      <origin rpy="0 0 0" xyz="-0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_one_pdz_gripper_tpu">
+        <color rgba="0.06 0.06 0.06 1.0" />
+      </material>
+    </visual>
+    <collision name="left_tpu_pad">
+      <origin rpy="0 0 0" xyz="-0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/left_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_pdz_gripper_right_finger_link">
+    <inertial>
+      <origin xyz="0.012 -2.86102295e-09 0.100500038" rpy="0 0 0" />
+      <mass value="0.08" />
+      <inertia ixx="8.61067725e-05" ixy="0" ixz="0" iyy="7.05067684e-05" iyz="0" izz="2.32800041e-05" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_one_pdz_gripper_orange">
+        <color rgba="0.95 0.36 0.08 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/right_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <visual name="right_tpu_pad">
+      <origin rpy="0 0 0" xyz="0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_one_pdz_gripper_tpu">
+        <color rgba="0.06 0.06 0.06 1.0" />
+      </material>
+    </visual>
+    <collision name="right_tpu_pad">
+      <origin rpy="0 0 0" xyz="0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/right_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_one_pdz_gripper_tcp" />
+  <link name="lbr_one_camera_bottom_screw_frame" />
+  <link name="lbr_one_camera_link">
+    <collision>
+      <origin rpy="0 0 0" xyz="-0.0078 -0.009 0" />
+      <geometry>
+        <box size="0.023 0.042 0.042" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.072" />
+      <origin xyz="0 0 0" />
+      <inertia ixx="0.003881243" ixy="0.0" ixz="0.0" iyy="0.000498940" iyz="0.0" izz="0.003879257" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="-0.0078 -0.009 0" />
+      <geometry>
+        <box size="0.023 0.042 0.042" />
+      </geometry>
+    </visual>
+  </link>
+  <link name="lbr_one_camera_depth_frame" />
+  <link name="lbr_one_camera_depth_optical_frame" />
+  <link name="lbr_one_camera_infra1_frame" />
+  <link name="lbr_one_camera_infra1_optical_frame" />
+  <link name="lbr_one_camera_infra2_frame" />
+  <link name="lbr_one_camera_infra2_optical_frame" />
+  <link name="lbr_one_camera_color_frame" />
+  <link name="lbr_one_camera_color_optical_frame" />
+  <joint name="lbr_one_A1" type="revolute">
+    <origin xyz="0 0 0.1475" rpy="0 0 0" />
+    <parent link="lbr_one_link_0" />
+    <child link="lbr_one_link_1" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="176" velocity="1.71" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A2" type="revolute">
+    <origin xyz="0 -0.0105 0.1925" rpy="0 0 0" />
+    <parent link="lbr_one_link_1" />
+    <child link="lbr_one_link_2" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.09" upper="2.09" effort="176" velocity="1.71" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A3" type="revolute">
+    <origin xyz="0 0.0105 0.2075" rpy="0 0 0" />
+    <parent link="lbr_one_link_2" />
+    <child link="lbr_one_link_3" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="110" velocity="1.75" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A4" type="revolute">
+    <origin xyz="0 0.0105 0.1925" rpy="0 0 0" />
+    <parent link="lbr_one_link_3" />
+    <child link="lbr_one_link_4" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.09" upper="2.09" effort="110" velocity="2.27" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A5" type="revolute">
+    <origin xyz="0 -0.0105 0.2075" rpy="0 0 0" />
+    <parent link="lbr_one_link_4" />
+    <child link="lbr_one_link_5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="110" velocity="2.44" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A6" type="revolute">
+    <origin xyz="0 -0.0707 0.1925" rpy="0 0 0" />
+    <parent link="lbr_one_link_5" />
+    <child link="lbr_one_link_6" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.09" upper="2.09" effort="40" velocity="3.14" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_A7" type="revolute">
+    <origin xyz="0 0.0707 0.091" rpy="0 0 0" />
+    <parent link="lbr_one_link_6" />
+    <child link="lbr_one_link_7" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.05" upper="3.05" effort="40" velocity="3.14" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_pdz_gripper_mount_joint" type="fixed">
+    <origin xyz="0 0 0.035" rpy="0 0 0" />
+    <parent link="lbr_one_link_7" />
+    <child link="lbr_one_pdz_gripper_base_link" />
+  </joint>
+  <joint name="lbr_one_pdz_gripper_left_finger_joint" type="prismatic">
+    <parent link="lbr_one_pdz_gripper_base_link" />
+    <child link="lbr_one_pdz_gripper_left_finger_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <axis xyz="-1 0 0" />
+    <limit effort="100.0" lower="0.0" upper="0.032" velocity="0.05" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_pdz_gripper_right_finger_joint" type="prismatic">
+    <parent link="lbr_one_pdz_gripper_base_link" />
+    <child link="lbr_one_pdz_gripper_right_finger_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit effort="100.0" lower="0.0" upper="0.032" velocity="0.05" />
+    <mimic joint="lbr_one_pdz_gripper_left_finger_joint" multiplier="1.0" offset="0.0" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_one_pdz_gripper_tcp_joint" type="fixed">
+    <parent link="lbr_one_pdz_gripper_base_link" />
+    <child link="lbr_one_pdz_gripper_tcp" />
+    <origin rpy="0 0 -1.57079633" xyz="0 0 0.1355" />
+  </joint>
+  <joint name="lbr_one_camera_joint" type="fixed">
+    <origin rpy="3.141592653589793 -1.0471975511965976 1.5707963267948966" xyz="0 -0.074171787517 0.064030695532" />
+    <parent link="lbr_one_pdz_gripper_base_link" />
+    <child link="lbr_one_camera_bottom_screw_frame" />
+  </joint>
+  <joint name="lbr_one_camera_link_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.01085 0.009 0.021" />
+    <parent link="lbr_one_camera_bottom_screw_frame" />
+    <child link="lbr_one_camera_link" />
+  </joint>
+  <joint name="lbr_one_camera_depth_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <parent link="lbr_one_camera_link" />
+    <child link="lbr_one_camera_depth_frame" />
+  </joint>
+  <joint name="lbr_one_camera_depth_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_one_camera_depth_frame" />
+    <child link="lbr_one_camera_depth_optical_frame" />
+  </joint>
+  <joint name="lbr_one_camera_infra1_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.0 0" />
+    <parent link="lbr_one_camera_link" />
+    <child link="lbr_one_camera_infra1_frame" />
+  </joint>
+  <joint name="lbr_one_camera_infra1_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_one_camera_infra1_frame" />
+    <child link="lbr_one_camera_infra1_optical_frame" />
+  </joint>
+  <joint name="lbr_one_camera_infra2_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.018 0" />
+    <parent link="lbr_one_camera_link" />
+    <child link="lbr_one_camera_infra2_frame" />
+  </joint>
+  <joint name="lbr_one_camera_infra2_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_one_camera_infra2_frame" />
+    <child link="lbr_one_camera_infra2_optical_frame" />
+  </joint>
+  <joint name="lbr_one_camera_color_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.0 0" />
+    <parent link="lbr_one_camera_link" />
+    <child link="lbr_one_camera_color_frame" />
+  </joint>
+  <joint name="lbr_one_camera_color_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_one_camera_color_frame" />
+    <child link="lbr_one_camera_color_optical_frame" />
+  </joint>
+  <link name="lbr_one_link_ee" />
+  <joint name="lbr_one_joint_ee" type="fixed">
+    <parent link="lbr_one_link_7" />
+    <child link="lbr_one_link_ee" />
+    <origin xyz="0 0 0.035" rpy="0 0 0" />
+  </joint>
+  <xacro:lbr_system_interface robot_name="lbr_one" mode="$(arg lbr_one_mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_one_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
+  <joint name="lbr_two_base_joint" type="fixed">
+    <origin xyz="0 0.42 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lbr_two_link_0" />
+  </joint>
+  <link name="lbr_two_link_0">
+    <inertial>
+      <origin xyz="-0.0128567641 7.05371085e-07 0.0679655593" rpy="0 0 0" />
+      <mass value="30.2763518" />
+      <inertia ixx="0.111239566" ixy="-3.81097437e-07" ixz="0.00486659751" iyy="0.139017104" iyz="7.87871532e-07" izz="0.133028622" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/base_link.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/base_link.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_1">
+    <inertial>
+      <origin xyz="-4.78790442e-07 -0.0348192059 0.120797868" rpy="0 0 0" />
+      <mass value="21.1627406" />
+      <inertia ixx="0.133321611" ixy="-5.38303163e-07" ixz="9.16989471e-07" iyy="0.127213841" iyz="0.0236704925" izz="0.0471553201" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.19" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link1.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.19" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link1.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_2">
+    <inertial>
+      <origin xyz="-5.29061672e-07 0.0392906957 0.0844460685" rpy="0 0 0" />
+      <mass value="25.1403147" />
+      <inertia ixx="0.197631242" ixy="-3.51963819e-07" ixz="-9.50708464e-08" iyy="0.18755727" iyz="0.0367196702" izz="0.0602720614" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0.0105 -0.0025" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link2.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0105 -0.0025" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link2.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_3">
+    <inertial>
+      <origin xyz="8.94264666e-07 0.0343188245 0.120097948" rpy="0 0 0" />
+      <mass value="21.1627874" />
+      <inertia ixx="0.133322418" ixy="-2.72387852e-07" ixz="-2.31579647e-07" iyy="0.127213838" iyz="-0.0236710393" izz="0.0471557501" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.1893" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link3.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.1893" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link3.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_4">
+    <inertial>
+      <origin xyz="9.93437855e-08 -0.0397907045 0.0837462343" rpy="0 0 0" />
+      <mass value="25.140329" />
+      <inertia ixx="0.19763084" ixy="-3.24564289e-07" ixz="3.90828878e-07" iyy="0.187556898" iyz="-0.0367195589" izz="0.0602723071" />
+    </inertial>
+    <visual>
+      <origin xyz="0 -0.0105 -0.0032" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link4.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.0105 -0.0032" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link4.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_5">
+    <inertial>
+      <origin xyz="-1.50596451e-07 -0.0298223596 0.0723663276" rpy="0 0 0" />
+      <mass value="9.53466993" />
+      <inertia ixx="0.0529038961" ixy="6.86274869e-08" ixz="3.57472027e-07" iyy="0.0444942714" iyz="0.0174914068" izz="0.0239916849" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.1886" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link5.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.1886" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link5.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_6">
+    <inertial>
+      <origin xyz="3.09820422e-06 0.0710485699 -0.00331157704" rpy="0 0 0" />
+      <mass value="14.2007599" />
+      <inertia ixx="0.0384515763" ixy="2.19173188e-06" ixz="6.70279498e-08" iyy="0.0368124807" iyz="0.00192249677" izz="0.028001094" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0.0707 -0.0039" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link6.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0707 -0.0039" rpy="-1.57079633 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link6.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_link_7">
+    <inertial>
+      <origin xyz="5.28878934e-07 3.37199922e-07 0.00360718224" rpy="0 0 0" />
+      <mass value="2.47156969" />
+      <inertia ixx="0.00177365937" ixy="-1.24105214e-07" ixz="-2.95409039e-08" iyy="0.00177328723" iyz="-1.57567641e-08" izz="0.00272748711" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0311" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link7.STL" scale="1 1 1" />
+      </geometry>
+      <material name="lbr_two_kuka_silver">
+        <color rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0311" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/link7.STL" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_pdz_gripper_base_link">
+    <inertial>
+      <origin xyz="-0.00447499847 -0.0244852962 0.0376887703" rpy="0 0 0" />
+      <mass value="0.8" />
+      <inertia ixx="0.00139698822" ixy="0" ixz="0" iyy="0.00217241519" iyz="0" izz="0.00259749349" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/base.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_two_pdz_gripper_dark_grey">
+        <color rgba="0.22 0.25 0.29 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/base.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_pdz_gripper_left_finger_link">
+    <inertial>
+      <origin xyz="-0.012 2.86102295e-09 0.100500038" rpy="0 0 0" />
+      <mass value="0.08" />
+      <inertia ixx="8.61067725e-05" ixy="0" ixz="0" iyy="7.05067684e-05" iyz="0" izz="2.32800041e-05" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_two_pdz_gripper_orange">
+        <color rgba="0.95 0.36 0.08 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/left_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <visual name="left_tpu_pad">
+      <origin rpy="0 0 0" xyz="-0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_two_pdz_gripper_tpu">
+        <color rgba="0.06 0.06 0.06 1.0" />
+      </material>
+    </visual>
+    <collision name="left_tpu_pad">
+      <origin rpy="0 0 0" xyz="-0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/left_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_pdz_gripper_right_finger_link">
+    <inertial>
+      <origin xyz="0.012 -2.86102295e-09 0.100500038" rpy="0 0 0" />
+      <mass value="0.08" />
+      <inertia ixx="8.61067725e-05" ixy="0" ixz="0" iyy="7.05067684e-05" iyz="0" izz="2.32800041e-05" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_two_pdz_gripper_orange">
+        <color rgba="0.95 0.36 0.08 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/right_finger.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <visual name="right_tpu_pad">
+      <origin rpy="0 0 0" xyz="0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="lbr_two_pdz_gripper_tpu">
+        <color rgba="0.06 0.06 0.06 1.0" />
+      </material>
+    </visual>
+    <collision name="right_tpu_pad">
+      <origin rpy="0 0 0" xyz="0.0 0 0" />
+      <geometry>
+        <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/collision/right_pad_8mm.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lbr_two_pdz_gripper_tcp" />
+  <link name="lbr_two_camera_bottom_screw_frame" />
+  <link name="lbr_two_camera_link">
+    <collision>
+      <origin rpy="0 0 0" xyz="-0.0078 -0.009 0" />
+      <geometry>
+        <box size="0.023 0.042 0.042" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.072" />
+      <origin xyz="0 0 0" />
+      <inertia ixx="0.003881243" ixy="0.0" ixz="0.0" iyy="0.000498940" iyz="0.0" izz="0.003879257" />
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="-0.0078 -0.009 0" />
+      <geometry>
+        <box size="0.023 0.042 0.042" />
+      </geometry>
+    </visual>
+  </link>
+  <link name="lbr_two_camera_depth_frame" />
+  <link name="lbr_two_camera_depth_optical_frame" />
+  <link name="lbr_two_camera_infra1_frame" />
+  <link name="lbr_two_camera_infra1_optical_frame" />
+  <link name="lbr_two_camera_infra2_frame" />
+  <link name="lbr_two_camera_infra2_optical_frame" />
+  <link name="lbr_two_camera_color_frame" />
+  <link name="lbr_two_camera_color_optical_frame" />
+  <joint name="lbr_two_A1" type="revolute">
+    <origin xyz="0 0 0.1475" rpy="0 0 0" />
+    <parent link="lbr_two_link_0" />
+    <child link="lbr_two_link_1" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="176" velocity="1.71" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A2" type="revolute">
+    <origin xyz="0 -0.0105 0.1925" rpy="0 0 0" />
+    <parent link="lbr_two_link_1" />
+    <child link="lbr_two_link_2" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.09" upper="2.09" effort="176" velocity="1.71" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A3" type="revolute">
+    <origin xyz="0 0.0105 0.2075" rpy="0 0 0" />
+    <parent link="lbr_two_link_2" />
+    <child link="lbr_two_link_3" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="110" velocity="1.75" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A4" type="revolute">
+    <origin xyz="0 0.0105 0.1925" rpy="0 0 0" />
+    <parent link="lbr_two_link_3" />
+    <child link="lbr_two_link_4" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.09" upper="2.09" effort="110" velocity="2.27" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A5" type="revolute">
+    <origin xyz="0 -0.0105 0.2075" rpy="0 0 0" />
+    <parent link="lbr_two_link_4" />
+    <child link="lbr_two_link_5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.97" upper="2.97" effort="110" velocity="2.44" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A6" type="revolute">
+    <origin xyz="0 -0.0707 0.1925" rpy="0 0 0" />
+    <parent link="lbr_two_link_5" />
+    <child link="lbr_two_link_6" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.09" upper="2.09" effort="40" velocity="3.14" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_A7" type="revolute">
+    <origin xyz="0 0.0707 0.091" rpy="0 0 0" />
+    <parent link="lbr_two_link_6" />
+    <child link="lbr_two_link_7" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.05" upper="3.05" effort="40" velocity="3.14" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_pdz_gripper_mount_joint" type="fixed">
+    <origin xyz="0 0 0.035" rpy="0 0 0" />
+    <parent link="lbr_two_link_7" />
+    <child link="lbr_two_pdz_gripper_base_link" />
+  </joint>
+  <joint name="lbr_two_pdz_gripper_left_finger_joint" type="prismatic">
+    <parent link="lbr_two_pdz_gripper_base_link" />
+    <child link="lbr_two_pdz_gripper_left_finger_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <axis xyz="-1 0 0" />
+    <limit effort="100.0" lower="0.0" upper="0.032" velocity="0.05" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_pdz_gripper_right_finger_joint" type="prismatic">
+    <parent link="lbr_two_pdz_gripper_base_link" />
+    <child link="lbr_two_pdz_gripper_right_finger_link" />
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit effort="100.0" lower="0.0" upper="0.032" velocity="0.05" />
+    <mimic joint="lbr_two_pdz_gripper_left_finger_joint" multiplier="1.0" offset="0.0" />
+    <dynamics damping="10.0" friction="0.0" />
+  </joint>
+  <joint name="lbr_two_pdz_gripper_tcp_joint" type="fixed">
+    <parent link="lbr_two_pdz_gripper_base_link" />
+    <child link="lbr_two_pdz_gripper_tcp" />
+    <origin rpy="0 0 -1.57079633" xyz="0 0 0.1355" />
+  </joint>
+  <joint name="lbr_two_camera_joint" type="fixed">
+    <origin rpy="3.141592653589793 -1.0471975511965976 1.5707963267948966" xyz="0 -0.074171787517 0.064030695532" />
+    <parent link="lbr_two_pdz_gripper_base_link" />
+    <child link="lbr_two_camera_bottom_screw_frame" />
+  </joint>
+  <joint name="lbr_two_camera_link_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.01085 0.009 0.021" />
+    <parent link="lbr_two_camera_bottom_screw_frame" />
+    <child link="lbr_two_camera_link" />
+  </joint>
+  <joint name="lbr_two_camera_depth_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0" />
+    <parent link="lbr_two_camera_link" />
+    <child link="lbr_two_camera_depth_frame" />
+  </joint>
+  <joint name="lbr_two_camera_depth_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_two_camera_depth_frame" />
+    <child link="lbr_two_camera_depth_optical_frame" />
+  </joint>
+  <joint name="lbr_two_camera_infra1_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.0 0" />
+    <parent link="lbr_two_camera_link" />
+    <child link="lbr_two_camera_infra1_frame" />
+  </joint>
+  <joint name="lbr_two_camera_infra1_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_two_camera_infra1_frame" />
+    <child link="lbr_two_camera_infra1_optical_frame" />
+  </joint>
+  <joint name="lbr_two_camera_infra2_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.018 0" />
+    <parent link="lbr_two_camera_link" />
+    <child link="lbr_two_camera_infra2_frame" />
+  </joint>
+  <joint name="lbr_two_camera_infra2_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_two_camera_infra2_frame" />
+    <child link="lbr_two_camera_infra2_optical_frame" />
+  </joint>
+  <joint name="lbr_two_camera_color_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.0 0" />
+    <parent link="lbr_two_camera_link" />
+    <child link="lbr_two_camera_color_frame" />
+  </joint>
+  <joint name="lbr_two_camera_color_optical_joint" type="fixed">
+    <origin rpy="-1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0" />
+    <parent link="lbr_two_camera_color_frame" />
+    <child link="lbr_two_camera_color_optical_frame" />
+  </joint>
+  <link name="lbr_two_link_ee" />
+  <joint name="lbr_two_joint_ee" type="fixed">
+    <parent link="lbr_two_link_7" />
+    <child link="lbr_two_link_ee" />
+    <origin xyz="0 0 0.035" rpy="0 0 0" />
+  </joint>
+  <xacro:lbr_system_interface robot_name="lbr_two" mode="$(arg lbr_two_mode)" joint_limits="${joint_limits}" system_config_path="$(arg lbr_two_system_config_path)" initial_joint_positions_path="$(arg initial_joint_positions_path)" />
+</robot>

@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 import time
+import webbrowser
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from grasp_planning.gripper_profiles import (
+    SERVO_GRIPPER_CLOSED_WIDTH_M,
+    SERVO_GRIPPER_OPEN_WIDTH_M,
+    servo_gripper_clamp_width,
+)
 from grasp_planning.pipeline.dual_robot_simple_sim import (
     DEFAULT_FLOOR_Z_WORLD_M,
 )
@@ -23,29 +29,40 @@ from grasp_planning.ros2.normalized_position_gripper_client import (
 )
 from grasp_planning.start_poses import (
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
-    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
-    kuka_gripper_approach_width,
+    gripper_approach_width,
     kuka_moveit_gripper_state,
 )
 
 ARM_SPEC_BY_ROBOT = {
-    "lbr_one": {
-        "robot": "lbr_one",
-        "planning_group": "arm_one",
-        "pose_link": "lbr_one_gripper_tcp",
-        "joint_names": tuple(f"lbr_one_A{index}" for index in range(1, 8)),
-    },
-    "lbr_two": {
-        "robot": "lbr_two",
-        "planning_group": "arm_two",
-        "pose_link": "lbr_two_gripper_tcp",
-        "joint_names": tuple(f"lbr_two_A{index}" for index in range(1, 8)),
-    },
+    robot: {
+        "robot": robot,
+        "planning_group": "arm_one" if robot == "lbr_one" else "arm_two",
+        "joint_names": tuple(f"{robot}_A{index}" for index in range(1, 8)),
+    }
+    for robot in ("lbr_one", "lbr_two")
 }
 ROLE_SPECS = {
     "holder": ARM_SPEC_BY_ROBOT["lbr_one"],
     "inserter": ARM_SPEC_BY_ROBOT["lbr_two"],
 }
+GRIPPER_SIDE_BY_ROBOT = {"lbr_one": "left", "lbr_two": "right"}
+
+
+def _gripper_model_for_plan(plan: Mapping[str, object]) -> str:
+    raw_model = str(plan.get("gripper_model", "")).strip()
+    if raw_model in {"pdz_gripper"}:
+        return "pdz_gripper"
+    if raw_model in {"", "y_gripper", "kuka_y_gripper"}:
+        if not raw_model:
+            roles = plan.get("roles")
+            if isinstance(roles, dict) and any(
+                "pdz_gripper_tcp" in str(value.get("tcp_link", ""))
+                for value in roles.values()
+                if isinstance(value, dict)
+            ):
+                return "pdz_gripper"
+        return "kuka_y_gripper"
+    raise ValueError(f"Dual plan has unsupported gripper_model {raw_model!r}.")
 
 
 def _role_spec(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
@@ -55,7 +72,14 @@ def _role_spec(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
     robot = str(roles[role].get("robot", ""))
     if robot not in ARM_SPEC_BY_ROBOT:
         raise ValueError(f"Dual plan role '{role}' has unsupported robot {robot!r}.")
-    return ARM_SPEC_BY_ROBOT[robot]
+    spec = dict(ARM_SPEC_BY_ROBOT[robot])
+    tcp_suffix = (
+        "pdz_gripper_tcp"
+        if _gripper_model_for_plan(plan) == "pdz_gripper"
+        else "gripper_tcp"
+    )
+    spec["pose_link"] = f"{robot}_{tcp_suffix}"
+    return spec
 MOTION_SEQUENCE = (
     ("holder", "holder_pregrasp"),
     ("holder", "holder_grasp"),
@@ -89,6 +113,25 @@ def _motion_sequence_through(
     return MOTION_SEQUENCE[: stop_index + 1]
 
 
+def _normalized_active_roles(active_roles: Sequence[str]) -> tuple[str, ...]:
+    roles = tuple(dict.fromkeys(str(role) for role in active_roles))
+    if not roles or any(role not in ROLE_SPECS for role in roles):
+        raise ValueError("active_roles must contain holder and/or inserter.")
+    return roles
+
+
+def _motion_sequence_for(
+    stop_after: str,
+    active_roles: Sequence[str],
+) -> tuple[tuple[str, str], ...]:
+    roles = set(_normalized_active_roles(active_roles))
+    return tuple(
+        (role, target_name)
+        for role, target_name in _motion_sequence_through(stop_after)
+        if role in roles
+    )
+
+
 @dataclass(frozen=True)
 class DualRealExecutionConfig:
     moveit_namespace: str = "/lbr_dual_arm"
@@ -112,19 +155,26 @@ class DualRealExecutionConfig:
     require_confirmation: bool = True
     allow_objectless_planning: bool = False
     stop_after: str = "holder_pregrasp"
+    active_roles: tuple[str, ...] = ("holder", "inserter")
+    policy: str = ""
+    left_camera: str = "realsense_1"
+    right_camera: str = "realsense_2"
     grippers_enabled: bool = True
+    allow_missing_grippers: bool = False
     gripper_timeout_s: float = 10.0
     grasp_settle_time_s: float = 0.5
-    holder_gripper_open_service: str = "/lbr_one/gripper_controller/open"
-    holder_gripper_close_service: str = "/lbr_one/gripper_controller/close"
-    holder_gripper_stop_service: str = "/lbr_one/gripper_controller/stop"
-    holder_gripper_position_command_topic: str = "/lbr_one/gripper_controller/position_command"
-    holder_gripper_position_feedback_topic: str = "/lbr_one/gripper_controller/position"
-    inserter_gripper_open_service: str = "/lbr_two/gripper_controller/open"
-    inserter_gripper_close_service: str = "/lbr_two/gripper_controller/close"
-    inserter_gripper_stop_service: str = "/lbr_two/gripper_controller/stop"
-    inserter_gripper_position_command_topic: str = "/lbr_two/gripper_controller/position_command"
-    inserter_gripper_position_feedback_topic: str = "/lbr_two/gripper_controller/position"
+    left_gripper_open_service: str = "/left/gripper_controller/open"
+    left_gripper_close_service: str = "/left/gripper_controller/close"
+    left_gripper_stop_service: str = "/left/gripper_controller/stop"
+    left_gripper_position_command_topic: str = "/left/gripper_controller/position_command"
+    left_gripper_position_feedback_topic: str = "/left/gripper_controller/position"
+    right_gripper_open_service: str = "/right/gripper_controller/open"
+    right_gripper_close_service: str = "/right/gripper_controller/close"
+    right_gripper_stop_service: str = "/right/gripper_controller/stop"
+    right_gripper_position_command_topic: str = "/right/gripper_controller/position_command"
+    right_gripper_position_feedback_topic: str = "/right/gripper_controller/position"
+    gripper_closed_width_m: float = SERVO_GRIPPER_CLOSED_WIDTH_M
+    gripper_open_width_m: float = SERVO_GRIPPER_OPEN_WIDTH_M
     gripper_position_feedback_tolerance: float = 0.02
     debug_gui: bool = False
     debug_gui_port: int = 0
@@ -147,6 +197,16 @@ class PreplannedDualSequence:
     joint_targets: Mapping[str, tuple[float, ...]]
     segment_modes: Mapping[str, str]
     start_states: Mapping[str, Mapping[str, float]]
+
+
+@dataclass(frozen=True)
+class PreparedPolicyApproach:
+    role: str
+    grasp_id: str
+    part_id: str
+    config_path: Path
+    goal_path: Path
+    preparation: object
 
 
 def _validate_dual_plan_payload(
@@ -424,20 +484,31 @@ def _make_commander(
 def _make_gripper(
     *,
     role: str,
+    plan: Mapping[str, object],
     commander,
     config: DualRealExecutionConfig,
 ):
-    prefix = "holder" if role == "holder" else "inserter"
+    prefix = _gripper_side_for_role(plan, role)
     return NormalizedPositionGripperClient(
         commander,
         position_command_topic=str(getattr(config, f"{prefix}_gripper_position_command_topic")),
         position_feedback_topic=str(getattr(config, f"{prefix}_gripper_position_feedback_topic")),
         open_service_name=str(getattr(config, f"{prefix}_gripper_open_service")),
+        close_service_name=str(getattr(config, f"{prefix}_gripper_close_service")),
         stop_service_name=str(getattr(config, f"{prefix}_gripper_stop_service")),
         timeout_s=float(config.gripper_timeout_s),
         feedback_tolerance=float(config.gripper_position_feedback_tolerance),
         grasp_settle_time_s=float(config.grasp_settle_time_s),
+        closed_width_m=float(config.gripper_closed_width_m),
+        open_width_m=float(config.gripper_open_width_m),
     )
+
+
+def _gripper_side_for_role(plan: Mapping[str, object], role: str) -> str:
+    """Resolve a task role through its planned robot to the physical gripper side."""
+
+    robot = str(_role_spec(plan, role)["robot"])
+    return GRIPPER_SIDE_BY_ROBOT[robot]
 
 
 def _grasp_payload_for_role(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
@@ -454,7 +525,20 @@ def _grasp_payload_for_role(plan: Mapping[str, object], role: str) -> Mapping[st
 def _gripper_width_for_role(plan: Mapping[str, object], role: str, *, contact: bool) -> float:
     grasp = _grasp_payload_for_role(plan, role)
     jaw_width = float(grasp["jaw_width_m"])
-    return jaw_width if contact else kuka_gripper_approach_width(jaw_width)
+    width = (
+        jaw_width
+        if contact
+        else gripper_approach_width(
+            jaw_width,
+            gripper_model=_gripper_model_for_plan(plan),
+        )
+    )
+    return servo_gripper_clamp_width(width)
+
+
+def _gripper_fully_closed_width(_plan: Mapping[str, object], _role: str) -> float:
+    del _plan, _role
+    return SERVO_GRIPPER_CLOSED_WIDTH_M
 
 
 def _moveit_gripper_state_for_plan(
@@ -466,6 +550,7 @@ def _moveit_gripper_state_for_plan(
     if not isinstance(roles, dict):
         raise ValueError("Dual plan is missing roles.")
     state: dict[str, float] = {}
+    gripper_model = _gripper_model_for_plan(plan)
     for role in ("holder", "inserter"):
         role_payload = roles.get(role)
         if not isinstance(role_payload, dict):
@@ -474,6 +559,7 @@ def _moveit_gripper_state_for_plan(
             kuka_moveit_gripper_state(
                 str(role_payload["robot"]),
                 _gripper_width_for_role(plan, role, contact=role in contact_roles),
+                gripper_model=gripper_model,
             )
         )
     return state
@@ -492,6 +578,10 @@ def _command_gripper_width(
     *,
     approach: bool,
 ) -> tuple[bool, str]:
+    if not approach:
+        close = getattr(gripper, "close", None)
+        if callable(close):
+            return close(width=width_m)
     command_width = getattr(gripper, "command_width", None)
     if callable(command_width):
         return command_width(
@@ -507,7 +597,7 @@ def _initialize_gripper_open(gripper) -> tuple[bool, str]:
     initialize_open = getattr(gripper, "initialize_open", None)
     if callable(initialize_open):
         return initialize_open()
-    return gripper.open(width=KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
+    return gripper.open(width=SERVO_GRIPPER_OPEN_WIDTH_M)
 
 
 def _activate_available_grippers(
@@ -515,8 +605,9 @@ def _activate_available_grippers(
     *,
     timeout_s: float,
     record: Callable[..., None],
+    allow_missing: bool = False,
 ) -> tuple[dict[str, object], tuple[str, ...]]:
-    """Probe every role first, then home only controllers that are present."""
+    """Probe every role first, then open only controllers that are present."""
 
     available: dict[str, object] = {}
     skipped: list[str] = []
@@ -526,6 +617,10 @@ def _activate_available_grippers(
         except RuntimeError as exc:
             if "unavailable" not in str(exc).lower():
                 raise
+            if not allow_missing:
+                raise RuntimeError(
+                    f"Required {role} gripper endpoint is unavailable; no arm motion was started: {exc}"
+                ) from exc
             skipped.append(role)
             record(
                 name=f"skip_{role}_gripper_unavailable",
@@ -544,15 +639,15 @@ def _activate_available_grippers(
 
     # Do not move either gripper until availability has been checked for both.
     for role, gripper in available.items():
-        home_ok, home_message = _initialize_gripper_open(gripper)
+        open_ok, open_message = _initialize_gripper_open(gripper)
         record(
-            name=f"initialize_{role}_gripper_open_zero",
+            name=f"initialize_{role}_gripper_open",
             role=role,
-            ok=home_ok,
-            message=home_message,
+            ok=open_ok,
+            message=open_message,
         )
-        if not home_ok:
-            raise RuntimeError(f"Could not establish the {role} gripper open zero: {home_message}")
+        if not open_ok:
+            raise RuntimeError(f"Could not open the {role} gripper: {open_message}")
     return available, tuple(skipped)
 
 
@@ -590,19 +685,277 @@ def _confirmation_text(
             holder_id = str(holder.get("grasp_id", ""))
         if isinstance(inserter, dict):
             inserter_id = str(inserter.get("grasp_id", ""))
+    active_roles = _normalized_active_roles(config.active_roles)
+    role_lines = []
+    for role, grasp_id in (("holder", holder_id), ("inserter", inserter_id)):
+        if role not in active_roles:
+            continue
+        role_lines.append(
+            f"  {role + ':':18s}{_role_spec(plan, role)['robot']} / {grasp_id}\n"
+        )
+    policy_line = f"  policy:           {config.policy}\n" if config.policy else ""
     return (
         "DUAL REAL-ROBOT EXECUTION REQUESTED\n"
         f"  plan:             {plan_json}\n"
         f"  pair:             {plan.get('pair_id', '')}\n"
-        f"  holder:           lbr_one / {holder_id}\n"
-        f"  inserter:         lbr_two / {inserter_id}\n"
-        f"  stop_after:       {config.stop_after}\n"
+        f"  active_roles:     {','.join(active_roles)}\n"
+        + "".join(role_lines)
+        + policy_line
+        + f"  stop_after:       {config.stop_after}\n"
         f"  velocity_scale:   {config.velocity_scale:.3f}\n"
         "  collision scene:  both robots + table + phase-aware part AABBs; "
         "incoming part attached during loaded transport\n"
-        "Verify the physical 840 mm base transform, clear the cell, keep both "
-        "E-stops reachable, and type 'yes' to continue: "
+        "Verify the physical 840 mm base transform, clear the cell, keep every "
+        "active-arm E-stop reachable, and type 'yes' to continue: "
     )
+
+
+def _source_artifact_path(plan: Mapping[str, object], *, role: str) -> Path:
+    source_artifacts = plan.get("source_artifacts")
+    if isinstance(source_artifacts, dict):
+        key = "holder_stage2_bundle" if role == "holder" else "inserter_stage2_bundle"
+        raw_path = str(source_artifacts.get(key, "")).strip()
+        if raw_path:
+            return Path(raw_path).expanduser().resolve()
+    collision_checks = plan.get("collision_checks")
+    if isinstance(collision_checks, dict):
+        offline = collision_checks.get("offline_dual_pair")
+        if isinstance(offline, dict) and str(offline.get("artifact", "")).strip():
+            artifact_dir = Path(str(offline["artifact"])).expanduser().resolve().parent
+            filename = (
+                "holder_base_candidates.json"
+                if role == "holder"
+                else f"inserter_candidates_{plan['step_id']}.json"
+            )
+            return artifact_dir / filename
+    raise ValueError(f"Dual task has no source stage-2 bundle for the {role} policy goal.")
+
+
+def _local_pose_for_role(
+    plan: Mapping[str, object],
+    *,
+    role: str,
+    position_world: Sequence[float],
+    orientation_xyzw_world: Sequence[float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    layout = plan.get("layout")
+    if not isinstance(layout, dict):
+        raise ValueError("Dual task has no layout block for policy goal rendering.")
+    base_key = "holder_base_world_m" if role == "holder" else "inserter_base_world_m"
+    base_position = tuple(float(value) for value in layout[base_key])
+    position = tuple(
+        float(value) - float(offset)
+        for value, offset in zip(position_world, base_position, strict=True)
+    )
+    orientation = tuple(float(value) for value in orientation_xyzw_world)
+    if len(position) != 3 or len(orientation) != 4:
+        raise ValueError("Policy rendering requires a 3D position and XYZW orientation.")
+    return position, orientation  # type: ignore[return-value]
+
+
+def _prepare_policy_approaches(
+    *,
+    plan: Mapping[str, object],
+    config: DualRealExecutionConfig,
+    preplanned_sequence: PreplannedDualSequence,
+    attempt_artifact_path: Path,
+    record: Callable[..., None],
+) -> dict[str, PreparedPolicyApproach]:
+    if not config.policy:
+        return {}
+    from grasp_planning.rl.d405_deployment_config import write_visual_servo_config
+    from grasp_planning.rl.d405_goal_renderer import render_d405_goal_for_grasp
+    from grasp_planning.rl.policy_registry import resolve_policy_reference
+    from grasp_planning.ros2.d405_visual_servo import (
+        preflight_d405_policy_visual_servo,
+        prepare_d405_policy_visual_servo,
+    )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    policy_name, assets = resolve_policy_reference(
+        config.policy,
+        registry_path=repo_root / "configs/d405_policy_registry.yaml",
+    )
+    plan_gripper_model = _gripper_model_for_plan(plan)
+    normalized_plan_model = "y_gripper" if plan_gripper_model == "kuka_y_gripper" else plan_gripper_model
+    if str(assets["gripper_model"]) != normalized_plan_model:
+        raise ValueError(
+            f"Policy '{policy_name}' was trained for {assets['gripper_model']}, but the selected "
+            f"dual task uses {normalized_plan_model}."
+        )
+    output_dir = attempt_artifact_path.expanduser().resolve().parent / "policy"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    grasps = plan.get("grasps")
+    objects = plan.get("objects")
+    targets = plan.get("targets")
+    if not isinstance(grasps, dict) or not isinstance(objects, dict) or not isinstance(targets, dict):
+        raise ValueError("Dual task is missing grasps, objects, or targets for policy deployment.")
+
+    prepared: dict[str, PreparedPolicyApproach] = {}
+    active_roles = _normalized_active_roles(config.active_roles)
+    for role in active_roles:
+        grasp_key = "holder" if role == "holder" else "inserter_pickup"
+        target_name = "holder_grasp" if role == "holder" else "inserter_pickup_grasp"
+        if target_name not in preplanned_sequence.joint_targets:
+            continue
+        grasp = grasps.get(grasp_key)
+        target = targets.get(target_name)
+        if not isinstance(grasp, dict) or not isinstance(target, dict):
+            raise ValueError(f"Dual task has no {role} grasp target for policy deployment.")
+        robot = str(_role_spec(plan, role)["robot"])
+        camera_side = GRIPPER_SIDE_BY_ROBOT[robot]
+        camera_name = config.left_camera if camera_side == "left" else config.right_camera
+        config_path = output_dir / f"{role}_visual_servo.yaml"
+        write_visual_servo_config(
+            policy_name=policy_name,
+            assets=assets,
+            template_path=repo_root / "configs/visual_servo_real_d405.yaml",
+            output_path=config_path,
+            output_root=output_dir / f"{role}_runs",
+            model_device="cuda:0",
+            camera_name=camera_name,
+            robot_name=robot,
+        )
+        goal_position, goal_orientation = _local_pose_for_role(
+            plan,
+            role=role,
+            position_world=target["position_world_m"],
+            orientation_xyzw_world=target["orientation_xyzw_world"],
+        )
+        if role == "holder":
+            object_payload = objects.get("subassembly")
+            object_pose_key = "source_pose_world"
+            part_id = str(plan["base_part_id"])
+        else:
+            object_payload = objects.get("incoming")
+            object_pose_key = "pickup_source_pose_world"
+            part_id = str(plan["incoming_part_id"])
+        if not isinstance(object_payload, dict) or not isinstance(object_payload.get(object_pose_key), dict):
+            raise ValueError(f"Dual task has no {role} object pose for policy goal rendering.")
+        object_pose = object_payload[object_pose_key]
+        assert isinstance(object_pose, dict)
+        object_position, object_orientation = _local_pose_for_role(
+            plan,
+            role=role,
+            position_world=object_pose["position_world_m"],
+            orientation_xyzw_world=object_pose["orientation_xyzw_world"],
+        )
+        grasp_id = str(grasp["grasp_id"])
+        goal_path = output_dir / f"{role}_goal_{grasp_id}.npz"
+        rendered = render_d405_goal_for_grasp(
+            config_path=config_path,
+            stage2_bundle_path=_source_artifact_path(plan, role=role),
+            grasp_id=grasp_id,
+            part_id=part_id,
+            goal_joint_positions=preplanned_sequence.joint_targets[target_name],
+            goal_tcp_position=goal_position,
+            goal_tcp_orientation_xyzw=goal_orientation,
+            approach_width_m=_gripper_width_for_role(plan, role, contact=False),
+            maximum_approach_width_m=float(config.gripper_open_width_m),
+            output_path=goal_path,
+            object_position=object_position,
+            object_orientation_xyzw=object_orientation,
+        )
+        preparation = prepare_d405_policy_visual_servo(
+            config_path=config_path,
+            expected_grasp_id=grasp_id,
+            expected_part_id=part_id,
+            goal_observation_path_override=rendered.path,
+        )
+        camera_serial = preflight_d405_policy_visual_servo(preparation)
+        prepared[role] = PreparedPolicyApproach(
+            role=role,
+            grasp_id=grasp_id,
+            part_id=part_id,
+            config_path=config_path,
+            goal_path=rendered.path,
+            preparation=preparation,
+        )
+        record(
+            name=f"prepare_{role}_policy",
+            role=role,
+            ok=True,
+            message=(
+                f"policy={policy_name} camera={camera_name} serial={camera_serial} goal={rendered.path} "
+                f"sha256={rendered.sha256}"
+            ),
+        )
+    if prepared:
+        debug_html = _write_policy_goal_debug_html(
+            approaches=prepared,
+            output_path=output_dir / "policy_execution_debug.html",
+        )
+        print(f"[DUAL-REAL] Policy goal debug HTML: {debug_html.as_uri()}", flush=True)
+        if config.debug_gui and config.debug_gui_open_browser:
+            webbrowser.open(debug_html.as_uri())
+    return prepared
+
+
+def _write_policy_goal_debug_html(
+    *,
+    approaches: Mapping[str, PreparedPolicyApproach],
+    output_path: Path,
+) -> Path:
+    """Embed every on-demand MuJoCo RGB-D goal in one execution handoff page."""
+
+    import base64
+    import html
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    def data_url(image: object) -> str:
+        buffer = io.BytesIO()
+        Image.fromarray(np.asarray(image, dtype=np.uint8)).save(buffer, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    cards: list[str] = []
+    for role, approach in approaches.items():
+        with np.load(approach.goal_path, allow_pickle=False) as rendered:
+            rgb = np.asarray(rendered["goal_rgb"], dtype=np.uint8)
+            depth = np.asarray(rendered["goal_depth"], dtype=np.float32)
+        valid = np.isfinite(depth) & (depth >= 0.07) & (depth < 0.50)
+        normalized = np.clip((depth - 0.07) / 0.43, 0.0, 1.0)
+        depth_rgb = np.stack(
+            (
+                (255.0 * normalized),
+                (255.0 * (1.0 - np.abs(2.0 * normalized - 1.0))),
+                (255.0 * (1.0 - normalized)),
+            ),
+            axis=-1,
+        ).astype(np.uint8)
+        depth_rgb[~valid] = (20, 24, 31)
+        cards.append(
+            "<section><h2>"
+            + html.escape(role.title())
+            + " policy approach</h2><p>grasp="
+            + html.escape(approach.grasp_id)
+            + " part="
+            + html.escape(approach.part_id)
+            + "</p><div class='images'><figure><img src='"
+            + data_url(rgb)
+            + "'><figcaption>On-demand MuJoCo goal RGB</figcaption></figure>"
+            + "<figure><img src='"
+            + data_url(depth_rgb)
+            + "'><figcaption>Policy depth, valid fraction "
+            + f"{float(valid.mean()):.1%}"
+            + "</figcaption></figure></div></section>"
+        )
+    output_path.write_text(
+        "<!doctype html><meta charset='utf-8'><title>Dual policy execution</title>"
+        "<style>body{font:15px system-ui;background:#10141c;color:#edf2fa;margin:24px}"
+        "section{background:#1a2230;border-radius:12px;padding:16px;margin:14px 0}"
+        ".images{display:flex;gap:16px;flex-wrap:wrap}figure{margin:0}"
+        "img{width:512px;max-width:42vw;image-rendering:pixelated;border-radius:8px}"
+        "figcaption{color:#aebdd0;margin-top:6px}</style>"
+        "<h1>MoveIt-selected dual policy handoff</h1>"
+        "<p>Each image was rendered on demand after connected collision-aware preflight. "
+        "The policy replaces only pregrasp-to-grasp; gripper closure follows its completion gate.</p>"
+        + "".join(cards),
+        encoding="utf-8",
+    )
+    return output_path.resolve()
 
 
 def _preflight_targets(
@@ -618,6 +971,7 @@ def _preflight_targets(
     stop_after: str = "inserter_preinsertion",
     resolved_joint_targets: dict[str, tuple[float, ...]] | None = None,
     initial_contact_roles: frozenset[str] = frozenset(),
+    active_roles: Sequence[str] = ("holder", "inserter"),
 ) -> bool:
     targets = plan["targets"]
     assert isinstance(targets, dict)
@@ -625,7 +979,7 @@ def _preflight_targets(
     contact_roles = set(initial_contact_roles)
     attached_objects = _attached_collision_objects(plan)
     incoming_attached = False
-    for role, target_name in _motion_sequence_through(stop_after):
+    for role, target_name in _motion_sequence_for(stop_after, active_roles):
         if role_filter is not None and role != role_filter:
             continue
         finger_state = _moveit_gripper_state_for_plan(
@@ -1005,7 +1359,7 @@ def _preplan_connected_candidate(
     failure = ""
 
     try:
-        for role, target_name in _motion_sequence_through(stop_after):
+        for role, target_name in _motion_sequence_for(stop_after, config.active_roles):
             finger_state = _moveit_gripper_state_for_plan(
                 plan,
                 contact_roles=frozenset(contact_roles),
@@ -1210,7 +1564,7 @@ def _preplan_connected_candidate(
 
     if failure:
         return None, failure
-    expected_names = tuple(name for _role, name in _motion_sequence_through(stop_after))
+    expected_names = tuple(name for _role, name in _motion_sequence_for(stop_after, config.active_roles))
     if tuple(trajectories) != expected_names:
         return None, "connected preflight did not produce every requested trajectory segment"
     return (
@@ -1254,7 +1608,7 @@ def _select_ranked_preflight_candidate(
 
     def prefix_signature(candidate: Mapping[str, object], through_target: str) -> str:
         prefix = []
-        for role, target_name in _motion_sequence_through(through_target):
+        for role, target_name in _motion_sequence_for(through_target, config.active_roles):
             prefix.append(
                 {
                     "role": role,
@@ -1317,7 +1671,7 @@ def _select_ranked_preflight_candidate(
                 message="Preplanning the complete connected dual-arm sequence before hardware motion.",
             )
         cached_failure = ""
-        for _role, prefix_target in _motion_sequence_through(stop_after):
+        for _role, prefix_target in _motion_sequence_for(stop_after, config.active_roles):
             cached_failure = failed_prefixes.get(prefix_signature(candidate, prefix_target), "")
             if cached_failure:
                 break
@@ -1346,7 +1700,7 @@ def _select_ranked_preflight_candidate(
                 if failed_target in STOP_AFTER_CHOICES:
                     failed_prefixes[prefix_signature(candidate, failed_target)] = failure
         candidate_ok = preplanned is not None
-        active_roles = tuple(dict.fromkeys(role for role, _ in _motion_sequence_through(stop_after)))
+        active_roles = tuple(dict.fromkeys(role for role, _ in _motion_sequence_for(stop_after, config.active_roles)))
         role_records = {
             role: {
                 "grasp_id": _candidate_grasp_id(candidate, role=role),
@@ -1451,16 +1805,22 @@ def _validate_preplanned_trajectory_start(
     trajectory,
     expected_start_state: Mapping[str, float],
     tolerance_rad: float,
+    active_roles: Sequence[str] = ("holder", "inserter"),
+    joint_names: Sequence[str] | None = None,
 ) -> tuple[bool, str]:
     get_state = getattr(commander, "get_current_robot_state", None)
     if not callable(get_state):
         return True, "Live-state guard unavailable in lightweight test adapter."
     current_state = get_state()
     del trajectory
-    names = tuple(
-        str(name)
-        for role in ("holder", "inserter")
-        for name in ROLE_SPECS[role]["joint_names"]
+    names = (
+        tuple(str(name) for name in joint_names)
+        if joint_names is not None
+        else tuple(
+            str(name)
+            for role in _normalized_active_roles(active_roles)
+            for name in ROLE_SPECS[role]["joint_names"]
+        )
     )
     missing = [name for name in names if name not in current_state or name not in expected_start_state]
     if missing:
@@ -1488,6 +1848,7 @@ def _execute_sequence(
     config: DualRealExecutionConfig,
     record: Callable[..., None],
     preplanned_sequence: PreplannedDualSequence,
+    policy_approaches: Mapping[str, PreparedPolicyApproach] | None = None,
     candidate_rank: int | None = None,
     update_debug: Callable[..., None] | None = None,
 ) -> tuple[bool, str, str]:
@@ -1497,7 +1858,10 @@ def _execute_sequence(
     contact_roles: set[str] = set()
     attached_objects = _attached_collision_objects(plan)
     incoming_attached = False
-    requested_targets = tuple(name for _role, name in _motion_sequence_through(config.stop_after))
+    active_roles = _normalized_active_roles(config.active_roles)
+    policy_approaches = dict(policy_approaches or {})
+    requested_sequence = _motion_sequence_for(config.stop_after, active_roles)
+    requested_targets = tuple(name for _role, name in requested_sequence)
     missing_preplans = [name for name in requested_targets if name not in preplanned_sequence.trajectories]
     if missing_preplans:
         return False, "connected_motion_preflight_missing", ""
@@ -1521,7 +1885,7 @@ def _execute_sequence(
                 return False, "attached_collision_cleanup_failed", completed
         return success, status, completed
 
-    for role in ("holder", "inserter"):
+    for role in active_roles:
         if role not in grippers:
             record(
                 name=f"skip_position_{role}_gripper_for_approach",
@@ -1568,7 +1932,7 @@ def _execute_sequence(
     if not state_ok:
         return _finish(False, "approach_gripper_moveit_state_failed", last_completed)
 
-    for role, target_name in MOTION_SEQUENCE:
+    for role, target_name in requested_sequence:
         if update_debug is not None:
             update_debug(
                 candidate=plan,
@@ -1612,6 +1976,12 @@ def _execute_sequence(
                 trajectory=trajectory,
                 expected_start_state=preplanned_sequence.start_states[target_name],
                 tolerance_rad=float(config.execution_start_tolerance_rad),
+                active_roles=active_roles,
+                joint_names=tuple(
+                    str(name)
+                    for active_role in active_roles
+                    for name in _role_spec(plan, active_role)["joint_names"]
+                ),
             )
             record(
                 name=f"validate_{target_name}_start_state",
@@ -1623,6 +1993,28 @@ def _execute_sequence(
             if not start_ok:
                 ok = False
                 message = start_message
+            elif role in policy_approaches and target_name in GRIPPER_CLOSE_AFTER:
+                from grasp_planning.ros2.d405_visual_servo import run_d405_policy_visual_servo
+
+                policy = policy_approaches[role]
+                policy_result = run_d405_policy_visual_servo(
+                    config_path=policy.config_path,
+                    expected_grasp_id=policy.grasp_id,
+                    expected_part_id=policy.part_id,
+                    allow_real_motion=True,
+                    preparation=policy.preparation,
+                )
+                ok = bool(
+                    policy_result.completed
+                    and policy_result.motion_applied
+                    and policy_result.allow_gripper_close
+                )
+                message = (
+                    f"policy state={policy_result.state} completed={policy_result.completed} "
+                    f"motion_applied={policy_result.motion_applied} "
+                    f"allow_gripper_close={policy_result.allow_gripper_close}; "
+                    f"{policy_result.message}; run={policy_result.run_directory}"
+                )
             else:
                 ok, execute_message = commanders[role].execute_trajectory(
                     trajectory,
@@ -1676,7 +2068,7 @@ def _execute_sequence(
         close_role = GRIPPER_CLOSE_AFTER.get(target_name)
         if close_role is not None:
             if close_role in grippers:
-                width = _gripper_width_for_role(plan, close_role, contact=True)
+                width = _gripper_fully_closed_width(plan, close_role)
                 ok, message = _command_gripper_width(
                     grippers[close_role],
                     width,
@@ -1786,6 +2178,13 @@ def execute_dual_real_plan(
 ) -> DualRealExecutionResult:
     if config.stop_after not in STOP_AFTER_CHOICES:
         raise ValueError(f"stop_after must be one of {STOP_AFTER_CHOICES}; got {config.stop_after!r}.")
+    active_roles = _normalized_active_roles(config.active_roles)
+    if config.policy and not config.execute:
+        print(
+            "[DUAL-REAL] Policy assets and runtime goals will be validated after connected "
+            "motion preflight; no policy command is emitted without --execute.",
+            flush=True,
+        )
     if float(config.cartesian_max_step_m) <= 0.0:
         raise ValueError("cartesian_max_step_m must be positive.")
     if float(config.cartesian_revolute_jump_threshold_rad) <= 0.0:
@@ -1799,8 +2198,10 @@ def execute_dual_real_plan(
             "attached incoming-part collision geometry. Rebuild the task, or "
             "pass --allow-objectless-planning only for an explicitly reviewed legacy plan."
         )
-    if config.execute and not config.grippers_enabled and config.stop_after != "holder_pregrasp":
-        raise RuntimeError("Execution without gripper control is limited to stop_after=holder_pregrasp.")
+    if config.execute and not config.grippers_enabled:
+        requested = _motion_sequence_for(config.stop_after, active_roles)
+        if any(target_name not in {"holder_pregrasp", "inserter_pickup_pregrasp"} for _, target_name in requested):
+            raise RuntimeError("Execution without gripper control is limited to active-role pregrasp targets.")
     if rclpy is None:
         raise RuntimeError(
             "ROS2 MoveIt dependencies are unavailable. Source ROS2, lbr-stack, "
@@ -1826,6 +2227,7 @@ def execute_dual_real_plan(
     grippers: dict[str, object] = {}
     skipped_gripper_roles: tuple[str, ...] = ()
     preplanned_sequence: PreplannedDualSequence | None = None
+    policy_approaches: dict[str, PreparedPolicyApproach] = {}
     debug_server = None
     debug_scene_candidate_id = ""
     candidate_counts = dict(ranked_candidates[0].get("candidate_filter_diagnostics", {}))
@@ -2019,6 +2421,15 @@ def execute_dual_real_plan(
             return result
 
         if config.require_confirmation:
+            if preplanned_sequence is None:
+                raise RuntimeError("Connected motion preflight selected no executable trajectory sequence.")
+            policy_approaches = _prepare_policy_approaches(
+                plan=execution_plan,
+                config=config,
+                preplanned_sequence=preplanned_sequence,
+                attempt_artifact_path=output_path,
+                record=_record,
+            )
             reply = input(
                 _confirmation_text(
                     plan_json=plan_json,
@@ -2036,20 +2447,32 @@ def execute_dual_real_plan(
                     output_path,
                 )
                 return result
+        elif config.policy:
+            if preplanned_sequence is None:
+                raise RuntimeError("Connected motion preflight selected no executable trajectory sequence.")
+            policy_approaches = _prepare_policy_approaches(
+                plan=execution_plan,
+                config=config,
+                preplanned_sequence=preplanned_sequence,
+                attempt_artifact_path=output_path,
+                record=_record,
+            )
 
         if config.grippers_enabled:
             configured_grippers = {
                 role: _make_gripper(
                     role=role,
+                    plan=execution_plan,
                     commander=commanders[role],
                     config=config,
                 )
-                for role in ROLE_SPECS
+                for role in active_roles
             }
             grippers, skipped_gripper_roles = _activate_available_grippers(
                 configured_grippers,
                 timeout_s=float(config.wait_for_moveit_timeout_s),
                 record=_record,
+                allow_missing=bool(config.allow_missing_grippers),
             )
 
         if preplanned_sequence is None:
@@ -2061,6 +2484,7 @@ def execute_dual_real_plan(
             config=config,
             record=_record,
             preplanned_sequence=preplanned_sequence,
+            policy_approaches=policy_approaches,
             candidate_rank=(
                 int(pair_selection["selected_rank"]) if pair_selection.get("selected_rank") is not None else None
             ),

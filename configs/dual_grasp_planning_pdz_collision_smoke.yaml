@@ -1,0 +1,45 @@
+# Fast, separate three-stage collision build for the PDZ gripper.
+# It preserves all plumbers-block assembly steps, but limits candidate budgets.
+assembly:
+  name: plumbers_block
+  asset_root: assets/obj/fabrica
+  mesh_scale: 0.01
+  table_z_assembly_m: 0.0
+  table_contact_tolerance_m: 0.000001
+
+artifacts:
+  output_root: artifacts/dual_grasp_planning_pdz_collision_smoke
+
+planning:
+  stage1_cache_enabled: false
+  stage1_cache_dir: artifacts/dual_grasp_planning_pdz_collision_smoke/stage1_cache
+  num_surface_samples: 128
+  min_jaw_width: 0.008
+  # PDZ joint travel is 32 mm per finger: 76 mm pad-to-pad at maximum.
+  # A 62 mm contact width plus 10 mm approach clearance leaves 4 mm margin.
+  max_jaw_width: 0.062
+  antipodal_cosine_threshold: 0.984807753012208
+  roll_angle_step_deg: 30.0
+  max_pair_checks: 12000
+  detailed_finger_contact_gap_m: 0.005
+  gripper_collision_model: pdz_gripper
+  symmetry_pickup_enabled: false
+  rng_seed: 0
+
+holder_feasibility:
+  pregrasp_offset_m: 0.05
+  table_clearance_margin_m: 0.002
+  geometry_clearance_margin_m: 0.0
+  incoming_path_samples: 11
+
+pair_planning:
+  stage3_worker_count: 1
+  max_holder_candidates_per_step: 20
+  max_inserter_candidates_per_step: 48
+  max_pair_checks: 320
+  max_accepted_pairs: 32
+  max_rejected_pairs: 32
+  max_pairs_per_holder: 2
+  max_pairs_per_inserter: 2
+  path_samples: 11
+  exact_pair_clearance_ranking: false

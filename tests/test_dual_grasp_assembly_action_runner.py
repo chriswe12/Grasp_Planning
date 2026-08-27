@@ -46,7 +46,7 @@ def _goal(
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
     (tmp_path / "configs").mkdir()
-    (tmp_path / "run_simple_dual_robot.sh").write_text(
+    (tmp_path / "run_pipeline.sh").write_text(
         "#!/usr/bin/env bash\n",
         encoding="utf-8",
     )

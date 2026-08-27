@@ -35,14 +35,16 @@ planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/dual_grasp_planning/stage1_cache"
   num_surface_samples: 1024
-  min_jaw_width: 0.002
-  max_jaw_width: 0.07
+  # PDZ collision/contact range. The physical service driver independently
+  # maps the calibrated 7--74 mm endpoint stroke.
+  min_jaw_width: 0.008
+  max_jaw_width: 0.062
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
   # Check both selected contact width and an approach width opened 5 mm per finger.
   detailed_finger_contact_gap_m: 0.005
-  gripper_collision_model: "kuka_y_gripper"
+  gripper_collision_model: "pdz_gripper"
   contact_lateral_offsets_m: [-0.002916666666666667, 0.0, 0.002916666666666667]
   contact_approach_offsets_m: [-0.0030833333333333333, 0.0, 0.0030833333333333333]
   # Expand object-local inserter contacts by finite incoming-part symmetries.
@@ -58,6 +60,14 @@ holder_feasibility:
   incoming_path_samples: 21
 
 pair_planning:
+  # Trapezoidal PDZ contact patches used in the trained embodiment.
+  inserter_contact_offset_pairs_m:
+    - [-0.005, -0.005]
+    - [0.0, -0.005]
+    - [0.005, -0.005]
+    - [-0.015, 0.005]
+    - [0.0, 0.005]
+    - [0.015, 0.005]
   # Stage-3 insertion filtering runs once per independent assembly step.
   # 0 selects min(step_count, available CPU cores - 1).
   stage3_worker_count: 0

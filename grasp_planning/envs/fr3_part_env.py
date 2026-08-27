@@ -19,6 +19,7 @@ from .fr3_cube_env import (
     DEFAULT_ROBOT_CFG,
     ISAAC_MIN_CONTACT_OFFSET_M,
 )
+from grasp_planning.start_poses import PDZ_GRIPPER_TRAVEL_M
 
 DEFAULT_PART_DENSITY_KG_M3 = 1240.0
 KUKA_ARM_ACTUATOR_PROFILE_WORKING = "working"
@@ -56,7 +57,16 @@ def _is_kuka_lbr_asset(asset_path: str) -> bool:
     return "kuka" in normalized or "iiwa" in normalized or "lbr" in normalized
 
 
+def _is_pdz_gripper_asset(asset_path: str) -> bool:
+    return "pdz_gripper" in str(asset_path).lower()
+
+
 def _hand_start_joint_pos_for_asset(asset_path: str) -> dict[str, float]:
+    if _is_pdz_gripper_asset(asset_path):
+        return {
+            "pdz_gripper_left_finger_joint": PDZ_GRIPPER_TRAVEL_M,
+            "pdz_gripper_right_finger_joint": PDZ_GRIPPER_TRAVEL_M,
+        }
     if _is_kuka_lbr_asset(asset_path):
         return {
             "left_finger_joint": DEFAULT_HAND_START_JOINT_POS["left_finger_joint"],
@@ -171,25 +181,46 @@ def _robot_actuators_for_asset(
     if _is_kuka_lbr_asset(asset_path):
         if float(kuka_hand_effort_limit_sim) <= 0.0:
             raise ValueError("KUKA hand effort limit must be positive.")
+        if _is_pdz_gripper_asset(asset_path):
+            hand_actuators = {
+                "hand_driver": ImplicitActuatorCfg(
+                    joint_names_expr=["pdz_gripper_left_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=float(kuka_hand_effort_limit_sim),
+                    velocity_limit_sim=0.05,
+                ),
+                "hand_follower": ImplicitActuatorCfg(
+                    joint_names_expr=["pdz_gripper_right_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=float(kuka_hand_effort_limit_sim),
+                    velocity_limit_sim=0.05,
+                ),
+            }
+        else:
+            hand_actuators = {
+                "hand_driver": ImplicitActuatorCfg(
+                    joint_names_expr=["left_finger_joint"],
+                    stiffness=7500.0,
+                    damping=173.0,
+                    effort_limit_sim=float(kuka_hand_effort_limit_sim),
+                    velocity_limit_sim=0.04,
+                ),
+                "hand_passive": ImplicitActuatorCfg(
+                    joint_names_expr=["right_finger_joint"],
+                    stiffness=0.0,
+                    damping=0.0,
+                    effort_limit_sim=1.0,
+                    velocity_limit_sim=0.04,
+                ),
+            }
         return {
             **_kuka_arm_actuators(
                 kuka_arm_actuator_profile,
                 damping_override=kuka_arm_damping_override,
             ),
-            "hand_driver": ImplicitActuatorCfg(
-                joint_names_expr=["left_finger_joint"],
-                stiffness=7500.0,
-                damping=173.0,
-                effort_limit_sim=float(kuka_hand_effort_limit_sim),
-                velocity_limit_sim=0.04,
-            ),
-            "hand_passive": ImplicitActuatorCfg(
-                joint_names_expr=["right_finger_joint"],
-                stiffness=0.0,
-                damping=0.0,
-                effort_limit_sim=1.0,
-                velocity_limit_sim=0.04,
-            ),
+            **hand_actuators,
         }
     return {
         "panda_shoulder": ImplicitActuatorCfg(
@@ -290,7 +321,7 @@ _FR3_PART_SCENE_TEMPLATE = FR3PartSceneCfg()
 
 @configclass
 class DualKukaAssemblySceneCfg(InteractiveSceneCfg):
-    """Two KUKA/Y-gripper articulations, one rigid prefix, and one incoming part."""
+    """Two KUKA/gripper articulations, one rigid prefix, and one incoming part."""
 
     num_envs = 1
     env_spacing = 2.5
@@ -456,6 +487,23 @@ def make_dual_kuka_assembly_scene_cfg(
         float(ground_height_m),
     )
     resolved_robot_path = _resolve_asset_path(robot_asset_path)
+    finger_link_names = (
+        ("pdz_gripper_left_finger_link", "pdz_gripper_right_finger_link")
+        if _is_pdz_gripper_asset(resolved_robot_path)
+        else ("left_finger_link", "right_finger_link")
+    )
+    scene_cfg.holder_left_finger_contact.prim_path = (
+        f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[0]}"
+    )
+    scene_cfg.holder_right_finger_contact.prim_path = (
+        f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[1]}"
+    )
+    scene_cfg.inserter_left_finger_contact.prim_path = (
+        f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[0]}"
+    )
+    scene_cfg.inserter_right_finger_contact.prim_path = (
+        f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[1]}"
+    )
     for robot_cfg, base_position in (
         (scene_cfg.holder_robot, holder_robot_base_position),
         (scene_cfg.inserter_robot, inserter_robot_base_position),

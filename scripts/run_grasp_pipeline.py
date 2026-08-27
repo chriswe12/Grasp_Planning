@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import math
 import os
@@ -22,9 +24,12 @@ if str(REPO_ROOT) not in sys.path:
 from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
     DEFAULT_CONTACT_APPROACH_OFFSETS_M,
     DEFAULT_CONTACT_LATERAL_OFFSETS_M,
+    CandidateStatus,
     build_pickup_pose_world,
     canonicalize_target_mesh,
+    ground_plane_overlay_obj,
     load_asset_mesh,
+    write_debug_html,
 )
 from grasp_planning.grasping.grasp_transforms import saved_grasp_to_world_grasp  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
@@ -499,6 +504,9 @@ def _artifacts(payload: dict[str, object]) -> dict[str, Path]:
         "part_frame_html": Path(
             str(raw.get("part_frame_html", stage2_html.with_name(f"{stage2_html.stem}_part_frame.html")))
         ),
+        "execution_debug_html": Path(
+            str(raw.get("execution_debug_html", stage2_html.with_name(f"{stage2_html.stem}_execution.html")))
+        ),
     }
 
 
@@ -507,6 +515,17 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
     stop_after = str(raw.get("stop_after", "pregrasp")).strip().lower()
     if stop_after not in {"pregrasp", "grasp", "lift", "full"}:
         raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
+    grasp_approach_controller = str(raw.get("grasp_approach_controller", "moveit_pose")).strip().lower()
+    if grasp_approach_controller not in {"moveit_pose", "d405_policy"}:
+        raise ValueError(
+            "real_execution.grasp_approach_controller must be 'moveit_pose' or 'd405_policy'."
+        )
+    visual_servo_config = str(raw.get("visual_servo_config", "")).strip()
+    if grasp_approach_controller == "d405_policy" and not visual_servo_config:
+        raise ValueError(
+            "real_execution.visual_servo_config is required when grasp_approach_controller=d405_policy."
+        )
+    grasp_id = str(raw.get("grasp_id", "")).strip()
     planning_scene_obstacles_raw = raw.get("planning_scene_obstacles", ())
     if planning_scene_obstacles_raw is None:
         planning_scene_obstacles: tuple[dict[str, object], ...] = ()
@@ -516,7 +535,7 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         raise ValueError("real_execution.planning_scene_obstacles must be a list of obstacle mappings.")
     return RealExecutionConfig(
         enabled=bool(raw.get("enabled", False)),
-        grasp_id=str(raw.get("grasp_id", "")),
+        grasp_id=grasp_id,
         attempt_artifact=str(raw.get("attempt_artifact", "artifacts/real_robot_pick_attempt.json")),
         planning_group=str(raw.get("planning_group", "fr3_arm")),
         pose_link=str(raw.get("pose_link", "fr3_hand_tcp")),
@@ -536,6 +555,8 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         lift_height_m=float(raw.get("lift_height_m", 0.08)),
         require_confirmation=bool(raw.get("require_confirmation", True)),
         stop_after=stop_after,
+        grasp_approach_controller=grasp_approach_controller,
+        visual_servo_config=visual_servo_config,
         allow_collisions=bool(raw.get("allow_collisions", False)),
         planning_scene_obstacles=planning_scene_obstacles,
         gripper_enabled=bool(raw.get("gripper_enabled", False)),
@@ -545,9 +566,26 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         gripper_command_action=str(raw.get("gripper_command_action", "/gripper_controller/gripper_cmd")),
         gripper_command_position_mode=str(raw.get("gripper_command_position_mode", "width")),
         gripper_command_max_effort=float(raw.get("gripper_command_max_effort", raw.get("gripper_grasp_force", 30.0))),
-        gripper_trigger_open_service=str(raw.get("gripper_trigger_open_service", "/gripper_controller/open")),
-        gripper_trigger_close_service=str(raw.get("gripper_trigger_close_service", "/gripper_controller/close")),
-        gripper_trigger_stop_service=str(raw.get("gripper_trigger_stop_service", "/gripper_controller/stop")),
+        gripper_trigger_open_service=str(
+            raw.get("gripper_trigger_open_service", "/left/gripper_controller/open")
+        ),
+        gripper_trigger_close_service=str(
+            raw.get("gripper_trigger_close_service", "/left/gripper_controller/close")
+        ),
+        gripper_trigger_stop_service=str(
+            raw.get("gripper_trigger_stop_service", "/left/gripper_controller/stop")
+        ),
+        gripper_position_command_topic=str(
+            raw.get("gripper_position_command_topic", "/left/gripper_controller/position_command")
+        ),
+        gripper_position_feedback_topic=str(
+            raw.get("gripper_position_feedback_topic", "/left/gripper_controller/position")
+        ),
+        gripper_position_feedback_tolerance=float(
+            raw.get("gripper_position_feedback_tolerance", 0.02)
+        ),
+        moveit_gripper_joint_name=str(raw.get("moveit_gripper_joint_name", "")),
+        gripper_closed_width=float(raw.get("gripper_closed_width", 0.0)),
         gripper_open_width=float(raw.get("gripper_open_width", 0.08)),
         gripper_grasp_speed=float(raw.get("gripper_grasp_speed", 0.03)),
         gripper_grasp_force=float(raw.get("gripper_grasp_force", 30.0)),
@@ -1211,6 +1249,120 @@ def _write_part_frame_debug_artifact(*, input_json: Path, output_html: Path) -> 
     print(f"[PIPELINE] Wrote part frame debug HTML to {output_html}.", flush=True)
 
 
+def _png_data_url(image: np.ndarray) -> str:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.fromarray(np.asarray(image, dtype=np.uint8)).save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _policy_goal_reference_images(
+    *,
+    goal_observation_path: str | Path | None,
+) -> list[dict[str, str]]:
+    """Load the goal RGB-D rendered on demand for this exact live grasp."""
+
+    if goal_observation_path is None:
+        return []
+    path = Path(goal_observation_path).expanduser().resolve()
+    if not path.is_file():
+        return []
+    with np.load(path, allow_pickle=False) as rendered:
+        rgb = np.asarray(rendered["goal_rgb"], dtype=np.uint8)
+        depth_m = np.asarray(rendered["goal_depth"], dtype=np.float32)
+        goal_id = str(np.asarray(rendered["goal_id"]).item())
+    if rgb.ndim != 3 or rgb.shape[-1] != 3 or depth_m.shape != rgb.shape[:2]:
+        raise ValueError(f"Runtime goal '{path}' has invalid rendered RGB-D shapes.")
+
+    valid = np.isfinite(depth_m) & (depth_m >= 0.07) & (depth_m < 0.50)
+    normalized = np.clip((depth_m - 0.07) / (0.50 - 0.07), 0.0, 1.0)
+    color_stops = np.asarray(
+        (
+            (49, 54, 149),
+            (69, 117, 180),
+            (116, 173, 209),
+            (224, 243, 248),
+            (253, 174, 97),
+            (215, 48, 39),
+        ),
+        dtype=float,
+    )
+    scaled = normalized * (len(color_stops) - 1)
+    lower = np.floor(scaled).astype(np.int64)
+    upper = np.minimum(lower + 1, len(color_stops) - 1)
+    blend = (scaled - lower)[..., None]
+    depth_rgb = ((1.0 - blend) * color_stops[lower] + blend * color_stops[upper]).astype(np.uint8)
+    depth_rgb[~valid] = (20, 24, 31)
+    height, width = rgb.shape[:2]
+    return [
+        {
+            "title": "Goal RGB render",
+            "data_url": _png_data_url(rgb),
+            "caption": f"{goal_id} - generated on demand for the MoveIt-selected grasp ({width} x {height}).",
+        },
+        {
+            "title": "Goal policy depth",
+            "data_url": _png_data_url(depth_rgb),
+            "caption": (
+                "D405 policy-valid depth is colorized from 0.07 m (blue) to 0.50 m (red); "
+                f"dark pixels are outside the valid range. Valid area: {float(valid.mean()):.1%}."
+            ),
+        },
+    ]
+
+
+def _write_policy_execution_debug_artifact(
+    *,
+    stage2,
+    selected_grasp,
+    config: RealExecutionConfig,
+    planning: PlanningConfig,
+    output_html: Path,
+    goal_observation_path: str | Path | None = None,
+    candidate_rank: int | None = None,
+) -> None:
+    """Write a focused world-frame page for the exact live policy handoff."""
+
+    write_debug_html(
+        title="Single-Arm D405 Policy Pickup",
+        subtitle=(
+            "The ordinary live stage-2 grasp selected by collision-aware MoveIt preplanning, "
+            "shown with its automatic pregrasp and its on-demand policy goal render."
+        ),
+        mesh_local=stage2.mesh_local,
+        candidate_statuses=(
+            CandidateStatus(
+                grasp=selected_grasp,
+                status="accepted",
+                reason="selected_for_policy_execution",
+            ),
+        ),
+        output_html=output_html,
+        contact_gap_m=float(planning.detailed_finger_contact_gap_m),
+        ground_plane=ground_plane_overlay_obj(
+            stage2.mesh_local,
+            object_pose_world=stage2.pickup_pose_world,
+            enabled=True,
+        ),
+        display_object_pose_world=stage2.pickup_pose_world,
+        metadata_lines=[
+            f"grasp_id:        {selected_grasp.grasp_id}",
+            f"candidate_rank:   {candidate_rank if candidate_rank is not None else 'pending MoveIt'}",
+            f"live_score:      {float(selected_grasp.score or 0.0):.9f}",
+            f"jaw_width_m:     {float(selected_grasp.jaw_width):.9f}",
+            f"pregrasp_offset: {float(config.pregrasp_offset_m):.6f} m",
+            "approach:        MoveIt path to pregrasp, D405 policy through MoveIt Servo to grasp",
+        ],
+        gripper_collision_model=planning.gripper_collision_model,
+        pregrasp_offset_m=float(config.pregrasp_offset_m),
+        pregrasp_width_clearance_m=float(config.gripper_width_clearance_m),
+        scene_label="Live Policy Pickup (World Frame)",
+        reference_images=_policy_goal_reference_images(goal_observation_path=goal_observation_path),
+    )
+    print(f"[PIPELINE] Wrote focused policy execution debug HTML to {output_html}.", flush=True)
+
+
 def _settle_object_pose_on_floor(
     object_pose_world: ObjectWorldPose | None,
     mesh_local: object,
@@ -1430,6 +1582,25 @@ def run_pitl(payload: dict[str, object], *, headless: bool, backend: str = "conf
     )
 
 
+def _open_debug_html_if_requested(
+    payload: dict[str, object],
+    *,
+    path: Path,
+) -> None:
+    raw_artifacts = payload.get("artifacts", {})
+    if not isinstance(raw_artifacts, dict) or not bool(raw_artifacts.get("open_debug_html", False)):
+        return
+    try:
+        from grasp_planning.pipeline.dual_robot_planning_debug import (
+            open_debug_html_in_browser,
+        )
+
+        url = open_debug_html_in_browser(path)
+        print(f"[PIPELINE] Opening live execution debug HTML: {url}", flush=True)
+    except Exception as exc:
+        print(f"[PIPELINE] Could not open execution debug HTML: {exc}", flush=True)
+
+
 def run_real(payload: dict[str, object]) -> None:
     geometry = _geometry_config(payload)
     planning = _planning_config(payload)
@@ -1471,6 +1642,19 @@ def run_real(payload: dict[str, object]) -> None:
         planning=planning,
         object_pose_world=object_pose_world,
     )
+    selected_policy_grasp = None
+    if str(real_execution.grasp_approach_controller) == "d405_policy":
+        if not stage2.accepted:
+            raise RuntimeError(
+                "The ordinary live stage-2 recheck produced no feasible grasps; no robot execution was started."
+            )
+        selected_policy_grasp = stage2.accepted[0]
+        print(
+            "[PIPELINE] Highest-scoring live stage-2 grasp before MoveIt reachability fallback: "
+            f"grasp={selected_policy_grasp.grasp_id} "
+            f"score={float(selected_policy_grasp.score or 0.0):.6f}.",
+            flush=True,
+        )
     print(
         f"[PIPELINE] Planning complete: feasible {len(stage2.accepted)} / {len(stage2.source_bundle.candidates)}.",
         flush=True,
@@ -1482,9 +1666,54 @@ def run_real(payload: dict[str, object]) -> None:
         output_html=artifacts["stage2_html"],
     )
     _write_part_frame_debug_artifact(input_json=artifacts["stage2_json"], output_html=artifacts["part_frame_html"])
+    debug_html = artifacts["part_frame_html"]
+    if selected_policy_grasp is not None:
+        _write_policy_execution_debug_artifact(
+            stage2=stage2,
+            selected_grasp=selected_policy_grasp,
+            config=real_execution,
+            planning=planning,
+            output_html=artifacts["execution_debug_html"],
+        )
+        debug_html = artifacts["execution_debug_html"]
+    _open_debug_html_if_requested(payload, path=debug_html)
     if real_execution.enabled:
+        pregrasp_selected_callback = None
+        if selected_policy_grasp is not None:
+
+            def pregrasp_selected_callback(
+                *,
+                selected_grasp,
+                config: RealExecutionConfig,
+                candidate_rank: int,
+                goal_observation_path: Path,
+            ) -> None:
+                _write_policy_execution_debug_artifact(
+                    stage2=stage2,
+                    selected_grasp=selected_grasp,
+                    config=config,
+                    planning=planning,
+                    output_html=artifacts["execution_debug_html"],
+                    goal_observation_path=goal_observation_path,
+                    candidate_rank=candidate_rank,
+                )
+                print(
+                    "[PIPELINE] MoveIt accepted live candidate and its goal RGB-D was rendered "
+                    f"on demand: rank={candidate_rank} grasp={selected_grasp.grasp_id}; "
+                    "refreshed the execution debug page.",
+                    flush=True,
+                )
+                _open_debug_html_if_requested(
+                    payload,
+                    path=artifacts["execution_debug_html"],
+                )
+
         print("[PIPELINE] Starting real-robot execution from the stage-2 bundle.", flush=True)
-        result = execute_real_grasp_from_bundle(input_json=artifacts["stage2_json"], config=real_execution)
+        result = execute_real_grasp_from_bundle(
+            input_json=artifacts["stage2_json"],
+            config=real_execution,
+            pregrasp_selected_callback=pregrasp_selected_callback,
+        )
         print(
             f"[PIPELINE] Real execution finished success={result.success} status={result.status} "
             f"grasp_id={result.grasp_id} message={result.message}",

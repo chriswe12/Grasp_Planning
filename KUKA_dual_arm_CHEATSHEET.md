@@ -2,22 +2,32 @@
 
 (Full details: `KUKA_dual_arm_bringup_README.md`)
 
-## One-command simulation
+## Persistent-stack simulation
 
-From the repository root:
+Terminal 1:
 
 ```bash
-./run_simple_dual_robot.sh \
+export ROS_DOMAIN_ID=1
+./run_pipeline.sh --mode sim --robots both --bringup-only --rviz
+```
+
+Terminal 2:
+
+```bash
+export ROS_DOMAIN_ID=1
+./run_pipeline.sh \
   --mode sim \
+  --robots both \
   --pair-id p001_h0450_i0_0422 \
   --pickup-x 0.55 \
   --pickup-y 0.28
 ```
 
-Add `--headless` to suppress the Isaac window or `--rviz` to inspect the live
-MoveIt plan. This single command starts a fresh dual mock MoveIt stack, plans
-all holder and inserter phases, executes the saved waypoints in Isaac, and
-stops the MoveIt stack it started. It uses `DUAL_ROBOT_ROS_DOMAIN_ID` when set,
+Add `--headless` to suppress the Isaac window. The task reuses the persistent
+dual mock MoveIt stack, plans all holder and inserter phases, and executes the
+saved waypoints in Isaac without stopping MoveIt. Use `--start-moveit` only
+when a temporary stack owned by that task command is wanted. It uses
+`DUAL_ROBOT_ROS_DOMAIN_ID` when set,
 then an existing `ROS_DOMAIN_ID`, and finally domain `0`; it also applies
 matching Fast DDS discovery settings.
 
@@ -27,48 +37,55 @@ robots, keep both mock terminals on another domain:
 ```bash
 # Terminal 1
 export ROS_DOMAIN_ID=1
-./start_dual_lbr_moveit.sh --mode mock --rviz
+./run_pipeline.sh --mode sim --robots both --bringup-only --rviz
 
 # Terminal 2
 export ROS_DOMAIN_ID=1
-./run_simple_dual_robot.sh \
+./run_pipeline.sh \
   --mode sim \
-  --reuse-moveit \
+  --robots both \
   --pair-id p001_h0450_i0_0422
 ```
 
 Passing `--ros-domain-id 1` to both commands is equivalent and takes
 precedence over the environment.
 
-Use `--reuse-moveit` only when intentionally reusing a matching stack that is
-already running on the selected domain. Otherwise the command refuses to mix
-its task with stale robot state.
+Reusing a matching stack is the default. If it is absent, the task fails fast;
+it does not silently bring up or tear down robot control.
 
 ## Real holder/pickup vertical slice
 
 ### Gripper computer
 
-On `s3c@192.170.20.3`, run:
+Run:
 
 ```bash
-cd ~/Workspaces/servo_test/ros2/servo_gripper
-./start_dual_grippers.sh
+cd ~/Workspaces/new_gripper/ros2
+source servo_gripper/setup_gripper_env.sh
+ros2 launch servo_gripper dual_grippers.launch.py
 ```
 
-The wrapper sources ROS and the workspace, overrides the machine's
-`ROS_DOMAIN_ID=42` with domain `0`, clears incompatible discovery variables,
-selects Fast DDS/UDP, and starts:
+The verified physical mapping is:
 
-- `/lbr_one/gripper_controller/{open,close,stop}`
-- `/lbr_two/gripper_controller/{open,close,stop}`
+- `lbr_one` / left: USB adapter `5B3D047592` (`ttyACM0`), servo ID 1
+- `lbr_two` / right: USB adapter `5B3D044069` (`ttyACM1`), servo ID 1
 
-Its defaults bind `lbr_one` to USB serial `5B3D047592` and `lbr_two` to
-`5B3D044069`. Confirm that physical cable-to-robot mapping before commanding
-motion; swap the `lbr_one_port` and `lbr_two_port` launch arguments if needed.
-Repository copies of both remote files live under `scripts/gripper_computer/`.
-That directory also contains `st3215_error_ack.patch`, the deployed external
-driver fix that ignores delayed zero-payload write acknowledgements before
-interpreting the requested encoder response.
+The launch exposes `/left/gripper_controller/*` and
+`/right/gripper_controller/*`, including `calibrate`, `open`, `close`, `stop`,
+`position_command`, and `position`. With empty jaws, calibrate the two sides
+separately before execution:
+
+```bash
+ros2 service call /left/gripper_controller/calibrate std_srvs/srv/Trigger "{}"
+ros2 service call /right/gripper_controller/calibrate std_srvs/srv/Trigger "{}"
+```
+
+The real executor routes task roles through robot identity, so a swapped plan
+still maps `lbr_one` to `/left` and `lbr_two` to `/right`.
+MoveIt continuously republishes each gripper's last measured normalized
+`position` as its passive finger joint. This remains correct after the gripper
+finishes moving; before the first feedback sample the scene uses a warned,
+fully-open fallback.
 
 ### Robot computer
 
@@ -76,13 +93,14 @@ After starting the `LBRServer` app on both SmartPADs, run the non-moving live
 target preflight:
 
 ```bash
-./run_simple_dual_robot.sh \
+./run_pipeline.sh \
   --mode real \
+  --robots both \
   --pair-id p001_h0450_i0_0422
 ```
 
-The same command starts the hardware MoveIt stack and builds a fresh target
-task. Before either arm moves, the real executor plans the complete connected
+The command reuses the separately started hardware MoveIt stack and builds a
+fresh target task. Before either arm moves, the real executor plans the complete connected
 sequence from the live shared joint state. Grasp approaches, pickup lift, and
 the final pre-insertion descent are collision-aware straight Cartesian TCP
 paths; other transfers are free-space MoveIt plans. Hardware execution uses
@@ -93,8 +111,9 @@ Ramp execution one stop point at a time. This first motion command moves only
 the holder to pregrasp and does not actuate either gripper:
 
 ```bash
-./run_simple_dual_robot.sh \
+./run_pipeline.sh \
   --mode real \
+  --robots both \
   --pair-id p001_h0450_i0_0422 \
   --execute \
   --allow-objectless-planning \
@@ -106,8 +125,9 @@ After verifying the target and both gripper namespaces, continue through the
 holder close:
 
 ```bash
-./run_simple_dual_robot.sh \
+./run_pipeline.sh \
   --mode real \
+  --robots both \
   --pair-id p001_h0450_i0_0422 \
   --execute \
   --allow-objectless-planning \
@@ -118,19 +138,19 @@ The complete current vertical slice stops with the incoming part at
 pre-insertion while both grippers remain closed:
 
 ```bash
-./run_simple_dual_robot.sh \
+./run_pipeline.sh \
   --mode real \
+  --robots both \
   --pair-id p001_h0450_i0_0422 \
   --execute \
   --allow-objectless-planning \
   --stop-after inserter_preinsertion
 ```
 
-If one namespaced gripper controller is not connected, the real executor logs
-that role as skipped and continues the same arm sequence using the planned
-MoveIt finger/object state. An unavailable inserter therefore does not perform
-a physical pickup; it only exercises the empty-arm path to pre-insertion. Any
-controller that is discovered but later fails a command still aborts the run.
+If an active role's namespaced gripper controller is not connected, the real
+executor fails before either arm moves. A controller command failure also
+aborts the run. The calibrated service contract is 7 mm closed, 74 mm open,
+with `0.0=open` and `1.0=closed` on `position_command`.
 
 Hardware execution retains a typed confirmation and defaults to 5% velocity
 and acceleration scaling. Add `--rviz` when a live RViz view is useful. MoveIt
@@ -159,14 +179,11 @@ domain:
 ```bash
 # Terminal 1
 export ROS_DOMAIN_ID=1
-./start_dual_lbr_moveit.sh --mode mock --rviz
+./run_pipeline.sh --mode sim --robots both --bringup-only --rviz
 
 # Terminal 2; the perception publisher must also use domain 1
 export ROS_DOMAIN_ID=1
-ros2 run robot_integration_ros grasp_assembly_action_server \
-  --dual-mode pitl \
-  --config configs/dual_grasp_planning.yaml \
-  --headless
+./run_pipeline.sh --mode pitl --robots both --serve-action --headless
 ```
 
 For hardware, use domain `0`, start both SmartPAD `LBRServer` apps and the
@@ -175,10 +192,7 @@ start the action adapter:
 
 ```bash
 export ROS_DOMAIN_ID=0
-ros2 run robot_integration_ros grasp_assembly_action_server \
-  --dual-mode real \
-  --config configs/dual_grasp_planning.yaml \
-  --execute \
+./run_pipeline.sh --mode real --robots both --serve-action --execute \
   --allow-objectless-planning
 ```
 
@@ -197,8 +211,8 @@ ros2 action send_goal --feedback \
 
 The adapter waits for current `DebugPoseItem` messages for parts `2` and `0`,
 derives the assembly/pickup frames, validates the selected-order step, and
-invokes the same dual planner and PITL/real executor used by
-`run_simple_dual_robot.sh`. It returns the Isaac-measured pose in PITL and the
+invokes the same dual planner and PITL/real executor selected by
+`run_pipeline.sh`. It returns the Isaac-measured pose in PITL and the
 commanded pre-insertion source-frame pose in the current real slice. Actual
 insertion, release, and retreat remain outside this action.
 

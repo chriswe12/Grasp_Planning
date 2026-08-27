@@ -1757,6 +1757,7 @@ def write_debug_html(
     pregrasp_width_clearance_m: float = 0.0,
     scene_label: str = "Object Frame",
     scene_overlays: dict[str, object] | None = None,
+    reference_images: list[dict[str, str]] | None = None,
 ) -> None:
     mesh_vertices_display = (
         [fmt_vec(vertex) for vertex in mesh_local.vertices_obj.tolist()]
@@ -1812,6 +1813,7 @@ def write_debug_html(
         "ground_plane_overlay": ground_plane_display,
         "scene_label": str(scene_label),
         "scene_overlays": scene_overlays or {},
+        "reference_images": reference_images or [],
         "metadata_lines": metadata_lines or [],
         "candidates": candidate_payload(
             candidate_statuses,
@@ -1896,6 +1898,12 @@ def write_debug_html(
     .swatch { width: 14px; height: 14px; border-radius: 999px; display: inline-block; }
     .kv { white-space: pre-wrap; font-family: "IBM Plex Mono", monospace; font-size: 13px; line-height: 1.55; margin: 0; }
     .caption { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .reference-card { margin-top: 18px; }
+    .reference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    .reference-figure { margin: 0; }
+    .reference-figure img { width: 100%; display: block; border-radius: 12px; background: #111827; image-rendering: pixelated; }
+    .reference-figure figcaption { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .reference-title { display: block; color: var(--ink); font-weight: 700; font-size: 13px; margin-bottom: 3px; }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -1940,6 +1948,10 @@ def write_debug_html(
           <pre id="details" class="kv"></pre>
         </section>
       </div>
+      <section id="referenceCard" class="card reference-card" hidden>
+        <h2>Policy goal render</h2>
+        <div id="referenceGrid" class="reference-grid"></div>
+      </section>
     </main>
   </div>
   <script>
@@ -1955,9 +1967,28 @@ def write_debug_html(
     const meshModeBtn = document.getElementById("meshModeBtn");
     const viewModeBtn = document.getElementById("viewModeBtn");
     const acceptedOnlyBtn = document.getElementById("acceptedOnlyBtn");
+    const referenceCard = document.getElementById("referenceCard");
+    const referenceGrid = document.getElementById("referenceGrid");
     title.textContent = data.title;
     subtitle.textContent = data.subtitle;
     sceneHeading.textContent = data.scene_label || "Object Frame";
+    if (data.reference_images && data.reference_images.length > 0) {
+      data.reference_images.forEach((reference) => {
+        const figure = document.createElement("figure");
+        figure.className = "reference-figure";
+        const image = document.createElement("img");
+        image.src = reference.data_url;
+        image.alt = reference.title || "Policy reference image";
+        const caption = document.createElement("figcaption");
+        const captionTitle = document.createElement("span");
+        captionTitle.className = "reference-title";
+        captionTitle.textContent = reference.title || "Policy reference";
+        caption.append(captionTitle, document.createTextNode(reference.caption || ""));
+        figure.append(image, caption);
+        referenceGrid.appendChild(figure);
+      });
+      referenceCard.hidden = false;
+    }
     const state = {
       selectedIndex: 0,
       yaw: -0.82,

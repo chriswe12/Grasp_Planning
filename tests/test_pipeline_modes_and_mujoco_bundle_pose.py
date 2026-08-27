@@ -265,6 +265,31 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
         self.assertIn("--pregrasp-only", command)
 
+    def test_execution_benchmark_isaac_command_passes_gripper_collision_model(self) -> None:
+        command = run_grasp_execution_benchmark._isaac_command(
+            cfg={"gripper_collision_model": "pdz_gripper"},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
+
+        option_index = command.index("--gripper-collision-model")
+        self.assertEqual(command[option_index + 1], "pdz_gripper")
+
+    def test_pdz_execution_benchmark_config_uses_pdz_usd_tcp_and_collision_model(self) -> None:
+        config_path = run_grasp_execution_benchmark.REPO_ROOT / "configs" / "grasp_execution_benchmark_pdz.yaml"
+        payload = run_grasp_execution_benchmark._load_yaml(config_path)
+        cfg = dict(payload["isaac"])
+
+        self.assertEqual(cfg["gripper_collision_model"], "pdz_gripper")
+        self.assertEqual(
+            cfg["fr3_usd"],
+            "assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd",
+        )
+        self.assertEqual(cfg["moveit_pose_link"], "pdz_gripper_tcp")
+        self.assertEqual(cfg["tcp_to_grasp_offset"], [0.0, 0.0, 0.0])
+        self.assertEqual(cfg["close_width"], 0.012)
+
     def test_execution_benchmark_default_isaac_config_uses_kuka_moveit_and_usd(self) -> None:
         payload = run_grasp_execution_benchmark._load_yaml(run_grasp_execution_benchmark.DEFAULT_CONFIG_PATH)
         cfg = dict(payload["isaac"])
@@ -415,45 +440,16 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertAlmostEqual(summary["lift_height_m"], 0.07)
         self.assertAlmostEqual(summary["target_lift_height_m"], 0.05)
 
-    def test_execution_benchmark_isaac_preplan_failure_writes_attempt_artifact(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "out"
-            stage2_json = Path(tmpdir) / "stage2.json"
-            stage2_json.write_text("{}", encoding="utf-8")
-            spec = {
-                "assembly": "beam",
-                "part_id": "0",
-                "orientation_id": "orientation_003",
-                "backend": "isaac",
-                "grasp_id": "g0001",
-                "grasp_rank": 1,
-                "stage2_json": str(stage2_json),
-                "source_stage2_json": str(stage2_json),
-                "placement_mode": "bundle_pose",
-                "placement_xy_world": None,
-            }
+    def test_execution_benchmark_delegates_isaac_preplanning_to_public_pipeline(self) -> None:
+        command = run_grasp_execution_benchmark._isaac_command(
+            cfg={"controller": "moveit"},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
 
-            with mock.patch.object(
-                run_grasp_execution_benchmark,
-                "_preplan_isaac_moveit",
-                side_effect=RuntimeError("no MoveIt plan"),
-            ):
-                record = run_grasp_execution_benchmark._run_attempt(
-                    spec=spec,
-                    output_dir=output_dir,
-                    payload={"isaac": {"controller": "moveit"}},
-                    record_video=False,
-                )
-
-            artifact_path = Path(str(record["attempt_artifact"]))
-            artifact = run_grasp_execution_benchmark._load_json_if_present(artifact_path)
-
-            self.assertTrue(artifact_path.is_file())
-            self.assertIsNotNone(artifact)
-            assert artifact is not None
-            self.assertEqual(record["status"], "moveit_preplan_failed")
-            self.assertEqual(artifact["execution"]["status"], "moveit_preplan_failed")
-            self.assertFalse(artifact["execution"]["success"])
+        self.assertEqual(command[0], str(run_grasp_execution_benchmark.REPO_ROOT / "run_pipeline.sh"))
+        self.assertNotIn("--moveit-plan-json", command)
 
     def test_execution_benchmark_isaac_relocated_bundles_use_unique_stems(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -480,13 +476,10 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             }
             other_spec = dict(base_spec, part_id="1", grasp_id="g0002")
 
-            with (
-                mock.patch.object(run_grasp_execution_benchmark, "_preplan_isaac_moveit"),
-                mock.patch.object(
-                    run_grasp_execution_benchmark.subprocess,
-                    "run",
-                    return_value=SimpleNamespace(returncode=0),
-                ),
+            with mock.patch.object(
+                run_grasp_execution_benchmark.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
             ):
                 first = run_grasp_execution_benchmark._run_attempt(
                     spec=base_spec,
@@ -508,35 +501,6 @@ class RunGraspPipelineModeTests(unittest.TestCase):
             self.assertNotEqual(first_stage2.name, second_stage2.name)
             self.assertNotEqual(first_stage2.stem, "stage2_execution_pose")
             self.assertTrue(first_stage2.stem.startswith("stage2_execution_pose_"))
-
-    def test_execution_benchmark_isaac_preplan_interrupts_propagate(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "out"
-            stage2_json = Path(tmpdir) / "stage2.json"
-            stage2_json.write_text("{}", encoding="utf-8")
-            spec = {
-                "assembly": "beam",
-                "part_id": "0",
-                "orientation_id": "orientation_003",
-                "backend": "isaac",
-                "grasp_id": "g0001",
-                "grasp_rank": 1,
-                "stage2_json": str(stage2_json),
-                "source_stage2_json": str(stage2_json),
-                "placement_mode": "bundle_pose",
-                "placement_xy_world": None,
-            }
-
-            for exc in (KeyboardInterrupt(), SystemExit(2)):
-                with self.subTest(exc=type(exc).__name__):
-                    with mock.patch.object(run_grasp_execution_benchmark, "_preplan_isaac_moveit", side_effect=exc):
-                        with self.assertRaises(type(exc)):
-                            run_grasp_execution_benchmark._run_attempt(
-                                spec=spec,
-                                output_dir=output_dir,
-                                payload={"isaac": {"controller": "moveit"}},
-                                record_video=False,
-                            )
 
     def test_execution_benchmark_resume_reports_only_current_attempt_keys(self) -> None:
         current_spec = {
@@ -1026,6 +990,19 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         assert settled is not None
         self.assertEqual(settled.orientation_xyzw_world, pose.orientation_xyzw_world)
         self.assertAlmostEqual(settled.position_world[2], 0.02)
+
+    def test_settle_object_pose_on_floor_raises_intersecting_estimate_out_of_table(self) -> None:
+        mesh_local = SimpleNamespace(vertices_obj=np.array([[0.0, 0.0, -0.02], [0.1, 0.0, 0.04]], dtype=float))
+        pose = ObjectWorldPose(
+            position_world=(0.4, -0.1, 0.01),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+
+        settled = run_grasp_pipeline._settle_object_pose_on_floor(pose, mesh_local)
+
+        assert settled is not None
+        vertices_world = settled.transform_points_to_world(mesh_local.vertices_obj)
+        self.assertAlmostEqual(float(vertices_world[:, 2].min()), 0.0)
 
     def test_planning_config_parses_floor_clearance_margin(self) -> None:
         config = run_grasp_pipeline._planning_config({"planning": {"floor_clearance_margin_m": 0.012}})

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,11 +8,37 @@ from unittest import mock
 
 import numpy as np
 
+from grasp_planning import SavedGraspBundle, SavedGraspCandidate
 from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from scripts import run_grasp_pipeline
 
 
 class RunGraspPipelineRealTests(unittest.TestCase):
+    @staticmethod
+    def _candidate(grasp_id: str, x: float) -> SavedGraspCandidate:
+        return SavedGraspCandidate(
+            grasp_id=grasp_id,
+            grasp_position_obj=(x, 0.0, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(x - 0.02, 0.0, 0.0),
+            contact_point_b_obj=(x + 0.02, 0.0, 0.0),
+            contact_normal_a_obj=(-1.0, 0.0, 0.0),
+            contact_normal_b_obj=(1.0, 0.0, 0.0),
+            jaw_width=0.04,
+            roll_angle_rad=0.0,
+        )
+
+    @staticmethod
+    def _bundle(*candidates: SavedGraspCandidate) -> SavedGraspBundle:
+        return SavedGraspBundle(
+            target_mesh_path="obj/fabrica/plumbers_block/0.obj",
+            mesh_scale=0.01,
+            source_frame_origin_obj_world=(0.0, 0.0, 0.05),
+            source_frame_orientation_xyzw_obj_world=(0.0, 0.0, 0.0, 1.0),
+            candidates=tuple(candidates),
+            metadata={},
+        )
+
     def test_real_execution_config_parses_defaults_and_stop_after(self) -> None:
         config = run_grasp_pipeline._real_execution_config({"real_execution": {"enabled": True, "stop_after": "grasp"}})
 
@@ -19,6 +46,63 @@ class RunGraspPipelineRealTests(unittest.TestCase):
         self.assertEqual(config.stop_after, "grasp")
         self.assertEqual(config.frame_id, "base")
         self.assertAlmostEqual(config.velocity_scale, 0.05)
+        self.assertEqual(config.grasp_approach_controller, "moveit_pose")
+
+    def test_execution_debug_html_uses_existing_browser_opener(self) -> None:
+        from grasp_planning.pipeline import dual_robot_planning_debug
+
+        path = Path("artifacts/live_part_frame.html")
+        with mock.patch.object(
+            dual_robot_planning_debug,
+            "open_debug_html_in_browser",
+            return_value="file:///artifacts/live_part_frame.html",
+        ) as open_browser:
+            run_grasp_pipeline._open_debug_html_if_requested(
+                {"artifacts": {"open_debug_html": True}},
+                path=path,
+            )
+
+        open_browser.assert_called_once_with(path)
+
+    def test_policy_execution_debug_embeds_runtime_goal_rgb_and_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            goal_path = Path(temp_dir) / "runtime_goal.npz"
+            np.savez_compressed(
+                goal_path,
+                goal_id=np.asarray("runtime__part_0__g0001"),
+                goal_rgb=np.full((4, 6, 3), 127, dtype=np.uint8),
+                goal_depth=np.full((4, 6), 0.25, dtype=np.float32),
+            )
+            images = run_grasp_pipeline._policy_goal_reference_images(
+                goal_observation_path=goal_path,
+            )
+
+        self.assertEqual([image["title"] for image in images], ["Goal RGB render", "Goal policy depth"])
+        self.assertTrue(all(image["data_url"].startswith("data:image/png;base64,") for image in images))
+        self.assertIn("generated on demand", images[0]["caption"])
+        self.assertIn("Valid area: 100.0%", images[1]["caption"])
+
+    def test_real_execution_config_policy_uses_any_live_grasp(self) -> None:
+        config = run_grasp_pipeline._real_execution_config(
+            {
+                "real_execution": {
+                    "grasp_approach_controller": "d405_policy",
+                    "visual_servo_config": "configs/visual_servo_real_d405.yaml",
+                }
+            }
+        )
+
+        self.assertEqual(config.grasp_approach_controller, "d405_policy")
+        self.assertEqual(config.visual_servo_config, "configs/visual_servo_real_d405.yaml")
+        self.assertEqual(config.grasp_id, "")
+        self.assertFalse(hasattr(config, "policy_target_id"))
+        self.assertFalse(hasattr(config, "policy_target_candidates"))
+
+    def test_real_execution_config_requires_policy_config_for_d405_approach(self) -> None:
+        with self.assertRaises(ValueError):
+            run_grasp_pipeline._real_execution_config(
+                {"real_execution": {"grasp_approach_controller": "d405_policy"}}
+            )
 
     def test_real_execution_config_parses_lbr_moveit_settings(self) -> None:
         config = run_grasp_pipeline._real_execution_config(
@@ -87,6 +171,12 @@ class RunGraspPipelineRealTests(unittest.TestCase):
                     "gripper_trigger_open_service": "/hand/open",
                     "gripper_trigger_close_service": "/hand/close",
                     "gripper_trigger_stop_service": "/hand/stop",
+                    "gripper_position_command_topic": "/hand/position_command",
+                    "gripper_position_feedback_topic": "/hand/position",
+                    "gripper_position_feedback_tolerance": 0.03,
+                    "moveit_gripper_joint_name": "left_finger_joint",
+                    "gripper_closed_width": 0.007,
+                    "gripper_open_width": 0.064,
                 }
             }
         )
@@ -95,6 +185,12 @@ class RunGraspPipelineRealTests(unittest.TestCase):
         self.assertEqual(config.gripper_trigger_open_service, "/hand/open")
         self.assertEqual(config.gripper_trigger_close_service, "/hand/close")
         self.assertEqual(config.gripper_trigger_stop_service, "/hand/stop")
+        self.assertEqual(config.gripper_position_command_topic, "/hand/position_command")
+        self.assertEqual(config.gripper_position_feedback_topic, "/hand/position")
+        self.assertAlmostEqual(config.gripper_position_feedback_tolerance, 0.03)
+        self.assertEqual(config.moveit_gripper_joint_name, "left_finger_joint")
+        self.assertAlmostEqual(config.gripper_closed_width, 0.007)
+        self.assertAlmostEqual(config.gripper_open_width, 0.064)
 
     def test_real_execution_config_rejects_invalid_stop_after(self) -> None:
         with self.assertRaises(ValueError):
@@ -249,6 +345,78 @@ class RunGraspPipelineRealTests(unittest.TestCase):
         self.assertEqual(execute_real.call_args.kwargs["input_json"], Path("artifacts/test_stage2.json"))
         self.assertTrue(execute_real.call_args.kwargs["config"].enabled)
         self.assertNotIn("source_frame_pose_obj_world", generate_stage1.call_args.kwargs)
+
+    def test_run_real_passes_all_stage2_grasps_to_executor_and_refreshes_runtime_goal(self) -> None:
+        payload = {
+            "geometry": {"target_mesh_path": "obj/fabrica/plumbers_block/0.obj", "mesh_scale": 0.01},
+            "planning": {},
+            "artifacts": {
+                "stage1_json": "artifacts/test_stage1.json",
+                "stage1_html": "artifacts/test_stage1.html",
+                "stage2_json": "artifacts/test_stage2.json",
+                "stage2_html": "artifacts/test_stage2.html",
+            },
+            "ros2": {},
+            "real_execution": {
+                "enabled": True,
+                "grasp_approach_controller": "d405_policy",
+                "visual_servo_config": "visual.yaml",
+            },
+        }
+        object_pose_world = ObjectWorldPose(
+            position_world=(0.4, -0.1, 0.2),
+            orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+        )
+        stage1 = SimpleNamespace(
+            bundle=SimpleNamespace(candidates=("g0001", "g0002")),
+            raw_candidate_count=2,
+            target_mesh_local=SimpleNamespace(vertices_obj=np.array([[0.0, 0.0, -0.2]], dtype=float)),
+        )
+        selected = run_grasp_pipeline.replace(self._candidate("g0001", -0.02), score=0.85)
+        stage2 = SimpleNamespace(
+            source_bundle=SimpleNamespace(candidates=("g0001", "g0002")),
+            accepted=(selected,),
+        )
+        execution_result = SimpleNamespace(
+            success=True,
+            status="completed",
+            grasp_id="g0001",
+            message="ok",
+            attempt_artifact_path=Path("artifacts/attempt.json"),
+        )
+
+        with (
+            mock.patch.object(run_grasp_pipeline, "_resolve_object_pose_world", return_value=object_pose_world),
+            mock.patch.object(run_grasp_pipeline, "generate_stage1_result", return_value=stage1),
+            mock.patch.object(run_grasp_pipeline, "write_stage1_artifacts"),
+            mock.patch.object(run_grasp_pipeline, "recheck_stage2_result", return_value=stage2),
+            mock.patch.object(run_grasp_pipeline, "write_stage2_artifacts"),
+            mock.patch.object(run_grasp_pipeline, "_write_part_frame_debug_artifact"),
+            mock.patch.object(run_grasp_pipeline, "_write_policy_execution_debug_artifact"),
+            mock.patch.object(
+                run_grasp_pipeline,
+                "execute_real_grasp_from_bundle",
+                return_value=execution_result,
+            ) as execute_real,
+        ):
+            run_grasp_pipeline.run_real(payload)
+
+        selected_config = execute_real.call_args.kwargs["config"]
+        self.assertEqual(selected_config.grasp_id, "")
+        callback = execute_real.call_args.kwargs["pregrasp_selected_callback"]
+        goal_path = Path("artifacts/policy_goal_g0001.npz")
+        with mock.patch.object(
+            run_grasp_pipeline,
+            "_write_policy_execution_debug_artifact",
+        ) as refreshed_debug:
+            callback(
+                selected_grasp=selected,
+                config=selected_config,
+                candidate_rank=1,
+                goal_observation_path=goal_path,
+            )
+        self.assertEqual(refreshed_debug.call_args.kwargs["goal_observation_path"], goal_path)
+        self.assertEqual(refreshed_debug.call_args.kwargs["candidate_rank"], 1)
 
     def test_run_real_roll_sweep_keeps_live_axis_for_stage1_cache_augmentation(self) -> None:
         payload = {

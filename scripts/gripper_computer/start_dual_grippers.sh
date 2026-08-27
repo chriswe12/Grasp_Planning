@@ -37,6 +37,6 @@ unset FASTRTPS_DEFAULT_PROFILES_FILE
 echo "[DUAL-GRIPPERS] ROS_DOMAIN_ID=${ROS_DOMAIN_ID}"
 echo "[DUAL-GRIPPERS] ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
 echo "[DUAL-GRIPPERS] RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}"
-echo "[DUAL-GRIPPERS] Starting lbr_one and lbr_two gripper endpoints."
+echo "[DUAL-GRIPPERS] Starting left (lbr_one) and right (lbr_two) gripper endpoints."
 
 exec ros2 launch servo_gripper dual_grippers.launch.py "$@"

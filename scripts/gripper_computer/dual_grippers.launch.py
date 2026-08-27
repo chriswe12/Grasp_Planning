@@ -1,4 +1,4 @@
-"""Launch two conservative ST3215 gripper controllers in stable ROS namespaces."""
+"""Launch the left/lbr_one and right/lbr_two persistent gripper controllers."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -42,20 +42,20 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "lbr_one_port",
+                "left_port",
                 default_value=("/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B3D047592-if00"),
             ),
             DeclareLaunchArgument(
-                "lbr_two_port",
+                "right_port",
                 default_value=("/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B3D044069-if00"),
             ),
-            DeclareLaunchArgument("lbr_one_servo_id", default_value="1"),
-            DeclareLaunchArgument("lbr_two_servo_id", default_value="1"),
-            DeclareLaunchArgument("lbr_one_close_direction", default_value="1"),
-            DeclareLaunchArgument("lbr_two_close_direction", default_value="1"),
+            DeclareLaunchArgument("left_servo_id", default_value="1"),
+            DeclareLaunchArgument("right_servo_id", default_value="1"),
+            DeclareLaunchArgument("left_close_direction", default_value="1"),
+            DeclareLaunchArgument("right_close_direction", default_value="1"),
             DeclareLaunchArgument("speed", default_value="820"),
             DeclareLaunchArgument("torque_limit", default_value="500"),
-            _gripper_node(role="lbr_one", port_argument="lbr_one_port"),
-            _gripper_node(role="lbr_two", port_argument="lbr_two_port"),
+            _gripper_node(role="left", port_argument="left_port"),
+            _gripper_node(role="right", port_argument="right_port"),
         ]
     )

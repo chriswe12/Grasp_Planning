@@ -1238,6 +1238,8 @@ class SimpleDualRobotPairTask:
             dtype=float,
         )
         lift_offset = np.asarray((0.0, 0.0, self.transport_clearance_m))
+        gripper_model = str(self.pickup_gripper_collision_model)
+        tcp_suffix = "pdz_gripper_tcp" if gripper_model == "pdz_gripper" else "gripper_tcp"
         return {
             "schema_version": SIMPLE_SIM_SCHEMA_VERSION,
             "kind": "dual_robot_simple_sim_task",
@@ -1255,6 +1257,7 @@ class SimpleDualRobotPairTask:
             "transition_motion_score": self.transition_motion_score,
             "transition_motion_components": dict(self.transition_motion_components),
             "candidate_filter_diagnostics": dict(self.candidate_filter_diagnostics),
+            "gripper_model": gripper_model,
             "pickup_top_down_score": self.pickup_top_down_score,
             "layout_proxy_score": self.layout_proxy_score,
             "layout_proxy_components": dict(self.layout_proxy_components),
@@ -1264,12 +1267,12 @@ class SimpleDualRobotPairTask:
                 "holder": {
                     "robot": self.holder_robot_name,
                     "planning_group": ("arm_one" if self.holder_robot_name == "lbr_one" else "arm_two"),
-                    "tcp_link": f"{self.holder_robot_name}_gripper_tcp",
+                    "tcp_link": f"{self.holder_robot_name}_{tcp_suffix}",
                 },
                 "inserter": {
                     "robot": self.inserter_robot_name,
                     "planning_group": ("arm_one" if self.inserter_robot_name == "lbr_one" else "arm_two"),
-                    "tcp_link": f"{self.inserter_robot_name}_gripper_tcp",
+                    "tcp_link": f"{self.inserter_robot_name}_{tcp_suffix}",
                 },
             },
             "layout": {
@@ -1899,18 +1902,30 @@ def simple_dual_robot_attached_collision_objects(
     center_tcp = tcp_rotation_world.T @ (center_world - tcp_position)
     rotation_tcp_from_box = tcp_rotation_world.T
     robot_name = str(task.inserter_robot_name)
+    gripper_model = str(task.pickup_gripper_collision_model)
+    if gripper_model == "pdz_gripper":
+        tcp_link = f"{robot_name}_pdz_gripper_tcp"
+        touch_links = [
+            tcp_link,
+            f"{robot_name}_pdz_gripper_base_link",
+            f"{robot_name}_pdz_gripper_left_finger_link",
+            f"{robot_name}_pdz_gripper_right_finger_link",
+        ]
+    else:
+        tcp_link = f"{robot_name}_gripper_tcp"
+        touch_links = [
+            tcp_link,
+            f"{robot_name}_gripper_base_link",
+            f"{robot_name}_left_finger_link",
+            f"{robot_name}_right_finger_link",
+        ]
     return {
         "incoming": {
             "id": "dual_attached_incoming_part_aabb",
             "type": "box",
-            "link_name": f"{robot_name}_gripper_tcp",
-            "frame_id": f"{robot_name}_gripper_tcp",
-            "touch_links": [
-                f"{robot_name}_gripper_tcp",
-                f"{robot_name}_gripper_base_link",
-                f"{robot_name}_left_finger_link",
-                f"{robot_name}_right_finger_link",
-            ],
+            "link_name": tcp_link,
+            "frame_id": tcp_link,
+            "touch_links": touch_links,
             "size_m": [float(value) for value in size],
             "xyz": [float(value) for value in center_tcp],
             "quaternion_xyzw": list(rotmat_to_quat_xyzw(rotation_tcp_from_box)),

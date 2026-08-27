@@ -241,8 +241,10 @@ The shared dual-arm MoveIt prerequisite for Stages 4B and 5 is implemented by:
     controller per arm;
   - provides `arm_one`, `arm_two`, and `both_arms` SRDF groups while leaving
     all cross-arm collision pairs enabled;
-  - publishes the externally controlled Y-gripper joints at their source-open
-    coordinate so MoveIt receives a complete 16-joint state;
+  - bridges each persistent controller's normalized position feedback into the
+    corresponding passive gripper driver joint, republishes the last measured
+    value continuously, and uses a warned fully-open fallback before the first
+    sample so MoveIt receives a complete 16-joint state;
 - [`start_dual_lbr_moveit.sh`](start_dual_lbr_moveit.sh)
   - starts the shared model in mock or hardware mode and optionally opens a
     dual-arm RViz configuration;
@@ -379,8 +381,9 @@ The first exact-IK and simulation vertical slice is implemented by:
     trajectories;
 - [`run_simple_dual_robot.sh`](run_simple_dual_robot.sh)
   - provides one entrypoint for this vertical slice in `sim` and `real` modes;
-  - starts the appropriate mock or hardware MoveIt stack, generates a fresh
-    plan or target task, executes it, and cleans up the stack it started;
+  - reuses the appropriate persistent mock or hardware MoveIt stack by default,
+    generates a fresh plan or target task, and executes it; `--start-moveit`
+    explicitly opts into a temporary owned stack;
   - uses an explicit CLI domain first, then
     `DUAL_ROBOT_ROS_DOMAIN_ID`, then the calling shell's `ROS_DOMAIN_ID`, and
     finally `0`, while enforcing matching Fast DDS discovery settings so
@@ -388,9 +391,10 @@ The first exact-IK and simulation vertical slice is implemented by:
 - [`scripts/gripper_computer/dual_grippers.launch.py`](scripts/gripper_computer/dual_grippers.launch.py)
   - is the repository copy deployed to the gripper computer's
     `servo_gripper` package;
-  - starts the two USB-by-id devices as
-    `/lbr_one/gripper_controller` and `/lbr_two/gripper_controller`, each with
-    independent Open/Close/Stop Trigger services;
+  - starts USB adapter `5B3D047592` as `/left/gripper_controller` for
+    `lbr_one`, and `5B3D044069` as `/right/gripper_controller` for `lbr_two`,
+    each with independent Calibrate/Open/Close/Stop Trigger services and
+    closure-fraction position command/feedback topics;
 - [`scripts/gripper_computer/start_dual_grippers.sh`](scripts/gripper_computer/start_dual_grippers.sh)
   - sources the remote ROS workspace and deliberately overrides the gripper
     computer's unrelated domain `42` with the shared default domain `0`;

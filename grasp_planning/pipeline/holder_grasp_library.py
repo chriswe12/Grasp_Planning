@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_KUKA_Y
+from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ
 from grasp_planning.grasping.fabrica_grasp_debug import (
     SavedGraspCandidate,
     save_grasp_bundle,
@@ -49,10 +49,10 @@ def generate_holder_grasp_library(
     dual-robot stages.
     """
 
-    if planning.gripper_collision_model != GRIPPER_COLLISION_MODEL_KUKA_Y:
+    if planning.gripper_collision_model not in {GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ}:
         raise ValueError(
-            "Holder grasp generation currently requires "
-            f"planning.gripper_collision_model='{GRIPPER_COLLISION_MODEL_KUKA_Y}'."
+            "Holder grasp generation requires a mesh collision model: "
+            f"'{GRIPPER_COLLISION_MODEL_KUKA_Y}' or '{GRIPPER_COLLISION_MODEL_PDZ}'."
         )
 
     base_part = sequence.parts_by_id[sequence.base_part_id]
@@ -158,7 +158,7 @@ def write_holder_grasp_library_artifacts(
     write_holder_grasp_debug_html(
         title="Fabrica Base Holder Candidate Library",
         subtitle=(
-            "Stage 1: scored KUKA Y-gripper contacts on the designated base only. "
+            f"Stage 1: scored {planning.gripper_collision_model} contacts on the designated base only. "
             "Assembly-state, table, insertion-sweep, and robot-pair filters have not yet been applied."
         ),
         mesh_local=result.target_mesh_local,
@@ -166,4 +166,5 @@ def write_holder_grasp_library_artifacts(
         output_html=output_html,
         metadata_lines=metadata_lines,
         table_plane_local=np.round(table_corners_local, 6).tolist(),
+        gripper_collision_model=planning.gripper_collision_model,
     )

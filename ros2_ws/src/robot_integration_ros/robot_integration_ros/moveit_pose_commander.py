@@ -197,6 +197,8 @@ class MoveItPoseCommanderConfig:
     execute_timeout_s: float = 120.0
     post_execute_sleep_s: float = 0.5
     avoid_collisions: bool = True
+    planning_scene_apply_attempts: int = 2
+    planning_scene_first_attempt_timeout_s: float = 2.0
 
     def __post_init__(self) -> None:
         namespace = _normalize_ros_namespace(self.moveit_namespace)
@@ -218,6 +220,10 @@ class MoveItPoseCommanderConfig:
                 field_name,
                 _ros_name_with_namespace(str(getattr(self, field_name)), namespace=namespace),
             )
+        if int(self.planning_scene_apply_attempts) < 1:
+            raise ValueError("planning_scene_apply_attempts must be at least 1.")
+        if float(self.planning_scene_first_attempt_timeout_s) <= 0.0:
+            raise ValueError("planning_scene_first_attempt_timeout_s must be positive.")
 
 
 class MoveItPoseCommander(Node):
@@ -341,9 +347,8 @@ class MoveItPoseCommander(Node):
         request = ApplyPlanningScene.Request()
         request.scene = scene
         try:
-            response = self._wait_for_future(
-                self._apply_planning_scene_client.call_async(request),
-                timeout_s=self.config.wait_for_moveit_timeout_s,
+            response = self._apply_planning_scene_request(
+                request,
                 label="planning-scene apply",
             )
         except Exception as exc:
@@ -382,9 +387,8 @@ class MoveItPoseCommander(Node):
         request = ApplyPlanningScene.Request()
         request.scene = scene
         try:
-            response = self._wait_for_future(
-                self._apply_planning_scene_client.call_async(request),
-                timeout_s=self.config.wait_for_moveit_timeout_s,
+            response = self._apply_planning_scene_request(
+                request,
                 label="planning-scene robot-state apply",
             )
         except Exception as exc:
@@ -438,9 +442,8 @@ class MoveItPoseCommander(Node):
         request = ApplyPlanningScene.Request()
         request.scene = scene
         try:
-            response = self._wait_for_future(
-                self._apply_planning_scene_client.call_async(request),
-                timeout_s=self.config.wait_for_moveit_timeout_s,
+            response = self._apply_planning_scene_request(
+                request,
                 label="attached planning-scene apply",
             )
         except Exception as exc:
@@ -503,9 +506,8 @@ class MoveItPoseCommander(Node):
         request = ApplyPlanningScene.Request()
         request.scene = scene
         try:
-            response = self._wait_for_future(
-                self._apply_planning_scene_client.call_async(request),
-                timeout_s=self.config.wait_for_moveit_timeout_s,
+            response = self._apply_planning_scene_request(
+                request,
                 label="attached planning-scene removal",
             )
         except Exception as exc:
@@ -563,9 +565,8 @@ class MoveItPoseCommander(Node):
         request = ApplyPlanningScene.Request()
         request.scene = scene
         try:
-            response = self._wait_for_future(
-                self._apply_planning_scene_client.call_async(request),
-                timeout_s=self.config.wait_for_moveit_timeout_s,
+            response = self._apply_planning_scene_request(
+                request,
                 label="planning-scene removal",
             )
         except Exception as exc:
@@ -1121,6 +1122,31 @@ class MoveItPoseCommander(Node):
         if exception is not None:
             raise RuntimeError(f"{label} raised {exception!r}")
         return future.result()
+
+    def _apply_planning_scene_request(self, request, *, label: str):
+        """Apply an idempotent scene diff with one bounded DDS-response retry."""
+
+        attempts = int(self.config.planning_scene_apply_attempts)
+        full_timeout_s = float(self.config.wait_for_moveit_timeout_s)
+        first_timeout_s = min(
+            full_timeout_s,
+            float(self.config.planning_scene_first_attempt_timeout_s),
+        )
+        for attempt_index in range(attempts):
+            timeout_s = full_timeout_s if attempt_index == attempts - 1 else first_timeout_s
+            try:
+                return self._wait_for_future(
+                    self._apply_planning_scene_client.call_async(request),
+                    timeout_s=timeout_s,
+                    label=f"{label} attempt {attempt_index + 1}/{attempts}",
+                )
+            except TimeoutError:
+                if attempt_index == attempts - 1:
+                    raise
+                self.get_logger().warning(
+                    f"{label} response timed out after {timeout_s:.1f}s; retrying the idempotent scene diff."
+                )
+        raise RuntimeError(f"{label} exhausted all apply attempts")  # pragma: no cover
 
     def _pose_stamped(self, target: PoseTarget) -> PoseStamped:
         pose_stamped = PoseStamped()

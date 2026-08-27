@@ -25,6 +25,13 @@
     <joint name="$(arg robot_name)_A7" value="0"/>
   </group_state>
 
+  <!--
+    The physical Y-gripper is controlled by its own ROS service node, not by
+    ros2_control.  Mark its independent joint passive so MoveIt Servo does not
+    wait forever for an actuated gripper state before accepting arm commands.
+  -->
+  <passive_joint name="left_finger_joint"/>
+
   <disable_collisions link1="$(arg robot_name)_link_0" link2="$(arg robot_name)_link_1" reason="Adjacent"/>
   <disable_collisions link1="$(arg robot_name)_link_0" link2="$(arg robot_name)_link_2" reason="Never"/>
   <disable_collisions link1="$(arg robot_name)_link_0" link2="$(arg robot_name)_link_3" reason="Never"/>

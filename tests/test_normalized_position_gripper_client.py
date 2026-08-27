@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from grasp_planning.gripper_profiles import (
+    SERVO_GRIPPER_CLOSED_WIDTH_M,
+    SERVO_GRIPPER_OPEN_WIDTH_M,
+    servo_gripper_closure_fraction_from_width,
+    servo_gripper_width_from_closure_fraction,
+)
 from grasp_planning.ros2 import normalized_position_gripper_client as gripper_module
 from grasp_planning.ros2.normalized_position_gripper_client import (
     NormalizedPositionGripperClient,
-)
-from grasp_planning.start_poses import (
-    kuka_gripper_approach_width,
-    kuka_gripper_normalized_position_from_width,
 )
 
 
@@ -99,10 +103,13 @@ def _client(monkeypatch) -> tuple[NormalizedPositionGripperClient, _Node]:
             position_command_topic="/robot/gripper/position_command",
             position_feedback_topic="/robot/gripper/position",
             open_service_name="/robot/gripper/open",
+            close_service_name="/robot/gripper/close",
             stop_service_name="/robot/gripper/stop",
             timeout_s=0.01,
             feedback_tolerance=0.02,
             grasp_settle_time_s=0.0,
+            closed_width_m=SERVO_GRIPPER_CLOSED_WIDTH_M,
+            open_width_m=SERVO_GRIPPER_OPEN_WIDTH_M,
         ),
         node,
     )
@@ -124,13 +131,34 @@ def test_initializes_open_zero_once_and_skips_unchanged_commands(monkeypatch) ->
 def test_candidate_width_maps_to_normalized_partially_closed_position(monkeypatch) -> None:
     client, node = _client(monkeypatch)
     jaw_width_m = 0.040
-    approach_width_m = kuka_gripper_approach_width(jaw_width_m)
+    approach_width_m = 0.050
 
     assert client.command_width(approach_width_m, wait_for_feedback=False)[0] is True
     assert client.command_width(jaw_width_m, wait_for_feedback=False)[0] is True
 
     assert node.publisher.values == [
-        kuka_gripper_normalized_position_from_width(approach_width_m),
-        kuka_gripper_normalized_position_from_width(jaw_width_m),
+        servo_gripper_closure_fraction_from_width(approach_width_m),
+        servo_gripper_closure_fraction_from_width(jaw_width_m),
     ]
     assert 0.0 < node.publisher.values[0] < node.publisher.values[1] < 1.0
+
+
+def test_new_gripper_physical_endpoints_map_to_zero_and_one(monkeypatch) -> None:
+    client, node = _client(monkeypatch)
+
+    assert client.command_width(SERVO_GRIPPER_OPEN_WIDTH_M, wait_for_feedback=False)[0]
+    assert client.command_width(SERVO_GRIPPER_CLOSED_WIDTH_M, wait_for_feedback=False)[0]
+
+    assert node.publisher.values == [0.0, 1.0]
+    assert servo_gripper_width_from_closure_fraction(0.7) == pytest.approx(0.0271)
+
+
+def test_open_and_close_use_acknowledged_endpoint_services(monkeypatch) -> None:
+    client, node = _client(monkeypatch)
+
+    assert client.open(width=0.050)[0]
+    assert client.close(width=0.040)[0]
+
+    assert node.publisher.values == []
+    assert node.clients["/robot/gripper/open"].calls == 1
+    assert node.clients["/robot/gripper/close"].calls == 1

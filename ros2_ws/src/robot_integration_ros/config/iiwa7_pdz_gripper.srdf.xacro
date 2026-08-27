@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="iiwa7">
+  <xacro:arg name="robot_name" default="lbr"/>
+
+  <group name="arm">
+    <chain base_link="$(arg robot_name)_link_0" tip_link="pdz_gripper_tcp"/>
+  </group>
+
+  <group_state name="zero" group="arm">
+    <joint name="$(arg robot_name)_A1" value="0"/>
+    <joint name="$(arg robot_name)_A2" value="0"/>
+    <joint name="$(arg robot_name)_A3" value="0"/>
+    <joint name="$(arg robot_name)_A4" value="0"/>
+    <joint name="$(arg robot_name)_A5" value="0"/>
+    <joint name="$(arg robot_name)_A6" value="0"/>
+    <joint name="$(arg robot_name)_A7" value="0"/>
+  </group_state>
+  <group_state name="transport" group="arm">
+    <joint name="$(arg robot_name)_A1" value="0"/>
+    <joint name="$(arg robot_name)_A2" value="0.4363"/>
+    <joint name="$(arg robot_name)_A3" value="0"/>
+    <joint name="$(arg robot_name)_A4" value="1.5707"/>
+    <joint name="$(arg robot_name)_A5" value="0"/>
+    <joint name="$(arg robot_name)_A6" value="0"/>
+    <joint name="$(arg robot_name)_A7" value="0"/>
+  </group_state>
+
+  <!-- The physical gripper is commanded by its dedicated ROS service node. -->
+  <passive_joint name="pdz_gripper_left_finger_joint"/>
+
+  <disable_collisions link1="$(arg robot_name)_link_0" link2="$(arg robot_name)_link_1" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_1" link2="$(arg robot_name)_link_2" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_2" link2="$(arg robot_name)_link_3" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_3" link2="$(arg robot_name)_link_4" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_4" link2="$(arg robot_name)_link_5" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_5" link2="$(arg robot_name)_link_6" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_6" link2="$(arg robot_name)_link_7" reason="Adjacent"/>
+  <disable_collisions link1="$(arg robot_name)_link_7" link2="pdz_gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="pdz_gripper_base_link" link2="pdz_gripper_left_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="pdz_gripper_base_link" link2="pdz_gripper_right_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="pdz_gripper_left_finger_link" link2="pdz_gripper_right_finger_link" reason="Never"/>
+  <disable_collisions link1="pdz_gripper_base_link" link2="camera_link" reason="Adjacent"/>
+</robot>

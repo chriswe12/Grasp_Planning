@@ -8,6 +8,7 @@ import numpy as np
 from grasp_planning.grasping import fabrica_grasp_debug
 from grasp_planning.grasping.collision import (
     KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
+    make_gripper_collision_model,
     make_gripper_collision_models,
 )
 from grasp_planning.grasping.fabrica_grasp_debug import (
@@ -104,6 +105,100 @@ def test_fast_kuka_floor_support_matches_transformed_collision_meshes() -> None:
         "kuka_y_gripper",
         approach_gap_m=0.005,
     )[1]
+    grasp_rotation = np.array(
+        [
+            [0.8660254, 0.0, 0.5],
+            [0.0, 1.0, 0.0],
+            [-0.5, 0.0, 0.8660254],
+        ],
+        dtype=float,
+    )
+    pose = ObjectWorldPose(
+        position_world=(0.1, -0.2, 0.03),
+        orientation_xyzw_world=(0.0, 0.0, 0.3826834324, 0.9238795325),
+    )
+    contact_a = np.array([0.02, -0.02, 0.04])
+    contact_b = np.array([0.02, 0.02, 0.04])
+    center = np.array([0.02, 0.0, 0.04])
+
+    fast_minimum = model.minimum_world_z_for_grasp(
+        grasp_rotmat_obj=grasp_rotation,
+        contact_point_a_obj=contact_a,
+        contact_point_b_obj=contact_b,
+        grasp_center_obj=center,
+        rotation_world_from_object=pose.rotation_world_from_object,
+        translation_world_from_object=pose.translation_world,
+    )
+    primitives = model.primitives_for_grasp(
+        grasp_rotmat=grasp_rotation,
+        contact_point_a=contact_a,
+        contact_point_b=contact_b,
+        grasp_center=center,
+    )
+    transformed = tuple(transform_primitive_to_world(primitive, pose) for primitive in primitives)
+    mesh_minimum = min(float(np.min(primitive.vertices_obj[:, 2])) for primitive in transformed)
+
+    assert math.isclose(fast_minimum, mesh_minimum, abs_tol=1.0e-10)
+    fast_bounds = model.world_component_aabb_bounds_for_grasp(
+        grasp_rotmat_obj=grasp_rotation,
+        contact_point_a_obj=contact_a,
+        contact_point_b_obj=contact_b,
+        grasp_center_obj=center,
+        rotation_world_from_object=pose.rotation_world_from_object,
+        translation_world_from_object=pose.translation_world,
+    )
+    assert [item[0] for item in fast_bounds] == [primitive.name for primitive in transformed]
+    for (_, minimum, maximum), primitive in zip(fast_bounds, transformed, strict=True):
+        np.testing.assert_allclose(minimum, primitive.vertices_obj.min(axis=0), atol=1.0e-10)
+        np.testing.assert_allclose(maximum, primitive.vertices_obj.max(axis=0), atol=1.0e-10)
+
+
+def test_mesh_gripper_contact_offsets_shift_an_explicit_saved_grasp_center() -> None:
+    grasp_rotation = np.eye(3, dtype=float)
+    contact_a = np.array([0.0, -0.02, 0.04])
+    contact_b = np.array([0.0, 0.02, 0.04])
+    center = np.array([0.0, 0.0, 0.04])
+    lateral_offset_m = 0.01
+    approach_offset_m = -0.005
+    expected_translation = np.array([-0.01, 0.0, 0.005])
+
+    for model_name in ("kuka_y_gripper", "pdz_gripper"):
+        nominal_model = make_gripper_collision_model(model_name, contact_gap_m=0.0)
+        offset_model = make_gripper_collision_model(
+            model_name,
+            contact_gap_m=0.0,
+            contact_patch_lateral_offset_m=lateral_offset_m,
+            contact_patch_approach_offset_m=approach_offset_m,
+        )
+        nominal_primitives = nominal_model.primitives_for_grasp(
+            grasp_rotmat=grasp_rotation,
+            contact_point_a=contact_a,
+            contact_point_b=contact_b,
+            grasp_center=center,
+        )
+        offset_primitives = offset_model.primitives_for_grasp(
+            grasp_rotmat=grasp_rotation,
+            contact_point_a=contact_a,
+            contact_point_b=contact_b,
+            grasp_center=center,
+        )
+
+        assert [item.name for item in nominal_primitives] == [item.name for item in offset_primitives]
+        for nominal, offset in zip(nominal_primitives, offset_primitives, strict=True):
+            np.testing.assert_allclose(
+                offset.vertices_obj - nominal.vertices_obj,
+                np.broadcast_to(expected_translation, offset.vertices_obj.shape),
+                atol=1.0e-12,
+            )
+
+
+def test_fast_pdz_floor_support_matches_transformed_collision_hulls() -> None:
+    model = make_gripper_collision_model(
+        "pdz_gripper",
+        contact_gap_m=0.005,
+        contact_patch_lateral_offset_m=0.015,
+        contact_patch_approach_offset_m=0.005,
+    )
     grasp_rotation = np.array(
         [
             [0.8660254, 0.0, 0.5],

@@ -56,7 +56,7 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
 
     command = benchmark._command(payload=payload, spec=spec, paths=paths)
 
-    assert command[:3] == [str(REPO_ROOT / "run_simple_dual_robot.sh"), "--mode", "sim"]
+    assert command[:5] == [str(REPO_ROOT / "run_pipeline.sh"), "--workflow", "dual", "--mode", "sim"]
     assert command[command.index("--artifact-root") + 1] == str(
         (REPO_ROOT / "artifacts/dual_grasp_planning").resolve()
     )
@@ -138,7 +138,7 @@ def test_real_preflight_only_command_runs_connected_planning_without_execution_o
         real_preflight_only=True,
     )
 
-    assert command[:3] == [str(REPO_ROOT / "run_simple_dual_robot.sh"), "--mode", "real"]
+    assert command[:5] == [str(REPO_ROOT / "run_pipeline.sh"), "--workflow", "dual", "--mode", "real"]
     assert command[command.index("--task-output") + 1] == str(paths["plan"])
     assert command[command.index("--attempt-output") + 1] == str(paths["attempt"])
     assert command[command.index("--stop-after") + 1] == "inserter_preinsertion"
@@ -169,15 +169,22 @@ def test_real_preflight_benchmark_manages_one_mock_moveit_stack_by_default(
     )
 
     assert command == [
-        str(REPO_ROOT / "start_dual_lbr_moveit.sh"),
+        str(REPO_ROOT / "run_pipeline.sh"),
+        "--workflow",
+        "dual",
         "--mode",
-        "mock",
+        "sim",
+        "--robots",
+        "both",
+        "--bringup-only",
         "--ros-domain-id",
         "43",
         "--ik-solver",
         "kdl",
         "--process-group-file",
         str(handoff),
+        "--gripper-model",
+        "pdz_gripper",
     ]
 
 
@@ -724,16 +731,17 @@ def test_failure_phase_classifies_holder_and_grounded_pickup_failures() -> None:
 
 def test_failure_phase_classifies_existing_moveit_stack_as_setup() -> None:
     message = (
-        "[DUAL-RUN] Stop it first, or pass --reuse-moveit after confirming it matches mode=sim."
+        "[DUAL-RUN] Stop it before using --start-moveit, or use the default "
+        "persistent-stack reuse."
     )
 
     assert benchmark._failure_phase(message) == ("setup", "MoveIt/Isaac setup")
     assert benchmark._is_existing_stack_ownership_conflict(message)
     assert not benchmark._is_existing_stack_ownership_conflict(
-        "--reuse-moveit was requested, but the live MoveIt services are not ready"
+        "No reusable dual MoveIt stack is ready on ROS domain 0"
     )
     assert benchmark._is_reused_stack_unavailable(
-        "--reuse-moveit was requested, but the live MoveIt services are not ready"
+        "No reusable dual MoveIt stack is ready on ROS domain 0"
     )
     assert benchmark._is_reused_stack_unavailable(
         "Missing /lbr_dual_arm/compute_ik or /lbr_dual_arm/plan_kinematic_path"
@@ -783,8 +791,8 @@ def test_benchmark_stops_after_recording_first_existing_stack_conflict(
                 "status": "failed",
                 "success": False,
                 "message": (
-                    "[DUAL-RUN] Stop it first, or pass --reuse-moveit after "
-                    "confirming it matches mode=sim."
+                    "[DUAL-RUN] Stop it before using --start-moveit, or use the "
+                    "default persistent-stack reuse."
                 ),
                 "duration_s": 0.1,
             },
@@ -917,10 +925,12 @@ def test_case_cleanup_terminates_exact_nested_process_group_only(
 
 
 def test_dual_moveit_wrappers_handoff_exact_nested_process_group() -> None:
-    runner = (REPO_ROOT / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    compatibility = (REPO_ROOT / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    runner = (REPO_ROOT / "scripts/run_dual_pipeline.sh").read_text(encoding="utf-8")
     launcher = (REPO_ROOT / "start_dual_lbr_moveit.sh").read_text(encoding="utf-8")
 
     assert "DUAL_MOVEIT_PROCESS_GROUP_FILE" in runner
+    assert 'exec "${SCRIPT_DIR}/run_pipeline.sh" --workflow dual "$@"' in compatibility
     assert 'START_ARGS+=(--process-group-file "${MOVEIT_PROCESS_GROUP_FILE}")' in runner
     assert 'kill -TERM -- "-${moveit_process_group}"' in runner
     assert 'kill -KILL -- "-${moveit_process_group}"' in runner
@@ -950,7 +960,7 @@ def test_failure_scene_renderer_draws_assembly_and_incoming_part(tmp_path: Path)
 
 
 def test_wrapper_exposes_role_and_contact_physics_options() -> None:
-    source = (REPO_ROOT / "run_simple_dual_robot.sh").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "scripts/run_dual_pipeline.sh").read_text(encoding="utf-8")
 
     for flag in (
         "--inserter-arm",

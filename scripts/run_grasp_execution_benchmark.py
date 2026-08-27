@@ -13,7 +13,6 @@ import shlex
 import subprocess
 import sys
 import time
-import traceback
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -25,14 +24,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from grasp_planning.grasping.fabrica_grasp_debug import load_grasp_bundle  # noqa: E402
-from grasp_planning.grasping.grasp_transforms import saved_grasp_to_world_grasp  # noqa: E402
-from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
-from grasp_planning.ros2.moveit_pose_commander import (  # noqa: E402
-    MoveItPoseCommander,
-    MoveItPoseCommanderConfig,
-    rclpy,
-)
-from grasp_planning.ros2.moveit_world_grasp import world_grasp_pose_targets  # noqa: E402
 from grasp_planning.start_poses import DEFAULT_ARM_START_JOINT_VALUES, DEFAULT_MOVEIT_ARM_JOINT_NAMES  # noqa: E402
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "grasp_execution_benchmark.yaml"
@@ -472,146 +463,6 @@ def _configured_gripper_width_clearance_m(payload: dict[str, object], backends: 
     return max(values) if values else 0.01
 
 
-def _object_pose_from_bundle_metadata(bundle, *, bundle_path: Path) -> ObjectWorldPose:
-    raw_pose = bundle.metadata.get("execution_world_pose")
-    if not isinstance(raw_pose, dict):
-        raise RuntimeError(f"Stage-2 bundle '{bundle_path}' is missing metadata.execution_world_pose.")
-    position_world = raw_pose.get("position_world")
-    orientation_xyzw_world = raw_pose.get("orientation_xyzw_world")
-    if not isinstance(position_world, (list, tuple)) or len(position_world) != 3:
-        raise RuntimeError(f"Stage-2 bundle '{bundle_path}' has an invalid execution_world_pose.position_world.")
-    if not isinstance(orientation_xyzw_world, (list, tuple)) or len(orientation_xyzw_world) != 4:
-        raise RuntimeError(
-            f"Stage-2 bundle '{bundle_path}' has an invalid execution_world_pose.orientation_xyzw_world."
-        )
-    return ObjectWorldPose(
-        position_world=tuple(float(value) for value in position_world),
-        orientation_xyzw_world=tuple(float(value) for value in orientation_xyzw_world),
-    )
-
-
-def _moveit_config_from_benchmark_cfg(cfg: dict[str, object]) -> MoveItPoseCommanderConfig:
-    return MoveItPoseCommanderConfig(
-        planning_group=str(cfg.get("moveit_planning_group", "fr3_arm")),
-        pose_link=str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
-        joint_names=_moveit_joint_names_from_cfg(cfg),
-        moveit_namespace=str(cfg.get("moveit_namespace", "")),
-        pipeline_id=str(cfg.get("moveit_pipeline_id", "")),
-        planner_id=str(cfg.get("moveit_planner_id", "")),
-        wait_for_moveit_timeout_s=_optional_float(cfg.get("moveit_wait_for_moveit_timeout_s"), 15.0),
-        ik_timeout_s=_optional_float(cfg.get("moveit_ik_timeout_s"), 2.0),
-        fk_timeout_s=_optional_float(cfg.get("moveit_ik_timeout_s"), 2.0),
-        planning_time_s=_optional_float(cfg.get("moveit_planning_time_s"), 5.0),
-        num_planning_attempts=int(_optional_float(cfg.get("moveit_num_planning_attempts"), 5.0)),
-        velocity_scale=_optional_float(cfg.get("moveit_velocity_scale"), 0.05),
-        acceleration_scale=_optional_float(cfg.get("moveit_acceleration_scale"), 0.05),
-        post_execute_sleep_s=0.0,
-        avoid_collisions=not bool(cfg.get("moveit_allow_collisions", False)),
-    )
-
-
-def _trajectory_waypoints_for_joints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
-    joint_trajectory = trajectory.joint_trajectory
-    source_joint_names = tuple(str(name) for name in joint_trajectory.joint_names)
-    name_to_index = {name: index for index, name in enumerate(source_joint_names)}
-    missing = [joint_name for joint_name in joint_names if joint_name not in name_to_index]
-    if missing:
-        raise RuntimeError(f"MoveIt trajectory is missing arm joints: {missing}.")
-    ordered_indices = [name_to_index[name] for name in joint_names]
-    waypoints = tuple(
-        tuple(float(point.positions[index]) for index in ordered_indices) for point in tuple(joint_trajectory.points)
-    )
-    if not waypoints:
-        raise RuntimeError("MoveIt returned a trajectory with no points.")
-    return waypoints
-
-
-def _preplan_isaac_moveit(
-    *,
-    cfg: dict[str, object],
-    spec: dict[str, object],
-    execution_stage2_json: Path,
-    plan_path: Path,
-) -> None:
-    if rclpy is None:
-        raise RuntimeError("ROS2 MoveIt dependencies are unavailable. Source the ROS2 / MoveIt workspace first.")
-    bundle = load_grasp_bundle(execution_stage2_json)
-    selected = next((grasp for grasp in bundle.candidates if grasp.grasp_id == str(spec["grasp_id"])), None)
-    if selected is None:
-        raise RuntimeError(f"Requested Isaac grasp id '{spec['grasp_id']}' is not present in {execution_stage2_json}.")
-    object_pose_world = _object_pose_from_bundle_metadata(bundle, bundle_path=execution_stage2_json)
-    world_grasp = saved_grasp_to_world_grasp(
-        selected,
-        object_pose_world,
-        pregrasp_offset=_optional_float(cfg.get("pregrasp_offset"), 0.20),
-        gripper_width_clearance=_optional_float(cfg.get("gripper_width_clearance"), 0.01),
-    )
-    min_pregrasp_z = 0.05
-    if world_grasp.pregrasp_position_w[2] <= min_pregrasp_z:
-        raise RuntimeError(
-            f"Requested Isaac grasp id '{selected.grasp_id}' has unsafe pregrasp height: "
-            f"pregrasp_position_w={world_grasp.pregrasp_position_w} required_min_z={min_pregrasp_z:.3f}"
-        )
-    targets = world_grasp_pose_targets(
-        world_grasp,
-        frame_id=str(cfg.get("moveit_frame_id", "base")),
-        lift_height_m=_optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
-        position_signs=_moveit_target_position_signs_from_cfg(cfg),
-        tcp_to_grasp_offset=_tcp_to_grasp_offset_from_cfg(cfg),
-    )
-    labels = ("pregrasp",) if bool(cfg.get("pregrasp_only", False)) else ("pregrasp", "grasp", "lift")
-    initialized_here = False
-    commander = None
-    try:
-        if not rclpy.ok():
-            rclpy.init()
-            initialized_here = True
-        commander = MoveItPoseCommander(_moveit_config_from_benchmark_cfg(cfg), node_name="isaac_benchmark_moveit")
-        commander.wait_for_moveit(require_execute=False)
-        planned: dict[str, tuple[tuple[float, ...], ...]] = {}
-        current_start = _moveit_start_joint_positions_from_cfg(cfg)
-        joint_names = _moveit_joint_names_from_cfg(cfg)
-        for label in labels:
-            print(f"[EXEC-BENCH] preplan Isaac {label} with MoveIt/cuMotion", flush=True)
-            trajectory, message = commander.plan_to_pose(
-                targets[label],
-                label=f"isaac_benchmark_{label}",
-                start_joint_positions=current_start,
-            )
-            if trajectory is None:
-                raise RuntimeError(f"MoveIt failed to preplan Isaac {label}: {message}")
-            waypoints = _trajectory_waypoints_for_joints(trajectory, joint_names=joint_names)
-            planned[label] = waypoints
-            current_start = waypoints[-1]
-    finally:
-        if commander is not None:
-            commander.destroy_node()
-        if initialized_here and rclpy.ok():
-            rclpy.shutdown()
-
-    _write_json(
-        plan_path,
-        {
-            "selected_grasp_id": selected.grasp_id,
-            "joint_names": list(_moveit_joint_names_from_cfg(cfg)),
-            "start_joint_positions": list(_moveit_start_joint_positions_from_cfg(cfg)),
-            "trajectories": {label: [list(waypoint) for waypoint in waypoints] for label, waypoints in planned.items()},
-            "moveit": {
-                "frame_id": str(cfg.get("moveit_frame_id", "base")),
-                "target_position_signs": list(_moveit_target_position_signs_from_cfg(cfg)),
-                "tcp_to_grasp_offset": list(_tcp_to_grasp_offset_from_cfg(cfg)),
-                "planning_group": str(cfg.get("moveit_planning_group", "fr3_arm")),
-                "pose_link": str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
-                "namespace": str(cfg.get("moveit_namespace", "")),
-                "pipeline_id": str(cfg.get("moveit_pipeline_id", "")),
-                "planner_id": str(cfg.get("moveit_planner_id", "")),
-                "lift_height_m": _optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
-                "allow_collisions": bool(cfg.get("moveit_allow_collisions", False)),
-            },
-        },
-    )
-
-
 def _mujoco_command(
     *,
     cfg: dict[str, object],
@@ -620,18 +471,23 @@ def _mujoco_command(
     video_path: Path | None,
 ) -> list[str]:
     command = [
-        *_effective_python_command(cfg.get("python_executable", "")),
-        "scripts/run_fabrica_grasp_in_mujoco.py",
-        "--input-json",
+        str(REPO_ROOT / "run_pipeline.sh"),
+        "--workflow",
+        "single-object",
+        "--mode",
+        "sim",
+        "--backend",
+        "mujoco",
+        "--stage2-bundle",
         str(spec.get("execution_stage2_json") or spec["stage2_json"]),
-        "--robot-config",
-        str(cfg.get("robot_config", "configs/mujoco_fr3_with_hand.json")),
         "--attempt-artifact",
         str(attempt_artifact),
-        "--controller",
-        str(cfg.get("controller", "native")),
         "--grasp-id",
         str(spec["grasp_id"]),
+        "--robot-config",
+        str(cfg.get("robot_config", "configs/mujoco_fr3_with_hand.json")),
+        "--controller",
+        str(cfg.get("controller", "native")),
     ]
     _append_optional(command, "--simulation-config", cfg.get("simulation_config"))
     _append_optional(command, "--pregrasp-offset", cfg.get("pregrasp_offset"))
@@ -715,16 +571,23 @@ def _isaac_command(
     if controller != "moveit":
         raise ValueError(f"Unsupported Isaac benchmark controller '{controller}'. Only 'moveit' is supported.")
     command = [
-        *_effective_python_command(cfg.get("python_executable", "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p")),
-        "scripts/run_fabrica_grasp_in_isaac.py",
-        "--input-json",
+        str(REPO_ROOT / "run_pipeline.sh"),
+        "--workflow",
+        "single-object",
+        "--mode",
+        "sim",
+        "--backend",
+        "isaac",
+        "--backend-python",
+        str(cfg.get("python_executable", "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p")),
+        "--stage2-bundle",
         str(spec.get("execution_stage2_json") or spec["stage2_json"]),
-        "--controller",
-        controller,
         "--attempt-artifact",
         str(attempt_artifact),
         "--grasp-id",
         str(spec["grasp_id"]),
+        "--controller",
+        controller,
         "--close-width",
         str(cfg.get("close_width", 0.0)),
         "--run-seconds",
@@ -742,6 +605,7 @@ def _isaac_command(
     _append_optional(command, "--pregrasp-offset", cfg.get("pregrasp_offset"))
     _append_optional(command, "--gripper-width-clearance", cfg.get("gripper_width_clearance"))
     _append_optional(command, "--detailed-finger-contact-gap-m", cfg.get("contact_gap_m"))
+    _append_optional(command, "--gripper-collision-model", cfg.get("gripper_collision_model"))
     if cfg.get("object_mass_kg") not in (None, "") and cfg.get("object_density_kg_m3") not in (None, ""):
         raise ValueError("isaac.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     _append_optional(command, "--object-mass-kg", cfg.get("object_mass_kg"))
@@ -927,46 +791,6 @@ def _execution_summary(backend: str, artifact: dict[str, object] | None) -> dict
     }
 
 
-def _write_isaac_preplan_failure_artifact(
-    *,
-    path: Path,
-    run_spec: dict[str, object],
-    cfg: dict[str, object],
-    message: str,
-    duration_s: float,
-    stdout_path: Path,
-    stderr_path: Path,
-    plan_path: Path,
-) -> None:
-    _write_json(
-        path,
-        {
-            "attempt": _json_safe(run_spec),
-            "execution": {
-                "controller": str(cfg.get("controller", "moveit")),
-                "success": False,
-                "status": "moveit_preplan_failed",
-                "message": message,
-                "duration_s": float(duration_s),
-                "stdout_log": str(stdout_path),
-                "stderr_log": str(stderr_path),
-            },
-            "moveit": {
-                "frame_id": str(cfg.get("moveit_frame_id", "base")),
-                "planning_group": str(cfg.get("moveit_planning_group", "fr3_arm")),
-                "pose_link": str(cfg.get("moveit_pose_link", "fr3_hand_tcp")),
-                "namespace": str(cfg.get("moveit_namespace", "")),
-                "joint_names": list(_moveit_joint_names_from_cfg(cfg)),
-                "pipeline_id": str(cfg.get("moveit_pipeline_id", "")),
-                "planner_id": str(cfg.get("moveit_planner_id", "")),
-                "lift_height_m": _optional_float(cfg.get("moveit_lift_height_m", cfg.get("lift_height_m")), 0.08),
-                "allow_collisions": bool(cfg.get("moveit_allow_collisions", False)),
-                "plan_json": str(plan_path),
-            },
-        },
-    )
-
-
 def _run_attempt(
     *,
     spec: dict[str, object],
@@ -1014,49 +838,6 @@ def _run_attempt(
         controller = str(isaac_cfg.get("controller", "moveit"))
         if controller != "moveit":
             raise ValueError(f"Unsupported Isaac benchmark controller '{controller}'. Only 'moveit' is supported.")
-        plan_path = attempt_dir / "moveit_plan.json"
-        plan_path.unlink(missing_ok=True)
-        preplan_started = time.perf_counter()
-        try:
-            _preplan_isaac_moveit(
-                cfg=isaac_cfg,
-                spec=run_spec,
-                execution_stage2_json=execution_stage2_json,
-                plan_path=plan_path,
-            )
-        except Exception as exc:
-            stdout_path.write_text("", encoding="utf-8")
-            with stderr_path.open("w", encoding="utf-8") as stderr:
-                traceback.print_exception(type(exc), exc, exc.__traceback__, file=stderr)
-            duration_s = float(time.perf_counter() - preplan_started)
-            _write_isaac_preplan_failure_artifact(
-                path=attempt_artifact,
-                run_spec=run_spec,
-                cfg=isaac_cfg,
-                message=str(exc),
-                duration_s=duration_s,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                plan_path=plan_path,
-            )
-            return {
-                **run_spec,
-                "attempt_key": _attempt_key(spec),
-                "returncode": 1,
-                "duration_s": duration_s,
-                "attempt_artifact": str(attempt_artifact),
-                "stdout_log": str(stdout_path),
-                "stderr_log": str(stderr_path),
-                "command": [],
-                "success": False,
-                "status": "moveit_preplan_failed",
-                "message": str(exc),
-                "lift_height_m": None,
-                "target_lift_height_m": None,
-                "video_path": None,
-                "video_frame_count": 0,
-            }
-        run_spec["moveit_plan_json"] = str(plan_path)
         command = _isaac_command(
             cfg=isaac_cfg,
             spec=run_spec,

@@ -7,13 +7,15 @@ planning:
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
   num_surface_samples: 256
-  min_jaw_width: 0.002
-  max_jaw_width: 0.09
+  # PDZ contact range used by the trained policy. The real driver still maps
+  # its physical 7--74 mm stroke independently below.
+  min_jaw_width: 0.008
+  max_jaw_width: 0.062
   antipodal_cosine_threshold: 0.984807753012208
   roll_angle_step_deg: 15.0
   max_pair_checks: 40960
   detailed_finger_contact_gap_m: 0.002
-  gripper_collision_model: "kuka_y_gripper"
+  gripper_collision_model: "pdz_gripper"
   floor_clearance_margin_m: 0.01
   top_grasp_score_weight: 0.35
   regrasp_transfer_top_grasp_score_weight: 0.70
@@ -44,8 +46,10 @@ ros2:
   pose_base_topic: "/perception/fp/pose_base/fused/assembly"
   assembly_name: "plumbers_block"
   part_id: 0
-  # Temporary perception-base -> left LBR base translation, applied before planning.
-  position_offset_m: [0.0, -0.840, 0.0]
+  # Perception publishes in the dual-cell base_link frame. Standalone lbr_one
+  # is mounted at base_link Y=-0.420 m, so express the pose in lbr_link_0 by
+  # adding +0.420 m on Y before single-arm planning.
+  position_offset_m: [0.0, 0.420, 0.0]
   frame_id: "world"
   timeout_s: 40.0
 
@@ -55,10 +59,13 @@ grasp_assembly_action:
 
 real_execution:
   enabled: true
+  # The single-pick wrapper switches this to d405_policy in a generated config.
+  grasp_approach_controller: "moveit_pose"
+  visual_servo_config: "configs/visual_servo_real_d405.yaml"
   grasp_id: ""
   attempt_artifact: "artifacts/real_lbr_robot_pick_attempt.json"
   planning_group: "arm"
-  pose_link: "gripper_tcp"
+  pose_link: "pdz_gripper_tcp"
   moveit_namespace: "/lbr"
   joint_names:
     - "lbr_A1"
@@ -97,11 +104,16 @@ real_execution:
       xyz: [0.0, -0.75, 0.75]
       rpy: [0.0, 0.0, 0.0]
   gripper_enabled: true
-  gripper_client: "trigger_service"
-  gripper_trigger_open_service: "/gripper_controller/open"
-  gripper_trigger_close_service: "/gripper_controller/close"
-  gripper_trigger_stop_service: "/gripper_controller/stop"
-  gripper_open_width: 0.08
+  gripper_client: "normalized_position"
+  gripper_trigger_open_service: "/left/gripper_controller/open"
+  gripper_trigger_close_service: "/left/gripper_controller/close"
+  gripper_trigger_stop_service: "/left/gripper_controller/stop"
+  gripper_position_command_topic: "/left/gripper_controller/position_command"
+  gripper_position_feedback_topic: "/left/gripper_controller/position"
+  gripper_position_feedback_tolerance: 0.02
+  moveit_gripper_joint_name: "pdz_gripper_left_finger_joint"
+  gripper_closed_width: 0.007
+  gripper_open_width: 0.074
   gripper_grasp_speed: 0.03
   gripper_grasp_force: 30.0
   gripper_epsilon_inner: 0.002

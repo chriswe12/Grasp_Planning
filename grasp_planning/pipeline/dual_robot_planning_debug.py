@@ -22,6 +22,27 @@ from grasp_planning.start_poses import kuka_gripper_approach_width
 from .holder_state_debug_html import _gripper_payload
 
 
+def open_debug_url_in_browser(url: str, *, daemon: bool = True) -> str:
+    """Open one debug URL without blocking the planning process."""
+
+    threading.Thread(
+        target=webbrowser.open,
+        args=(str(url),),
+        kwargs={"new": 2},
+        daemon=bool(daemon),
+    ).start()
+    return str(url)
+
+
+def open_debug_html_in_browser(path: str | Path, *, daemon: bool = True) -> str:
+    """Open one generated debug page using the live debugger browser pattern."""
+
+    return open_debug_url_in_browser(
+        Path(path).expanduser().resolve().as_uri(),
+        daemon=daemon,
+    )
+
+
 def _pose_payload(pose: Any) -> dict[str, list[float]]:
     return {
         "position_world_m": [float(value) for value in pose.position_world],
@@ -457,12 +478,7 @@ class DualRobotPlanningDebugServer:
     def start(self, *, open_browser: bool = True) -> str:
         self._thread.start()
         if open_browser:
-            threading.Thread(
-                target=webbrowser.open,
-                args=(self.url,),
-                kwargs={"new": 2},
-                daemon=True,
-            ).start()
+            open_debug_url_in_browser(self.url)
         return self.url
 
     def update(
