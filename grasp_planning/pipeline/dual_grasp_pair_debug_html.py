@@ -46,6 +46,8 @@ def _candidate_world_payload(
         "contact_a": point(candidate.contact_point_a_obj),
         "contact_b": point(candidate.contact_point_b_obj),
         "jaw_width": candidate.jaw_width,
+        "contact_patch_lateral_offset_m": candidate.contact_patch_lateral_offset_m,
+        "contact_patch_approach_offset_m": candidate.contact_patch_approach_offset_m,
         "score": candidate.score,
     }
 
@@ -57,6 +59,7 @@ def _step_debug_payload(
 ) -> dict[str, object]:
     holder_by_id = {candidate.grasp_id: candidate for candidate in result.holder_feasibility.candidates}
     library = result.inserter_libraries_by_step[step_result.step_id]
+    gripper_model = str(library.bundle.metadata.get("gripper_model", "kuka_y_gripper"))
     inserter_by_id = {status.grasp_id: status.candidate for status in library.candidate_statuses}
     holder_references = {candidate.grasp_id: candidate.to_payload() for candidate in step_result.holder_candidates}
     inserter_references = {candidate.grasp_id: candidate.to_payload() for candidate in step_result.inserter_candidates}
@@ -108,7 +111,7 @@ def _step_debug_payload(
         },
         "retained_pair_ids": list(step_result.retained_pair_ids),
         "detailed_rejected_pair_ids": list(step_result.detailed_rejected_pair_ids),
-        "gripper": _gripper_payload(),
+        "gripper": _gripper_payload(gripper_model),
     }
 
 
@@ -170,8 +173,8 @@ function polygon(points,fill,alpha=.2){const ps=points.map(project);ctx.beginPat
 function drawPart(id,color,alpha=1,offset=[0,0,0]){const m=S.parts[id],verts=m.vertices_assembly_m.map(p=>add(p,offset)),records=m.faces.map(f=>{const ps=f.map(i=>project(verts[i]));return{ps,d:ps.reduce((s,p)=>s+p[2],0)/3}}).sort((a,b)=>a.d-b.d);ctx.globalAlpha=.34*alpha;ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidth=.35;records.forEach(r=>{ctx.beginPath();ctx.moveTo(r.ps[0][0],r.ps[0][1]);ctx.lineTo(r.ps[1][0],r.ps[1][1]);ctx.lineTo(r.ps[2][0],r.ps[2][1]);ctx.closePath();ctx.fill();ctx.stroke()});ctx.globalAlpha=1;m.edges.forEach(e=>line(verts[e[0]],verts[e[1]],color,.65*alpha))}
 function faceRecords(vertices,faces,fill){return faces.map(f=>{const ps=f.map(i=>project(vertices[i]));return{ps,d:ps.reduce((s,p)=>s+p[2],0)/ps.length,fill}})}
 function drawFaces(records,alpha=.64){records.sort((a,b)=>a.d-b.d);ctx.globalAlpha=alpha;records.forEach(r=>{ctx.beginPath();ctx.moveTo(r.ps[0][0],r.ps[0][1]);r.ps.slice(1).forEach(p=>ctx.lineTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=r.fill;ctx.fill();ctx.strokeStyle="#342c2444";ctx.lineWidth=.3;ctx.stroke()});ctx.globalAlpha=1}
-function componentWorld(comp,c,shift=0,translation=[0,0,0]){const origin=add(sub(c.position,qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw)),translation);return comp.vertices.map(v=>add(origin,qrot([v[0],v[1]+shift,v[2]],c.orientation_xyzw)))}
-function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];items.forEach(([comp,shift])=>records.push(...faceRecords(componentWorld(comp,c,shift,translation),comp.faces,color)));drawFaces(records,alpha)}
+function componentWorld(comp,c,shift=0,translation=[0,0,0]){const patch=qrot([c.contact_patch_lateral_offset_m||0,0,c.contact_patch_approach_offset_m||0],c.orientation_xyzw),origin=add(sub(sub(c.position,patch),qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw)),translation);return comp.vertices.map(v=>add(origin,qrot([v[0],v[1]+shift,v[2]],c.orientation_xyzw)))}
+function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=data.gripper.model==="pdz_gripper"?[[data.gripper.base,0],[data.gripper.left_finger,-Math.max(0,(c.jaw_width-.012)/2)],[data.gripper.right_finger,Math.max(0,(c.jaw_width-.012)/2)]]:[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];items.forEach(([comp,shift])=>records.push(...faceRecords(componentWorld(comp,c,shift,translation),comp.faces,color)));drawFaces(records,alpha)}
 function key(h,i){return `${h}|${i}`}function selected(){const h=data.holder_ids[state.row],i=data.inserter_ids[state.col];return{h,i,holder:data.holders[h],inserter:data.inserters[i],evaluation:data.evaluations[key(h,i)]||null}}
 function cell(h,i){const H=data.holders[h],I=data.inserters[i];if(H.unary.status!=="accepted"||I.unary.status!=="accepted")return{status:"unary",reason:H.unary.status!=="accepted"?H.unary.reason:I.unary.reason};return data.evaluations[key(h,i)]||{status:"unchecked",reason:"not_checked_limit"}}
 function motionTranslation(){const t=state.phase==="insertion"?data.step.final_to_pre_translation_m:data.step.retreat_translation_m;return state.phase==="insertion"?mul(t,1-state.progress):mul(t,state.progress)}
@@ -219,7 +222,7 @@ main{{max-width:1000px;margin:auto;padding:28px}}h1{{margin:0 0 5px}}p{{color:#7
 .step:hover{{border-color:#23836b;transform:translateY(-1px)}}span{{display:block;color:#716b61;font-size:12px;margin-top:4px}}.counts{{display:flex;gap:9px;flex-wrap:wrap;font-size:12px}}b{{color:#178650}}code{{font-size:11px;overflow-wrap:anywhere}}
 @media(max-width:750px){{.step{{grid-template-columns:1fr}}}}</style></head><body><main>
 <h1>Dual-Grasp Pair Summary</h1><p>{result.assembly}: {" → ".join(result.selected_order)} · base {result.base_part_id}</p>
-<p>Stage 3 checks KUKA end-effector geometry through insertion and retreat. Robot IK, links, and trajectories remain deferred.</p>
+<p>Stage 3 checks the configured end-effector collision geometry through insertion and retreat. Robot IK, links, and trajectories remain deferred.</p>
 <div class="steps">{"".join(rows)}</div></main></body></html>"""
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)

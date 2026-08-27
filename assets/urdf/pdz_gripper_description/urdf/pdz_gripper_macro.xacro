@@ -1,0 +1,189 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find realsense2_description)/urdf/_d405.urdf.xacro"/>
+  <!--
+    PDZ belt-driven parallel gripper.
+
+    The parent frame is the flange mounting point exported from SolidWorks:
+      +Z points from the robot flange through the gripper.
+      +X points toward the right finger in the fully-open CAD pose.
+
+    Each finger joint represents half the jaw opening. Joint position 0 is
+    closed and 0.032 m is fully open, giving a total opening of 0.064 m.
+  -->
+  <xacro:macro
+    name="pdz_gripper"
+    params="parent prefix:='' use_pads:=true pad_thickness:=0.008 use_camera:=true camera_use_nominal_extrinsics:=true *origin">
+    <!-- The Slim CAD pad mesh is 8 mm thick. Scale only its X dimension and
+         translate it so the mounting face at +/-14 mm remains fixed. -->
+    <xacro:property name="pad_reference_thickness" value="0.008"/>
+    <xacro:property name="pad_mount_face_offset" value="0.014"/>
+    <xacro:property
+      name="pad_thickness_scale"
+      value="${pad_thickness / pad_reference_thickness}"/>
+    <joint name="${prefix}pdz_gripper_mount_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${prefix}pdz_gripper_base_link"/>
+      <xacro:insert_block name="origin"/>
+    </joint>
+
+    <link name="${prefix}pdz_gripper_base_link">
+      <visual>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/visual/base.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="pdz_gripper_dark_grey">
+          <color rgba="0.22 0.25 0.29 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/collision/base.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="${prefix}pdz_gripper_left_finger_link">
+      <visual>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/visual/left_finger.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="pdz_gripper_orange">
+          <color rgba="0.95 0.36 0.08 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/collision/left_finger.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <xacro:if value="${use_pads}">
+        <visual name="left_tpu_pad">
+          <origin
+            xyz="${-pad_mount_face_offset * (1.0 - pad_thickness_scale)} 0 0"
+            rpy="0 0 0"/>
+          <geometry>
+            <mesh
+              filename="package://pdz_gripper_description/meshes/visual/left_pad_8mm.stl"
+              scale="${0.001 * pad_thickness_scale} 0.001 0.001"/>
+          </geometry>
+          <material name="pdz_gripper_tpu">
+            <color rgba="0.06 0.06 0.06 1.0"/>
+          </material>
+        </visual>
+        <collision name="left_tpu_pad">
+          <origin
+            xyz="${-pad_mount_face_offset * (1.0 - pad_thickness_scale)} 0 0"
+            rpy="0 0 0"/>
+          <geometry>
+            <mesh
+              filename="package://pdz_gripper_description/meshes/collision/left_pad_8mm.stl"
+              scale="${0.001 * pad_thickness_scale} 0.001 0.001"/>
+          </geometry>
+        </collision>
+      </xacro:if>
+    </link>
+
+    <joint name="${prefix}pdz_gripper_left_finger_joint" type="prismatic">
+      <parent link="${prefix}pdz_gripper_base_link"/>
+      <child link="${prefix}pdz_gripper_left_finger_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="-1 0 0"/>
+      <limit lower="0.0" upper="0.032" effort="100.0" velocity="0.05"/>
+    </joint>
+
+    <link name="${prefix}pdz_gripper_right_finger_link">
+      <visual>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/visual/right_finger.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="pdz_gripper_orange">
+          <color rgba="0.95 0.36 0.08 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh
+            filename="package://pdz_gripper_description/meshes/collision/right_finger.stl"
+            scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <xacro:if value="${use_pads}">
+        <visual name="right_tpu_pad">
+          <origin
+            xyz="${pad_mount_face_offset * (1.0 - pad_thickness_scale)} 0 0"
+            rpy="0 0 0"/>
+          <geometry>
+            <mesh
+              filename="package://pdz_gripper_description/meshes/visual/right_pad_8mm.stl"
+              scale="${0.001 * pad_thickness_scale} 0.001 0.001"/>
+          </geometry>
+          <material name="pdz_gripper_tpu">
+            <color rgba="0.06 0.06 0.06 1.0"/>
+          </material>
+        </visual>
+        <collision name="right_tpu_pad">
+          <origin
+            xyz="${pad_mount_face_offset * (1.0 - pad_thickness_scale)} 0 0"
+            rpy="0 0 0"/>
+          <geometry>
+            <mesh
+              filename="package://pdz_gripper_description/meshes/collision/right_pad_8mm.stl"
+              scale="${0.001 * pad_thickness_scale} 0.001 0.001"/>
+          </geometry>
+        </collision>
+      </xacro:if>
+    </link>
+
+    <joint name="${prefix}pdz_gripper_right_finger_joint" type="prismatic">
+      <parent link="${prefix}pdz_gripper_base_link"/>
+      <child link="${prefix}pdz_gripper_right_finger_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="0.0" upper="0.032" effort="100.0" velocity="0.05"/>
+      <mimic joint="${prefix}pdz_gripper_left_finger_joint" multiplier="1.0" offset="0.0"/>
+    </joint>
+
+    <!-- Grasp-center frame at the vertical midpoint of the 30 mm finger pads. -->
+    <link name="${prefix}pdz_gripper_tcp"/>
+    <joint name="${prefix}pdz_gripper_tcp_joint" type="fixed">
+      <parent link="${prefix}pdz_gripper_base_link"/>
+      <child link="${prefix}pdz_gripper_tcp"/>
+      <origin xyz="0 0 0.1355" rpy="0 0 0"/>
+    </joint>
+
+    <!--
+      RealSense D405 placement recovered from PDZ_Gripper_Slim(3).STEP.
+
+      The official D405 macro is attached at the centre of its 1/4-20 bottom
+      mounting screw. Its internal geometry then places camera_link at the
+      depth origin (left imager centre, 3.7 mm behind the cover glass).
+
+      The mounted camera mesh in CAD has flange-frame pose
+        xyz = [0, -0.048660254038, 0.066217967697] m
+        R   = Rx(-30 deg)
+      and the transform below reproduces that pose through the official
+      realsense2_description D405 model.
+    -->
+    <xacro:if value="${use_camera}">
+      <xacro:sensor_d405
+        parent="${prefix}pdz_gripper_base_link"
+        name="${prefix}camera"
+        use_nominal_extrinsics="${camera_use_nominal_extrinsics}">
+        <origin
+          xyz="0 -0.074171787517 0.064030695532"
+          rpy="${pi} ${-60.0 * pi / 180.0} ${pi / 2.0}"/>
+      </xacro:sensor_d405>
+    </xacro:if>
+  </xacro:macro>
+</robot>

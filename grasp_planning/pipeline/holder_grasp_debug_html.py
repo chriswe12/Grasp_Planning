@@ -12,6 +12,13 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     SavedGraspCandidate,
     _load_kuka_y_gripper_visual_mesh_tcp,
 )
+from grasp_planning.grasping.collision import (
+    GRIPPER_COLLISION_MODEL_PDZ,
+    _PDZ_GRIPPER_BODY_ROTATION_TCP,
+    _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M,
+    _load_pdz_gripper_collision_hull,
+    normalize_gripper_collision_model_name,
+)
 from grasp_planning.grasping.mesh_antipodal_grasp_generator import TriangleMesh
 
 
@@ -25,6 +32,16 @@ def _component_payload(name: str) -> dict[str, object]:
         "vertices": _rounded(vertices),
         "faces": np.asarray(faces, dtype=np.int64).tolist(),
     }
+
+
+def _pdz_component_payload(name: str) -> dict[str, object]:
+    """Express a PDZ URDF component in the planner TCP frame for the HTML."""
+
+    vertices, faces = _load_pdz_gripper_collision_hull(name)
+    vertices_tcp = vertices @ _PDZ_GRIPPER_BODY_ROTATION_TCP.T - (
+        _PDZ_GRIPPER_BODY_ROTATION_TCP @ _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M
+    )[None, :]
+    return {"vertices": _rounded(vertices_tcp), "faces": np.asarray(faces, dtype=np.int64).tolist()}
 
 
 def _candidate_payload(candidate: SavedGraspCandidate, rank: int) -> dict[str, object]:
@@ -56,17 +73,38 @@ def write_holder_grasp_debug_html(
     output_html: str | Path,
     metadata_lines: list[str],
     table_plane_local: list[list[float]] | None = None,
+    gripper_collision_model: str = "kuka_y_gripper",
 ) -> None:
     """Write one shared KUKA mesh plus lightweight data for every candidate."""
 
-    left_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("left_finger")
-    right_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("right_finger")
-    left_tip = left_vertices[left_vertices[:, 2] >= 0.08]
-    right_tip = right_vertices[right_vertices[:, 2] >= 0.08]
-    if not len(left_tip):
-        left_tip = left_vertices
-    if not len(right_tip):
-        right_tip = right_vertices
+    is_pdz = normalize_gripper_collision_model_name(gripper_collision_model) == GRIPPER_COLLISION_MODEL_PDZ
+    if is_pdz:
+        gripper_payload = {
+            "model": GRIPPER_COLLISION_MODEL_PDZ,
+            "tcp_to_grasp_center_m": [0.0, 0.0, 0.0],
+            "robot_tcp_from_grasp_center_m": [0.0, 0.0, 0.0],
+            "base": _pdz_component_payload("base"),
+            "left_finger": _pdz_component_payload("left_finger"),
+            "right_finger": _pdz_component_payload("right_finger"),
+        }
+    else:
+        left_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("left_finger")
+        right_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("right_finger")
+        left_tip = left_vertices[left_vertices[:, 2] >= 0.08]
+        right_tip = right_vertices[right_vertices[:, 2] >= 0.08]
+        if not len(left_tip):
+            left_tip = left_vertices
+        if not len(right_tip):
+            right_tip = right_vertices
+        gripper_payload = {
+            "model": "kuka_y_gripper",
+            "tcp_to_grasp_center_m": np.asarray(KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M, dtype=float).tolist(),
+            "base": _component_payload("base"),
+            "left_finger": _component_payload("left_finger"),
+            "right_finger": _component_payload("right_finger"),
+            "left_fingertip_inner_y": float(np.max(left_tip[:, 1])),
+            "right_fingertip_inner_y": float(np.min(right_tip[:, 1])),
+        }
 
     sorted_candidates = sorted(
         candidates,
@@ -82,17 +120,7 @@ def write_holder_grasp_debug_html(
             "vertices": _rounded(mesh_local.vertices_obj),
             "faces": np.asarray(mesh_local.faces, dtype=np.int64).tolist(),
         },
-        "gripper": {
-            "tcp_to_grasp_center_m": np.asarray(
-                KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
-                dtype=float,
-            ).tolist(),
-            "base": _component_payload("base"),
-            "left_finger": _component_payload("left_finger"),
-            "right_finger": _component_payload("right_finger"),
-            "left_fingertip_inner_y": float(np.max(left_tip[:, 1])),
-            "right_fingertip_inner_y": float(np.min(right_tip[:, 1])),
-        },
+        "gripper": gripper_payload,
         "metadata_lines": metadata_lines,
         "table_plane_local": table_plane_local,
         "candidates": [
@@ -217,14 +245,17 @@ function drawFaces(records){records.sort((a,b)=>a.depth-b.depth).forEach(r=>{ctx
   r.pts.slice(1).forEach(p=>ctx.lineTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=r.fill;ctx.fill();ctx.strokeStyle="#40372b55";ctx.lineWidth=.45;ctx.stroke()})}
 function edges(faces){const seen=new Set(),out=[];faces.forEach(f=>[[f[0],f[1]],[f[1],f[2]],[f[2],f[0]]].forEach(([a,b])=>{const k=a<b?`${a}:${b}`:`${b}:${a}`;if(!seen.has(k)){seen.add(k);out.push([a,b])}}));return out}
 const targetEdges=edges(data.mesh.faces);
-function componentWorld(component,c,shiftY=0){const origin=sub(c.position,qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw));
+function componentWorld(component,c,shiftY=0){const patch=qrot([c.contact_patch_lateral_offset_m||0,0,c.contact_patch_approach_offset_m||0],c.orientation_xyzw),origin=sub(sub(c.position,patch),qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw));
   return component.vertices.map(v=>add(origin,qrot([v[0],v[1]+shiftY,v[2]],c.orientation_xyzw)))}
 function drawTarget(){if(state.solid)drawFaces(faceRecords(data.mesh.vertices,data.mesh.faces,"#5f8275cc"));
   targetEdges.forEach(e=>line(data.mesh.vertices[e[0]],data.mesh.vertices[e[1]],"#3f6256",state.solid?.55:1.4))}
 function drawTable(){if(!data.table_plane_local)return;const pts=data.table_plane_local.map(project);ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
   pts.slice(1).forEach(p=>ctx.lineTo(p[0],p[1]));ctx.closePath();ctx.fillStyle="#2777a822";ctx.fill();ctx.strokeStyle="#2777a899";ctx.lineWidth=1.4;ctx.stroke()}
 function drawGripper(c){const half=c.jaw_width/2;
-  const items=[
+  const items=data.gripper.model==="pdz_gripper"?
+    // The PDZ hand is deliberately a single convex collision hull.  Keep it
+    // translucent so its conservative envelope cannot hide the pad contacts.
+    [[data.gripper.base,0,"#82612638"],[data.gripper.left_finger,-Math.max(0,(c.jaw_width-.012)/2),"#d18a2bc8"],[data.gripper.right_finger,Math.max(0,(c.jaw_width-.012)/2),"#d18a2bc8"]]:[
     [data.gripper.base,0,"#826126b8"],
     [data.gripper.left_finger,-half-data.gripper.left_fingertip_inner_y,"#d18a2bc8"],
     [data.gripper.right_finger,half-data.gripper.right_fingertip_inner_y,"#d18a2bc8"]];
@@ -234,6 +265,7 @@ function drawCandidateOverlay(list,selected){if(!state.overlay)return;list.forEa
 function drawAxes(){const o=[0,0,0],len=.025;arrow(o,[len,0,0],"#c23b32",1.5);arrow(o,[0,len,0],"#2f8b56",1.5);arrow(o,[0,0,len],"#2877b4",1.5)}
 function renderScene(){ctx.clearRect(0,0,canvas.width,canvas.height);const list=filtered(),c=selectedCandidate();drawTable();drawCandidateOverlay(list,c);drawTarget();drawAxes();if(!c)return;
   drawGripper(c);line(c.contact_a,c.contact_b,"#2d2b27",2.4);point(c.contact_a,"#d04732",6);point(c.contact_b,"#178166",6);point(c.position,"#b4462e",5);
+  if(data.gripper.model==="pdz_gripper"){const tcp=add(c.position,qrot(data.gripper.robot_tcp_from_grasp_center_m,c.orientation_xyzw));line(c.position,tcp,"#175eb0",1.7,[3,3]);point(tcp,"#175eb0",4)}
   const z=qrot([0,0,1],c.orientation_xyzw),x=qrot([1,0,0],c.orientation_xyzw),y=qrot([0,1,0],c.orientation_xyzw);
   const pre=sub(c.position,mul(z,.05));line(pre,c.position,"#2777a8",2,[7,5]);point(pre,"#2777a8",4);arrow(c.position,add(c.position,mul(z,.035)),"#2777a8",2.2);
   arrow(c.position,add(c.position,mul(x,.025)),"#c23b32",1.5);arrow(c.position,add(c.position,mul(y,.025)),"#2f8b56",1.5);
@@ -243,7 +275,7 @@ function renderDetails(){const c=selectedCandidate();if(!c){$("details").textCon
   const scores=Object.entries(c.score_components).map(([k,v])=>`  ${k}: ${typeof v==="number"?v.toFixed(6):v}`);
   $("details").textContent=[...data.metadata_lines,"",`rank:              ${c.rank} / ${data.candidates.length}`,`grasp_id:          ${c.grasp_id}`,
     `score:             ${c.score===null?"n/a":c.score.toFixed(6)}`,`jaw_width_m:       ${c.jaw_width.toFixed(6)}`,
-    `roll_angle_rad:    ${c.roll_angle_rad.toFixed(6)}`,`contact_offset_x:  ${c.contact_patch_lateral_offset_m.toFixed(6)}`,
+    `roll_angle_rad:    ${c.roll_angle_rad.toFixed(6)}`,data.gripper.model==="pdz_gripper"?`robot_tcp_offset_z:${data.gripper.robot_tcp_from_grasp_center_m[2].toFixed(6)}`:"",`contact_offset_x:  ${c.contact_patch_lateral_offset_m.toFixed(6)}`,
     `contact_offset_z:  ${c.contact_patch_approach_offset_m.toFixed(6)}`,`position:          ${fmt(c.position)}`,
     `contact_a:         ${fmt(c.contact_a)}`,`contact_b:         ${fmt(c.contact_b)}`,`normal_a:          ${fmt(c.normal_a)}`,
     `normal_b:          ${fmt(c.normal_b)}`,"score_components:",...scores].join("\\n")}

@@ -22,6 +22,7 @@ def _resolved_package_path(package_name: str, relative_path: str) -> str:
 def _launch_setup(context: LaunchContext):
     mode = LaunchConfiguration("mode").perform(context)
     robot_name = LaunchConfiguration("robot_name").perform(context)
+    gripper_model = LaunchConfiguration("gripper_model").perform(context)
     system_config_path = _resolved_package_path(
         LaunchConfiguration("sys_cfg_pkg").perform(context),
         LaunchConfiguration("sys_cfg").perform(context),
@@ -32,11 +33,11 @@ def _launch_setup(context: LaunchContext):
     )
     description_path = _resolved_package_path(
         "robot_integration_ros",
-        "urdf/iiwa7_y_gripper_moveit.urdf.xacro",
+        f"urdf/iiwa7_{gripper_model}_moveit.urdf.xacro",
     )
     semantic_description_path = _resolved_package_path(
         "robot_integration_ros",
-        "config/iiwa7_y_gripper.srdf.xacro",
+        f"config/iiwa7_{gripper_model}.srdf.xacro",
     )
 
     moveit_configs = (
@@ -137,6 +138,14 @@ def generate_launch_description() -> LaunchDescription:
         )
     )
     description.add_action(LBRDescriptionMixin.arg_robot_name())
+    description.add_action(
+        DeclareLaunchArgument(
+            "gripper_model",
+            default_value="y_gripper",
+            choices=["y_gripper", "pdz_gripper"],
+            description="Select the end-effector geometry and calibrated TCP used by MoveIt.",
+        )
+    )
     description.add_action(RVizMixin.arg_rviz())
     description.add_action(LBRROS2ControlMixin.arg_sys_cfg_pkg())
     description.add_action(LBRROS2ControlMixin.arg_sys_cfg())

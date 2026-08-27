@@ -14,9 +14,11 @@ from typing import Iterable
 import numpy as np
 
 from grasp_planning.grasping.collision import (
+    GRIPPER_COLLISION_MODEL_PDZ,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
     BoxCollisionPrimitive,
     KukaYGripperCollisionModel,
+    PdzGripperCollisionModel,
     MeshCollisionPrimitive,
     gripper_collision_check_gaps,
     make_gripper_collision_model,
@@ -103,6 +105,12 @@ class DualGraspPairConfig:
     balance_inserter_symmetry_transforms: bool = True
     exact_pair_clearance_ranking: bool = True
     stage3_worker_count: int = 1
+    # (lateral, approach) contact-patch offsets.  These are deliberately not
+    # a Cartesian grid: the PDZ pad uses a trapezoidal robust-contact region.
+    inserter_contact_offset_pairs_m: tuple[tuple[float, float], ...] = (
+        (-0.005, -0.005), (0.0, -0.005), (0.005, -0.005),
+        (-0.015, 0.005), (0.0, 0.005), (0.015, 0.005),
+    )
 
     def __post_init__(self) -> None:
         positive_ints = {
@@ -571,7 +579,7 @@ def _candidate_primitives_assembly(
             contact_point_b=np.asarray(candidate_obj.contact_point_b_obj, dtype=float),
             grasp_center=np.asarray(candidate_obj.grasp_position_obj, dtype=float),
         ):
-            if primitive.name == "kuka_y_gripper_base":
+            if primitive.name in {"kuka_y_gripper_base", "pdz_gripper_base"}:
                 if base_added:
                     continue
                 base_added = True
@@ -709,7 +717,7 @@ def _minimum_table_clearance_candidate(
             planning=planning,
             model_cache=model_cache,
         )
-        if isinstance(model, KukaYGripperCollisionModel)
+        if isinstance(model, (KukaYGripperCollisionModel, PdzGripperCollisionModel))
     )
     if fast_minima:
         minimum_z = min(fast_minima)
@@ -749,7 +757,7 @@ def _candidate_swept_component_bounds(
         planning=planning,
         model_cache=model_cache,
     ):
-        if not isinstance(model, KukaYGripperCollisionModel):
+        if not isinstance(model, (KukaYGripperCollisionModel, PdzGripperCollisionModel)):
             return ()
         for name, minimum, maximum in model.world_component_aabb_bounds_for_grasp(
             grasp_rotmat_obj=grasp_rotmat,
@@ -759,7 +767,7 @@ def _candidate_swept_component_bounds(
             rotation_world_from_object=source_pose_assembly.rotation_world_from_object,
             translation_world_from_object=source_pose_assembly.translation_world,
         ):
-            if name == "kuka_y_gripper_base":
+            if name in {"kuka_y_gripper_base", "pdz_gripper_base"}:
                 if base_added:
                     continue
                 base_added = True
@@ -813,7 +821,7 @@ def _retreat_translation(
     return tuple(float(value) for value in final_to_pre / norm * distance_m)
 
 
-def _evaluate_inserter_candidate_geometry(
+def _evaluate_inserter_candidate_geometry_single(
     candidate: SavedGraspCandidate,
     *,
     source_pose: ObjectWorldPose,
@@ -960,6 +968,34 @@ def _evaluate_inserter_candidate_geometry(
     )
 
 
+def _evaluate_inserter_candidate_geometry(candidate: SavedGraspCandidate, **kwargs) -> InserterCandidateStatus | None:
+    """Try every robust contact patch; retain the first collision-free pose."""
+
+    config: DualGraspPairConfig = kwargs["config"]
+    offsets = [(candidate.contact_patch_lateral_offset_m, candidate.contact_patch_approach_offset_m)]
+    offsets.extend(config.inserter_contact_offset_pairs_m)
+    seen: set[tuple[float, float]] = set()
+    failures: list[InserterCandidateStatus] = []
+    deferred = False
+    for lateral, approach in offsets:
+        key = (float(lateral), float(approach))
+        if key in seen:
+            continue
+        seen.add(key)
+        variant = replace(candidate, contact_patch_lateral_offset_m=key[0], contact_patch_approach_offset_m=key[1])
+        status = _evaluate_inserter_candidate_geometry_single(variant, **kwargs)
+        if status is None:
+            deferred = True
+            continue
+        if status.status == "accepted":
+            return status
+        failures.append(status)
+    if deferred:
+        return None
+    # Preserve the closest failure for diagnostics when no robust patch works.
+    return max(failures, key=lambda item: float("-inf") if item.minimum_clearance_m is None else item.minimum_clearance_m)
+
+
 def generate_inserter_grasp_library(
     *,
     sequence: AssemblySequence,
@@ -971,9 +1007,10 @@ def generate_inserter_grasp_library(
 
     if not step.holder_base_available:
         raise ValueError(f"Step '{step.step_id}' has no available holder base and cannot be paired.")
-    if planning.gripper_collision_model != GRIPPER_COLLISION_MODEL_KUKA_Y:
+    if planning.gripper_collision_model not in {GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ}:
         raise ValueError(
-            f"Dual-grasp pair planning requires planning.gripper_collision_model='{GRIPPER_COLLISION_MODEL_KUKA_Y}'."
+            "Dual-grasp pair planning requires a mesh collision model: "
+            f"'{GRIPPER_COLLISION_MODEL_KUKA_Y}' or '{GRIPPER_COLLISION_MODEL_PDZ}'."
         )
     if not trimesh_fcl_backend_available():
         raise RuntimeError("trimesh with python-fcl is required for inserter grasp filtering.")
@@ -1182,7 +1219,7 @@ def generate_inserter_grasp_library(
             continue
         statuses.append(candidate_status)
         if candidate_status.status == "accepted":
-            accepted.append(candidate)
+            accepted.append(candidate_status.candidate)
             cluster_counts[cluster] += 1
 
     for candidate in deferred_exact:
@@ -1240,7 +1277,7 @@ def generate_inserter_grasp_library(
             raise AssertionError("Exact inserter fallback unexpectedly deferred.")
         statuses.append(candidate_status)
         if candidate_status.status == "accepted":
-            accepted.append(candidate)
+            accepted.append(candidate_status.candidate)
             cluster_counts[cluster] += 1
 
     accepted_tuple = tuple(sorted(accepted, key=_candidate_sort_key))
@@ -2383,8 +2420,10 @@ def plan_dual_grasp_pairs(
 ) -> DualGraspPairPlanningResult:
     """Plan bounded, ranked end-effector pairs for every holder-active step."""
 
-    if planning.gripper_collision_model != GRIPPER_COLLISION_MODEL_KUKA_Y:
-        raise ValueError("Dual-grasp pair planning requires the KUKA Y-gripper collision model.")
+    if planning.gripper_collision_model not in {GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ}:
+        raise ValueError(
+            "Dual-grasp pair planning requires the KUKA Y-gripper or PDZ gripper mesh collision model."
+        )
     if not trimesh_fcl_backend_available():
         raise RuntimeError("trimesh with python-fcl is required for dual-grasp pair planning.")
     if (

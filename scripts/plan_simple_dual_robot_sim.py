@@ -50,18 +50,20 @@ from grasp_planning.ros2.multi_ik_planner import (  # noqa: E402
 )
 from grasp_planning.start_poses import (  # noqa: E402
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
-    kuka_gripper_clamp_width,
+    gripper_clamp_width,
     kuka_moveit_gripper_state,
 )
 
 MOVEIT_START_JOINT_POSITIONS = KUKA_MOVEIT_ARM_START_JOINT_VALUES
 ARM_SPEC_BY_ROBOT = {
     "lbr_one": {
+        "robot": "lbr_one",
         "planning_group": "arm_one",
         "pose_link": "lbr_one_gripper_tcp",
         "joint_names": tuple(f"lbr_one_A{index}" for index in range(1, 8)),
     },
     "lbr_two": {
+        "robot": "lbr_two",
         "planning_group": "arm_two",
         "pose_link": "lbr_two_gripper_tcp",
         "joint_names": tuple(f"lbr_two_A{index}" for index in range(1, 8)),
@@ -105,6 +107,12 @@ KUKA_A7_NEAR_LIMIT_BRANCH_RAD = 3.0
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--gripper-model",
+        choices=("y_gripper", "pdz_gripper"),
+        default="y_gripper",
+        help="MoveIt end-effector model carried by both arms.",
+    )
     parser.add_argument(
         "--artifact-root",
         type=Path,
@@ -1056,7 +1064,7 @@ def _validated_joint_target_sequence(
     endpoint = joint_targets.get(target_name)
     if endpoint is None:
         return ()
-    if target_name != "inserter_pickup_grasp":
+    if target_name not in {"holder_grasp", "inserter_pickup_grasp"}:
         return ((target_name, tuple(float(value) for value in endpoint)),)
 
     approach_prefix = f"{target_name}__approach_"
@@ -1200,22 +1208,31 @@ def _task_approach_gripper_state(task) -> dict[str, float]:
     holder_grasp = getattr(task, "holder_world_grasp", None)
     inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
     holder_robot = str(
-        getattr(task, "holder_robot_name", str(ARM_SPECS["holder"]["pose_link"]).split("_gripper", 1)[0])
+        getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"])
     )
     inserter_robot = str(
-        getattr(task, "inserter_robot_name", str(ARM_SPECS["inserter"]["pose_link"]).split("_gripper", 1)[0])
+        getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"])
     )
+    gripper_model = str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
     state: dict[str, float] = {}
     state.update(
         kuka_moveit_gripper_state(
             holder_robot,
-            kuka_gripper_clamp_width(getattr(holder_grasp, "gripper_width", 0.05)),
+            gripper_clamp_width(
+                getattr(holder_grasp, "gripper_width", 0.05),
+                gripper_model=gripper_model,
+            ),
+            gripper_model=gripper_model,
         )
     )
     state.update(
         kuka_moveit_gripper_state(
             inserter_robot,
-            kuka_gripper_clamp_width(getattr(inserter_grasp, "gripper_width", 0.05)),
+            gripper_clamp_width(
+                getattr(inserter_grasp, "gripper_width", 0.05),
+                gripper_model=gripper_model,
+            ),
+            gripper_model=gripper_model,
         )
     )
     return state
@@ -1227,19 +1244,22 @@ def _task_post_grasp_state_updates(task) -> dict[str, dict[str, float]]:
     holder_grasp = getattr(task, "holder_world_grasp", None)
     inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
     holder_robot = str(
-        getattr(task, "holder_robot_name", str(ARM_SPECS["holder"]["pose_link"]).split("_gripper", 1)[0])
+        getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"])
     )
     inserter_robot = str(
-        getattr(task, "inserter_robot_name", str(ARM_SPECS["inserter"]["pose_link"]).split("_gripper", 1)[0])
+        getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"])
     )
+    gripper_model = str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
     return {
         "holder_grasp": kuka_moveit_gripper_state(
             holder_robot,
             getattr(holder_grasp, "jaw_width", 0.04),
+            gripper_model=gripper_model,
         ),
         "inserter_pickup_grasp": kuka_moveit_gripper_state(
             inserter_robot,
             getattr(inserter_grasp, "jaw_width", 0.04),
+            gripper_model=gripper_model,
         ),
     }
 
@@ -1438,12 +1458,16 @@ def _ik_search_targets(
     target_names: tuple[str, ...],
     pickup_approach_ik_steps: int,
 ) -> tuple[_IkSearchTarget, ...]:
-    """Expand pickup approach into request-local numerical continuation targets."""
+    """Expand object-contact approaches into numerical continuation targets."""
 
     steps = max(1, int(pickup_approach_ik_steps))
     search_targets: list[_IkSearchTarget] = []
     for target_name in target_names:
-        if target_name != "inserter_pickup_grasp" or steps == 1:
+        pregrasp_target_name = {
+            "holder_grasp": "holder_pregrasp",
+            "inserter_pickup_grasp": "inserter_pickup_pregrasp",
+        }.get(target_name)
+        if pregrasp_target_name is None or steps == 1:
             search_targets.append(
                 _IkSearchTarget(
                     label=target_name,
@@ -1454,13 +1478,13 @@ def _ik_search_targets(
             )
             continue
 
-        start_payload = dict(targets["inserter_pickup_pregrasp"])
+        start_payload = dict(targets[pregrasp_target_name])
         final_payload = dict(targets[target_name])
         start_position = np.asarray(start_payload["position_world_m"], dtype=float)
         final_position = np.asarray(final_payload["position_world_m"], dtype=float)
         final_orientation = tuple(float(value) for value in final_payload["orientation_xyzw_world"])
         if start_position.shape != (3,) or final_position.shape != (3,) or len(final_orientation) != 4:
-            raise ValueError("Pickup pregrasp/grasp targets must contain 3D positions and a quaternion.")
+            raise ValueError("Contact pregrasp/grasp targets must contain 3D positions and a quaternion.")
         for step_index in range(1, steps + 1):
             fraction = float(step_index) / float(steps)
             position = start_position + fraction * (final_position - start_position)
@@ -2117,8 +2141,30 @@ def _configure_role_assignment(
     )
 
 
+def _configure_gripper_model(gripper_model: str) -> None:
+    """Select the dual MoveIt TCP links before commanders are constructed."""
+
+    global ARM_SPEC_BY_ROBOT, ARM_SPECS
+    model = str(gripper_model)
+    tcp_suffix = "pdz_gripper_tcp" if model == "pdz_gripper" else "gripper_tcp"
+    ARM_SPEC_BY_ROBOT = {
+        robot: {
+            "robot": robot,
+            "planning_group": "arm_one" if robot == "lbr_one" else "arm_two",
+            "pose_link": f"{robot}_{tcp_suffix}",
+            "joint_names": tuple(f"{robot}_A{index}" for index in range(1, 8)),
+        }
+        for robot in ("lbr_one", "lbr_two")
+    }
+    ARM_SPECS = {
+        "holder": dict(ARM_SPEC_BY_ROBOT["lbr_one"]),
+        "inserter": dict(ARM_SPEC_BY_ROBOT["lbr_two"]),
+    }
+
+
 def main() -> int:
     args = _parse_args()
+    _configure_gripper_model(str(args.gripper_model))
     if rclpy is None:
         raise RuntimeError(
             "ROS2 MoveIt dependencies are unavailable. Source ROS2 and both workspaces before running this planner."
@@ -2222,6 +2268,16 @@ def main() -> int:
             include_nonretained_identity_fallbacks=(not strict_retained_only and not bool(args.pair_id)),
         )
     )
+    artifact_models = {
+        str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
+        for task in tasks
+    }
+    requested_artifact_model = "pdz_gripper" if str(args.gripper_model) == "pdz_gripper" else "kuka_y_gripper"
+    if artifact_models != {requested_artifact_model}:
+        raise ValueError(
+            "The selected MoveIt gripper model does not match the Stage-3 artifacts: "
+            f"requested={requested_artifact_model} artifacts={sorted(artifact_models)}."
+        )
     tasks = [
         with_inserter_pickup_pregrasp_offset(task, pickup_pregrasp_offsets_m[0])
         for task in tasks

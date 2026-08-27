@@ -1,4 +1,4 @@
-"""Launch two side-by-side iiwa7 arms with calibrated Y-grippers in one MoveIt model."""
+"""Launch two side-by-side iiwa7 arms with one selected gripper model."""
 
 from pathlib import Path
 
@@ -22,8 +22,9 @@ def _launch_setup(context: LaunchContext):
     mode = LaunchConfiguration("mode").perform(context)
     robot_namespace = LaunchConfiguration("robot_namespace").perform(context)
     ik_solver = LaunchConfiguration("ik_solver").perform(context)
-    description_path = _package_path("urdf/dual_iiwa7_y_gripper_moveit.urdf.xacro")
-    semantic_description_path = _package_path("config/dual_iiwa7_y_gripper.srdf")
+    gripper_model = LaunchConfiguration("gripper_model").perform(context)
+    description_path = _package_path(f"urdf/dual_iiwa7_{gripper_model}_moveit.urdf.xacro")
+    semantic_description_path = _package_path(f"config/dual_iiwa7_{gripper_model}.srdf")
     kinematics_path = _package_path(
         "config/dual_lbr_kinematics_pick_ik.yaml" if ik_solver == "pick_ik" else "config/dual_lbr_kinematics.yaml"
     )
@@ -114,6 +115,14 @@ def _launch_setup(context: LaunchContext):
 
 def generate_launch_description() -> LaunchDescription:
     description = LaunchDescription()
+    description.add_action(
+        DeclareLaunchArgument(
+            "gripper_model",
+            default_value="y_gripper",
+            choices=["y_gripper", "pdz_gripper"],
+            description="End-effector model carried by both arms.",
+        )
+    )
     description.add_action(
         DeclareLaunchArgument(
             "mode",

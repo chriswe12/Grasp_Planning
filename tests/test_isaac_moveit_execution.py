@@ -18,7 +18,12 @@ from grasp_planning.start_poses import (
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
     KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
     KUKA_Y_GRIPPER_TRAVEL_M,
+    PDZ_GRIPPER_CLOSED_WIDTH_M,
+    PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
+    PDZ_GRIPPER_OPEN_WIDTH_M,
+    PDZ_GRIPPER_TRAVEL_M,
     gripper_joint_target_from_width,
+    gripper_approach_width,
     gripper_max_open_width,
     kuka_isaac_to_moveit_joint_positions,
     kuka_moveit_to_isaac_joint_positions,
@@ -127,6 +132,26 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(gripper_max_open_width("left_finger_joint"), KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M)
         self.assertAlmostEqual(gripper_max_open_width("panda_finger_joint1"), 0.04)
 
+    def test_pdz_gripper_width_maps_to_outward_joint_target(self) -> None:
+        self.assertAlmostEqual(
+            gripper_joint_target_from_width("pdz_gripper_left_finger_joint", PDZ_GRIPPER_CLOSED_WIDTH_M),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            gripper_joint_target_from_width("pdz_gripper_right_finger_joint", PDZ_GRIPPER_OPEN_WIDTH_M),
+            PDZ_GRIPPER_TRAVEL_M,
+        )
+        self.assertAlmostEqual(gripper_joint_target_from_width("pdz_gripper_left_finger_joint", 0.040), 0.014)
+        self.assertAlmostEqual(
+            gripper_max_open_width("pdz_gripper_left_finger_joint"),
+            PDZ_GRIPPER_OPEN_WIDTH_M,
+        )
+        self.assertAlmostEqual(PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M, 0.015)
+        self.assertAlmostEqual(
+            gripper_approach_width(0.040, gripper_model="pdz_gripper"),
+            0.070,
+        )
+
     def test_kuka_moveit_joint_positions_are_converted_to_generated_usd_coordinates(self) -> None:
         self.assertEqual(
             KUKA_MOVEIT_ARM_START_JOINT_VALUES,
@@ -160,6 +185,49 @@ class IsaacMoveItExecutionTests(unittest.TestCase):
         self.assertEqual(context.arm_joint_names, tuple(f"joint{i}" for i in range(1, 8)))
         self.assertEqual(context.hand_joint_names, ("left_finger_joint", "right_finger_joint"))
         self.assertEqual(context.hand_command_joint_names, ("left_finger_joint",))
+
+    def test_motion_context_resolves_pdz_tcp_and_driver_joint(self) -> None:
+        robot = SimpleNamespace(
+            body_names=["base_link", "link7", "pdz_gripper_base_link", "pdz_gripper_tcp"],
+            joint_names=[
+                *(f"joint{i}" for i in range(1, 8)),
+                "pdz_gripper_left_finger_joint",
+                "pdz_gripper_right_finger_joint",
+            ],
+            device="cpu",
+            is_fixed_base=True,
+        )
+
+        context = FR3MotionContext(robot=robot, scene=object(), sim=object())
+
+        self.assertEqual(context.ee_body_name, "pdz_gripper_tcp")
+        self.assertEqual(
+            context.hand_joint_names,
+            ("pdz_gripper_left_finger_joint", "pdz_gripper_right_finger_joint"),
+        )
+        self.assertEqual(
+            context.hand_command_joint_names,
+            ("pdz_gripper_left_finger_joint", "pdz_gripper_right_finger_joint"),
+        )
+
+    def test_pdz_contact_stall_acceptance_uses_decreasing_driver_coordinate(self) -> None:
+        accepted_diagnostics = {
+            "gripper_close_joint_names": ["pdz_gripper_left_finger_joint"],
+            "gripper_close_final_joint_positions": [0.015],
+            "gripper_close_final_max_step_delta": 0.0,
+        }
+        rejected_diagnostics = {
+            "gripper_close_joint_names": ["pdz_gripper_left_finger_joint"],
+            "gripper_close_final_joint_positions": [0.028],
+            "gripper_close_final_max_step_delta": 0.0,
+        }
+
+        self.assertTrue(pick_execution._kuka_contact_stall_matches_grasp_width(accepted_diagnostics, 0.040))
+        self.assertFalse(pick_execution._kuka_contact_stall_matches_grasp_width(rejected_diagnostics, 0.040))
+        self.assertEqual(
+            accepted_diagnostics["gripper_close_contact_stall_driver_joint_name"],
+            "pdz_gripper_left_finger_joint",
+        )
 
     def test_isaac_grasp_tcp_mapping_matches_grasp_frame(self) -> None:
         position_w = (0.4, -0.1, 0.2)

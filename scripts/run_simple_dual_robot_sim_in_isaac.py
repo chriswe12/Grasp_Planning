@@ -82,6 +82,12 @@ parser.add_argument(
     help="Maximum time to hold each final arm waypoint before declaring it unsettled.",
 )
 parser.add_argument("--grasp-settle-time-s", type=float, default=1.0)
+parser.add_argument(
+    "--approach-clearance-per-finger-m",
+    type=float,
+    default=None,
+    help="Override the selected gripper model's extra opening on each side while approaching contact.",
+)
 parser.add_argument("--gripper-close-duration-s", type=float, default=3.0)
 parser.add_argument("--gripper-contact-preload-m", type=float, default=0.0004)
 parser.add_argument(
@@ -89,8 +95,8 @@ parser.add_argument(
     type=float,
     default=0.0,
     help=(
-        "Requested closed gripper width. The default 0.0 uses the same KUKA "
-        "effective close command as run_pipeline: min(0.001 m, selected jaw width)."
+        "Requested closed gripper width. The default 0.0 commands the selected "
+        "model's minimum opening, bounded by the selected jaw width."
     ),
 )
 parser.add_argument(
@@ -167,6 +173,11 @@ if args_cli.critical_damping_ratio <= 0.0:
     parser.error("--critical-damping-ratio must be positive.")
 if args_cli.gripper_contact_preload_m < 0.0:
     parser.error("--gripper-contact-preload-m must be non-negative.")
+if (
+    args_cli.approach_clearance_per_finger_m is not None
+    and args_cli.approach_clearance_per_finger_m < 0.0
+):
+    parser.error("--approach-clearance-per-finger-m must be non-negative.")
 if args_cli.trajectory_waypoint_tolerance_rad <= 0.0:
     parser.error("--trajectory-waypoint-tolerance-rad must be positive.")
 if args_cli.contact_pose_tolerance_rad <= 0.0:
@@ -237,9 +248,13 @@ from grasp_planning.planning.trajectory_executor import (  # noqa: E402
 from grasp_planning.planning.types import JointTrajectory  # noqa: E402
 from grasp_planning.start_poses import (  # noqa: E402
     KUKA_MOVEIT_ARM_START_JOINT_VALUES,
-    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
+    PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M,
+    PDZ_GRIPPER_CLOSED_WIDTH_M,
+    gripper_approach_width,
     gripper_joint_target_from_width,
-    kuka_gripper_approach_width,
+    gripper_width_from_joint_position,
+    is_gripper_command_joint_name,
     kuka_moveit_to_isaac_joint_positions,
 )
 
@@ -597,9 +612,24 @@ def _close_gripper(
     contact_role: str,
     step_callback: Callable[[], None] | None = None,
 ) -> dict[str, object]:
+    command_joint_name = next(
+        (
+            str(name)
+            for name in context.robot.joint_names
+            if is_gripper_command_joint_name(str(name))
+        ),
+        "left_finger_joint",
+    )
+    minimum_width_m = (
+        PDZ_GRIPPER_CLOSED_WIDTH_M
+        if command_joint_name == "pdz_gripper_left_finger_joint"
+        else 0.001
+    )
     requested_close_width_m = float(args_cli.close_width)
     commanded_width_m = (
-        requested_close_width_m if requested_close_width_m > 0.0 else min(0.001, float(selected_jaw_width_m))
+        requested_close_width_m
+        if requested_close_width_m > 0.0
+        else min(float(selected_jaw_width_m), minimum_width_m)
     )
     settle_steps = max(
         1,
@@ -640,18 +670,30 @@ def _close_gripper(
     )
     joint_names = diagnostics.get("gripper_close_joint_names")
     final_positions = diagnostics.get("gripper_close_final_joint_positions")
+    driver_joint_name = (
+        next(
+            (
+                str(name)
+                for name in joint_names
+                if str(name) in {"left_finger_joint", "pdz_gripper_left_finger_joint"}
+            ),
+            "",
+        )
+        if isinstance(joint_names, list)
+        else ""
+    )
     if (
         not width_matched
         and isinstance(joint_names, list)
         and isinstance(final_positions, list)
-        and "left_finger_joint" in joint_names
+        and bool(driver_joint_name)
         and len(final_positions) == len(joint_names)
     ):
-        left_index = joint_names.index("left_finger_joint")
+        left_index = joint_names.index(driver_joint_name)
         final_close = abs(float(final_positions[left_index]))
         selected_close = abs(
             gripper_joint_target_from_width(
-                "left_finger_joint",
+                driver_joint_name,
                 float(selected_jaw_width_m),
             )
         )
@@ -710,16 +752,13 @@ def _close_gripper(
     if (
         isinstance(joint_names, list)
         and isinstance(contact_hold_positions, list)
-        and "left_finger_joint" in joint_names
+        and bool(driver_joint_name)
         and len(contact_hold_positions) == len(joint_names)
     ):
-        left_index = joint_names.index("left_finger_joint")
-        transport_hold_width_m = max(
-            0.0,
-            min(
-                KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
-                KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * abs(float(contact_hold_positions[left_index])),
-            ),
+        left_index = joint_names.index(driver_joint_name)
+        transport_hold_width_m = gripper_width_from_joint_position(
+            driver_joint_name,
+            float(contact_hold_positions[left_index]),
         )
     diagnostics["transport_hold_width_m"] = float(transport_hold_width_m)
     context.fixed_gripper_width = float(transport_hold_width_m)
@@ -1038,6 +1077,14 @@ def main() -> int:
     if set(role_robot_names.values()) != {"lbr_one", "lbr_two"}:
         raise ValueError(f"Dual plan roles must assign lbr_one and lbr_two exactly once; got {role_robot_names}.")
     ROLE_ROBOT_NAMES = role_robot_names
+    gripper_model = str(plan.get("gripper_model", "kuka_y_gripper"))
+    robot_usd = args_cli.robot_usd.expanduser().resolve()
+    asset_is_pdz = "pdz_gripper" in str(robot_usd).lower()
+    if (gripper_model == "pdz_gripper") != asset_is_pdz:
+        raise ValueError(
+            "Dual plan and Isaac robot asset use different grippers: "
+            f"plan={gripper_model} robot_usd={robot_usd}."
+        )
     objects = dict(plan["objects"])
     base_payload = dict(objects["base"])
     raw_subassembly = objects.get("subassembly")
@@ -1116,7 +1163,7 @@ def main() -> int:
     sim._disable_app_control_on_stop_handle = True
     sim.set_camera_view([1.65, -1.25, 1.15], [0.48, 0.0, 0.25])
     scene_cfg = make_dual_kuka_assembly_scene_cfg(
-        robot_asset_path=str(args_cli.robot_usd.expanduser().resolve()),
+        robot_asset_path=str(robot_usd),
         base_part_usd_path=base_usd,
         incoming_part_usd_path=incoming_usd,
         base_part_position=base_position,
@@ -1176,11 +1223,15 @@ def main() -> int:
     base_part = scene["base_part"]
     incoming_part = scene["incoming_part"]
     plan_grasps = dict(plan["grasps"])
-    holder_approach_width_m = kuka_gripper_approach_width(
-        float(dict(plan_grasps["holder"])["jaw_width_m"])
+    holder_approach_width_m = gripper_approach_width(
+        float(dict(plan_grasps["holder"])["jaw_width_m"]),
+        gripper_model=gripper_model,
+        clearance_per_finger_m=args_cli.approach_clearance_per_finger_m,
     )
-    inserter_approach_width_m = kuka_gripper_approach_width(
-        float(dict(plan_grasps["inserter_pickup"])["jaw_width_m"])
+    inserter_approach_width_m = gripper_approach_width(
+        float(dict(plan_grasps["inserter_pickup"])["jaw_width_m"]),
+        gripper_model=gripper_model,
+        clearance_per_finger_m=args_cli.approach_clearance_per_finger_m,
     )
     holder_context = FR3MotionContext(
         robot=holder_robot,
@@ -1196,6 +1247,17 @@ def main() -> int:
         fixed_gripper_width=inserter_approach_width_m,
         critical_damping_ratio=float(args_cli.critical_damping_ratio),
     )
+    resolved_robot_frames = {
+        "holder_ee_body": holder_context.ee_body_name,
+        "inserter_ee_body": inserter_context.ee_body_name,
+        "holder_pdz_bodies": [
+            name for name in holder_robot.body_names if "pdz_gripper" in str(name)
+        ],
+        "inserter_pdz_bodies": [
+            name for name in inserter_robot.body_names if "pdz_gripper" in str(name)
+        ],
+    }
+    print(f"[DUAL-SIM-ISAAC] Resolved robot frames: {resolved_robot_frames}", flush=True)
     holder_damping = holder_context.refresh_critical_joint_damping(required=True)
     inserter_damping = inserter_context.refresh_critical_joint_damping(required=True)
     print(
@@ -1295,11 +1357,19 @@ def main() -> int:
             "finger_contact_min_force_n": float(args_cli.finger_contact_min_force_n),
             "gripper_contact_preload_m": float(args_cli.gripper_contact_preload_m),
             "gripper_close_duration_s": float(args_cli.gripper_close_duration_s),
+            "approach_clearance_per_finger_m": (
+                args_cli.approach_clearance_per_finger_m
+                if args_cli.approach_clearance_per_finger_m is not None
+                else PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
+                if gripper_model == "pdz_gripper"
+                else KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
+            ),
         },
         "joint_drive_damping": {
             "holder": holder_damping,
             "inserter": inserter_damping,
         },
+        "resolved_robot_frames": resolved_robot_frames,
         "tracking_tolerances_rad": {
             "transit": float(args_cli.trajectory_waypoint_tolerance_rad),
             "contact_pose": float(args_cli.contact_pose_tolerance_rad),
@@ -1422,11 +1492,16 @@ def main() -> int:
             trajectories = {str(name): dict(value) for name, value in dict(case_plan["trajectories"]).items()}
             targets = {str(name): dict(value) for name, value in dict(case_plan["targets"]).items()}
             case_grasps = dict(case_plan["grasps"])
-            holder_context.fixed_gripper_width = kuka_gripper_approach_width(
-                float(dict(case_grasps["holder"])["jaw_width_m"])
+            case_gripper_model = str(case_plan.get("gripper_model", gripper_model))
+            holder_context.fixed_gripper_width = gripper_approach_width(
+                float(dict(case_grasps["holder"])["jaw_width_m"]),
+                gripper_model=case_gripper_model,
+                clearance_per_finger_m=args_cli.approach_clearance_per_finger_m,
             )
-            inserter_context.fixed_gripper_width = kuka_gripper_approach_width(
-                float(dict(case_grasps["inserter_pickup"])["jaw_width_m"])
+            inserter_context.fixed_gripper_width = gripper_approach_width(
+                float(dict(case_grasps["inserter_pickup"])["jaw_width_m"]),
+                gripper_model=case_gripper_model,
+                clearance_per_finger_m=args_cli.approach_clearance_per_finger_m,
             )
             case_initial_base_pose = _root_pose(base_part)
             case_result: dict[str, object] = {
@@ -1521,8 +1596,15 @@ def main() -> int:
         )
         return 0
 
+    active_role = "holder"
+    active_target_name = "holder_grasp"
+    active_target_arm: torch.Tensor | None = None
     try:
         holder_labels = ("holder_pregrasp", "holder_grasp")
+        active_target_arm = _trajectory_group(
+            context=holder_context,
+            segments=tuple((label, trajectories[label]) for label in holder_labels),
+        ).waypoints[-1]
         holder_last, detail, duration_s = _execute_segments(
             context=holder_context,
             segments=tuple((label, trajectories[label]) for label in holder_labels),
@@ -1608,6 +1690,12 @@ def main() -> int:
             "inserter_pickup_pregrasp",
             "inserter_pickup_grasp",
         )
+        active_role = "inserter"
+        active_target_name = "inserter_pickup_grasp"
+        active_target_arm = _trajectory_group(
+            context=inserter_context,
+            segments=tuple((label, trajectories[label]) for label in pickup_labels),
+        ).waypoints[-1]
         inserter_last, detail, duration_s = _execute_segments(
             context=inserter_context,
             segments=tuple((label, trajectories[label]) for label in pickup_labels),
@@ -1659,6 +1747,11 @@ def main() -> int:
             "inserter_above_preinsertion",
             "inserter_preinsertion",
         )
+        active_target_name = "inserter_preinsertion"
+        active_target_arm = _trajectory_group(
+            context=inserter_context,
+            segments=tuple((label, trajectories[label]) for label in transport_labels),
+        ).waypoints[-1]
         inserter_last, detail, duration_s = _execute_segments(
             context=inserter_context,
             segments=tuple((label, trajectories[label]) for label in transport_labels),
@@ -1810,6 +1903,23 @@ def main() -> int:
             }
         )
     except Exception as exc:
+        failure_diagnostics: dict[str, object] = {
+            "active_role": active_role,
+            "active_target": active_target_name,
+            "holder_hand_joint_positions": _hand_joint_positions(holder_context),
+            "inserter_hand_joint_positions": _hand_joint_positions(inserter_context),
+            "holder_finger_contacts": _finger_contact_snapshot(scene, role="holder"),
+            "inserter_finger_contacts": _finger_contact_snapshot(scene, role="inserter"),
+        }
+        if active_target_arm is not None:
+            active_context = holder_context if active_role == "holder" else inserter_context
+            failure_diagnostics["tracking"] = _motion_snapshot(
+                context=active_context,
+                target_arm=active_target_arm,
+                target_pose=targets[active_target_name],
+                base_part=base_part,
+                incoming_part=incoming_part,
+            )
         result.update(
             {
                 "success": False,
@@ -1818,6 +1928,7 @@ def main() -> int:
                 "traceback": traceback.format_exc(),
                 "final_base_pose": _root_pose(base_part),
                 "final_incoming_pose": _root_pose(incoming_part),
+                "failure_diagnostics": failure_diagnostics,
             }
         )
 

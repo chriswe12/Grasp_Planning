@@ -41,6 +41,7 @@ Common options:
   --ros-domain-id ID            Default: DUAL_ROBOT_ROS_DOMAIN_ID,
                                 then ROS_DOMAIN_ID, then 0
   --ik-solver NAME              kdl or pick_ik. Default: kdl
+  --gripper-model NAME          y_gripper or pdz_gripper. Default: y_gripper
   --rviz
   --reuse-moveit               Reuse an already-running /lbr_dual_arm stack
   --keep-moveit                Leave a stack started by this script running
@@ -71,6 +72,7 @@ Simulation options:
   --joint-rank-candidates N    Candidates to pre-plan in joint space. Default: 8
   --record-video PATH
   --isaac-python PATH
+  --robot-usd PATH              Isaac robot asset; defaults to the selected gripper model.
   --static-friction VALUE       Isaac contact friction. Default: 5.0
   --dynamic-friction VALUE      Isaac contact friction. Default: 4.0
   --gripper-effort-limit VALUE  Isaac finger effort limit. Default: 200
@@ -120,6 +122,7 @@ TASK_OUTPUT=""
 ATTEMPT_OUTPUT=""
 ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
 IK_SOLVER="kdl"
+GRIPPER_MODEL="y_gripper"
 RVIZ=0
 REUSE_MOVEIT=0
 KEEP_MOVEIT=0
@@ -142,6 +145,7 @@ PLANNING_TIME="15.0"
 PLANNING_ATTEMPTS="16"
 RECORD_VIDEO=""
 ISAAC_PYTHON="${ISAAC_PYTHON:-/media/pdz/Elements1/IsaacLab/isaaclab.sh}"
+ROBOT_USD=""
 STATIC_FRICTION="5.0"
 DYNAMIC_FRICTION="4.0"
 GRIPPER_EFFORT_LIMIT="200.0"
@@ -269,6 +273,7 @@ while [[ $# -gt 0 ]]; do
     --attempt-output) ATTEMPT_OUTPUT="${2:-}"; shift 2 ;;
     --ros-domain-id) ROS_DOMAIN_VALUE="${2:-}"; shift 2 ;;
     --ik-solver) IK_SOLVER="${2:-}"; shift 2 ;;
+    --gripper-model) GRIPPER_MODEL="${2:-}"; shift 2 ;;
     --rviz) RVIZ=1; shift ;;
     --reuse-moveit) REUSE_MOVEIT=1; shift ;;
     --keep-moveit) KEEP_MOVEIT=1; shift ;;
@@ -291,6 +296,7 @@ while [[ $# -gt 0 ]]; do
     --planning-attempts) PLANNING_ATTEMPTS="${2:-}"; shift 2 ;;
     --record-video) RECORD_VIDEO="${2:-}"; shift 2 ;;
     --isaac-python) ISAAC_PYTHON="${2:-}"; shift 2 ;;
+    --robot-usd) ROBOT_USD="${2:-}"; shift 2 ;;
     --static-friction) STATIC_FRICTION="${2:-}"; shift 2 ;;
     --dynamic-friction) DYNAMIC_FRICTION="${2:-}"; shift 2 ;;
     --gripper-effort-limit) GRIPPER_EFFORT_LIMIT="${2:-}"; shift 2 ;;
@@ -330,6 +336,17 @@ fi
 if [[ "${IK_SOLVER}" != "pick_ik" && "${IK_SOLVER}" != "kdl" ]]; then
   echo "[DUAL-RUN] --ik-solver must be pick_ik or kdl." >&2
   exit 1
+fi
+if [[ "${GRIPPER_MODEL}" != "y_gripper" && "${GRIPPER_MODEL}" != "pdz_gripper" ]]; then
+  echo "[DUAL-RUN] --gripper-model must be y_gripper or pdz_gripper." >&2
+  exit 1
+fi
+if [[ -z "${ROBOT_USD}" ]]; then
+  if [[ "${GRIPPER_MODEL}" == "pdz_gripper" ]]; then
+    ROBOT_USD="assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd"
+  else
+    ROBOT_USD="assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
+  fi
 fi
 if [[ ! "${JOINT_RANK_CANDIDATES}" =~ ^[0-9]+$ ]]; then
   echo "[DUAL-RUN] --joint-rank-candidates must be a non-negative integer." >&2
@@ -398,6 +415,7 @@ else
   START_ARGS=(--mode "$([[ "${MODE}" == "sim" ]] && printf mock || printf hardware)")
   START_ARGS+=(--ros-domain-id "${ROS_DOMAIN_ID}")
   START_ARGS+=(--ik-solver "${IK_SOLVER}")
+  START_ARGS+=(--gripper-model "${GRIPPER_MODEL}")
   if [[ -z "${MOVEIT_PROCESS_GROUP_FILE}" ]]; then
     MOVEIT_RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dual-run-moveit.XXXXXX")"
     MOVEIT_PROCESS_GROUP_FILE="${MOVEIT_RUNTIME_DIR}/process-group"
@@ -510,6 +528,7 @@ if [[ "${MODE}" == "sim" ]]; then
     --planning-attempts "${PLANNING_ATTEMPTS}"
   )
   PLAN_ARGS+=(--inserter-arm "${INSERTER_ARM}")
+  PLAN_ARGS+=(--gripper-model "${GRIPPER_MODEL}")
   python3 scripts/plan_simple_dual_robot_sim.py \
     "${COMMON_TASK_ARGS[@]}" \
     --max-pair-attempts "${MAX_PAIR_ATTEMPTS}" \
@@ -523,6 +542,7 @@ if [[ "${MODE}" == "sim" ]]; then
   ISAAC_ARGS=(
     -p scripts/run_simple_dual_robot_sim_in_isaac.py
     --plan-json "${PLAN_PATH}"
+    --robot-usd "${ROBOT_USD}"
   )
   ISAAC_ARGS+=(
     --attempt-artifact

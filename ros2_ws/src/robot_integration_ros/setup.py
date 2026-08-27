@@ -4,6 +4,15 @@ from setuptools import setup
 
 package_name = "robot_integration_ros"
 kuka_mesh_root = Path("../../../assets/urdf/kuka_iiwa7_y_gripper/meshes")
+pdz_mesh_root = Path("../../../assets/urdf/kuka_iiwa7_pdz_gripper/meshes")
+pdz_mesh_data_files = [
+    (
+        f"share/{package_name}/meshes/pdz_gripper/{path.relative_to(pdz_mesh_root).parent}",
+        [str(path)],
+    )
+    for path in sorted(pdz_mesh_root.rglob("*"))
+    if path.is_file()
+]
 
 
 setup(
@@ -24,7 +33,9 @@ setup(
             f"share/{package_name}/config",
             [
                 "config/dual_iiwa7_y_gripper.srdf",
+                "config/dual_iiwa7_pdz_gripper.srdf",
                 "config/dual_lbr_controllers.yaml",
+                "config/dual_lbr_controllers_pdz_gripper.yaml",
                 "config/dual_lbr_initial_joint_positions.yaml",
                 "config/dual_lbr_joint_limits.yaml",
                 "config/dual_lbr_kinematics.yaml",
@@ -32,6 +43,7 @@ setup(
                 "config/dual_lbr_moveit.rviz",
                 "config/dual_lbr_moveit_controllers.yaml",
                 "config/iiwa7_y_gripper.srdf.xacro",
+                "config/iiwa7_pdz_gripper.srdf.xacro",
                 "config/lbr_one_system_config.yaml",
                 "config/lbr_two_system_config.yaml",
             ],
@@ -40,10 +52,13 @@ setup(
             f"share/{package_name}/urdf",
             [
                 "urdf/dual_iiwa7_y_gripper_moveit.urdf.xacro",
+                "urdf/dual_iiwa7_pdz_gripper_moveit.urdf.xacro",
                 "urdf/iiwa7_y_gripper_moveit.urdf.xacro",
+                "urdf/iiwa7_pdz_gripper_moveit.urdf.xacro",
             ],
         ),
         (f"share/{package_name}/meshes", [str(path) for path in sorted(kuka_mesh_root.glob("*.STL"))]),
+        *pdz_mesh_data_files,
     ],
     install_requires=["setuptools"],
     zip_safe=True,

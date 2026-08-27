@@ -309,6 +309,33 @@ def _object_root_z(object_asset) -> float | None:
     return z if math.isfinite(z) else None
 
 
+def _robot_body_pose_diagnostics(context: FR3MotionContext, *, prefix: str) -> dict[str, object]:
+    """Capture end-effector body poses for frame/contact debugging."""
+
+    robot = getattr(context, "robot", None)
+    if robot is None:
+        return {f"{prefix}_resolved_ee_body_name": str(getattr(context, "ee_body_name", ""))}
+    body_names = tuple(getattr(robot, "body_names", ()))
+    body_pose_w = getattr(getattr(robot, "data", None), "body_pose_w", None)
+    diagnostics: dict[str, object] = {
+        f"{prefix}_resolved_ee_body_name": str(getattr(context, "ee_body_name", "")),
+    }
+    if body_pose_w is None:
+        return diagnostics
+    for body_idx, body_name in enumerate(body_names):
+        if not (
+            "pdz_gripper" in body_name
+            or body_name in {"gripper_tcp", "gripper_base_link", "left_finger_link", "right_finger_link"}
+        ):
+            continue
+        try:
+            pose = body_pose_w[0, body_idx, :7]
+            diagnostics[f"{prefix}_{body_name}_pose_wxyz"] = [float(value) for value in pose.tolist()]
+        except (AttributeError, IndexError, TypeError):
+            continue
+    return diagnostics
+
+
 def _finite_float_or_none(value: float | None) -> float | None:
     if value is None:
         return None
@@ -331,7 +358,17 @@ def _kuka_contact_stall_matches_grasp_width(
         return None
 
     joint_names = diagnostics.get("gripper_close_joint_names")
-    if not isinstance(joint_names, list) or "left_finger_joint" not in joint_names:
+    if not isinstance(joint_names, list):
+        return None
+    driver_joint_name = next(
+        (
+            name
+            for name in ("left_finger_joint", "pdz_gripper_left_finger_joint")
+            if name in joint_names
+        ),
+        None,
+    )
+    if driver_joint_name is None:
         return None
 
     final_positions = diagnostics.get("gripper_close_final_joint_positions")
@@ -346,18 +383,24 @@ def _kuka_contact_stall_matches_grasp_width(
         )
         return False
 
-    left_index = joint_names.index("left_finger_joint")
-    final_close = abs(float(final_positions[left_index]))
-    expected_close = abs(gripper_joint_target_from_width("left_finger_joint", float(selected_gripper_width_m)))
+    driver_index = joint_names.index(driver_joint_name)
+    final_position = float(final_positions[driver_index])
+    expected_position = gripper_joint_target_from_width(driver_joint_name, float(selected_gripper_width_m))
     tolerance = 0.003
-    diagnostics["gripper_close_contact_stall_max_abs_joint_position"] = float(final_close)
-    diagnostics["gripper_close_contact_stall_expected_min_joint_position"] = float(expected_close)
+    diagnostics["gripper_close_contact_stall_driver_joint_name"] = driver_joint_name
+    diagnostics["gripper_close_contact_stall_driver_joint_position"] = float(final_position)
+    diagnostics["gripper_close_contact_stall_expected_joint_position"] = float(expected_position)
     diagnostics["gripper_close_contact_stall_expected_tolerance_m"] = float(tolerance)
-    accepted = final_close + tolerance >= expected_close
+    if driver_joint_name == "pdz_gripper_left_finger_joint":
+        accepted = final_position <= expected_position + tolerance
+        expectation = "at most"
+    else:
+        accepted = abs(final_position) + tolerance >= abs(expected_position)
+        expectation = "at least"
     diagnostics["gripper_close_contact_stall_accepted"] = bool(accepted)
     if not accepted:
         diagnostics["gripper_close_contact_stall_accept_reason"] = (
-            f"finger only closed to {final_close:.4f} m, expected at least {expected_close:.4f} m "
+            f"finger stopped at {final_position:.4f} m, expected {expectation} {expected_position:.4f} m "
             f"for selected grasp width {float(selected_gripper_width_m):.4f} m"
         )
     return accepted
@@ -729,6 +772,15 @@ def execute_pick_from_moveit_joint_trajectories(
             flush=True,
         )
 
+    preclose_body_diagnostics = _robot_body_pose_diagnostics(context, prefix="preclose")
+    moveit_diagnostics.update(preclose_body_diagnostics)
+    print(
+        "[INFO]: Isaac pre-close EE diagnostics "
+        f"resolved_body={preclose_body_diagnostics.get('preclose_resolved_ee_body_name', 'n/a')} "
+        f"poses={{{', '.join(key + '=' + str(value) for key, value in preclose_body_diagnostics.items() if key.endswith('_pose_wxyz'))}}}.",
+        flush=True,
+    )
+
     gripper_close_diagnostics = _command_gripper_width(
         sim=sim,
         scene=scene,
@@ -747,6 +799,7 @@ def execute_pick_from_moveit_joint_trajectories(
     )
     if isinstance(gripper_close_diagnostics, Mapping):
         moveit_diagnostics.update(dict(gripper_close_diagnostics))
+    moveit_diagnostics.update(_robot_body_pose_diagnostics(context, prefix="postclose"))
     print(
         "[INFO]: Isaac gripper close complete "
         f"status={moveit_diagnostics.get('gripper_close_status', 'unknown')} "

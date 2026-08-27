@@ -58,6 +58,7 @@ class FR3PickController:
 
     _EE_PATTERNS = (
         r"gripper_tcp",
+        r"pdz_gripper_tcp",
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
@@ -72,7 +73,10 @@ class FR3PickController:
         "panda_hand": (0.0, 0.0, 0.107),
     }
     _ARM_JOINT_PATTERN = r"(?:(?:panda|fr3)_joint[1-7]|joint[1-7])"
-    _HAND_JOINT_PATTERN = r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint)"
+    _HAND_JOINT_PATTERN = (
+        r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint|"
+        r"pdz_gripper_(?:left|right)_finger_joint)"
+    )
     _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _MIN_TCP_Z_M = 0.005

@@ -609,6 +609,30 @@ def test_pickup_approach_ik_targets_interpolate_and_publish_complete_chain() -> 
     assert all(target.pose.frame_id == "base_link" for target in approach)
 
 
+def test_holder_approach_ik_targets_use_the_same_contact_continuation() -> None:
+    targets = _task("pair", "holder", "inserter", 1.0).to_payload()["targets"]
+    targets["holder_pregrasp"]["position_world_m"] = [0.40, 0.0, 0.12]
+    targets["holder_grasp"]["position_world_m"] = [0.45, 0.0, 0.02]
+
+    search_targets = _ik_search_targets(
+        targets=targets,
+        target_names=("holder_pregrasp", "holder_grasp"),
+        pickup_approach_ik_steps=5,
+    )
+
+    assert len(search_targets) == 6
+    approach = search_targets[1:]
+    assert [target.pose.x for target in approach] == pytest.approx([0.41, 0.42, 0.43, 0.44, 0.45])
+    assert [target.pose.z for target in approach] == pytest.approx([0.10, 0.08, 0.06, 0.04, 0.02])
+    assert [target.result_target_name for target in approach] == [
+        "holder_grasp__approach_01_of_05",
+        "holder_grasp__approach_02_of_05",
+        "holder_grasp__approach_03_of_05",
+        "holder_grasp__approach_04_of_05",
+        "holder_grasp",
+    ]
+
+
 class _CoordinatedBranchCommander:
     def __init__(self, role: str) -> None:
         self.role = role

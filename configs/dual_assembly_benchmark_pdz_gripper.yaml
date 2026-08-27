@@ -1,0 +1,68 @@
+benchmark:
+  assembly: plumbers_block
+  artifact_root: artifacts/dual_grasp_planning_pdz_gripper
+  output_dir: artifacts/dual_assembly_benchmark_pdz_gripper/plumbers_block
+  ros_domain_id: 43
+  isaac_python: /media/pdz/Elements1/IsaacLab/isaaclab.sh
+  gripper_model: pdz_gripper
+  robot_usd: assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd
+  max_pair_attempts: 256
+  max_ik_screen_candidates: 0
+  joint_rank_candidates: 8
+  ik_solver: kdl
+  ik_timeout_s: 0.35
+  exact_ik_candidates: 7
+  exact_ik_beam_width: 4
+  exact_ik_seed_perturbation_rad: 0.60
+  pickup_approach_ik_steps: 5
+  pickup_pregrasp_offsets_m: [0.10, 0.075, 0.05, 0.025]
+  planning_time_s: 15.0
+  planning_attempts: 16
+  real_preflight_planning_time_s: 8.0
+  real_preflight_planning_attempts: 8
+  real_preflight_moveit_start_timeout_s: 90.0
+  cartesian_max_step_m: 0.005
+  cartesian_revolute_jump_threshold_rad: 0.35
+  execution_start_tolerance_rad: 0.05
+
+base:
+  position_world_m: [0.50, 0.0, -0.03]
+  floor_z_world_m: -0.03
+  yaw_deg: 0.0
+
+placements:
+  - {id: left_inner_front, x: 0.44, y: -0.18}
+  - {id: left_inner_middle, x: 0.55, y: -0.18}
+  - {id: left_inner_back, x: 0.66, y: -0.18}
+  - {id: left_outer_front, x: 0.44, y: -0.30}
+  - {id: left_outer_middle, x: 0.55, y: -0.30}
+  - {id: left_outer_back, x: 0.66, y: -0.30}
+  - {id: right_inner_front, x: 0.44, y: 0.18}
+  - {id: right_inner_middle, x: 0.55, y: 0.18}
+  - {id: right_inner_back, x: 0.66, y: 0.18}
+  - {id: right_outer_front, x: 0.44, y: 0.30}
+  - {id: right_outer_middle, x: 0.55, y: 0.30}
+  - {id: right_outer_back, x: 0.66, y: 0.30}
+
+orientations:
+  - {id: upright_yaw_0, rpy_deg: [0.0, 0.0, 0.0]}
+  - {id: upright_yaw_90, rpy_deg: [0.0, 0.0, 90.0]}
+  - {id: upright_yaw_180, rpy_deg: [0.0, 0.0, 180.0]}
+  - {id: upright_yaw_270, rpy_deg: [0.0, 0.0, 270.0]}
+  - {id: roll_90_yaw_0, rpy_deg: [90.0, 0.0, 0.0]}
+  - {id: roll_90_yaw_90, rpy_deg: [90.0, 0.0, 90.0]}
+  - {id: pitch_90_yaw_0, rpy_deg: [0.0, 90.0, 0.0]}
+  - {id: pitch_90_yaw_90, rpy_deg: [0.0, 90.0, 90.0]}
+
+selection:
+  incoming_parts: []
+  limit_cases:
+
+physics:
+  static_friction: 5.0
+  dynamic_friction: 4.0
+  gripper_effort_limit: 200.0
+  critical_damping_ratio: 1.0
+  gripper_close_duration_s: 3.0
+  finger_contact_min_force_n: 0.25
+  gripper_contact_preload_m: 0.0004

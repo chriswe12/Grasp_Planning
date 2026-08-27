@@ -13,6 +13,9 @@ from grasp_planning.grasping.fabrica_grasp_debug import (
     quat_to_rotmat_xyzw,
     rotmat_to_quat_xyzw,
 )
+from grasp_planning.grasping.collision import GRIPPER_COLLISION_MODEL_PDZ, normalize_gripper_collision_model_name
+
+from .holder_grasp_debug_html import _pdz_component_payload
 
 from .assembly_sequence import AssemblySequence
 from .assembly_sequence_debug_html import assembly_sequence_visual_payload
@@ -27,12 +30,23 @@ def _component_payload(name: str) -> dict[str, object]:
     }
 
 
-def _gripper_payload() -> dict[str, object]:
+def _gripper_payload(gripper_collision_model: str = "kuka_y_gripper") -> dict[str, object]:
+    if normalize_gripper_collision_model_name(gripper_collision_model) == GRIPPER_COLLISION_MODEL_PDZ:
+        return {
+            "model": GRIPPER_COLLISION_MODEL_PDZ,
+            "tcp_to_grasp_center_m": [0.0, 0.0, 0.0],
+            # Candidate poses are expressed directly at the calibrated TCP.
+            "robot_tcp_from_grasp_center_m": [0.0, 0.0, 0.0],
+            "base": _pdz_component_payload("base"),
+            "left_finger": _pdz_component_payload("left_finger"),
+            "right_finger": _pdz_component_payload("right_finger"),
+        }
     left_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("left_finger")
     right_vertices, _ = _load_kuka_y_gripper_visual_mesh_tcp("right_finger")
     left_tip = left_vertices[left_vertices[:, 2] >= 0.08]
     right_tip = right_vertices[right_vertices[:, 2] >= 0.08]
     return {
+        "model": "kuka_y_gripper",
         "tcp_to_grasp_center_m": np.asarray(
             KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M,
             dtype=float,
@@ -76,6 +90,8 @@ def _candidate_payloads(result: HolderStateFeasibilityResult) -> list[dict[str, 
                 ).tolist(),
                 "jaw_width": candidate.jaw_width,
                 "roll_angle_rad": candidate.roll_angle_rad,
+                "contact_patch_lateral_offset_m": candidate.contact_patch_lateral_offset_m,
+                "contact_patch_approach_offset_m": candidate.contact_patch_approach_offset_m,
                 "score": candidate.score,
                 "score_components": candidate.score_components or {},
             }
@@ -210,9 +226,9 @@ ctx.globalAlpha=.34*alpha;ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidt
 m.edges.forEach(e=>line(verts[e[0]],verts[e[1]],color,.7*alpha))}
 function faceRecords(vertices,faces,fill){return faces.map(f=>{const ps=f.map(i=>project(vertices[i]));return{ps,d:ps.reduce((s,p)=>s+p[2],0)/ps.length,fill}})}
 function drawFaces(records,alpha=.68){records.sort((a,b)=>a.d-b.d);ctx.globalAlpha=alpha;records.forEach(r=>{ctx.beginPath();ctx.moveTo(r.ps[0][0],r.ps[0][1]);r.ps.slice(1).forEach(p=>ctx.lineTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=r.fill;ctx.fill();ctx.strokeStyle="#3c302955";ctx.lineWidth=.35;ctx.stroke()});ctx.globalAlpha=1}
-function componentWorld(comp,c,shift=0,translation=[0,0,0]){const origin=add(sub(c.position,qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw)),translation);
+function componentWorld(comp,c,shift=0,translation=[0,0,0]){const patch=qrot([c.contact_patch_lateral_offset_m||0,0,c.contact_patch_approach_offset_m||0],c.orientation_xyzw),origin=add(sub(sub(c.position,patch),qrot(data.gripper.tcp_to_grasp_center_m,c.orientation_xyzw)),translation);
 return comp.vertices.map(v=>add(origin,qrot([v[0],v[1]+shift,v[2]],c.orientation_xyzw)))}
-function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];
+function drawGripper(c,color,translation=[0,0,0],alpha=.68){const h=c.jaw_width/2,items=data.gripper.model==="pdz_gripper"?[[data.gripper.base,0],[data.gripper.left_finger,-Math.max(0,(c.jaw_width-.012)/2)],[data.gripper.right_finger,Math.max(0,(c.jaw_width-.012)/2)]]:[[data.gripper.base,0],[data.gripper.left_finger,-h-data.gripper.left_fingertip_inner_y],[data.gripper.right_finger,h-data.gripper.right_fingertip_inner_y]],records=[];
 items.forEach(([comp,shift])=>records.push(...faceRecords(componentWorld(comp,c,shift,translation),comp.faces,color)));drawFaces(records,alpha)}
 function currentState(){return data.states[state.step]}function filtered(){const st=currentState(),q=state.search.toLowerCase();return data.candidates.filter(c=>{const r=st.results[c.grasp_id];return(!q||c.grasp_id.toLowerCase().includes(q))&&(!state.reason||r.reason===state.reason)})}
 function selected(){const a=filtered();if(!a.length)return null;state.selected=Math.min(state.selected,a.length-1);return a[state.selected]}

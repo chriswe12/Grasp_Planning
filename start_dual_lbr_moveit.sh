@@ -8,13 +8,14 @@ Usage:
   ./start_dual_lbr_moveit.sh --mode hardware --rviz
 
 Starts one MoveIt planning scene containing two side-by-side KUKA iiwa7 arms.
-Each arm carries the repository's calibrated Y-gripper and has its own planning
-group and trajectory controller.
+Each arm carries the selected repository gripper and has its own planning group
+and trajectory controller.
 
 Options:
   --lbr-ws PATH               LBR ROS2 workspace. Default: /home/pdz/lbr-stack
   --mode MODE                 mock or hardware. Default: mock
   --ik-solver NAME            kdl or pick_ik. Default: kdl
+  --gripper-model NAME        y_gripper or pdz_gripper. Default: y_gripper
   --rviz                      Launch the dual-arm RViz configuration.
   --robot-namespace NAME      Shared ROS namespace. Default: lbr_dual_arm
   --ros-domain-id ID          Force the ROS domain for this stack.
@@ -35,6 +36,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LBR_WS="/home/pdz/lbr-stack"
 MODE="mock"
 IK_SOLVER="kdl"
+GRIPPER_MODEL="y_gripper"
 RVIZ=0
 ROBOT_NAMESPACE="lbr_dual_arm"
 ROS_DOMAIN_VALUE="${DUAL_ROBOT_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
@@ -111,6 +113,10 @@ while [[ $# -gt 0 ]]; do
       IK_SOLVER="${2:-}"
       shift 2
       ;;
+    --gripper-model)
+      GRIPPER_MODEL="${2:-}"
+      shift 2
+      ;;
     --rviz)
       RVIZ=1
       shift
@@ -170,6 +176,10 @@ if [[ "${IK_SOLVER}" != "pick_ik" && "${IK_SOLVER}" != "kdl" ]]; then
   echo "[DUAL-LBR-MOVEIT] --ik-solver must be 'pick_ik' or 'kdl'." >&2
   exit 1
 fi
+if [[ "${GRIPPER_MODEL}" != "y_gripper" && "${GRIPPER_MODEL}" != "pdz_gripper" ]]; then
+  echo "[DUAL-LBR-MOVEIT] --gripper-model must be 'y_gripper' or 'pdz_gripper'." >&2
+  exit 1
+fi
 
 source_if_exists "/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
 source_if_exists "${LBR_WS}/install/setup.bash"
@@ -216,10 +226,16 @@ fi
 
 trap cleanup EXIT INT TERM
 
-echo "[DUAL-LBR-MOVEIT] Starting both iiwa7/Y-gripper arms in ${MODE} mode with ${IK_SOLVER} on ROS domain ${ROS_DOMAIN_ID}."
+controller_config="config/dual_lbr_controllers.yaml"
+if [[ "${GRIPPER_MODEL}" == "pdz_gripper" ]]; then
+  controller_config="config/dual_lbr_controllers_pdz_gripper.yaml"
+fi
+echo "[DUAL-LBR-MOVEIT] Starting both iiwa7/${GRIPPER_MODEL} arms in ${MODE} mode with ${IK_SOLVER} on ROS domain ${ROS_DOMAIN_ID}."
 setsid ros2 launch robot_integration_ros dual_aligned_lbr_moveit.launch.py \
   mode:="${MODE}" \
   ik_solver:="${IK_SOLVER}" \
+  gripper_model:="${GRIPPER_MODEL}" \
+  ctrl_cfg:="${controller_config}" \
   robot_namespace:="${ROBOT_NAMESPACE}" \
   rviz:="$([[ "${RVIZ}" -eq 1 ]] && printf true || printf false)" &
 launch_pid="$!"

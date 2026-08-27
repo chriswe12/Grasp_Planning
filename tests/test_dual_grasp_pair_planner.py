@@ -957,7 +957,10 @@ class InserterUnaryFilteringTests(unittest.TestCase):
                         sequence=_sequence(parts=parts),
                         step=_step(),
                         planning=_planning(),
-                        config=_config(max_inserter_candidates_per_step=1),
+                        config=_config(
+                            max_inserter_candidates_per_step=1,
+                            inserter_contact_offset_pairs_m=(),
+                        ),
                     )
             by_id = {status.grasp_id: status for status in library.candidate_statuses}
             self.assertEqual(

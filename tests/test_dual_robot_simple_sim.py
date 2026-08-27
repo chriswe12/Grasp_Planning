@@ -581,7 +581,8 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
     assert "default=0.030" in isaac_runner
     assert "default=2.0" in isaac_runner
     assert '"--close-width"' in isaac_runner
-    assert "min(0.001, float(selected_jaw_width_m))" in isaac_runner
+    assert "min(float(selected_jaw_width_m), minimum_width_m)" in isaac_runner
+    assert "clearance_per_finger_m=args_cli.approach_clearance_per_finger_m" in isaac_runner
     assert '"tcp_position_error_m"' in isaac_runner
     assert '"duration_s"' in isaac_runner
     assert "inserter_pickup_lift" in isaac_runner

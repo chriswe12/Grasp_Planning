@@ -13,6 +13,7 @@ import numpy as np
 
 from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator
 from grasp_planning.grasping.collision import (
+    GRIPPER_COLLISION_MODEL_PDZ,
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
     KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION,
@@ -128,6 +129,13 @@ def _robot_metadata_for_planning(planning: PlanningConfig) -> dict[str, object]:
             "gripper_model": GRIPPER_COLLISION_MODEL_KUKA_Y,
             "tcp_link": "gripper_tcp",
             "tcp_offset_m": [0.0, 0.0, 0.1455],
+        }
+    if planning.gripper_collision_model == GRIPPER_COLLISION_MODEL_PDZ:
+        return {
+            "robot_model": "kuka_iiwa7",
+            "gripper_model": GRIPPER_COLLISION_MODEL_PDZ,
+            "tcp_link": "pdz_gripper_tcp",
+            "tcp_offset_m": [0.0, 0.0, 0.1355],
         }
     return {
         "robot_model": "franka_fr3",
@@ -550,7 +558,12 @@ def _stage1_cache_key_payload(
             KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION
             if normalize_gripper_collision_model_name(planning.gripper_collision_model)
             == GRIPPER_COLLISION_MODEL_KUKA_Y
-            else "franka_hand_geometry_v1"
+            else (
+                "pdz_gripper_slim_8mm_collision_v5_floor_and_contact_offsets"
+                if normalize_gripper_collision_model_name(planning.gripper_collision_model)
+                == GRIPPER_COLLISION_MODEL_PDZ
+                else "franka_hand_geometry_v1"
+            )
         ),
         "geometry": {
             "target_mesh": _path_cache_record(geometry.target_mesh_path),

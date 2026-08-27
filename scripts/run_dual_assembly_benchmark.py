@@ -404,6 +404,13 @@ def _command(
         "--headless",
         "--no-planning-debug-gui",
     ]
+    if benchmark.get("gripper_model"):
+        command.extend(("--gripper-model", str(benchmark["gripper_model"])))
+    if benchmark.get("robot_usd"):
+        robot_usd = Path(str(benchmark["robot_usd"])).expanduser()
+        if not robot_usd.is_absolute():
+            robot_usd = REPO_ROOT / robot_usd
+        command.extend(("--robot-usd", str(robot_usd.resolve())))
 
     if real_preflight_only:
         command.extend(
@@ -1444,7 +1451,7 @@ def _managed_mock_moveit_command(
     process_group_file: Path,
 ) -> list[str]:
     benchmark = dict(payload.get("benchmark", {}) or {})
-    return [
+    command = [
         str(REPO_ROOT / "start_dual_lbr_moveit.sh"),
         "--mode",
         "mock",
@@ -1455,6 +1462,9 @@ def _managed_mock_moveit_command(
         "--process-group-file",
         str(process_group_file),
     ]
+    if benchmark.get("gripper_model"):
+        command.extend(("--gripper-model", str(benchmark["gripper_model"])))
+    return command
 
 
 def _wait_for_managed_moveit(

@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from grasp_planning.grasping.collision import (  # noqa: E402
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    GRIPPER_COLLISION_MODEL_PDZ,
     BoxCollisionPrimitive,
     GraspCollisionEvaluator,
     MeshCollisionPrimitive,
@@ -100,6 +101,14 @@ def _benchmark_robot_metadata(planning: PlanningConfig) -> dict[str, object]:
                 "robot_model": "kuka_iiwa7",
                 "tcp_link": "gripper_tcp",
                 "tcp_offset_m": [0.0, 0.0, 0.1455],
+            }
+        )
+    elif planning.gripper_collision_model == GRIPPER_COLLISION_MODEL_PDZ:
+        metadata.update(
+            {
+                "robot_model": "kuka_iiwa7",
+                "tcp_link": "pdz_gripper_tcp",
+                "tcp_offset_m": [0.0, 0.0, 0.1355],
             }
         )
     else:

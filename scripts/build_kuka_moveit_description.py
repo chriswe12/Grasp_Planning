@@ -24,12 +24,32 @@ DUAL_ARM_BASE_Y_M = {
     "lbr_two": 0.42,
 }
 
+DUAL_PDZ_NAME_REPLACEMENTS = (
+    ("_gripper_tcp", "_pdz_gripper_tcp"),
+    ("_gripper_base_link", "_pdz_gripper_base_link"),
+    ("_left_finger_joint", "_pdz_gripper_left_finger_joint"),
+    ("_right_finger_joint", "_pdz_gripper_right_finger_joint"),
+    ("_left_finger_link", "_pdz_gripper_left_finger_link"),
+    ("_right_finger_link", "_pdz_gripper_right_finger_link"),
+)
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-urdf", type=Path, default=DEFAULT_SOURCE_URDF)
     parser.add_argument("--output-xacro", type=Path, default=DEFAULT_OUTPUT_XACRO)
     parser.add_argument("--dual-output-xacro", type=Path, default=DEFAULT_DUAL_OUTPUT_XACRO)
+    parser.add_argument(
+        "--package-mesh-prefix",
+        default=PACKAGE_MESH_PREFIX,
+        help="Package URI prefix used for generated mesh references.",
+    )
+    parser.add_argument(
+        "--preserve-mesh-subdirectories",
+        action="store_true",
+        help="Preserve paths below ../meshes instead of flattening to basenames.",
+    )
+    parser.add_argument("--single-only", action="store_true", help="Generate only --output-xacro.")
     return parser.parse_args()
 
 
@@ -47,7 +67,19 @@ def _joint_name(name: str) -> str:
     return name
 
 
-def _rename_description_element(element: ET.Element) -> ET.Element:
+def _source_label(source_urdf: Path) -> str:
+    try:
+        return str(source_urdf.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(source_urdf)
+
+
+def _rename_description_element(
+    element: ET.Element,
+    *,
+    package_mesh_prefix: str = PACKAGE_MESH_PREFIX,
+    preserve_mesh_subdirectories: bool = False,
+) -> ET.Element:
     renamed = copy.deepcopy(element)
     if renamed.tag == "link":
         renamed.set("name", _link_name(str(renamed.get("name"))))
@@ -66,7 +98,12 @@ def _rename_description_element(element: ET.Element) -> ET.Element:
     for mesh in renamed.iter("mesh"):
         filename = str(mesh.get("filename", ""))
         if filename.startswith("../meshes/"):
-            mesh.set("filename", PACKAGE_MESH_PREFIX + Path(filename).name)
+            mesh_relative = filename.removeprefix("../meshes/")
+            mesh.set(
+                "filename",
+                str(package_mesh_prefix)
+                + (mesh_relative if preserve_mesh_subdirectories else Path(mesh_relative).name),
+            )
     return renamed
 
 
@@ -84,7 +121,13 @@ def _dual_joint_name(robot_name: str, name: str) -> str:
     return f"{robot_name}_{name}"
 
 
-def _rename_dual_description_element(element: ET.Element, *, robot_name: str) -> ET.Element:
+def _rename_dual_description_element(
+    element: ET.Element,
+    *,
+    robot_name: str,
+    package_mesh_prefix: str = PACKAGE_MESH_PREFIX,
+    preserve_mesh_subdirectories: bool = False,
+) -> ET.Element:
     renamed = copy.deepcopy(element)
     if renamed.tag == "link":
         renamed.set("name", _dual_link_name(robot_name, str(renamed.get("name"))))
@@ -107,7 +150,12 @@ def _rename_dual_description_element(element: ET.Element, *, robot_name: str) ->
     for mesh in renamed.iter("mesh"):
         filename = str(mesh.get("filename", ""))
         if filename.startswith("../meshes/"):
-            mesh.set("filename", PACKAGE_MESH_PREFIX + Path(filename).name)
+            mesh_relative = filename.removeprefix("../meshes/")
+            mesh.set(
+                "filename",
+                str(package_mesh_prefix)
+                + (mesh_relative if preserve_mesh_subdirectories else Path(mesh_relative).name),
+            )
     return renamed
 
 
@@ -127,7 +175,13 @@ def _append_hardware_ee(root: ET.Element, *, robot_name: str) -> None:
     )
 
 
-def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
+def build_moveit_xacro(
+    *,
+    source_urdf: Path,
+    output_xacro: Path,
+    package_mesh_prefix: str = PACKAGE_MESH_PREFIX,
+    preserve_mesh_subdirectories: bool = False,
+) -> Path:
     source_root = ET.parse(source_urdf).getroot()
     arm_joints = [
         joint
@@ -142,9 +196,7 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
     # must match exactly or MoveIt silently drops semantic groups.
     root = ET.Element("robot", {"name": "iiwa7"})
     root.append(
-        ET.Comment(
-            " Generated from assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf; do not hand-edit. "
-        )
+        ET.Comment(f" Generated from {_source_label(source_urdf)}; do not hand-edit. ")
     )
     ET.SubElement(
         root,
@@ -184,7 +236,13 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
 
     for element in source_root:
         if element.tag in {"link", "joint"}:
-            root.append(_rename_description_element(element))
+            root.append(
+                _rename_description_element(
+                    element,
+                    package_mesh_prefix=package_mesh_prefix,
+                    preserve_mesh_subdirectories=preserve_mesh_subdirectories,
+                )
+            )
 
     # lbr_ros2_control's force/torque estimator is configured against
     # <robot_name>_link_ee. Keep that canonical frame at 35 mm above link_7;
@@ -223,8 +281,14 @@ def build_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
     return output_xacro
 
 
-def build_dual_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
-    """Build one MoveIt robot model containing two fully prefixed iiwa7/Y-gripper chains."""
+def build_dual_moveit_xacro(
+    *,
+    source_urdf: Path,
+    output_xacro: Path,
+    package_mesh_prefix: str = PACKAGE_MESH_PREFIX,
+    preserve_mesh_subdirectories: bool = False,
+) -> Path:
+    """Build one MoveIt robot model containing two fully prefixed iiwa7/gripper chains."""
 
     source_root = ET.parse(source_urdf).getroot()
     arm_joints = [
@@ -237,10 +301,11 @@ def build_dual_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
 
     ET.register_namespace("xacro", XACRO_NS)
     root = ET.Element("robot", {"name": "lbr_dual_arm"})
+    gripper_label = "calibrated Y-gripper" if "y_gripper" in source_urdf.name else "calibrated PDZ gripper"
     root.append(
         ET.Comment(
-            " Generated from assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf; "
-            "both arms carry the calibrated Y-gripper; do not hand-edit. "
+            f" Generated from {_source_label(source_urdf)}; "
+            f"both arms carry the {gripper_label}; do not hand-edit. "
         )
     )
     ET.SubElement(
@@ -289,7 +354,14 @@ def build_dual_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
 
         for element in source_root:
             if element.tag in {"link", "joint"}:
-                root.append(_rename_dual_description_element(element, robot_name=robot_name))
+                root.append(
+                    _rename_dual_description_element(
+                        element,
+                        robot_name=robot_name,
+                        package_mesh_prefix=package_mesh_prefix,
+                        preserve_mesh_subdirectories=preserve_mesh_subdirectories,
+                    )
+                )
 
         _append_hardware_ee(root, robot_name=robot_name)
         ET.SubElement(
@@ -311,12 +383,67 @@ def build_dual_moveit_xacro(*, source_urdf: Path, output_xacro: Path) -> Path:
     return output_xacro
 
 
+def build_dual_pdz_srdf(*, template_srdf: Path, output_srdf: Path) -> Path:
+    """Derive the dual-PDZ SRDF while preserving the proven dual-arm ACM."""
+
+    root = ET.parse(template_srdf).getroot()
+    for element in root.iter():
+        for attribute, raw_value in tuple(element.attrib.items()):
+            value = str(raw_value)
+            for old, new in DUAL_PDZ_NAME_REPLACEMENTS:
+                value = value.replace(old, new)
+            element.set(attribute, value)
+
+    existing_pairs = {
+        (str(element.get("link1")), str(element.get("link2")))
+        for element in root.findall("disable_collisions")
+    }
+    for robot_name in DUAL_ARM_BASE_Y_M:
+        model_specific_pairs = (
+            (
+                f"{robot_name}_pdz_gripper_base_link",
+                f"{robot_name}_camera_link",
+                "Adjacent",
+            ),
+            (
+                f"{robot_name}_pdz_gripper_left_finger_link",
+                f"{robot_name}_pdz_gripper_right_finger_link",
+                "Never",
+            ),
+        )
+        for link1, link2, reason in model_specific_pairs:
+            if (link1, link2) not in existing_pairs:
+                ET.SubElement(
+                    root,
+                    "disable_collisions",
+                    {"link1": link1, "link2": link2, "reason": reason},
+                )
+
+    ET.indent(root, space="  ")
+    output_srdf.parent.mkdir(parents=True, exist_ok=True)
+    output_srdf.write_bytes(ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n")
+    return output_srdf
+
+
 def main() -> None:
     args = _parse_args()
-    outputs = (
-        build_moveit_xacro(source_urdf=args.source_urdf, output_xacro=args.output_xacro),
-        build_dual_moveit_xacro(source_urdf=args.source_urdf, output_xacro=args.dual_output_xacro),
-    )
+    outputs = [
+        build_moveit_xacro(
+            source_urdf=args.source_urdf,
+            output_xacro=args.output_xacro,
+            package_mesh_prefix=args.package_mesh_prefix,
+            preserve_mesh_subdirectories=bool(args.preserve_mesh_subdirectories),
+        )
+    ]
+    if not args.single_only:
+        outputs.append(
+            build_dual_moveit_xacro(
+                source_urdf=args.source_urdf,
+                output_xacro=args.dual_output_xacro,
+                package_mesh_prefix=args.package_mesh_prefix,
+                preserve_mesh_subdirectories=bool(args.preserve_mesh_subdirectories),
+            )
+        )
     for output in outputs:
         print(output)
 

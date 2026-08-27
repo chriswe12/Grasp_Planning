@@ -742,6 +742,7 @@ def _isaac_command(
     _append_optional(command, "--pregrasp-offset", cfg.get("pregrasp_offset"))
     _append_optional(command, "--gripper-width-clearance", cfg.get("gripper_width_clearance"))
     _append_optional(command, "--detailed-finger-contact-gap-m", cfg.get("contact_gap_m"))
+    _append_optional(command, "--gripper-collision-model", cfg.get("gripper_collision_model"))
     if cfg.get("object_mass_kg") not in (None, "") and cfg.get("object_density_kg_m3") not in (None, ""):
         raise ValueError("isaac.object_mass_kg and object_density_kg_m3 are mutually exclusive.")
     _append_optional(command, "--object-mass-kg", cfg.get("object_mass_kg"))

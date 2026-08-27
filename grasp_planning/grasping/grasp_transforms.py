@@ -63,7 +63,26 @@ def saved_grasp_to_world_grasp(
     target_rotmat_world = np.asarray(mesh_grasp_rotmat_world, dtype=float)
     approach_axis_world = target_rotmat_world[:, 2]
     orientation_xyzw_world = rotmat_to_quat_xyzw(target_rotmat_world)
-    position_w = np.asarray(transform_point_obj_to_world(grasp.grasp_position_obj, object_pose_world), dtype=float)
+    # ``grasp_position_obj`` is the sampled contact center.  A non-zero pad
+    # offset means that contact is made away from the physical TCP, so the TCP
+    # target must receive the same local correction used by the offline
+    # gripper collision model.  Keeping the uncorrected contact center here
+    # makes floor/assembly filtering and MoveIt evaluate different poses.
+    tcp_position_obj = np.asarray(grasp.grasp_position_obj, dtype=float) - mesh_grasp_rotmat_obj @ np.array(
+        [
+            float(grasp.contact_patch_lateral_offset_m),
+            0.0,
+            float(grasp.contact_patch_approach_offset_m),
+        ],
+        dtype=float,
+    )
+    position_w = np.asarray(
+        transform_point_obj_to_world(
+            tuple(float(value) for value in tcp_position_obj),
+            object_pose_world,
+        ),
+        dtype=float,
+    )
     pregrasp_position_w = position_w - approach_axis_world * float(pregrasp_offset)
     return WorldFrameGraspCandidate(
         grasp_id=grasp.grasp_id,

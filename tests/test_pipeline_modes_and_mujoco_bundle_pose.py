@@ -265,6 +265,31 @@ class RunGraspPipelineModeTests(unittest.TestCase):
 
         self.assertIn("--pregrasp-only", command)
 
+    def test_execution_benchmark_isaac_command_passes_gripper_collision_model(self) -> None:
+        command = run_grasp_execution_benchmark._isaac_command(
+            cfg={"gripper_collision_model": "pdz_gripper"},
+            spec={"stage2_json": "artifacts/stage2.json", "grasp_id": "g0001"},
+            attempt_artifact=Path("artifacts/attempt.json"),
+            video_path=None,
+        )
+
+        option_index = command.index("--gripper-collision-model")
+        self.assertEqual(command[option_index + 1], "pdz_gripper")
+
+    def test_pdz_execution_benchmark_config_uses_pdz_usd_tcp_and_collision_model(self) -> None:
+        config_path = run_grasp_execution_benchmark.REPO_ROOT / "configs" / "grasp_execution_benchmark_pdz.yaml"
+        payload = run_grasp_execution_benchmark._load_yaml(config_path)
+        cfg = dict(payload["isaac"])
+
+        self.assertEqual(cfg["gripper_collision_model"], "pdz_gripper")
+        self.assertEqual(
+            cfg["fr3_usd"],
+            "assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd",
+        )
+        self.assertEqual(cfg["moveit_pose_link"], "pdz_gripper_tcp")
+        self.assertEqual(cfg["tcp_to_grasp_offset"], [0.0, 0.0, 0.0])
+        self.assertEqual(cfg["close_width"], 0.012)
+
     def test_execution_benchmark_default_isaac_config_uses_kuka_moveit_and_usd(self) -> None:
         payload = run_grasp_execution_benchmark._load_yaml(run_grasp_execution_benchmark.DEFAULT_CONFIG_PATH)
         cfg = dict(payload["isaac"])
