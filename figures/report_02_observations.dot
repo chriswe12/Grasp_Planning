@@ -1,0 +1,23 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.15, nodesep=0.3, ranksep=0.5,
+         fontname="Helvetica", fontsize=18, label="Actor Observation and Privileged Training Signals", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10,
+        color="#34495e", fillcolor="white", margin="0.13,0.08"];
+  edge [color="#34495e", penwidth=1.2, arrowsize=0.7, fontname="Helvetica", fontsize=9];
+
+  raw [label="Wrist camera\nRGB uint8 + metric depth\nrendered at 256 x 144", fillcolor="#ddf3ef"];
+  pre [label="Preprocess live image\nRGB / 255\ndepth = clip((d-0.04)/0.46, 0, 1)\narea resize to 128 x 72\ntraining randomization", fillcolor="#ddf3ef"];
+  live [label="Live RGB-D\n[B,72,128,4]", fillcolor="#eaf3fb"];
+  goal [label="Canonical goal RGB-D\n[B,72,128,4]\nnot randomized", fillcolor="#eaf3fb"];
+  prev [label="Previous executed\nmotion action [B,6]", fillcolor="#eaf3fb"];
+  labels [label="Training labels [B,8]\nnormalized camera pose error [6]\nready label [1] + valid mask [1]", fillcolor="#fff0f0"];
+  rollout [label="Stored policy observation\n[B,73742]", fillcolor="#eee8fa", penwidth=1.7, color="#6c4aa1"];
+  slice [label="Actor slices off final 8 values\nBEFORE inference", fillcolor="#fff1d6"];
+  deploy [label="Deployment actor input\nimages [73728] + previous action [6]", fillcolor="#ddf3ef"];
+  aux [label="Auxiliary losses only", fillcolor="#fff7e8", style="rounded,filled,dashed"];
+
+  raw -> pre -> live -> rollout;
+  goal -> rollout; prev -> rollout; labels -> rollout;
+  rollout -> slice -> deploy;
+  slice -> aux [style=dashed, color="#d17b00", label="last 8"];
+}

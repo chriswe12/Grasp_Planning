@@ -70,9 +70,9 @@ Examples:
         default="",
         help="Real-only policy registry name or checkpoint path used for every active grasp approach.",
     )
-    parser.add_argument("--camera", choices=("realsense_1", "realsense_2"), default=None)
-    parser.add_argument("--left-camera", choices=("realsense_1", "realsense_2"), default="realsense_1")
-    parser.add_argument("--right-camera", choices=("realsense_1", "realsense_2"), default="realsense_2")
+    parser.add_argument("--camera", default=None, help="Compressed RGB-D camera namespace.")
+    parser.add_argument("--left-camera", default="realsense_1")
+    parser.add_argument("--right-camera", default="realsense_2")
     parser.add_argument("--bringup-only", action="store_true")
     parser.add_argument("--serve-action", action="store_true")
     parser.add_argument("--benchmark", choices=tuple(BENCHMARK_SCRIPTS), default=None)

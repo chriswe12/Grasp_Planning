@@ -15,20 +15,16 @@ visual_servo:
   goal_renderer_backend: "filament"
   goal_renderer_timeout_s: 240.0
 
-  # realsense_1 and realsense_2 were physically swapped. Serial identity is
-  # recorded and warned on, but does not abort when topics, TF, and RGB-D agree.
-  expected_camera_serial: "260522275434"
+  # The checkpoint/render profile describes the synthetic goal observation;
+  # it is not a live-camera allow-list.
   expected_camera_profile: "d405_color_848x480_intrinsics_260322275185_render_256x144_pdz_named_frame_link7_mount35mm_rpy30_0_180_v1"
   expected_observation_profile: "rgbd_render_256x144_valid_area_128x72_d405_range_v3"
-  # Compressed transport preserves the ROS timestamps and lossless 16UC1
-  # depth while avoiding another ~2 MB raw RGB-D DDS stream to this process.
-  image_transport: "compressed"
+  # Deployment has one transport contract: JPEG color plus lossless 16UC1
+  # compressedDepth. Camera serial and calibration never gate execution.
   color_topic: "/realsense_1/camera/color/image_rect/compressed"
   depth_topic: "/realsense_1/camera/aligned_depth_to_color/image_rect/compressedDepth"
   color_camera_info_topic: "/realsense_1/camera/color/camera_info"
   depth_camera_info_topic: "/realsense_1/camera/aligned_depth_to_color/camera_info"
-  camera_parameter_node: "/realsense_1/camera"
-  camera_serial_parameter: "serial_no"
   camera_optical_frame: "camera_color_optical_frame"
   # The PDZ MoveIt description publishes the camera frames in the robot tree.
   # Keep the old CAD-only fallback disabled for normal deployment.
@@ -64,8 +60,8 @@ visual_servo:
 
   startup_timeout_s: 30.0
   transform_timeout_s: 0.05
-  # Differences beyond this threshold warn but do not abort. Color and aligned
-  # depth must still publish the same projection grid.
+  # CameraInfo is optional and diagnostic-only. Differences beyond this
+  # threshold warn but never abort; decoded RGB/depth dimensions must match.
   intrinsics_tolerance_px: 3.0
   # Live compressed transport measured ~0.24 s median and ~0.42 s p95 frame
   # age. The 0.50 s limit admits that stream but still stops on longer stalls.

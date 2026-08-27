@@ -980,6 +980,16 @@ class MeshCollisionScene(Protocol):
         primitive: MeshCollisionPrimitive,
     ) -> bool: ...
 
+    def minimum_distance_to_box(
+        self,
+        primitive: BoxCollisionPrimitive,
+    ) -> float: ...
+
+    def minimum_distance_to_mesh(
+        self,
+        primitive: MeshCollisionPrimitive,
+    ) -> float: ...
+
 
 class MeshCollisionBackend(Protocol):
     """Factory for prepared mesh collision scenes."""
@@ -1018,6 +1028,24 @@ class TrimeshFclMeshCollisionScene:
         mesh = trimesh.Trimesh(vertices=primitive.vertices_obj, faces=primitive.faces, process=False)
         result = self._manager.in_collision_single(mesh, return_data=False)
         return bool(result)
+
+    def minimum_distance_to_box(self, primitive: BoxCollisionPrimitive) -> float:
+        box_mesh = trimesh.creation.box(extents=2.0 * primitive.half_extents)
+        return float(
+            self._manager.min_distance_single(
+                box_mesh,
+                transform=primitive.transform_matrix_obj(),
+                return_data=False,
+            )
+        )
+
+    def minimum_distance_to_mesh(self, primitive: MeshCollisionPrimitive) -> float:
+        mesh = trimesh.Trimesh(
+            vertices=primitive.vertices_obj,
+            faces=primitive.faces,
+            process=False,
+        )
+        return float(self._manager.min_distance_single(mesh, return_data=False))
 
 
 class TrimeshFclMeshCollisionBackend:

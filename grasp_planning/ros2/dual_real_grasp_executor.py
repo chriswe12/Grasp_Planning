@@ -862,7 +862,7 @@ def _prepare_policy_approaches(
             expected_part_id=part_id,
             goal_observation_path_override=rendered.path,
         )
-        camera_serial = preflight_d405_policy_visual_servo(preparation)
+        camera_frame = preflight_d405_policy_visual_servo(preparation)
         prepared[role] = PreparedPolicyApproach(
             role=role,
             grasp_id=grasp_id,
@@ -876,7 +876,7 @@ def _prepare_policy_approaches(
             role=role,
             ok=True,
             message=(
-                f"policy={policy_name} camera={camera_name} serial={camera_serial} goal={rendered.path} "
+                f"policy={policy_name} camera={camera_name} frame={camera_frame} goal={rendered.path} "
                 f"sha256={rendered.sha256}"
             ),
         )

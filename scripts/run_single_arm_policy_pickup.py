@@ -20,7 +20,7 @@ from grasp_planning.gripper_profiles import (
     SERVO_GRIPPER_OPEN_WIDTH_M,
 )
 from grasp_planning.rl.d405_deployment_config import (  # noqa: E402
-    CAMERA_SERIAL_BY_NAME,
+    camera_driver_root,
     write_visual_servo_config,
 )
 from grasp_planning.rl.policy_registry import (  # noqa: E402
@@ -63,12 +63,7 @@ def write_resolved_configs(
     robot_side: str = "left",
 ) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=False)
-    selected_camera = str(camera_name).strip()
-    if selected_camera not in CAMERA_SERIAL_BY_NAME:
-        raise ValueError(
-            f"Unsupported camera '{selected_camera}'. Available: "
-            f"{', '.join(CAMERA_SERIAL_BY_NAME)}."
-        )
+    selected_camera = camera_driver_root(camera_name)
     selected_side = str(robot_side).strip()
     if selected_side not in {"left", "right"}:
         raise ValueError("robot_side must be 'left' or 'right'.")
@@ -193,9 +188,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--camera",
-        choices=tuple(CAMERA_SERIAL_BY_NAME),
         default="realsense_1",
-        help="RGB-D camera namespace. Default: realsense_1.",
+        help=(
+            "RGB-D camera namespace or complete camera-node namespace. "
+            "Default: realsense_1."
+        ),
     )
     parser.add_argument(
         "--output-root",
@@ -279,8 +276,8 @@ def main() -> None:
         "publisher_header_age=warning-only; local_receipt_timeout=0.50s"
     )
     print(
-        f"[SINGLE-PICK] camera={args.camera}; "
-        f"serial_hint={CAMERA_SERIAL_BY_NAME[str(args.camera)]}"
+        f"[SINGLE-PICK] camera={camera_driver_root(str(args.camera))}; "
+        "serial/intrinsics=diagnostic-only"
     )
     print("[SINGLE-PICK] TEST-ONLY robot_feedback_timeout=0.50s")
     print("[SINGLE-PICK] ros_executor=4-thread; GPU inference and feedback callbacks overlap")

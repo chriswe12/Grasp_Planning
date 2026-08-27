@@ -220,8 +220,8 @@
       <geometry>
         <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_finger.stl" scale="0.001 0.001 0.001" />
       </geometry>
-      <material name="pdz_gripper_orange">
-        <color rgba="0.95 0.36 0.08 1.0" />
+      <material name="pdz_finger_black">
+        <color rgba="0.025 0.03 0.035 1" />
       </material>
     </visual>
     <collision>
@@ -234,8 +234,8 @@
       <geometry>
         <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/left_pad_8mm.stl" scale="0.001 0.001 0.001" />
       </geometry>
-      <material name="pdz_gripper_tpu">
-        <color rgba="0.06 0.06 0.06 1.0" />
+      <material name="pdz_contact_white">
+        <color rgba="0.95 0.96 0.97 1" />
       </material>
     </visual>
     <collision name="left_tpu_pad">
@@ -255,8 +255,8 @@
       <geometry>
         <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_finger.stl" scale="0.001 0.001 0.001" />
       </geometry>
-      <material name="pdz_gripper_orange">
-        <color rgba="0.95 0.36 0.08 1.0" />
+      <material name="pdz_finger_black">
+        <color rgba="0.025 0.03 0.035 1" />
       </material>
     </visual>
     <collision>
@@ -269,8 +269,8 @@
       <geometry>
         <mesh filename="package://robot_integration_ros/meshes/pdz_gripper/visual/right_pad_8mm.stl" scale="0.001 0.001 0.001" />
       </geometry>
-      <material name="pdz_gripper_tpu">
-        <color rgba="0.06 0.06 0.06 1.0" />
+      <material name="pdz_contact_white">
+        <color rgba="0.95 0.96 0.97 1" />
       </material>
     </visual>
     <collision name="right_tpu_pad">

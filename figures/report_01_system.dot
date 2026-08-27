@@ -1,0 +1,29 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.15, nodesep=0.3, ranksep=0.5,
+         fontname="Helvetica", fontsize=18, label="System Overview", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10,
+        color="#34495e", fillcolor="white", margin="0.14,0.09"];
+  edge [color="#34495e", penwidth=1.2, arrowsize=0.7, fontname="Helvetica", fontsize=9];
+
+  catalog [label="Grasp catalog\npart + grasp + goal RGB-D", fillcolor="#eaf3fb"];
+  reset [label="Validated reset\napproach waypoint + perturbation", fillcolor="#eaf3fb"];
+  camera [label="Live wrist RGB-D\n72 x 128 x 4", fillcolor="#ddf3ef"];
+  actor [label="Goal-conditioned visual actor\ndeployable inputs only", fillcolor="#eee8fa", penwidth=1.7, color="#6c4aa1"];
+  action [label="Hybrid action\n6-D Gaussian twist\n+ Bernoulli stop", fillcolor="#fff1d6"];
+  control [label="Rate limit + frame transforms\n+ damped-least-squares IK", fillcolor="#ddf3ef"];
+  robot [label="Joint-position targets\nIsaac robot + wrist camera", fillcolor="#ddf3ef"];
+  reward [label="Reward + termination\npose progress, contact, stop", fillcolor="#fff0f0"];
+  critic [label="Privileged critic\ntraining only", fillcolor="#fff7e8", style="rounded,filled,dashed"];
+  ppo [label="Hybrid PPO update", fillcolor="#fff7e8", style="rounded,filled,dashed"];
+
+  catalog -> actor [label="goal image"];
+  reset -> robot;
+  robot -> camera;
+  camera -> actor [label="live image"];
+  actor -> action -> control -> robot;
+  robot -> reward;
+  action -> reward [label="stop"];
+  reward -> ppo [style=dashed, color="#d17b00"];
+  critic -> ppo [style=dashed, color="#d17b00", label="V(s)"];
+  ppo -> actor [style=dashed, color="#d17b00", label="gradients", constraint=false];
+}

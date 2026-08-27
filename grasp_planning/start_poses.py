@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 DEFAULT_ARM_START_JOINT_POS = {
     "panda_joint1": 0.0,
     "panda_joint2": -0.785,
@@ -38,12 +40,17 @@ KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M = (
     KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * KUKA_Y_GRIPPER_TRAVEL_M
 )
 KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
+KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = (
+    2.0 * KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
+)
+KUKA_Y_GRIPPER_APPROACH_PROFILE = "jaw_width_plus_10mm_v1"
 PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
 PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = 2.0 * PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
 PDZ_GRIPPER_APPROACH_PROFILE = "pdz_jaw_width_plus_10mm_v1"
 PDZ_GRIPPER_CLOSED_WIDTH_M = 0.012
 PDZ_GRIPPER_TRAVEL_M = 0.032
 PDZ_GRIPPER_OPEN_WIDTH_M = PDZ_GRIPPER_CLOSED_WIDTH_M + 2.0 * PDZ_GRIPPER_TRAVEL_M
+VISUAL_SERVO_GRIPPER_PROFILE = "kuka_iiwa7_pdz_gripper_slim8_v1"
 DEFAULT_HAND_START_JOINT_POS = {
     "panda_finger_joint.*": 0.04,
     "left_finger_joint": 0.0,
@@ -71,6 +78,43 @@ def gripper_joint_target_from_width(joint_name: str, width_m: float) -> float:
         open_distance = 0.5 * (float(width_m) - PDZ_GRIPPER_CLOSED_WIDTH_M)
         return max(0.0, min(PDZ_GRIPPER_TRAVEL_M, open_distance))
     return float(width_m)
+
+
+def kuka_y_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
+    """Return the trained Y-gripper approach aperture without silent clamping."""
+
+    jaw_width = float(jaw_width_m)
+    if not math.isfinite(jaw_width) or jaw_width < 0.0:
+        raise ValueError(
+            f"KUKA Y-gripper jaw width must be finite and non-negative, got {jaw_width_m}."
+        )
+    approach_width = jaw_width + KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M
+    if approach_width > KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M + 1.0e-9:
+        raise ValueError(
+            "KUKA Y-gripper approach aperture exceeds the physical opening: "
+            f"jaw={jaw_width:.6f} m, approach={approach_width:.6f} m, "
+            f"maximum={KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M:.6f} m."
+        )
+    return approach_width
+
+
+def pdz_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
+    """Return the trained PDZ approach aperture without silent clamping."""
+
+    jaw_width = float(jaw_width_m)
+    if not math.isfinite(jaw_width) or jaw_width < PDZ_GRIPPER_CLOSED_WIDTH_M:
+        raise ValueError(
+            f"PDZ jaw width must be finite and at least {PDZ_GRIPPER_CLOSED_WIDTH_M:.3f} m, "
+            f"got {jaw_width_m}."
+        )
+    approach_width = jaw_width + PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M
+    if approach_width > PDZ_GRIPPER_OPEN_WIDTH_M + 1.0e-9:
+        raise ValueError(
+            "PDZ approach aperture exceeds the physical opening: "
+            f"jaw={jaw_width:.6f} m, approach={approach_width:.6f} m, "
+            f"maximum={PDZ_GRIPPER_OPEN_WIDTH_M:.6f} m."
+        )
+    return approach_width
 
 
 def kuka_gripper_clamp_width(width_m: float) -> float:
@@ -251,6 +295,8 @@ __all__ = [
     "KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS",
     "DEFAULT_MOVEIT_ARM_JOINT_NAMES",
     "KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M",
+    "KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M",
+    "KUKA_Y_GRIPPER_APPROACH_PROFILE",
     "KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M",
     "KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M",
     "KUKA_Y_GRIPPER_TRAVEL_M",
@@ -260,6 +306,7 @@ __all__ = [
     "PDZ_GRIPPER_APPROACH_PROFILE",
     "PDZ_GRIPPER_OPEN_WIDTH_M",
     "PDZ_GRIPPER_TRAVEL_M",
+    "VISUAL_SERVO_GRIPPER_PROFILE",
     "gripper_joint_target_from_width",
     "gripper_approach_width",
     "gripper_clamp_width",
@@ -275,4 +322,6 @@ __all__ = [
     "kuka_moveit_gripper_driver_position_from_width",
     "kuka_moveit_gripper_state",
     "kuka_moveit_to_isaac_joint_positions",
+    "kuka_y_gripper_approach_width_from_jaw_width",
+    "pdz_gripper_approach_width_from_jaw_width",
 ]
