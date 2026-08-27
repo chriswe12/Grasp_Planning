@@ -28,9 +28,9 @@ from grasp_planning.isaac_visual_scene import (
     VISUAL_SERVO_KEY_INTENSITY,
     VISUAL_SERVO_SCENE_PROFILE,
 )
+from grasp_planning.rl.goal_catalog_profiles import GOAL_FILAMENT_MATERIALS
 from grasp_planning.rl.visual_servo_dataset import MmapVisualServoFrameDataset
 from scripts.build_visual_servo_training_cache import _area_resize
-from grasp_planning.rl.goal_catalog_profiles import GOAL_FILAMENT_MATERIALS
 
 
 def test_canonical_scene_is_small_tslot_with_pdz_black_white_fingers_and_a_stronger_shape_key() -> None:

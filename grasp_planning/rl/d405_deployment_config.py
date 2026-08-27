@@ -9,6 +9,7 @@ import yaml
 
 from grasp_planning.rl.policy_registry import load_yaml_mapping, resolve_from
 
+
 def camera_driver_root(camera_name: str) -> str:
     """Return the ROS camera-node root for any selected namespace.
 

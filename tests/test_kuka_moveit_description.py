@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from scripts import build_kuka_iiwa7_pdz_gripper_urdf as pdz_urdf_builder
 from grasp_planning.start_poses import KUKA_MOVEIT_TO_ISAAC_JOINT_SIGNS
+from scripts import build_kuka_iiwa7_pdz_gripper_urdf as pdz_urdf_builder
 from scripts.build_kuka_moveit_description import (
     DEFAULT_SOURCE_URDF,
     LBR_HARDWARE_EE_OFFSET_M,

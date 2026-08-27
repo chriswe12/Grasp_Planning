@@ -14,12 +14,12 @@ from typing import Iterable
 import numpy as np
 
 from grasp_planning.grasping.collision import (
-    GRIPPER_COLLISION_MODEL_PDZ,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
+    GRIPPER_COLLISION_MODEL_PDZ,
     BoxCollisionPrimitive,
     KukaYGripperCollisionModel,
-    PdzGripperCollisionModel,
     MeshCollisionPrimitive,
+    PdzGripperCollisionModel,
     gripper_collision_check_gaps,
     make_gripper_collision_model,
     trimesh,

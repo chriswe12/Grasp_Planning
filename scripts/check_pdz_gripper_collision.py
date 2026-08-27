@@ -15,7 +15,6 @@ import numpy as np
 import trimesh
 from trimesh.collision import CollisionManager
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COLLISION_DIR = REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "meshes" / "collision"
 
