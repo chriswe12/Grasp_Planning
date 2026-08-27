@@ -134,7 +134,7 @@ def test_resolved_config_uses_any_live_grasp_and_runtime_goal_renderer(tmp_path:
     assert "policy_target_candidates" not in real
     assert "policy_grasp_source_bundle" not in real
     assert visual["goal_observation_path"] == ""
-    assert visual["image_transport"] == "compressed"
+    assert "image_transport" not in visual
     assert visual["color_topic"].endswith("/image_rect/compressed")
     assert visual["depth_topic"].endswith("/image_rect/compressedDepth")
     assert visual["color_topic"].startswith("/realsense_1/camera/")
@@ -142,8 +142,8 @@ def test_resolved_config_uses_any_live_grasp_and_runtime_goal_renderer(tmp_path:
     assert visual["depth_camera_info_topic"] == (
         "/realsense_1/camera/aligned_depth_to_color/camera_info"
     )
-    assert visual["camera_parameter_node"] == "/realsense_1/camera"
-    assert visual["expected_camera_serial"] == "260522275434"
+    assert "camera_parameter_node" not in visual
+    assert "expected_camera_serial" not in visual
     assert visual["allow_pdz_camera_rotation_fallback"] is False
     assert visual["tcp_frame"] == "pdz_gripper_tcp"
     assert visual["policy_rate_hz"] == 15.0
@@ -171,7 +171,7 @@ def test_part_validation_accepts_all_fabrica_parts() -> None:
         assert pickup._validate_part_id(str(part_id)).is_file()
 
 
-def test_resolved_config_can_route_complete_rgbd_source_to_realsense_2(
+def test_resolved_config_can_route_complete_rgbd_source_to_any_camera_namespace(
     tmp_path: Path,
 ) -> None:
     fixture = tmp_path / "fixture"
@@ -195,17 +195,17 @@ def test_resolved_config_can_route_complete_rgbd_source_to_realsense_2(
         output_dir=tmp_path / "run",
         model_device="cpu",
         open_debug_html=False,
-        camera_name="realsense_2",
+        camera_name="/cell/wrist_rgbd/camera",
     )
 
     visual = yaml.safe_load(visual_path.read_text(encoding="utf-8"))["visual_servo"]
-    assert visual["color_topic"] == "/realsense_2/camera/color/image_rect/compressed"
+    assert visual["color_topic"] == "/cell/wrist_rgbd/camera/color/image_rect/compressed"
     assert visual["depth_topic"] == (
-        "/realsense_2/camera/aligned_depth_to_color/image_rect/compressedDepth"
+        "/cell/wrist_rgbd/camera/aligned_depth_to_color/image_rect/compressedDepth"
     )
-    assert visual["color_camera_info_topic"] == "/realsense_2/camera/color/camera_info"
+    assert visual["color_camera_info_topic"] == "/cell/wrist_rgbd/camera/color/camera_info"
     assert visual["depth_camera_info_topic"] == (
-        "/realsense_2/camera/aligned_depth_to_color/camera_info"
+        "/cell/wrist_rgbd/camera/aligned_depth_to_color/camera_info"
     )
-    assert visual["camera_parameter_node"] == "/realsense_2/camera"
-    assert visual["expected_camera_serial"] == "260322275185"
+    assert "camera_parameter_node" not in visual
+    assert "expected_camera_serial" not in visual

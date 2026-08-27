@@ -360,8 +360,8 @@ if [[ "${ROBOTS}" != "both" && "${MODE}" != "real" ]]; then
   exit 1
 fi
 for camera_name in "${LEFT_CAMERA}" "${RIGHT_CAMERA}"; do
-  if [[ "${camera_name}" != "realsense_1" && "${camera_name}" != "realsense_2" ]]; then
-    echo "[DUAL-RUN] camera selections must be realsense_1 or realsense_2." >&2
+  if [[ -z "${camera_name}" ]]; then
+    echo "[DUAL-RUN] camera selections must be non-empty ROS namespaces." >&2
     exit 1
   fi
 done

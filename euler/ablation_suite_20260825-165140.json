@@ -1,0 +1,40 @@
+{
+  "suite_id": "20260825-165140",
+  "task": "Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0",
+  "experiment_family": "grasp_visual_servo_rgbd_multipart",
+  "gpu_type": "rtx_4090",
+  "gpu_count": 3,
+  "num_envs_per_rank": 224,
+  "max_iterations": 3810,
+  "seed": 42,
+  "runs": [
+    {
+      "label": "baseline",
+      "job_id": 11746645,
+      "experiment": "ablation_20260825-165140_baseline_seed42",
+      "sim2real_profile": "combined_sim2real",
+      "policy_context": "action"
+    },
+    {
+      "label": "background",
+      "job_id": 11746654,
+      "experiment": "ablation_20260825-165140_background_seed42",
+      "sim2real_profile": "combined_busy_background",
+      "policy_context": "action"
+    },
+    {
+      "label": "velocity",
+      "job_id": 11746657,
+      "experiment": "ablation_20260825-165140_velocity_seed42",
+      "sim2real_profile": "combined_sim2real",
+      "policy_context": "action_twist"
+    },
+    {
+      "label": "velocity-rotation",
+      "job_id": 11746661,
+      "experiment": "ablation_20260825-165140_velocity-rotation_seed42",
+      "sim2real_profile": "combined_sim2real",
+      "policy_context": "action_twist_rotation"
+    }
+  ]
+}

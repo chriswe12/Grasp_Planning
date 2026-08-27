@@ -1,4 +1,4 @@
-"""Generate strict per-arm D405 policy deployment configurations."""
+"""Generate per-arm compressed RGB-D policy deployment configurations."""
 
 from __future__ import annotations
 
@@ -9,10 +9,20 @@ import yaml
 
 from grasp_planning.rl.policy_registry import load_yaml_mapping, resolve_from
 
-CAMERA_SERIAL_BY_NAME = {
-    "realsense_1": "260522275434",
-    "realsense_2": "260322275185",
-}
+def camera_driver_root(camera_name: str) -> str:
+    """Return the ROS camera-node root for any selected namespace.
+
+    ``realsense_2`` resolves to ``/realsense_2/camera`` while callers that
+    already pass ``/cell/wrist/camera`` keep that complete node namespace.
+    Camera identity is deliberately topic-driven; no serial or calibration
+    allow-list is part of deployment routing.
+    """
+
+    parts = tuple(part for part in str(camera_name).strip().split("/") if part)
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise ValueError("camera_name must be a non-empty ROS namespace.")
+    root = "/" + "/".join(parts)
+    return root if parts[-1] == "camera" else f"{root}/camera"
 
 
 def write_visual_servo_config(
@@ -43,11 +53,7 @@ def write_visual_servo_config(
         visual_block[path_key] = str(
             resolve_from(visual_block.get(path_key, ""), base=template_path.parent)
         )
-    camera = str(camera_name).strip()
-    if camera not in CAMERA_SERIAL_BY_NAME:
-        raise ValueError(
-            f"Unsupported camera '{camera}'. Available: {', '.join(CAMERA_SERIAL_BY_NAME)}."
-        )
+    camera_root = camera_driver_root(camera_name)
     if robot_name not in {None, "lbr_one", "lbr_two"}:
         raise ValueError("robot_name must be omitted, lbr_one, or lbr_two.")
 
@@ -67,7 +73,6 @@ def write_visual_servo_config(
     else:
         raise ValueError(f"Unsupported policy gripper_model '{gripper_model}'.")
 
-    camera_root = f"/{camera}/camera"
     visual_block.update(
         {
             "policy_name": str(policy_name),
@@ -79,13 +84,10 @@ def write_visual_servo_config(
             "command_sink": "moveit_servo",
             "real_motion_approved": True,
             "allow_gripper_close_on_completion": True,
-            "image_transport": "compressed",
             "color_topic": f"{camera_root}/color/image_rect/compressed",
             "depth_topic": f"{camera_root}/aligned_depth_to_color/image_rect/compressedDepth",
             "color_camera_info_topic": f"{camera_root}/color/camera_info",
             "depth_camera_info_topic": f"{camera_root}/aligned_depth_to_color/camera_info",
-            "camera_parameter_node": camera_root,
-            "expected_camera_serial": CAMERA_SERIAL_BY_NAME[camera],
             "policy_rate_hz": float(assets["policy_rate_hz"]),
             "action_delta_limit": float(assets["action_delta_limit"]),
             "expected_camera_profile": str(assets["camera_profile"]),
@@ -149,4 +151,4 @@ def write_visual_servo_config(
     return output_path
 
 
-__all__ = ["CAMERA_SERIAL_BY_NAME", "write_visual_servo_config"]
+__all__ = ["camera_driver_root", "write_visual_servo_config"]

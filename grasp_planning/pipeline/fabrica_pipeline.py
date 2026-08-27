@@ -266,6 +266,10 @@ class IsaacPipelineConfig:
     pregrasp_only: bool = False
     run_seconds: float = 0.0
     headless: bool = False
+    record_video: str = ""
+    video_fps: float = 30.0
+    video_width: int = 848
+    video_height: int = 480
     moveit_frame_id: str = "base"
     moveit_target_position_signs: tuple[float, float, float] = (1.0, 1.0, 1.0)
     moveit_planning_group: str = "fr3_arm"

@@ -5,8 +5,13 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 import traceback
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from isaacsim import SimulationApp
 
@@ -24,8 +29,14 @@ simulation_app = SimulationApp({"headless": ARGS.headless})
 
 import omni.kit.app
 import omni.kit.commands
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
+from grasp_planning.isaac_visual_materials import (
+    VISUAL_SERVO_CONTACT_PAD_COLOR,
+    VISUAL_SERVO_CONTACT_PAD_ROUGHNESS,
+    VISUAL_SERVO_FINGER_COLOR,
+    VISUAL_SERVO_FINGER_ROUGHNESS,
+)
 
 ROBOT_PRIM = "/kuka_iiwa7_pdz_gripper"
 CAMERA_FRAME = (
@@ -35,6 +46,124 @@ CAMERA_FRAME = (
 CAMERA_OPTICAL_FRAME_NAME = "camera_depth_optical_frame"
 LEFT_FINGER_JOINT = f"{ROBOT_PRIM}/joints/pdz_gripper_left_finger_joint"
 KUKA_JOINT4 = f"{ROBOT_PRIM}/joints/joint4"
+
+
+def _set_material_inputs(
+    material: UsdShade.Material,
+    *,
+    color: tuple[float, float, float],
+    roughness: float,
+) -> None:
+    """Override either UsdPreviewSurface or importer-authored OmniPBR inputs."""
+
+    source = None
+    # URDF importer materials are normally OmniPBR MDL materials.  Their
+    # surface output is authored for the ``mdl`` render context, so the
+    # universal/default query legitimately returns no shader.
+    for render_context in ("mdl", "", "universal"):
+        candidate = material.ComputeSurfaceSource(render_context)
+        if candidate and candidate[0]:
+            source = candidate
+            break
+    if source is None:
+        outputs = [output.GetFullName() for output in material.GetOutputs()]
+        raise RuntimeError(
+            f"Material {material.GetPath()} has no supported surface shader; outputs={outputs}."
+        )
+    shader = UsdShade.Shader(source[0])
+    color_written = False
+    for name in ("diffuseColor", "diffuse_color_constant", "diffuse_color"):
+        shader_input = shader.GetInput(name)
+        if shader_input:
+            shader_input.Set(Gf.Vec3f(*color))
+            color_written = True
+    if not color_written:
+        shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(*color)
+        )
+        color_written = True
+    roughness_written = False
+    for name in ("roughness", "reflection_roughness_constant"):
+        shader_input = shader.GetInput(name)
+        if shader_input:
+            shader_input.Set(float(roughness))
+            roughness_written = True
+    if not roughness_written:
+        # OmniPBR importer materials omit inputs that retain their MDL default.
+        # It is valid to author the standard input explicitly.
+        shader.CreateInput(
+            "reflection_roughness_constant", Sdf.ValueTypeNames.Float
+        ).Set(float(roughness))
+        roughness_written = True
+    if not color_written or not roughness_written:
+        raise RuntimeError(
+            f"Material {material.GetPath()} does not expose supported color/roughness inputs; "
+            f"shader={shader.GetPath()} inputs={[item.GetBaseName() for item in shader.GetInputs()]}"
+        )
+
+
+def _author_pdz_finger_materials(stage: Usd.Stage) -> None:
+    """Make the editable importer base layer obey the black-white contract."""
+
+    instance_roots = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsInstance()
+        and any(
+            name in str(prim.GetPath()).lower()
+            for name in (
+                "pdz_gripper_left_finger_link",
+                "pdz_gripper_right_finger_link",
+            )
+        )
+    ]
+    # The importer makes each visual scope instanceable even in its base layer.
+    # Temporarily de-instance those four scopes so their authored material
+    # shaders can be edited, then restore instanceability after saving values.
+    for prim in instance_roots:
+        prim.SetInstanceable(False)
+
+    observed: dict[str, set[str]] = {"finger": set(), "pad": set()}
+    try:
+        for prim in stage.Traverse():
+            path = str(prim.GetPath())
+            lowered = path.lower()
+            if prim.GetTypeName() != "Mesh" or not any(
+                name in lowered
+                for name in (
+                    "pdz_gripper_left_finger_link",
+                    "pdz_gripper_right_finger_link",
+                )
+            ):
+                continue
+            is_pad = "tpu_pad" in lowered or "pad_8mm" in lowered
+            material, _relationship = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+            if not material:
+                raise RuntimeError(f"PDZ visual geometry has no bound material: {path}")
+            key = "pad" if is_pad else "finger"
+            observed[key].add(str(material.GetPath()))
+            _set_material_inputs(
+                material,
+                color=VISUAL_SERVO_CONTACT_PAD_COLOR if is_pad else VISUAL_SERVO_FINGER_COLOR,
+                roughness=(
+                    VISUAL_SERVO_CONTACT_PAD_ROUGHNESS
+                    if is_pad
+                    else VISUAL_SERVO_FINGER_ROUGHNESS
+                ),
+            )
+        if not observed["finger"] or not observed["pad"]:
+            raise RuntimeError(
+                "Imported PDZ USD did not expose both finger and TPU-pad visual materials: "
+                f"{observed}"
+            )
+    finally:
+        for prim in instance_roots:
+            prim.SetInstanceable(True)
+    print(
+        "Authored PDZ visual materials: "
+        f"finger={sorted(observed['finger'])} pad={sorted(observed['pad'])}",
+        flush=True,
+    )
 
 
 def _import_urdf(input_path: Path, output_path: Path) -> None:
@@ -95,6 +224,16 @@ def _resolve_camera_frame(stage: Usd.Stage) -> str:
 
 
 def _author_camera_and_drive(output_path: Path) -> None:
+    # Visual scopes in the composed robot stage are instance proxies even when
+    # the top-level asset is not instanceable.  Author importer materials in
+    # the editable base layer first, then let the root stage compose them.
+    base_path = output_path.parent / "configuration" / f"{output_path.stem}_base.usd"
+    base_stage = Usd.Stage.Open(str(base_path))
+    if base_stage is None:
+        raise RuntimeError(f"Could not open generated importer base layer {base_path}")
+    _author_pdz_finger_materials(base_stage)
+    base_stage.GetRootLayer().Save()
+
     stage = Usd.Stage.Open(str(output_path))
     if stage is None:
         raise RuntimeError(f"Could not open generated USD {output_path}")

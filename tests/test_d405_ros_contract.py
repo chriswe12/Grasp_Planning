@@ -12,8 +12,6 @@ from grasp_planning.ros2.d405_rgbd_subscriber import (
     D405RgbdSubscriber,
     compressed_color_message_to_rgb8,
     compressed_depth_message_to_z16,
-    image_message_to_depth_z16,
-    image_message_to_rgb8,
 )
 
 
@@ -29,14 +27,14 @@ def test_rgbd_subscriptions_use_the_dedicated_control_callback_group(monkeypatch
     callback_group = object()
     node = object()
     monkeypatch.setattr(d405_rgbd_subscriber, "message_filters", filters)
-    monkeypatch.setattr(d405_rgbd_subscriber, "Image", object())
+    compressed_message_type = object()
+    monkeypatch.setattr(d405_rgbd_subscriber, "CompressedImage", compressed_message_type)
     monkeypatch.setattr(d405_rgbd_subscriber, "qos_profile_sensor_data", "sensor-qos")
 
     D405RgbdSubscriber(
         node,
         color_topic="/color",
         depth_topic="/depth",
-        image_transport="raw",
         maximum_skew_s=0.01,
         callback=mock.Mock(),
         callback_group=callback_group,
@@ -45,14 +43,14 @@ def test_rgbd_subscriptions_use_the_dedicated_control_callback_group(monkeypatch
     assert subscriber_type.call_args_list == [
         mock.call(
             node,
-            mock.ANY,
+            compressed_message_type,
             "/color",
             qos_profile="sensor-qos",
             callback_group=callback_group,
         ),
         mock.call(
             node,
-            mock.ANY,
+            compressed_message_type,
             "/depth",
             qos_profile="sensor-qos",
             callback_group=callback_group,
@@ -64,51 +62,6 @@ def test_rgbd_subscriptions_use_the_dedicated_control_callback_group(monkeypatch
         slop=0.01,
         allow_headerless=False,
     )
-
-
-def test_rgb_message_preserves_rgb_channel_order_and_row_padding() -> None:
-    row = bytes([10, 20, 30, 40, 50, 60, 0, 0])
-    message = SimpleNamespace(encoding="rgb8", height=1, width=2, step=8, data=row)
-
-    rgb = image_message_to_rgb8(message)
-
-    assert rgb.dtype == np.uint8
-    assert rgb.tolist() == [[[10, 20, 30], [40, 50, 60]]]
-
-
-def test_depth_message_decodes_little_endian_16uc1_with_padding() -> None:
-    values = np.asarray([250, 500, 999], dtype="<u2")
-    message = SimpleNamespace(
-        encoding="16UC1",
-        height=1,
-        width=2,
-        step=6,
-        is_bigendian=False,
-        data=values.tobytes(),
-    )
-
-    depth = image_message_to_depth_z16(message)
-
-    assert depth.dtype == np.uint16
-    assert depth.tolist() == [[250, 500]]
-
-
-def test_depth_message_rejects_float_encoding() -> None:
-    message = SimpleNamespace(
-        encoding="32FC1",
-        height=1,
-        width=1,
-        step=4,
-        is_bigendian=False,
-        data=b"\0" * 4,
-    )
-
-    try:
-        image_message_to_depth_z16(message)
-    except ValueError as exc:
-        assert "16UC1" in str(exc)
-    else:
-        raise AssertionError("Expected the wrong depth encoding to be rejected.")
 
 
 def test_compressed_color_message_decodes_jpeg_to_rgb8() -> None:

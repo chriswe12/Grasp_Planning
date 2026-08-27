@@ -49,7 +49,8 @@ def test_dry_run_config_resolves_artifact_paths_relative_to_yaml(tmp_path: Path)
     assert config.checkpoint_path == (tmp_path / "checkpoint.pth").resolve()
     assert config.goal_observation_path == (tmp_path / "runtime_goal.npz").resolve()
     assert not config.real_motion_approved
-    assert config.image_transport == "raw"
+    assert config.color_topic.endswith("/image_rect/compressed")
+    assert config.depth_topic.endswith("/image_rect/compressedDepth")
     assert config.tcp_frame == "pdz_gripper_tcp"
     assert config.policy_rate_hz == 15.0
     assert config.max_joint_state_age_s == 0.15
@@ -58,7 +59,6 @@ def test_dry_run_config_resolves_artifact_paths_relative_to_yaml(tmp_path: Path)
     assert config.goal_renderer_backend == "filament"
     assert config.goal_renderer_launcher == (tmp_path / "run_mujoco_filament.sh").resolve()
     assert config.goal_renderer_robot_urdf == (tmp_path / "robot.urdf").resolve()
-    assert config.expected_camera_serial == "260522275434"
     assert not config.allow_pdz_camera_rotation_fallback
 
 
@@ -429,39 +429,6 @@ def test_camera_contract_warns_for_trained_intrinsics_difference_but_continues()
     )
 
 
-def test_camera_serial_difference_warns_but_does_not_gate_routing(monkeypatch) -> None:
-    response = SimpleNamespace(
-        values=[SimpleNamespace(string_value="_260522275434")]
-    )
-    future = mock.Mock()
-    future.done.return_value = True
-    future.exception.return_value = None
-    future.result.return_value = response
-    client = mock.Mock()
-    client.wait_for_service.return_value = True
-    client.call_async.return_value = future
-    logger = mock.Mock()
-    node = object.__new__(d405_visual_servo.D405VisualServoNode)
-    node.config = SimpleNamespace(
-        camera_parameter_node="/realsense_1/camera",
-        camera_serial_parameter="serial_no",
-        expected_camera_serial="different-serial",
-    )
-    node._serial_client = client
-    node.get_logger = mock.Mock(return_value=logger)
-    request_type = SimpleNamespace(Request=lambda: SimpleNamespace(names=[]))
-    ros = SimpleNamespace(spin_until_future_complete=mock.Mock())
-    monkeypatch.setattr(d405_visual_servo, "GetParameters", request_type)
-    monkeypatch.setattr(d405_visual_servo, "rclpy", ros)
-
-    serial = node.query_and_validate_camera_serial(timeout_s=2.0)
-
-    assert serial == "260522275434"
-    assert "continuing because camera routing is determined by topics" in (
-        logger.warning.call_args.args[0]
-    )
-
-
 def test_policy_preparation_strict_loads_runtime_before_ros_node_creation(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     runtime = object()
@@ -531,7 +498,6 @@ def test_armed_policy_loop_uses_four_thread_executor(monkeypatch, tmp_path: Path
         basic_preflight_ready=mock.Mock(return_value=True),
         basic_preflight_missing_inputs=mock.Mock(return_value=()),
         validate_camera_contract=mock.Mock(),
-        query_and_validate_camera_serial=mock.Mock(return_value="camera"),
         now_seconds=mock.Mock(return_value=10.0),
         write_summary=mock.Mock(),
         destroy_node=mock.Mock(),

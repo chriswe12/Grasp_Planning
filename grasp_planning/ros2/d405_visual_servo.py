@@ -21,7 +21,7 @@ from grasp_planning.d405_wrist_camera import (
     camera_mount_profile_from_camera_profile,
     camera_rotation_in_link7,
 )
-from grasp_planning.rl.d405_policy_runtime import EXPECTED_D405_SERIAL, D405PolicyRuntime
+from grasp_planning.rl.d405_policy_runtime import D405PolicyRuntime
 from grasp_planning.rl.policy_timing import POLICY_RATE_HZ, PolicyRateGate
 from grasp_planning.ros2.d405_rgbd_subscriber import (
     D405RgbdSubscriber,
@@ -43,7 +43,6 @@ from grasp_planning.ros2.visual_servo_safety import (
 try:  # pragma: no cover - exercised only in a sourced ROS2 environment
     import rclpy
     from geometry_msgs.msg import WrenchStamped
-    from rcl_interfaces.srv import GetParameters
     from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
     from rclpy.duration import Duration
     from rclpy.executors import MultiThreadedExecutor
@@ -56,7 +55,6 @@ try:  # pragma: no cover - exercised only in a sourced ROS2 environment
 except Exception:  # pragma: no cover - optional dependency path
     rclpy = None
     WrenchStamped = None
-    GetParameters = None
     MutuallyExclusiveCallbackGroup = None
     Duration = None
     MultiThreadedExecutor = None
@@ -155,20 +153,16 @@ class D405VisualServoDeploymentConfig:
     goal_renderer_backend: str = "filament"
     goal_renderer_timeout_s: float = 240.0
     model_device: str = "cuda:0"
-    expected_camera_serial: str = EXPECTED_D405_SERIAL
     expected_camera_profile: str = D405_VISUAL_SERVO_CAMERA_PROFILE
     expected_observation_profile: str = D405_VISUAL_SERVO_OBSERVATION_PROFILE
-    image_transport: str = "raw"
-    color_topic: str = "/realsense_1/camera/color/image_rect"
-    depth_topic: str = "/realsense_1/camera/aligned_depth_to_color/image_rect"
+    color_topic: str = "/realsense_1/camera/color/image_rect/compressed"
+    depth_topic: str = "/realsense_1/camera/aligned_depth_to_color/image_rect/compressedDepth"
     color_camera_info_topic: str = "/realsense_1/camera/color/camera_info"
     depth_camera_info_topic: str = "/realsense_1/camera/aligned_depth_to_color/camera_info"
     joint_state_topic: str = "/lbr/joint_states"
     force_topic: str = ""
     deadman_topic: str = "/d405_visual_servo/deadman"
     emergency_stop_topic: str = "/d405_visual_servo/emergency_stop"
-    camera_parameter_node: str = "/realsense_1/camera"
-    camera_serial_parameter: str = "serial_no"
     camera_optical_frame: str = "realsense_1_color_optical_frame"
     allow_camera_topic_frame_alias: bool = False
     allow_pdz_camera_rotation_fallback: bool = False
@@ -260,14 +254,12 @@ class D405VisualServoDeploymentConfig:
             ).strip().lower(),
             goal_renderer_timeout_s=float(payload.get("goal_renderer_timeout_s", 240.0)),
             model_device=str(payload.get("model_device", "cuda:0")),
-            expected_camera_serial=str(payload.get("expected_camera_serial", EXPECTED_D405_SERIAL)),
             expected_camera_profile=str(
                 payload.get("expected_camera_profile", D405_VISUAL_SERVO_CAMERA_PROFILE)
             ),
             expected_observation_profile=str(
                 payload.get("expected_observation_profile", D405_VISUAL_SERVO_OBSERVATION_PROFILE)
             ),
-            image_transport=str(payload.get("image_transport", "raw")).strip().lower(),
             color_topic=str(payload.get("color_topic", cls.color_topic)),
             depth_topic=str(payload.get("depth_topic", cls.depth_topic)),
             color_camera_info_topic=str(
@@ -281,12 +273,6 @@ class D405VisualServoDeploymentConfig:
             deadman_topic=str(payload.get("deadman_topic", cls.deadman_topic)),
             emergency_stop_topic=str(
                 payload.get("emergency_stop_topic", cls.emergency_stop_topic)
-            ),
-            camera_parameter_node=str(
-                payload.get("camera_parameter_node", cls.camera_parameter_node)
-            ),
-            camera_serial_parameter=str(
-                payload.get("camera_serial_parameter", cls.camera_serial_parameter)
             ),
             camera_optical_frame=str(payload.get("camera_optical_frame", cls.camera_optical_frame)),
             allow_camera_topic_frame_alias=bool(
@@ -380,8 +366,6 @@ class D405VisualServoDeploymentConfig:
     def validate(self) -> None:
         if self.command_sink not in {"dry_run", "moveit_servo"}:
             raise ValueError("command_sink must be 'dry_run' or 'moveit_servo'.")
-        if self.image_transport not in {"raw", "compressed"}:
-            raise ValueError("image_transport must be 'raw' or 'compressed'.")
         for field_name in (
             "color_topic",
             "depth_topic",
@@ -550,11 +534,10 @@ def preflight_d405_policy_visual_servo(
             missing = "; ".join(node.basic_preflight_missing_inputs())
             raise TimeoutError(f"D405 visual-servo preflight missing: {missing}.")
         node.validate_camera_contract()
-        serial = node.query_and_validate_camera_serial(timeout_s=config.startup_timeout_s)
         assert node.latest_frame is not None
         node._lookup_camera_rotation(frame=node.latest_frame)
         node.sink.preflight(timeout_s=config.startup_timeout_s)
-        return serial
+        return node.latest_frame.camera_frame_id
     finally:
         node.destroy_node()
         if initialized_here and rclpy.ok():
@@ -659,7 +642,6 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
             self,
             color_topic=config.color_topic,
             depth_topic=config.depth_topic,
-            image_transport=config.image_transport,
             maximum_skew_s=config.max_image_skew_s,
             callback=self._on_rgbd,
             callback_group=self._control_callback_group,
@@ -688,10 +670,6 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
             0.02,
             self.watchdog,
             callback_group=self._control_callback_group,
-        )
-        self._serial_client = self.create_client(
-            GetParameters,
-            f"{config.camera_parameter_node.rstrip('/')}/get_parameters",
         )
         if config.command_sink == "moveit_servo":
             self.sink = MoveItServoCommandSink(
@@ -1137,13 +1115,9 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
     def basic_preflight_missing_inputs(self) -> tuple[str, ...]:
         missing: list[str] = []
         feedback = self._robot_feedback_snapshot()
-        if self.color_camera_info is None:
-            missing.append(f"color CameraInfo ({self.config.color_camera_info_topic})")
-        if self.depth_camera_info is None:
-            missing.append(f"depth CameraInfo ({self.config.depth_camera_info_topic})")
         if self.latest_frame is None:
             missing.append(
-                f"synchronized {self.config.image_transport} RGB-D "
+                "synchronized compressed RGB-D "
                 f"({self.config.color_topic}, {self.config.depth_topic})"
             )
         if feedback.pose_stamp_s is None or feedback.tcp_position_m is None:
@@ -1218,10 +1192,15 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
             ("aligned depth", self.depth_camera_info),
         ):
             if info is None:
-                raise RuntimeError(f"{label} CameraInfo is unavailable.")
+                self.get_logger().warning(
+                    f"{label} CameraInfo is unavailable; continuing because live calibration "
+                    "is diagnostic-only and the policy consumes resized RGB-D pixels."
+                )
+                continue
             if int(info.width) != camera.width or int(info.height) != camera.height:
-                raise ValueError(
-                    f"{label} CameraInfo must be {camera.width}x{camera.height}, got {info.width}x{info.height}."
+                self.get_logger().warning(
+                    f"{label} CameraInfo is {info.width}x{info.height}, while training used "
+                    f"{camera.width}x{camera.height}; continuing with runtime resizing."
                 )
             projection = tuple(float(value) for value in info.p)
             actual = (projection[0], projection[5], projection[2], projection[6])
@@ -1232,52 +1211,26 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
                     f"{label} rectified intrinsics {actual} differ from trained intrinsics "
                     f"{expected} by {delta} px; continuing with the live CameraInfo."
                 )
-        color_projection = np.asarray(self.color_camera_info.p, dtype=np.float64)
-        depth_projection = np.asarray(self.depth_camera_info.p, dtype=np.float64)
-        if not np.allclose(
-            color_projection,
-            depth_projection,
-            atol=self.config.intrinsics_tolerance_px,
-            rtol=0.0,
-        ):
-            raise ValueError("Aligned-depth CameraInfo does not use the color projection grid.")
+        if self.color_camera_info is not None and self.depth_camera_info is not None:
+            color_projection = np.asarray(self.color_camera_info.p, dtype=np.float64)
+            depth_projection = np.asarray(self.depth_camera_info.p, dtype=np.float64)
+            if not np.allclose(
+                color_projection,
+                depth_projection,
+                atol=self.config.intrinsics_tolerance_px,
+                rtol=0.0,
+            ):
+                self.get_logger().warning(
+                    "Color and aligned-depth CameraInfo projection grids differ; continuing "
+                    "because decoded RGB/depth dimensions are validated at intake."
+                )
         for topic in (self.config.color_topic, self.config.depth_topic):
             publisher_count = len(self.get_publishers_info_by_topic(topic))
             if publisher_count != 1:
-                raise RuntimeError(f"Expected exactly one publisher on '{topic}', found {publisher_count}.")
-
-    def query_and_validate_camera_serial(self, *, timeout_s: float) -> str:
-        if not self._serial_client.wait_for_service(timeout_sec=float(timeout_s)):
-            self.get_logger().warning(
-                f"Camera parameter service for '{self.config.camera_parameter_node}' is unavailable; "
-                "continuing with the configured RGB-D topics, CameraInfo, and TF chain."
-            )
-            return ""
-        request = GetParameters.Request()
-        request.names = [self.config.camera_serial_parameter]
-        future = self._serial_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=float(timeout_s))
-        if not future.done() or future.exception() is not None:
-            self.get_logger().warning(
-                "Failed to query the connected D405 serial parameter; continuing with "
-                "the configured RGB-D topics, CameraInfo, and TF chain."
-            )
-            return ""
-        response = future.result()
-        if response is None or len(response.values) != 1:
-            self.get_logger().warning(
-                "Camera serial parameter response is malformed; continuing with the "
-                "configured RGB-D topics, CameraInfo, and TF chain."
-            )
-            return ""
-        serial = str(response.values[0].string_value).strip().lstrip("_")
-        if self.config.expected_camera_serial and serial != self.config.expected_camera_serial:
-            self.get_logger().warning(
-                f"Connected camera serial '{serial}' differs from configured serial "
-                f"'{self.config.expected_camera_serial}'; continuing because camera routing "
-                "is determined by topics, CameraInfo, and TF."
-            )
-        return serial
+                self.get_logger().warning(
+                    f"Expected one publisher on '{topic}', found {publisher_count}; continuing "
+                    "and letting the RGB-D startup/receipt watchdog determine stream health."
+                )
 
     def watchdog(self) -> None:
         if not self.armed or self.terminal:
@@ -1309,7 +1262,7 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
         ):
             self._fault("MoveIt Servo command refresh was not accepted by a live consumer")
 
-    def write_summary(self, result: D405VisualServoRunResult, *, camera_serial: str) -> None:
+    def write_summary(self, result: D405VisualServoRunResult) -> None:
         config_payload = asdict(self.config)
         for key, value in tuple(config_payload.items()):
             if isinstance(value, Path):
@@ -1320,7 +1273,11 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
                 "run_directory": str(result.run_directory),
             },
             "config": config_payload,
-            "camera_serial": camera_serial,
+            "camera_source": {
+                "color_topic": self.config.color_topic,
+                "depth_topic": self.config.depth_topic,
+                "frame_id": "" if self.latest_frame is None else self.latest_frame.camera_frame_id,
+            },
             "checkpoint_sha256": self.runtime.checkpoint_sha256,
             "policy_context_mode": self.runtime.policy_context_mode,
             "policy_context_size": self.runtime.policy_context_size,
@@ -1368,7 +1325,6 @@ def run_d405_policy_visual_servo(
         expected_part_id=expected_part_id,
         prepared_runtime=preparation.runtime,
     )
-    camera_serial = ""
     executor = None
     try:
         deadline = time.monotonic() + config.startup_timeout_s
@@ -1380,7 +1336,6 @@ def run_d405_policy_visual_servo(
             missing = "; ".join(node.basic_preflight_missing_inputs())
             raise TimeoutError(f"D405 visual-servo preflight missing: {missing}.")
         node.validate_camera_contract()
-        camera_serial = node.query_and_validate_camera_serial(timeout_s=config.startup_timeout_s)
         node.supervisor.mark_ready()
         node.sink.activate(timeout_s=config.startup_timeout_s)
         if node.sink.is_real:
@@ -1408,7 +1363,7 @@ def run_d405_policy_visual_servo(
             step_count=node.step_count,
             run_directory=node.run_directory,
         )
-        node.write_summary(result, camera_serial=camera_serial)
+        node.write_summary(result)
         return result
     except Exception as exc:
         node._fault(str(exc))
@@ -1422,7 +1377,7 @@ def run_d405_policy_visual_servo(
             step_count=node.step_count,
             run_directory=node.run_directory,
         )
-        node.write_summary(result, camera_serial=camera_serial)
+        node.write_summary(result)
         return result
     finally:
         if executor is not None:

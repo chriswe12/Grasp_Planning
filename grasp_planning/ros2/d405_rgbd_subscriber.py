@@ -11,12 +11,11 @@ import numpy as np
 try:  # pragma: no cover - exercised only in a sourced ROS2 environment
     import message_filters
     from rclpy.qos import qos_profile_sensor_data
-    from sensor_msgs.msg import CompressedImage, Image
+    from sensor_msgs.msg import CompressedImage
 except Exception:  # pragma: no cover - optional dependency path
     message_filters = None
     qos_profile_sensor_data = None
     CompressedImage = None
-    Image = None
 
 try:
     from PIL import Image as PillowImage
@@ -26,38 +25,6 @@ except Exception:  # pragma: no cover - optional compressed-transport dependency
 
 def ros_stamp_seconds(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
-
-
-def image_message_to_rgb8(message) -> np.ndarray:
-    encoding = str(message.encoding).strip().lower()
-    if encoding != "rgb8":
-        raise ValueError(f"D405 color encoding must be rgb8, got '{message.encoding}'.")
-    height = int(message.height)
-    width = int(message.width)
-    step = int(message.step)
-    if height <= 0 or width <= 0 or step < width * 3:
-        raise ValueError(f"Malformed RGB image dimensions height={height} width={width} step={step}.")
-    raw = np.frombuffer(message.data, dtype=np.uint8)
-    if raw.size != height * step:
-        raise ValueError(f"RGB image payload has {raw.size} bytes; expected {height * step}.")
-    return raw.reshape(height, step)[:, : width * 3].reshape(height, width, 3).copy()
-
-
-def image_message_to_depth_z16(message) -> np.ndarray:
-    encoding = str(message.encoding).strip().lower()
-    if encoding != "16uc1":
-        raise ValueError(f"D405 aligned depth encoding must be 16UC1, got '{message.encoding}'.")
-    height = int(message.height)
-    width = int(message.width)
-    step = int(message.step)
-    if height <= 0 or width <= 0 or step < width * 2 or step % 2:
-        raise ValueError(f"Malformed depth image dimensions height={height} width={width} step={step}.")
-    byte_order = ">" if bool(message.is_bigendian) else "<"
-    raw = np.frombuffer(message.data, dtype=np.dtype(f"{byte_order}u2"))
-    row_values = step // 2
-    if raw.size != height * row_values:
-        raise ValueError(f"Depth image payload has {raw.size} values; expected {height * row_values}.")
-    return raw.reshape(height, row_values)[:, :width].astype(np.uint16, copy=True)
 
 
 def compressed_color_message_to_rgb8(message) -> np.ndarray:
@@ -118,35 +85,29 @@ class D405RgbdSubscriber:
         *,
         color_topic: str,
         depth_topic: str,
-        image_transport: str,
         maximum_skew_s: float,
         callback: Callable[[SynchronizedD405Frame], None],
         callback_group=None,
     ) -> None:
-        if message_filters is None or Image is None:
-            raise RuntimeError("ROS2 message_filters and sensor_msgs are required for D405 deployment.")
+        if message_filters is None or CompressedImage is None:
+            raise RuntimeError("ROS2 message_filters and sensor_msgs are required for RGB-D deployment.")
         if maximum_skew_s <= 0.0:
             raise ValueError("maximum_skew_s must be positive.")
-        transport = str(image_transport).strip().lower()
-        if transport not in {"raw", "compressed"}:
-            raise ValueError("image_transport must be 'raw' or 'compressed'.")
-        if transport == "compressed" and (CompressedImage is None or PillowImage is None):
-            raise RuntimeError("Compressed D405 transport requires sensor_msgs/CompressedImage and Pillow.")
+        if PillowImage is None:
+            raise RuntimeError("Compressed RGB-D transport requires Pillow.")
         self._callback = callback
-        self._image_transport = transport
         self._maximum_skew_s = float(maximum_skew_s)
         self._last_stamp_s = -float("inf")
-        message_type = Image if transport == "raw" else CompressedImage
         self.color_subscriber = message_filters.Subscriber(
             node,
-            message_type,
+            CompressedImage,
             str(color_topic),
             qos_profile=qos_profile_sensor_data,
             callback_group=callback_group,
         )
         self.depth_subscriber = message_filters.Subscriber(
             node,
-            message_type,
+            CompressedImage,
             str(depth_topic),
             qos_profile=qos_profile_sensor_data,
             callback_group=callback_group,
@@ -167,12 +128,8 @@ class D405RgbdSubscriber:
         newest_stamp = max(color_stamp_s, depth_stamp_s)
         if newest_stamp <= self._last_stamp_s:
             return
-        if self._image_transport == "raw":
-            rgb = image_message_to_rgb8(color_message)
-            depth = image_message_to_depth_z16(depth_message)
-        else:
-            rgb = compressed_color_message_to_rgb8(color_message)
-            depth = compressed_depth_message_to_z16(depth_message)
+        rgb = compressed_color_message_to_rgb8(color_message)
+        depth = compressed_depth_message_to_z16(depth_message)
         if rgb.shape[:2] != depth.shape:
             raise ValueError("Aligned D405 depth dimensions do not match the color image.")
         color_frame = str(color_message.header.frame_id).strip()
@@ -196,7 +153,5 @@ __all__ = [
     "SynchronizedD405Frame",
     "compressed_color_message_to_rgb8",
     "compressed_depth_message_to_z16",
-    "image_message_to_depth_z16",
-    "image_message_to_rgb8",
     "ros_stamp_seconds",
 ]

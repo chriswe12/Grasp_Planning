@@ -55,8 +55,8 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Policy registry name used for every active pregrasp-to-grasp approach.",
     )
-    parser.add_argument("--left-camera", choices=("realsense_1", "realsense_2"), default="realsense_1")
-    parser.add_argument("--right-camera", choices=("realsense_1", "realsense_2"), default="realsense_2")
+    parser.add_argument("--left-camera", default="realsense_1")
+    parser.add_argument("--right-camera", default="realsense_2")
     parser.add_argument("--yes", action="store_true", help="Skip the final typed confirmation.")
     parser.add_argument(
         "--skip-grippers",

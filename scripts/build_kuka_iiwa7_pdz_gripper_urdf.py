@@ -5,14 +5,21 @@ from __future__ import annotations
 
 import copy
 import shutil
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
 import trimesh
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_planning.isaac_visual_materials import (  # noqa: E402
+    VISUAL_SERVO_CONTACT_PAD_COLOR,
+    VISUAL_SERVO_FINGER_COLOR,
+)
 KUKA_SOURCE = (
     REPO_ROOT
     / "assets"
@@ -107,6 +114,30 @@ def _rewrite_pdz_meshes(link: ET.Element) -> None:
             link.remove(block)
 
 
+def _rewrite_pdz_visual_materials(link: ET.Element) -> None:
+    """Author the canonical black-finger/white-pad colors in the source URDF."""
+
+    if str(link.get("name")) not in {
+        "pdz_gripper_left_finger_link",
+        "pdz_gripper_right_finger_link",
+    }:
+        return
+    for visual in link.findall("visual"):
+        name = str(visual.get("name", "")).lower()
+        mesh = visual.find(".//mesh")
+        mesh_name = str(mesh.get("filename", "")).lower() if mesh is not None else ""
+        is_pad = "tpu_pad" in name or "pad_8mm" in mesh_name
+        material = visual.find("material")
+        if material is None:
+            material = ET.SubElement(visual, "material")
+        material.set("name", "pdz_contact_white" if is_pad else "pdz_finger_black")
+        color = material.find("color")
+        if color is None:
+            color = ET.SubElement(material, "color")
+        rgb = VISUAL_SERVO_CONTACT_PAD_COLOR if is_pad else VISUAL_SERVO_FINGER_COLOR
+        color.set("rgba", " ".join(_fmt(value) for value in (*rgb, 1.0)))
+
+
 def _mesh_bounds(link_name: str) -> tuple[np.ndarray, np.ndarray]:
     meshes = []
     for mesh_name in PDZ_COLLISION_MESHES[link_name]:
@@ -183,6 +214,7 @@ def _build_robot() -> ET.Element:
             continue
         pdz_link = copy.deepcopy(link)
         _rewrite_pdz_meshes(pdz_link)
+        _rewrite_pdz_visual_materials(pdz_link)
         _add_inertial(pdz_link)
         _ensure_camera_visual(pdz_link)
         robot.append(pdz_link)

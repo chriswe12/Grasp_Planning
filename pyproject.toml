@@ -19,6 +19,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+training = [
+    "Pillow>=10.0",
+    "rl-games==1.6.1",
+    "tensorboard>=2.16",
+    "torch>=2.7",
+    "torchvision>=0.22",
+]
 deployment = [
     "Pillow>=10.0",
     "torch>=2.7",

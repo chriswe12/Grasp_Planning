@@ -153,6 +153,8 @@ from grasp_planning.grasping.fabrica_grasp_debug import (  # noqa: E402
 )
 from grasp_planning.grasping.grasp_transforms import saved_grasp_to_world_grasp  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
+from grasp_planning.isaac_visual_materials import apply_visual_servo_materials  # noqa: E402
+from grasp_planning.isaac_visual_scene import make_visual_servo_render_cfg  # noqa: E402
 from grasp_planning.mujoco.scene_builder import write_temporary_triangle_mesh_stl  # noqa: E402
 from grasp_planning.planning.fr3_motion_context import FR3MotionContext  # noqa: E402
 from grasp_planning.planning.pick_execution import (  # noqa: E402
@@ -345,6 +347,7 @@ def _build_scene(*, part_usd_path: str, object_pose_world: ObjectWorldPose):
     sim_cfg = sim_utils.SimulationCfg(
         dt=0.01,
         device=args_cli.device,
+        render=make_visual_servo_render_cfg(),
         physx=sim_utils.PhysxCfg(
             solver_type=1,
             max_position_iteration_count=192,
@@ -379,6 +382,7 @@ def _build_scene(*, part_usd_path: str, object_pose_world: ObjectWorldPose):
     scene = InteractiveScene(scene_cfg)
     while omni.usd.get_context().get_stage_loading_status()[2] > 0:
         simulation_app.update()
+    apply_visual_servo_materials()
     if _is_generated_kuka_y_gripper_usd(args_cli.robot_usd):
         print(
             "[INFO]: Skipping Franka visual mesh collision exposure for generated KUKA/Y-gripper USD; "
