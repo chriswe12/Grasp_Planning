@@ -160,3 +160,14 @@ def test_runtime_renderer_uses_moveit_joints_directly_in_imported_urdf() -> None
     assert "data.qpos[:7] = moveit_joints" in source
     assert "kuka_moveit_to_isaac_joint_positions" not in source
     assert "isaaclab" not in source.lower()
+
+
+def test_runtime_pdz_renderer_uses_training_material_and_scene_contract() -> None:
+    source = (REPO_ROOT / "scripts/render_d405_policy_goal.py").read_text(encoding="utf-8")
+
+    assert "from grasp_planning.rl.goal_catalog_profiles import" in source
+    assert "from grasp_planning.rl.goal_renderer_profiles import" not in source
+    assert "_restore_pdz_gripper_visual_meshes" in source
+    assert '"pdz_contact_white" if is_pad else "pdz_finger_black"' in source
+    assert "FILAMENT_FALLBACK_HEAD_LIGHT_INTENSITY = 1000.0" in source
+    assert "FILAMENT_FALLBACK_ENVIRONMENT_LIGHT_INTENSITY = 6500.0" in source
