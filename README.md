@@ -42,6 +42,10 @@ source ./setup_robot_env.sh
 See [EXECUTION_PATHS.md](EXECUTION_PATHS.md) for the complete single-object,
 policy, dual-arm, ROS action, and benchmark execution map.
 
+See [REAL_DEPLOYMENT_REQUIREMENTS.md](REAL_DEPLOYMENT_REQUIREMENTS.md) for the
+clone-to-hardware dependency checklist, external runtime assets, compressed
+RGB-D contract, and exact MuJoCo Filament render materials.
+
 The single-object and dual-arm pipelines share grasp generation and collision
 geometry, but their numbered stages are different. When this README says
 "dual Stage 3," it means holder/inserter pair construction, not the
