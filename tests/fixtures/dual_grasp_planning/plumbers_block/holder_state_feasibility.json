@@ -1,0 +1,2789 @@
+{
+  "schema_version": 1,
+  "kind": "holder_state_feasibility",
+  "source_frame_pose_assembly": {
+    "position": [
+      1.53205832083312e-09,
+      0.0012657968499403256,
+      0.026403465771050766
+    ],
+    "orientation_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "source_holder_cache_key": "027ab7ca1fb99b24dbfc220ac63c62780e850d0a26118cbe4b6c5d94c5938853",
+  "candidates": {
+    "h1536": {
+      "grasp_id": "h1536",
+      "grasp_pose_obj": {
+        "position": [
+          -0.02387689784334219,
+          3.1500596731764974e-09,
+          -0.015245484436583814
+        ],
+        "orientation_xyzw": [
+          0.9234473023894693,
+          -0.02809398065007176,
+          0.38237985316119366,
+          0.015538849933941579
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.022598861075757426,
+          0.020000003150059675,
+          -0.015390051930319082
+        ],
+        [
+          -0.02515493461092695,
+          -0.01999999684994033,
+          -0.015100916942848546
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040082628543524616,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8736419412588173,
+      "score_components": {
+        "antipodal_alignment": 0.9979385447879277,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.16311015562430817,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.02693198473971179,
+        "score": 0.8736419412588173
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1536"
+      }
+    },
+    "h1208": {
+      "grasp_id": "h1208",
+      "grasp_pose_obj": {
+        "position": [
+          -0.02902674586640168,
+          3.150059671441774e-09,
+          0.009035298231457697
+        ],
+        "orientation_xyzw": [
+          -0.05433772672329125,
+          0.7050158944694401,
+          -0.015376060827014369,
+          0.706939584938801
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.027922140066550624,
+          -0.019999996849940332,
+          0.011018098870844342
+        ],
+        [
+          -0.03013135166625273,
+          0.020000003150059675,
+          0.007052497592071052
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04025675855548317,
+      "roll_angle_rad": 3.141592653589793,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8603869256441027,
+      "score_components": {
+        "antipodal_alignment": 0.9936219764159777,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.08625423385141155,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03130786569629519,
+        "score": 0.8603869256441027
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1208"
+      }
+    },
+    "h0837": {
+      "grasp_id": "h0837",
+      "grasp_pose_obj": {
+        "position": [
+          -0.03391576357711237,
+          3.150059674911221e-09,
+          -0.012152058912806386
+        ],
+        "orientation_xyzw": [
+          0.9220432099808584,
+          -0.03839070871164695,
+          0.3830510033711444,
+          -0.04042772846910529
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.03311430087424249,
+          0.020000003150059675,
+          -0.010059783813207192
+        ],
+        [
+          -0.034717226279982256,
+          -0.019999996849940326,
+          -0.014244334012405583
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04025021528173455,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.854371313654583,
+      "score_components": {
+        "antipodal_alignment": 0.9937835045108915,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.04571941233484235,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03512965865878439,
+        "score": 0.854371313654583
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0837"
+      }
+    },
+    "h0328": {
+      "grasp_id": "h0328",
+      "grasp_pose_obj": {
+        "position": [
+          0.03784096567025693,
+          3.1500596731764974e-09,
+          0.0001565885314656287
+        ],
+        "orientation_xyzw": [
+          0.03896937076867849,
+          0.9225179133068672,
+          -0.02445626469163391,
+          -0.38320226889616615
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03677331597832962,
+          -0.01999999684994033,
+          0.0016627444972737648
+        ],
+        [
+          0.03890861536218424,
+          0.020000003150059675,
+          -0.0013495674343425074
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04017005758810968,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8524371063926435,
+      "score_components": {
+        "antipodal_alignment": 0.9957665585184521,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.027536553235084544,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03790641607103859,
+        "score": 0.8524371063926435
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0328"
+      }
+    },
+    "h0822": {
+      "grasp_id": "h0822",
+      "grasp_pose_obj": {
+        "position": [
+          -0.04014363037093617,
+          3.1500596731764974e-09,
+          -0.0054687211150468915
+        ],
+        "orientation_xyzw": [
+          -0.018549819388619552,
+          0.9236905929619564,
+          0.004810683364750635,
+          0.3826597052209744
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.03938406655487594,
+          -0.01999999684994033,
+          -0.005362455647534171
+        ],
+        [
+          -0.0409031941869964,
+          0.020000003150059675,
+          -0.005574986582559612
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04002940067201875,
+      "roll_angle_rad": 3.9269908169872414,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.852340653907112,
+      "score_components": {
+        "antipodal_alignment": 0.9992655230524274,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.01756296457427293,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04020926698964007,
+        "score": 0.852340653907112
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0822"
+      }
+    },
+    "h0821": {
+      "grasp_id": "h0821",
+      "grasp_pose_obj": {
+        "position": [
+          -0.04014363037093617,
+          3.1500596731764974e-09,
+          -0.0054687211150468915
+        ],
+        "orientation_xyzw": [
+          -0.017763202930681888,
+          0.8658411776529186,
+          0.0071907645928446775,
+          0.4999518142849577
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.03938406655487594,
+          -0.01999999684994033,
+          -0.005362455647534171
+        ],
+        [
+          -0.0409031941869964,
+          0.020000003150059675,
+          -0.005574986582559612
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04002940067201875,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.852340653907112,
+      "score_components": {
+        "antipodal_alignment": 0.9992655230524274,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.01756296457427293,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04020926698964007,
+        "score": 0.852340653907112
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0821"
+      }
+    },
+    "h0820": {
+      "grasp_id": "h0820",
+      "grasp_pose_obj": {
+        "position": [
+          -0.04014363037093617,
+          3.1500596731764974e-09,
+          -0.0054687211150468915
+        ],
+        "orientation_xyzw": [
+          -0.016672653145709985,
+          0.7931769797377127,
+          0.009447809845098566,
+          0.6086896091936956
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.03938406655487594,
+          -0.01999999684994033,
+          -0.005362455647534171
+        ],
+        [
+          -0.0409031941869964,
+          0.020000003150059675,
+          -0.005574986582559612
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04002940067201875,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.852340653907112,
+      "score_components": {
+        "antipodal_alignment": 0.9992655230524274,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.01756296457427293,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04020926698964007,
+        "score": 0.852340653907112
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0820"
+      }
+    },
+    "h1342": {
+      "grasp_id": "h1342",
+      "grasp_pose_obj": {
+        "position": [
+          0.04223873602923453,
+          3.1500596731764974e-09,
+          0.0025812132602537107
+        ],
+        "orientation_xyzw": [
+          0.028446151018964833,
+          0.9234308650345108,
+          0.006080012073473029,
+          -0.38266079946475823
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.04109301167485906,
+          -0.01999999684994033,
+          0.0027924008964008216
+        ],
+        [
+          0.04338446038360999,
+          0.020000003150059675,
+          0.0023700256241065993
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04006780675374536,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8509626465552346,
+      "score_components": {
+        "antipodal_alignment": 0.9983076998907854,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.010930443992803268,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04250272158879364,
+        "score": 0.8509626465552346
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1342"
+      }
+    },
+    "h1820": {
+      "grasp_id": "h1820",
+      "grasp_pose_obj": {
+        "position": [
+          0.037225405768792706,
+          3.1500596731764974e-09,
+          0.00719099472294729
+        ],
+        "orientation_xyzw": [
+          0.9223937419964724,
+          0.015070874134749534,
+          -0.3815250206772517,
+          -0.05832076882022888
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03756182925758557,
+          0.020000003150059675,
+          0.0095901905250883
+        ],
+        [
+          0.036888982279999843,
+          -0.01999999684994033,
+          0.00479179892080628
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04029239736033698,
+      "roll_angle_rad": 3.9269908169872414,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8508019597307348,
+      "score_components": {
+        "antipodal_alignment": 0.9927431133540641,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024698095927394026,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03847611792413258,
+        "score": 0.8508019597307348
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1820"
+      }
+    },
+    "h1819": {
+      "grasp_id": "h1819",
+      "grasp_pose_obj": {
+        "position": [
+          0.037225405768792706,
+          3.1500596731764974e-09,
+          0.00719099472294729
+        ],
+        "orientation_xyzw": [
+          0.8647035274800847,
+          0.022554328598759266,
+          -0.49865756410640205,
+          -0.055854682743949356
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03756182925758557,
+          0.020000003150059675,
+          0.0095901905250883
+        ],
+        [
+          0.036888982279999843,
+          -0.01999999684994033,
+          0.00479179892080628
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04029239736033698,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8508019597307348,
+      "score_components": {
+        "antipodal_alignment": 0.9927431133540641,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024698095927394026,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03847611792413258,
+        "score": 0.8508019597307348
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1819"
+      }
+    },
+    "h1818": {
+      "grasp_id": "h1818",
+      "grasp_pose_obj": {
+        "position": [
+          0.037225405768792706,
+          3.1500596731764974e-09,
+          0.00719099472294729
+        ],
+        "orientation_xyzw": [
+          0.7922179958674025,
+          0.029651872247202993,
+          -0.607257938359696,
+          -0.05243290756007717
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03756182925758557,
+          0.020000003150059675,
+          0.0095901905250883
+        ],
+        [
+          0.036888982279999843,
+          -0.01999999684994033,
+          0.00479179892080628
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04029239736033698,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8508019597307348,
+      "score_components": {
+        "antipodal_alignment": 0.9927431133540641,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024698095927394026,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03847611792413258,
+        "score": 0.8508019597307348
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1818"
+      }
+    },
+    "h1817": {
+      "grasp_id": "h1817",
+      "grasp_pose_obj": {
+        "position": [
+          0.037225405768792706,
+          3.1500596731764974e-09,
+          0.00719099472294729
+        ],
+        "orientation_xyzw": [
+          0.7061773947011049,
+          0.036242064140444924,
+          -0.7054679609239474,
+          -0.04811399079070369
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03756182925758557,
+          0.020000003150059675,
+          0.0095901905250883
+        ],
+        [
+          0.036888982279999843,
+          -0.01999999684994033,
+          0.00479179892080628
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04029239736033698,
+      "roll_angle_rad": 3.141592653589793,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8508019597307348,
+      "score_components": {
+        "antipodal_alignment": 0.9927431133540641,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024698095927394026,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03847611792413258,
+        "score": 0.8508019597307348
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1817"
+      }
+    },
+    "h0932": {
+      "grasp_id": "h0932",
+      "grasp_pose_obj": {
+        "position": [
+          0.0403656347135857,
+          3.1500596731764974e-09,
+          0.019775656766291897
+        ],
+        "orientation_xyzw": [
+          -0.007134205348424796,
+          0.9237287588504404,
+          -0.02237506449003812,
+          -0.38232661387318856
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.04097208981430179,
+          -0.01999999684994033,
+          0.020494085009770673
+        ],
+        [
+          0.03975917961286961,
+          0.020000003150059675,
+          0.01905722852281312
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04004417195698833,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8502878834416987,
+      "score_components": {
+        "antipodal_alignment": 0.9988969192062264,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.004860771728054775,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04615867442591911,
+        "score": 0.8502878834416987
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0932"
+      }
+    },
+    "h1265": {
+      "grasp_id": "h1265",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0587148003559112,
+          3.1500596731764974e-09,
+          -0.0143342254329378
+        ],
+        "orientation_xyzw": [
+          0.9238111357590734,
+          0.0012102555572478526,
+          0.3825947421360708,
+          0.01388466848184502
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.05854696900999488,
+          0.020000003150059675,
+          -0.014866025987017938
+        ],
+        [
+          -0.05888263170182753,
+          -0.01999999684994033,
+          -0.013802424878857663
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040015545938547045,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8498639333784107,
+      "score_components": {
+        "antipodal_alignment": 0.9996115025252708,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.00012888245534867853,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.05985519114611224,
+        "score": 0.8498639333784107
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1265"
+      }
+    },
+    "h1264": {
+      "grasp_id": "h1264",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0587148003559112,
+          3.1500596731764974e-09,
+          -0.0143342254329378
+        ],
+        "orientation_xyzw": [
+          0.9658464382826706,
+          -0.0006124112539905122,
+          0.2587400411983326,
+          0.013923853267704865
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.05854696900999488,
+          0.020000003150059675,
+          -0.014866025987017938
+        ],
+        [
+          -0.05888263170182753,
+          -0.01999999684994033,
+          -0.013802424878857663
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040015545938547045,
+      "roll_angle_rad": 5.235987755982989,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8498639333784107,
+      "score_components": {
+        "antipodal_alignment": 0.9996115025252708,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.00012888245534867853,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.05985519114611224,
+        "score": 0.8498639333784107
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1264"
+      }
+    },
+    "h1263": {
+      "grasp_id": "h1263",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0587148003559112,
+          3.1500596731764974e-09,
+          -0.0143342254329378
+        ],
+        "orientation_xyzw": [
+          0.9913558404640286,
+          -0.002424599538880628,
+          0.13045822641939858,
+          0.013724797063732842
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.05854696900999488,
+          0.020000003150059675,
+          -0.014866025987017938
+        ],
+        [
+          -0.05888263170182753,
+          -0.01999999684994033,
+          -0.013802424878857663
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040015545938547045,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8498639333784107,
+      "score_components": {
+        "antipodal_alignment": 0.9996115025252708,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.00012888245534867853,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.05985519114611224,
+        "score": 0.8498639333784107
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1263"
+      }
+    },
+    "h0970": {
+      "grasp_id": "h0970",
+      "grasp_pose_obj": {
+        "position": [
+          0.07217749907324231,
+          3.1500596731764974e-09,
+          -0.016890185650902136
+        ],
+        "orientation_xyzw": [
+          -0.015306345587413435,
+          0.9913258242440236,
+          -0.003368346364498653,
+          -0.13048938736324417
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.07280233039220714,
+          -0.01999999684994033,
+          -0.01683648674767572
+        ],
+        [
+          0.07155266775427746,
+          0.020000003150059675,
+          -0.01694388455412855
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04001966005599584,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8498036986453661,
+      "score_components": {
+        "antipodal_alignment": 0.9995087400550549,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 1.3508222937040632e-06,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.07352495370823846,
+        "score": 0.8498036986453661
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0970"
+      }
+    },
+    "h1869": {
+      "grasp_id": "h1869",
+      "grasp_pose_obj": {
+        "position": [
+          -0.03830434909921984,
+          3.150059674911221e-09,
+          -0.008269298617096172
+        ],
+        "orientation_xyzw": [
+          0.052951046691532486,
+          0.9638133419068253,
+          -0.0537919503859479,
+          0.25566864236809356
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.04092573278308053,
+          -0.01999999684994033,
+          -0.006719338076197452
+        ],
+        [
+          -0.035682965415359154,
+          0.02000000315005968,
+          -0.009819259157994892
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040461044479664844,
+      "roll_angle_rad": 4.1887902047863905,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8491728862741631,
+      "score_components": {
+        "antipodal_alignment": 0.9886052254558937,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024871973945371047,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03843963399292371,
+        "score": 0.8491728862741631
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1869"
+      }
+    },
+    "h1868": {
+      "grasp_id": "h1868",
+      "grasp_pose_obj": {
+        "position": [
+          -0.03830434909921984,
+          3.150059674911221e-09,
+          -0.008269298617096172
+        ],
+        "orientation_xyzw": [
+          0.04547678469071689,
+          0.922196330798664,
+          -0.060243251292134904,
+          0.3792842472202452
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.04092573278308053,
+          -0.01999999684994033,
+          -0.006719338076197452
+        ],
+        [
+          -0.035682965415359154,
+          0.02000000315005968,
+          -0.009819259157994892
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040461044479664844,
+      "roll_angle_rad": 3.9269908169872414,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8491728862741631,
+      "score_components": {
+        "antipodal_alignment": 0.9886052254558937,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024871973945371047,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03843963399292371,
+        "score": 0.8491728862741631
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1868"
+      }
+    },
+    "h1866": {
+      "grasp_id": "h1866",
+      "grasp_pose_obj": {
+        "position": [
+          -0.03830434909921984,
+          3.150059674911221e-09,
+          -0.008269298617096172
+        ],
+        "orientation_xyzw": [
+          0.0283351000560492,
+          0.7926072661394742,
+          -0.06996077027067968,
+          0.6050424236290012
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.04092573278308053,
+          -0.01999999684994033,
+          -0.006719338076197452
+        ],
+        [
+          -0.035682965415359154,
+          0.02000000315005968,
+          -0.009819259157994892
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040461044479664844,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8491728862741631,
+      "score_components": {
+        "antipodal_alignment": 0.9886052254558937,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.024871973945371047,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03843963399292371,
+        "score": 0.8491728862741631
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1866"
+      }
+    },
+    "h1161": {
+      "grasp_id": "h1161",
+      "grasp_pose_obj": {
+        "position": [
+          -0.05461165006812607,
+          3.1500596731764974e-09,
+          -0.009566912034087523
+        ],
+        "orientation_xyzw": [
+          -0.034683196172831034,
+          0.9908156073628012,
+          -0.0022698766434460444,
+          0.13067653105873292
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.05324562825156595,
+          -0.01999999684994033,
+          -0.009295002700890405
+        ],
+        [
+          -0.055977671884686185,
+          0.020000003150059675,
+          -0.009838821367284641
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04009688019229417,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8491134526771972,
+      "score_components": {
+        "antipodal_alignment": 0.9975838471265208,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.0005327588439262716,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.05490880325268348,
+        "score": 0.8491134526771972
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1161"
+      }
+    },
+    "h1829": {
+      "grasp_id": "h1829",
+      "grasp_pose_obj": {
+        "position": [
+          0.03789879882109204,
+          3.1500596731764974e-09,
+          0.0017211157432318862
+        ],
+        "orientation_xyzw": [
+          0.05231008367300853,
+          0.9201806466725603,
+          -0.06057186273504035,
+          -0.3832261500474609
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.036888982279999843,
+          -0.01999999684994033,
+          0.00479179892080628
+        ],
+        [
+          0.03890861536218424,
+          0.020000003150059675,
+          -0.0013495674343425074
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04051907326796613,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.848829184431978,
+      "score_components": {
+        "antipodal_alignment": 0.9871894091818606,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.026356138394891884,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.03813688018158779,
+        "score": 0.848829184431978
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1829"
+      }
+    },
+    "h1883": {
+      "grasp_id": "h1883",
+      "grasp_pose_obj": {
+        "position": [
+          0.07049628914884609,
+          3.1500596731764974e-09,
+          -0.015808668896095418
+        ],
+        "orientation_xyzw": [
+          0.029839197804079596,
+          0.9906051497286947,
+          -0.024612726941174525,
+          -0.1311688731289496
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.06943991054341474,
+          -0.01999999684994033,
+          -0.014673453238062288
+        ],
+        [
+          0.07155266775427746,
+          0.020000003150059675,
+          -0.01694388455412855
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04012005236029768,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8488034812085623,
+      "score_components": {
+        "antipodal_alignment": 0.9970076718938564,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 2.7496734655493838e-06,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.07156543409534004,
+        "score": 0.8488034812085623
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1883"
+      }
+    },
+    "h1923": {
+      "grasp_id": "h1923",
+      "grasp_pose_obj": {
+        "position": [
+          0.04242077077135867,
+          3.1500596731764974e-09,
+          0.01529804207379949
+        ],
+        "orientation_xyzw": [
+          0.8655724729772579,
+          0.011821496495523961,
+          -0.4983127767221289,
+          0.048258914203721644
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0410427511988303,
+          0.020000003150059675,
+          0.013855689287348413
+        ],
+        [
+          0.04379879034388703,
+          -0.01999999684994033,
+          0.016740394860250567
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040198473578127544,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8488005295211313,
+      "score_components": {
+        "antipodal_alignment": 0.9950626588409683,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.005169773231626297,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04589085509675522,
+        "score": 0.8488005295211313
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1923"
+      }
+    },
+    "h1922": {
+      "grasp_id": "h1922",
+      "grasp_pose_obj": {
+        "position": [
+          0.04242077077135867,
+          3.1500596731764974e-09,
+          0.01529804207379949
+        ],
+        "orientation_xyzw": [
+          0.7931245111997836,
+          0.0054213096425497894,
+          -0.6070295208262846,
+          0.04938906742666285
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0410427511988303,
+          0.020000003150059675,
+          0.013855689287348413
+        ],
+        [
+          0.04379879034388703,
+          -0.01999999684994033,
+          0.016740394860250567
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040198473578127544,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8488005295211313,
+      "score_components": {
+        "antipodal_alignment": 0.9950626588409683,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.005169773231626297,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04589085509675522,
+        "score": 0.8488005295211313
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1922"
+      }
+    },
+    "h1921": {
+      "grasp_id": "h1921",
+      "grasp_pose_obj": {
+        "position": [
+          0.04242077077135867,
+          3.1500596731764974e-09,
+          0.01529804207379949
+        ],
+        "orientation_xyzw": [
+          0.707105969140023,
+          -0.0010716373214794098,
+          -0.7053598215287238,
+          0.049674160012697394
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0410427511988303,
+          0.020000003150059675,
+          0.013855689287348413
+        ],
+        [
+          0.04379879034388703,
+          -0.01999999684994033,
+          0.016740394860250567
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.040198473578127544,
+      "roll_angle_rad": 3.141592653589793,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8488005295211313,
+      "score_components": {
+        "antipodal_alignment": 0.9950626588409683,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.005169773231626297,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04589085509675522,
+        "score": 0.8488005295211313
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1921"
+      }
+    },
+    "h0918": {
+      "grasp_id": "h0918",
+      "grasp_pose_obj": {
+        "position": [
+          -0.040897164308918016,
+          3.1500596731764974e-09,
+          0.011706926168325214
+        ],
+        "orientation_xyzw": [
+          0.8637756546951151,
+          0.054072235316160726,
+          0.5005853327574067,
+          0.01954830816453372
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.042383821279830064,
+          0.020000003150059675,
+          0.00993709945222745
+        ],
+        [
+          -0.03941050733800597,
+          -0.01999999684994033,
+          0.01347675288442298
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04026623575921519,
+      "roll_angle_rad": 5.759586531581287,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8487291495396702,
+      "score_components": {
+        "antipodal_alignment": 0.9933881140316363,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.009159359513437909,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04332656933039831,
+        "score": 0.8487291495396702
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0918"
+      }
+    },
+    "h1072": {
+      "grasp_id": "h1072",
+      "grasp_pose_obj": {
+        "position": [
+          0.03878335639531785,
+          3.150059671441774e-09,
+          0.016891622636432894
+        ],
+        "orientation_xyzw": [
+          0.7927661473061258,
+          0.013457207188285176,
+          -0.6066567456433032,
+          -0.057518103459434006
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03975917961286961,
+          0.020000003150059675,
+          0.01905722852281312
+        ],
+        [
+          0.037807533177766105,
+          -0.019999996849940332,
+          0.014726016750052664
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04028111616164765,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8485993806944242,
+      "score_components": {
+        "antipodal_alignment": 0.9930211426982428,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.009272824100847447,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.043269699773871795,
+        "score": 0.8485993806944242
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1072"
+      }
+    },
+    "h1071": {
+      "grasp_id": "h1071",
+      "grasp_pose_obj": {
+        "position": [
+          0.03878335639531785,
+          3.150059671441774e-09,
+          0.016891622636432894
+        ],
+        "orientation_xyzw": [
+          0.706799328024343,
+          0.02084969794354694,
+          -0.7049434596146408,
+          -0.05526951009861986
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.03975917961286961,
+          0.020000003150059675,
+          0.01905722852281312
+        ],
+        [
+          0.037807533177766105,
+          -0.019999996849940332,
+          0.014726016750052664
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04028111616164765,
+      "roll_angle_rad": 3.141592653589793,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8485993806944242,
+      "score_components": {
+        "antipodal_alignment": 0.9930211426982428,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.009272824100847447,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.043269699773871795,
+        "score": 0.8485993806944242
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1071"
+      }
+    },
+    "h0990": {
+      "grasp_id": "h0990",
+      "grasp_pose_obj": {
+        "position": [
+          -0.07209628875513902,
+          3.1500596731764974e-09,
+          -0.013992130337084633
+        ],
+        "orientation_xyzw": [
+          0.9228351392111844,
+          -0.043418766403489406,
+          0.381824255693858,
+          0.026464208374794178
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.07007893524407342,
+          0.020000003150059675,
+          -0.014307511731959727
+        ],
+        [
+          -0.07411364226620462,
+          -0.01999999684994033,
+          -0.01367674894220954
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04020791865356088,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8479318458668863,
+      "score_components": {
+        "antipodal_alignment": 0.9948289127981893,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 1.871650736497282e-06,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.07263247144273585,
+        "score": 0.8479318458668863
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0990"
+      }
+    },
+    "h0989": {
+      "grasp_id": "h0989",
+      "grasp_pose_obj": {
+        "position": [
+          -0.07209628875513902,
+          3.1500596731764974e-09,
+          -0.013992130337084633
+        ],
+        "orientation_xyzw": [
+          0.9647782228590883,
+          -0.0465015851872093,
+          0.2581035394874584,
+          0.020570517153976075
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.07007893524407342,
+          0.020000003150059675,
+          -0.014307511731959727
+        ],
+        [
+          -0.07411364226620462,
+          -0.01999999684994033,
+          -0.01367674894220954
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04020791865356088,
+      "roll_angle_rad": 5.235987755982989,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8479318458668863,
+      "score_components": {
+        "antipodal_alignment": 0.9948289127981893,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 1.871650736497282e-06,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.07263247144273585,
+        "score": 0.8479318458668863
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0989"
+      }
+    },
+    "h0988": {
+      "grasp_id": "h0988",
+      "grasp_pose_obj": {
+        "position": [
+          -0.07209628875513902,
+          3.1500596731764974e-09,
+          -0.013992130337084633
+        ],
+        "orientation_xyzw": [
+          0.9902136836268157,
+          -0.048788748955700914,
+          0.12996660016060754,
+          0.014324858681428599
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.07007893524407342,
+          0.020000003150059675,
+          -0.014307511731959727
+        ],
+        [
+          -0.07411364226620462,
+          -0.01999999684994033,
+          -0.01367674894220954
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04020791865356088,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8479318458668863,
+      "score_components": {
+        "antipodal_alignment": 0.9948289127981893,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 1.871650736497282e-06,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.07263247144273585,
+        "score": 0.8479318458668863
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0988"
+      }
+    },
+    "h0192": {
+      "grasp_id": "h0192",
+      "grasp_pose_obj": {
+        "position": [
+          0.04600363993851221,
+          3.1500596731764974e-09,
+          -0.005217652611551851
+        ],
+        "orientation_xyzw": [
+          0.9217356842685535,
+          0.029764529102095937,
+          -0.3821471772722478,
+          -0.05899945810060771
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.04580637499141218,
+          0.020000003150059675,
+          -0.0025642248325268833
+        ],
+        [
+          0.04620090488561225,
+          -0.01999999684994033,
+          -0.00787108039057682
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0
+        ]
+      ],
+      "jaw_width": 0.040352427061472074,
+      "roll_angle_rad": 3.9269908169872414,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.847251433041299,
+      "score_components": {
+        "antipodal_alignment": 0.9912662735023302,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.004966157602446369,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04606564384051811,
+        "score": 0.847251433041299
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0192"
+      }
+    },
+    "h0190": {
+      "grasp_id": "h0190",
+      "grasp_pose_obj": {
+        "position": [
+          0.04600363993851221,
+          3.1500596731764974e-09,
+          -0.005217652611551851
+        ],
+        "orientation_xyzw": [
+          0.7914213349369954,
+          0.04402051077421251,
+          -0.6076885776100365,
+          -0.049285473316306096
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.04580637499141218,
+          0.020000003150059675,
+          -0.0025642248325268833
+        ],
+        [
+          0.04620090488561225,
+          -0.01999999684994033,
+          -0.00787108039057682
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0
+        ]
+      ],
+      "jaw_width": 0.040352427061472074,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.847251433041299,
+      "score_components": {
+        "antipodal_alignment": 0.9912662735023302,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.004966157602446369,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04606564384051811,
+        "score": 0.847251433041299
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0190"
+      }
+    },
+    "h1241": {
+      "grasp_id": "h1241",
+      "grasp_pose_obj": {
+        "position": [
+          0.045260087478903,
+          3.1500596731764974e-09,
+          -0.009892404861936358
+        ],
+        "orientation_xyzw": [
+          0.03616798614656554,
+          0.9215055557496695,
+          -0.05636596552690246,
+          -0.3825470760975892
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.044785172665214784,
+          -0.01999999684994033,
+          -0.007237488651594214
+        ],
+        [
+          0.04573500229259121,
+          0.020000003150059675,
+          -0.012547321072278501
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          -1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04036206754685385,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8472066424913276,
+      "score_components": {
+        "antipodal_alignment": 0.9910295094166438,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.00529892483113396,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04578319054436266,
+        "score": 0.8472066424913276
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1241"
+      }
+    },
+    "h0994": {
+      "grasp_id": "h0994",
+      "grasp_pose_obj": {
+        "position": [
+          0.03386227899584454,
+          3.150059674911221e-09,
+          0.025231493967240906
+        ],
+        "orientation_xyzw": [
+          -0.7043227215900573,
+          -0.06268575477709783,
+          0.7062265054239686,
+          -0.03527212832605125
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.031070951892486567,
+          0.020000003150059675,
+          0.026016714043327786
+        ],
+        [
+          0.03665360609920251,
+          -0.019999996849940326,
+          0.024446273891154027
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04041821755425792,
+      "roll_angle_rad": 3.141592653589793,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8471136781620697,
+      "score_components": {
+        "antipodal_alignment": 0.9896527462227522,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.008350531153126057,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.04375125200946668,
+        "score": 0.8471136781620697
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g0994"
+      }
+    },
+    "h1250": {
+      "grasp_id": "h1250",
+      "grasp_pose_obj": {
+        "position": [
+          0.04781423851636636,
+          3.1500596731764974e-09,
+          -0.008322316491057732
+        ],
+        "orientation_xyzw": [
+          0.07956600546428252,
+          0.920171341824528,
+          0.00404617084806005,
+          -0.38332438085878884
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.044785172665214784,
+          -0.01999999684994033,
+          -0.007237488651594214
+        ],
+        [
+          0.050843304367517946,
+          0.020000003150059675,
+          -0.009407144330521252
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          -1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04051429828452607,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8454469681133209,
+      "score_components": {
+        "antipodal_alignment": 0.9873057585518521,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 0.00349776461719967,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.047563142012824716,
+        "score": 0.8454469681133209
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1250"
+      }
+    },
+    "h2128": {
+      "grasp_id": "h2128",
+      "grasp_pose_obj": {
+        "position": [
+          0.06607345698310214,
+          3.1500596731764974e-09,
+          -0.014164000478023178
+        ],
+        "orientation_xyzw": [
+          0.07193064863323875,
+          0.9210701394868024,
+          0.025908057085939774,
+          -0.38181743348228064
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.06299161592985267,
+          -0.01999999684994033,
+          -0.014018247032809185
+        ],
+        [
+          0.06915529803635162,
+          0.020000003150059675,
+          -0.01430975392323717
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0,
+          -1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04047315101863386,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8453263459375603,
+      "score_components": {
+        "antipodal_alignment": 0.9883095087304665,
+        "centering": 1.0,
+        "contact_support": 1.0,
+        "com_offset": 1.6949635824531646e-05,
+        "pad_support_left": 1.0,
+        "pad_support_right": 1.0,
+        "pad_support_fraction_left": 1.0,
+        "pad_support_fraction_right": 1.0,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 9.0,
+        "pad_supported_samples_right": 9.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.06628805083767962,
+        "score": 0.8453263459375603
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g2128"
+      }
+    },
+    "h1157": {
+      "grasp_id": "h1157",
+      "grasp_pose_obj": {
+        "position": [
+          -0.05461165006812607,
+          3.1500596731764974e-09,
+          -0.009566912034087523
+        ],
+        "orientation_xyzw": [
+          -0.031171467291833926,
+          0.7927332209129274,
+          0.015375827249734292,
+          0.6085769992566894
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.05324562825156595,
+          -0.01999999684994033,
+          -0.009295002700890405
+        ],
+        [
+          -0.055977671884686185,
+          0.020000003150059675,
+          -0.009838821367284641
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.04009688019229417,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.826891230454975,
+      "score_components": {
+        "antipodal_alignment": 0.9975838471265208,
+        "centering": 1.0,
+        "contact_support": 0.8888888888888888,
+        "com_offset": 0.0005327588439262716,
+        "pad_support_left": 0.8888888888888888,
+        "pad_support_right": 0.8888888888888888,
+        "pad_support_fraction_left": 0.8888888888888888,
+        "pad_support_fraction_right": 0.8888888888888888,
+        "pad_normal_consistency_left": 1.0,
+        "pad_normal_consistency_right": 1.0,
+        "pad_supported_samples_left": 8.0,
+        "pad_supported_samples_right": 8.0,
+        "pad_total_samples_left": 9.0,
+        "pad_total_samples_right": 9.0,
+        "center_offset_plane_m": 0.0,
+        "com_offset_plane_m": 0.05490880325268348,
+        "score": 0.826891230454975
+      },
+      "metadata": {
+        "candidate_role": "assembly_holder",
+        "base_part_id": "2",
+        "source_grasp_id": "g1157"
+      }
+    }
+  }
+}
