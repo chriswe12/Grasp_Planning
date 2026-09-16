@@ -39,11 +39,25 @@ from grasp_planning.d405_wrist_camera import (  # noqa: E402
 from grasp_planning.grasping.fabrica_grasp_debug import load_grasp_bundle  # noqa: E402
 from grasp_planning.grasping.world_constraints import ObjectWorldPose  # noqa: E402
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE  # noqa: E402
+from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE  # noqa: E402
 from grasp_planning.mujoco import build_bundle_local_mesh  # noqa: E402
-from grasp_planning.rl.goal_renderer_profiles import (  # noqa: E402
-    GOAL_FILAMENT_MATERIALS,
-    MUJOCO_GOAL_RENDERER_BACKEND,
-    MUJOCO_GOAL_RENDERER_PROFILE,
+from grasp_planning.rl.goal_catalog_profiles import (  # noqa: E402
+    GOAL_FILAMENT_MATERIALS as PDZ_GOAL_FILAMENT_MATERIALS,
+)
+from grasp_planning.rl.goal_catalog_profiles import (
+    MUJOCO_GOAL_RENDERER_BACKEND as PDZ_GOAL_RENDERER_BACKEND,
+)
+from grasp_planning.rl.goal_catalog_profiles import (
+    MUJOCO_GOAL_RENDERER_PROFILE as PDZ_GOAL_RENDERER_PROFILE,
+)
+from grasp_planning.rl.legacy_y_goal_renderer_profiles import (  # noqa: E402
+    GOAL_FILAMENT_MATERIALS as LEGACY_Y_GOAL_FILAMENT_MATERIALS,
+)
+from grasp_planning.rl.legacy_y_goal_renderer_profiles import (
+    MUJOCO_GOAL_RENDERER_BACKEND as LEGACY_Y_GOAL_RENDERER_BACKEND,
+)
+from grasp_planning.rl.legacy_y_goal_renderer_profiles import (
+    MUJOCO_GOAL_RENDERER_PROFILE as LEGACY_Y_GOAL_RENDERER_PROFILE,
 )
 from grasp_planning.start_poses import (  # noqa: E402
     gripper_joint_target_from_width,
@@ -52,6 +66,40 @@ from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE  # 
 
 WIDTH = VISUAL_SERVO_RENDER_WIDTH
 HEIGHT = VISUAL_SERVO_RENDER_HEIGHT
+
+_PDZ_GRIPPER_VISUAL_MESHES = (
+    (
+        "pdz_gripper_left_finger_link",
+        None,
+        "left_finger",
+        "pdz_visual_left_finger",
+        "left_finger.stl",
+    ),
+    (
+        "pdz_gripper_left_finger_link",
+        "left_tpu_pad",
+        "left_pad_8mm",
+        "pdz_visual_left_pad",
+        "left_pad_8mm.stl",
+    ),
+    (
+        "pdz_gripper_right_finger_link",
+        None,
+        "right_finger",
+        "pdz_visual_right_finger",
+        "right_finger.stl",
+    ),
+    (
+        "pdz_gripper_right_finger_link",
+        "right_tpu_pad",
+        "right_pad_8mm",
+        "pdz_visual_right_pad",
+        "right_pad_8mm.stl",
+    ),
+)
+
+FILAMENT_FALLBACK_HEAD_LIGHT_INTENSITY = 1000.0
+FILAMENT_FALLBACK_ENVIRONMENT_LIGHT_INTENSITY = 6500.0
 
 
 def _csv_floats(raw: str, *, count: int, label: str) -> tuple[float, ...]:
@@ -80,8 +128,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--renderer-backend",
-        choices=(MUJOCO_GOAL_RENDERER_BACKEND,),
-        default=MUJOCO_GOAL_RENDERER_BACKEND,
+        choices=("filament",),
+        default="filament",
     )
     parser.add_argument("--maximum-position-error-m", type=float, default=0.002)
     parser.add_argument("--maximum-rotation-error-deg", type=float, default=1.0)
@@ -191,19 +239,118 @@ def _ros_camera_quat_to_opengl(quat_wxyz: np.ndarray) -> np.ndarray:
     return quat_xyzw[[3, 0, 1, 2]]
 
 
-def _add_material(asset: ET.Element, *, name: str) -> None:
-    material = GOAL_FILAMENT_MATERIALS[name]
+def _add_material(asset: ET.Element, *, name: str, materials: dict[str, object]) -> None:
+    material = materials[name]
     ET.SubElement(
         asset,
         "material",
         name=name,
         rgba=" ".join(str(value) for value in (*material.color, 1.0)),
-        specular="0.18",
-        shininess="0.25",
+        specular="0.05",
+        shininess="0.05",
         metallic=str(material.metallic),
         roughness=str(material.roughness),
         emission=str(material.emission),
     )
+
+
+def _set_custom_numeric(root: ET.Element, name: str, value: float) -> None:
+    custom = root.find("custom")
+    if custom is None:
+        custom = ET.SubElement(root, "custom")
+    numeric = custom.find(f"numeric[@name='{name}']")
+    if numeric is None:
+        numeric = ET.SubElement(custom, "numeric", name=name)
+    numeric.set("data", f"{value:.12g}")
+
+
+def _restore_pdz_gripper_visual_meshes(root: ET.Element, robot_urdf: Path) -> None:
+    """Replace collision-only URDF imports with the authored visual meshes."""
+
+    asset = root.find("asset")
+    worldbody = root.find("worldbody")
+    if asset is None or worldbody is None:
+        raise RuntimeError("Canonical robot MJCF has no asset or worldbody element.")
+    visual_mesh_dir = robot_urdf.parent.parent / "meshes" / "visual"
+    for body_name, geom_name, imported_mesh, visual_mesh, filename in _PDZ_GRIPPER_VISUAL_MESHES:
+        mesh_path = (visual_mesh_dir / filename).resolve()
+        if not mesh_path.is_file():
+            raise FileNotFoundError(f"PDZ gripper visual mesh not found: {mesh_path}")
+        ET.SubElement(
+            asset,
+            "mesh",
+            name=visual_mesh,
+            file=str(mesh_path),
+            scale="0.001 0.001 0.001",
+        )
+        body = worldbody.find(f".//body[@name='{body_name}']")
+        if body is None:
+            raise RuntimeError(f"Canonical MJCF has no {body_name} body.")
+        matching_geoms = [
+            geom
+            for geom in body.findall("geom")
+            if (
+                geom.get("name") == geom_name
+                if geom_name is not None
+                else geom.get("name") is None and geom.get("mesh") == imported_mesh
+            )
+        ]
+        if len(matching_geoms) != 1:
+            raise RuntimeError(
+                f"Expected one imported {body_name}/{geom_name or imported_mesh} geom, "
+                f"found {len(matching_geoms)}."
+            )
+        matching_geoms[0].set("mesh", visual_mesh)
+
+
+def _author_filament_fallback_lighting(root: ET.Element) -> None:
+    """Use Filament IBL plus a camera fill, without hard cast shadows."""
+
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    headlight = visual.find("headlight")
+    if headlight is None:
+        headlight = ET.SubElement(visual, "headlight")
+    headlight.attrib.update(
+        active="1",
+        ambient="0 0 0",
+        diffuse="1 0.98 0.95",
+        specular="0.05 0.05 0.05",
+    )
+    _set_custom_numeric(root, "filament.ao.enabled", 0.0)
+    _set_custom_numeric(
+        root,
+        "filament.fallback.head_light_intensity",
+        FILAMENT_FALLBACK_HEAD_LIGHT_INTENSITY,
+    )
+    _set_custom_numeric(
+        root,
+        "filament.fallback.environment_light_intensity",
+        FILAMENT_FALLBACK_ENVIRONMENT_LIGHT_INTENSITY,
+    )
+
+
+def _author_legacy_fill_lighting(worldbody: ET.Element) -> None:
+    for name, position, color in (
+        ("fill_top", "0.45 0.05 1.20", "1.00 0.98 0.95"),
+        ("fill_camera", "0.20 -0.75 0.55", "1.00 0.96 0.91"),
+        ("fill_back", "0.65 0.80 0.60", "0.92 0.96 1.00"),
+        ("fill_left", "-0.35 0.05 0.55", "0.94 0.97 1.00"),
+        ("fill_right", "1.20 0.05 0.55", "1.00 0.97 0.93"),
+        ("fill_low", "0.45 0.05 0.18", "0.90 0.94 1.00"),
+    ):
+        ET.SubElement(
+            worldbody,
+            "light",
+            name=name,
+            type="point",
+            pos=position,
+            diffuse=color,
+            intensity="1800",
+            range="3.0",
+            castshadow="false",
+        )
 
 
 def _scene_model(
@@ -212,6 +359,8 @@ def _scene_model(
     part_mesh: Path,
     *,
     camera_profile: str,
+    is_pdz: bool,
+    materials: dict[str, object],
 ) -> mujoco.MjModel:
     root = ET.parse(robot_mjcf).getroot()
     worldbody = root.find("worldbody")
@@ -251,20 +400,34 @@ def _scene_model(
     if compiler is None:
         compiler = ET.SubElement(root, "compiler")
     compiler.set("meshdir", str(robot_urdf.parent))
-    custom = root.find("custom")
-    if custom is None:
-        custom = ET.SubElement(root, "custom")
-    ET.SubElement(custom, "numeric", name="filament.ao.enabled", data="0")
     asset = root.find("asset")
     if asset is None:
         asset = ET.SubElement(root, "asset")
     ET.SubElement(asset, "mesh", name="selected_part_mesh", file=str(part_mesh))
-    for name in GOAL_FILAMENT_MATERIALS:
-        _add_material(asset, name=name)
+    for name in materials:
+        _add_material(asset, name=name, materials=materials)
+
+    imported_pdz = worldbody.find(".//body[@name='pdz_gripper_left_finger_link']") is not None
+    if imported_pdz != is_pdz:
+        raise RuntimeError("Robot URDF identity changed while compiling the runtime goal scene.")
+    if is_pdz:
+        removed_box = removed_base = False
+        for geom in list(link7_xml.findall("geom")):
+            if geom.get("type") == "box" and geom.get("size") == "0.0115 0.021 0.021":
+                link7_xml.remove(geom)
+                removed_box = True
+            elif geom.get("type") == "mesh" and geom.get("mesh") == "base":
+                link7_xml.remove(geom)
+                removed_base = True
+        if not (removed_box and removed_base):
+            raise RuntimeError(
+                "Could not remove the camera enclosure surfaces that contain the optical origin."
+            )
+        _restore_pdz_gripper_visual_meshes(root, robot_urdf)
 
     finger_names = (
         ("pdz_gripper_left_finger_link", "pdz_gripper_right_finger_link")
-        if worldbody.find(".//body[@name='pdz_gripper_left_finger_link']") is not None
+        if is_pdz
         else ("left_finger_link", "right_finger_link")
     )
     for finger_name in finger_names:
@@ -273,7 +436,11 @@ def _scene_model(
             raise RuntimeError(f"Canonical MJCF has no {finger_name} body.")
         for geom in finger.findall("geom"):
             geom.attrib.pop("rgba", None)
-            geom.set("material", "finger_canonical")
+            if is_pdz:
+                is_pad = geom.get("name") in {"left_tpu_pad", "right_tpu_pad"}
+                geom.set("material", "pdz_contact_white" if is_pad else "pdz_finger_black")
+            else:
+                geom.set("material", "finger_canonical")
 
     part_body = ET.SubElement(worldbody, "body", name="selected_part", mocap="true")
     ET.SubElement(
@@ -310,30 +477,21 @@ def _scene_model(
             contype="0",
             conaffinity="0",
         )
-    for name, position, color in (
-        ("fill_top", "0.45 0.05 1.20", "1.00 0.98 0.95"),
-        ("fill_camera", "0.20 -0.75 0.55", "1.00 0.96 0.91"),
-        ("fill_back", "0.65 0.80 0.60", "0.92 0.96 1.00"),
-        ("fill_left", "-0.35 0.05 0.55", "0.94 0.97 1.00"),
-        ("fill_right", "1.20 0.05 0.55", "1.00 0.97 0.93"),
-        ("fill_low", "0.45 0.05 0.18", "0.90 0.94 1.00"),
-    ):
-        ET.SubElement(
-            worldbody,
-            "light",
-            name=name,
-            type="point",
-            pos=position,
-            diffuse=color,
-            intensity="1800",
-            range="3.0",
-            castshadow="false",
+    if is_pdz:
+        _author_filament_fallback_lighting(root)
+    else:
+        _author_legacy_fill_lighting(worldbody)
+    model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+    if is_pdz and model.nlight != 0:
+        raise RuntimeError(
+            "The canonical Filament scene must have no physical lights so its "
+            "environment illumination remains active."
         )
-    return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+    return model
 
 
-def _apply_filament_materials(model: mujoco.MjModel) -> None:
-    for name, material in GOAL_FILAMENT_MATERIALS.items():
+def _apply_filament_materials(model: mujoco.MjModel, materials: dict[str, object]) -> None:
+    for name, material in materials.items():
         material_id = mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_MATERIAL, name
         )
@@ -455,6 +613,22 @@ def main() -> None:  # noqa: C901
         if urdf_root.find("./link[@name='pdz_gripper_tcp']") is not None
         else "gripper_tcp"
     )
+    is_pdz = tcp_link == "pdz_gripper_tcp"
+    materials = (
+        PDZ_GOAL_FILAMENT_MATERIALS
+        if is_pdz
+        else LEGACY_Y_GOAL_FILAMENT_MATERIALS
+    )
+    renderer_backend = (
+        PDZ_GOAL_RENDERER_BACKEND
+        if is_pdz
+        else LEGACY_Y_GOAL_RENDERER_BACKEND
+    )
+    renderer_profile = (
+        PDZ_GOAL_RENDERER_PROFILE
+        if is_pdz
+        else LEGACY_Y_GOAL_RENDERER_PROFILE
+    )
     tcp_position_link7, tcp_rotation_link7 = _fixed_link_transform(
         urdf_root,
         ancestor_link="link7",
@@ -477,8 +651,10 @@ def main() -> None:  # noqa: C901
             robot_urdf,
             part_mesh,
             camera_profile=str(args.camera_profile),
+            is_pdz=is_pdz,
+            materials=materials,
         )
-        _apply_filament_materials(model)
+        _apply_filament_materials(model, materials)
         data = mujoco.MjData(model)
         data.qpos[:7] = moveit_joints
         _set_gripper_width(model, data, approach_width)
@@ -544,10 +720,11 @@ def main() -> None:  # noqa: C901
                 D405_VISUAL_SERVO_OBSERVATION_PROFILE
             ),
             "visual_material_profile": np.asarray(VISUAL_SERVO_MATERIAL_PROFILE),
+            "visual_scene_profile": np.asarray(VISUAL_SERVO_SCENE_PROFILE if is_pdz else ""),
             "visual_workspace_profile": np.asarray(VISUAL_SERVO_TSLOT_PROFILE),
             "renderer_backend": np.asarray("mujoco_filament"),
-            "goal_renderer_backend": np.asarray(MUJOCO_GOAL_RENDERER_BACKEND),
-            "goal_renderer_profile": np.asarray(MUJOCO_GOAL_RENDERER_PROFILE),
+            "goal_renderer_backend": np.asarray(renderer_backend),
+            "goal_renderer_profile": np.asarray(renderer_profile),
             "goal_joint_positions": np.asarray(moveit_joints, dtype=np.float32),
             "mujoco_joint_positions": np.asarray(moveit_joints, dtype=np.float32),
             "goal_tcp_position": np.asarray(goal_position, dtype=np.float64),

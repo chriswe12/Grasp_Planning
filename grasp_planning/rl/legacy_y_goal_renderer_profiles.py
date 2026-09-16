@@ -1,4 +1,4 @@
-"""MuJoCo Filament provenance and materials for runtime D405 goals."""
+"""Legacy Y-gripper MuJoCo Filament material contract."""
 
 from __future__ import annotations
 
@@ -20,9 +20,7 @@ from grasp_planning.visual_servo_workspace import (
 )
 
 MUJOCO_GOAL_RENDERER_BACKEND = "filament"
-MUJOCO_GOAL_RENDERER_PROFILE = (
-    "mujoco_filament_y_gripper_d405_shared_materials_fill6_v1"
-)
+MUJOCO_GOAL_RENDERER_PROFILE = "mujoco_filament_y_gripper_d405_shared_materials_fill6_v1"
 
 
 @dataclass(frozen=True)
