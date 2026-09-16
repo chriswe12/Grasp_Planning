@@ -247,18 +247,8 @@ def spawn_visual_servo_surface_markings(
                 prim, path = box_prim, box_path
                 box_imageable.MakeVisible()
                 dirt_imageable.MakeInvisible()
-            world_x = (
-                VISUAL_SERVO_TSLOT_CENTER[0]
-                + phase_x
-                + cosine * marking.x_m
-                - sine * marking.y_m
-            )
-            world_y = (
-                VISUAL_SERVO_TSLOT_CENTER[1]
-                + phase_y
-                + sine * marking.x_m
-                + cosine * marking.y_m
-            )
+            world_x = VISUAL_SERVO_TSLOT_CENTER[0] + phase_x + cosine * marking.x_m - sine * marking.y_m
+            world_y = VISUAL_SERVO_TSLOT_CENTER[1] + phase_y + sine * marking.x_m + cosine * marking.y_m
             yaw_rad = math.radians(float(variant.rotation_deg) + marking.yaw_deg)
             standardize_xform_ops(
                 prim,

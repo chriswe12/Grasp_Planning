@@ -75,7 +75,9 @@ def _find_unique_prim(stage: Usd.Stage, name: str) -> Usd.Prim:
     return matches[0]
 
 
-def _set_material(stage: Usd.Stage, prim: Usd.Prim, name: str, color: tuple[float, float, float], roughness: float) -> None:
+def _set_material(
+    stage: Usd.Stage, prim: Usd.Prim, name: str, color: tuple[float, float, float], roughness: float
+) -> None:
     material = UsdShade.Material.Define(stage, f"/World/Materials/{name}")
     shader = UsdShade.Shader.Define(stage, f"/World/Materials/{name}/Shader")
     shader.CreateIdAttr("UsdPreviewSurface")
@@ -540,9 +542,7 @@ def main() -> None:
         "part_obj": str(part_obj),
         "part_extents_m": part_extents.tolist(),
         "isaac_joint_targets_rad": list(KUKA_START_RAD),
-        "actual_joint_positions": dict(
-            zip(articulation.dof_names, actual_joint_positions.tolist(), strict=True)
-        ),
+        "actual_joint_positions": dict(zip(articulation.dof_names, actual_joint_positions.tolist(), strict=True)),
         "pdz_finger_position_m": OPEN_FINGER_M,
         "camera": {
             "prim": str(camera_prim.GetPath()),

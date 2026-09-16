@@ -33,17 +33,11 @@ def retained_lift_quality(
         raise ValueError("Lift credit thresholds must satisfy 0 <= minimum < full.")
     if drift_scale_m <= 0.0 or drop_scale_m <= 0.0:
         raise ValueError("Lift drift and drop scales must be positive.")
-    if not (
-        final_lift_m.shape
-        == peak_lift_m.shape
-        == relative_drift_m.shape
-        == arm_lift_ok.shape
-    ):
+    if not (final_lift_m.shape == peak_lift_m.shape == relative_drift_m.shape == arm_lift_ok.shape):
         raise ValueError("All lift-quality tensors must have the same shape.")
 
     height = smoothstep01(
-        (final_lift_m - float(minimum_credit_lift_m))
-        / (float(full_credit_lift_m) - float(minimum_credit_lift_m))
+        (final_lift_m - float(minimum_credit_lift_m)) / (float(full_credit_lift_m) - float(minimum_credit_lift_m))
     )
     drift = torch.exp(-torch.square(relative_drift_m / float(drift_scale_m)))
     peak_drop = torch.relu(peak_lift_m - final_lift_m)
@@ -101,11 +95,7 @@ def lift_outcome_reward(
     quality = lift_quality.clamp(0.0, 1.0)
     pickup_quality = pickup.to(dtype=quality.dtype) * quality
     reward = float(lift_quality_reward) * pickup_quality
-    reward += (
-        float(geometric_lift_bonus)
-        * geometric.to(dtype=quality.dtype)
-        * pickup_quality
-    )
+    reward += float(geometric_lift_bonus) * geometric.to(dtype=quality.dtype) * pickup_quality
     reward -= float(neither_penalty) * (~geometric & ~pickup).to(dtype=quality.dtype)
     return reward
 

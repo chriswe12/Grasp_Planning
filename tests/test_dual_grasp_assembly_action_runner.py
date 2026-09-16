@@ -178,6 +178,7 @@ def test_dual_real_requires_execution_acknowledgement(
     )
     assert outcome.error_code == "EXECUTION_DISABLED"
 
+
 def test_dual_real_goal_builds_perceived_runtime_command_and_result(
     monkeypatch,
     tmp_path: Path,

@@ -108,8 +108,12 @@ class DualGraspPairConfig:
     # (lateral, approach) contact-patch offsets.  These are deliberately not
     # a Cartesian grid: the PDZ pad uses a trapezoidal robust-contact region.
     inserter_contact_offset_pairs_m: tuple[tuple[float, float], ...] = (
-        (-0.005, -0.005), (0.0, -0.005), (0.005, -0.005),
-        (-0.015, 0.005), (0.0, 0.005), (0.015, 0.005),
+        (-0.005, -0.005),
+        (0.0, -0.005),
+        (0.005, -0.005),
+        (-0.015, 0.005),
+        (0.0, 0.005),
+        (0.015, 0.005),
     )
 
     def __post_init__(self) -> None:
@@ -584,10 +588,7 @@ def _candidate_primitives_assembly(
                     continue
                 base_added = True
             primitives_list.append(primitive)
-    return tuple(
-        transform_primitive_to_world(primitive, source_pose_assembly)
-        for primitive in primitives_list
-    )
+    return tuple(transform_primitive_to_world(primitive, source_pose_assembly) for primitive in primitives_list)
 
 
 def _translated_meshes(
@@ -643,9 +644,7 @@ def _component_aabb_distance_lower_bound(
     second: tuple[tuple[np.ndarray, np.ndarray], ...],
 ) -> float:
     return min(
-        _aabb_distance_lower_bound(first_bounds, second_bounds)
-        for first_bounds in first
-        for second_bounds in second
+        _aabb_distance_lower_bound(first_bounds, second_bounds) for first_bounds in first for second_bounds in second
     )
 
 
@@ -891,9 +890,7 @@ def _evaluate_inserter_candidate_geometry_single(
         assembled_query = _CollisionQuery(
             collides=False,
             obstacle_names=(),
-            minimum_distance_m=(
-                None if math.isinf(assembled_aabb_lower_bound) else assembled_aabb_lower_bound
-            ),
+            minimum_distance_m=(None if math.isinf(assembled_aabb_lower_bound) else assembled_aabb_lower_bound),
         )
         collision_check = "component_aabb_separation_proof"
     elif defer_aabb_overlap:
@@ -907,9 +904,7 @@ def _evaluate_inserter_candidate_geometry_single(
         )
         final_meshes = tuple(_primitive_to_trimesh(primitive) for primitive in final_primitives)
         assembled_query_meshes = tuple(
-            mesh
-            for translation in checked_translations
-            for mesh in _swept_meshes(final_meshes, translation)
+            mesh for translation in checked_translations for mesh in _swept_meshes(final_meshes, translation)
         )
         assembled_query = _query_manager(
             assembled_manager,
@@ -993,7 +988,9 @@ def _evaluate_inserter_candidate_geometry(candidate: SavedGraspCandidate, **kwar
     if deferred:
         return None
     # Preserve the closest failure for diagnostics when no robust patch works.
-    return max(failures, key=lambda item: float("-inf") if item.minimum_clearance_m is None else item.minimum_clearance_m)
+    return max(
+        failures, key=lambda item: float("-inf") if item.minimum_clearance_m is None else item.minimum_clearance_m
+    )
 
 
 def generate_inserter_grasp_library(
@@ -1020,10 +1017,7 @@ def generate_inserter_grasp_library(
     obstacle_paths = (
         ()
         if force_full_assembly_recheck
-        else tuple(
-            str(sequence.parts_by_id[part_id].resolved_mesh_path)
-            for part_id in step.assembled_part_ids_before
-        )
+        else tuple(str(sequence.parts_by_id[part_id].resolved_mesh_path) for part_id in step.assembled_part_ids_before)
     )
     stage1 = generate_stage1_result(
         geometry=GeometryConfig(
@@ -1122,9 +1116,7 @@ def generate_inserter_grasp_library(
         for part_id in step.assembled_part_ids_before
     }
     assembled_manager = _manager_for_meshes(part_meshes.items())
-    assembled_component_bounds = tuple(
-        _bounds((mesh,)) for mesh in part_meshes.values()
-    )
+    assembled_component_bounds = tuple(_bounds((mesh,)) for mesh in part_meshes.values())
     model_cache: dict[tuple[float, float], tuple[object, ...]] = {}
     statuses: list[InserterCandidateStatus] = []
     accepted: list[SavedGraspCandidate] = []
@@ -1176,10 +1168,7 @@ def generate_inserter_grasp_library(
             source_pose_assembly=source_pose,
             config=config,
         )
-        if (
-            config.adaptive_inserter_shortlist
-            and cluster_counts[cluster] >= config.max_candidates_per_cluster
-        ):
+        if config.adaptive_inserter_shortlist and cluster_counts[cluster] >= config.max_candidates_per_cluster:
             statuses.append(
                 InserterCandidateStatus(
                     candidate=candidate,
@@ -1209,10 +1198,7 @@ def generate_inserter_grasp_library(
             force_full_assembly_recheck=force_full_assembly_recheck,
             assembled_manager=assembled_manager,
             assembled_component_bounds=assembled_component_bounds,
-            defer_aabb_overlap=(
-                config.adaptive_inserter_shortlist
-                and config.prefer_aabb_clear_inserter_candidates
-            ),
+            defer_aabb_overlap=(config.adaptive_inserter_shortlist and config.prefer_aabb_clear_inserter_candidates),
         )
         if candidate_status is None:
             deferred_exact.append(candidate)
@@ -1296,12 +1282,8 @@ def generate_inserter_grasp_library(
         "table_retreat_feasible_count": len(accepted_tuple),
         "adaptive_inserter_shortlist": bool(config.adaptive_inserter_shortlist),
         "adaptive_inserter_shortlist_limit": config.max_inserter_candidates_per_step,
-        "balance_inserter_approach_directions": bool(
-            config.balance_inserter_approach_directions
-        ),
-        "balance_inserter_symmetry_transforms": bool(
-            config.balance_inserter_symmetry_transforms
-        ),
+        "balance_inserter_approach_directions": bool(config.balance_inserter_approach_directions),
+        "balance_inserter_symmetry_transforms": bool(config.balance_inserter_symmetry_transforms),
         "accepted_approach_direction_counts_assembly": (
             _candidate_approach_direction_counts(
                 accepted_tuple,
@@ -1311,13 +1293,10 @@ def generate_inserter_grasp_library(
         "accepted_symmetry_transform_counts": dict(
             sorted(Counter(_candidate_symmetry_key(candidate) for candidate in accepted_tuple).items())
         ),
-        "prefer_aabb_clear_inserter_candidates": bool(
-            config.prefer_aabb_clear_inserter_candidates
-        ),
+        "prefer_aabb_clear_inserter_candidates": bool(config.prefer_aabb_clear_inserter_candidates),
         "tight_geometry_deferred_count": len(deferred_exact),
         "expensive_candidate_check_count": sum(
-            status.status != "not_evaluated" and status.grasp_id in filtered_by_id
-            for status in statuses
+            status.status != "not_evaluated" and status.grasp_id in filtered_by_id for status in statuses
         ),
         "candidate_ids_renamed": True,
         "table_filter_applied": True,
@@ -1656,9 +1635,7 @@ def _candidate_geometry(
         if normalized not in unique_translations:
             unique_translations.append(normalized)
     swept_meshes = tuple(
-        mesh
-        for translation in unique_translations
-        for mesh in _swept_meshes(final_meshes, translation)
+        mesh for translation in unique_translations for mesh in _swept_meshes(final_meshes, translation)
     )
     return _CandidateGeometry(
         final_meshes=final_meshes,
@@ -1948,10 +1925,7 @@ def _evaluate_pair(
     exact = _query_manager(
         inserter_manager,
         holder_geometry.final_meshes,
-        compute_distance=(
-            config.exact_pair_clearance_ranking
-            or config.geometry_clearance_margin_m > 0.0
-        ),
+        compute_distance=(config.exact_pair_clearance_ranking or config.geometry_clearance_margin_m > 0.0),
         stop_on_collision=config.geometry_clearance_margin_m <= 0.0,
     )
     clearance_component = _clearance_score(
@@ -2421,9 +2395,7 @@ def plan_dual_grasp_pairs(
     """Plan bounded, ranked end-effector pairs for every holder-active step."""
 
     if planning.gripper_collision_model not in {GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ}:
-        raise ValueError(
-            "Dual-grasp pair planning requires the KUKA Y-gripper or PDZ gripper mesh collision model."
-        )
+        raise ValueError("Dual-grasp pair planning requires the KUKA Y-gripper or PDZ gripper mesh collision model.")
     if not trimesh_fcl_backend_available():
         raise RuntimeError("trimesh with python-fcl is required for dual-grasp pair planning.")
     if (
@@ -2686,9 +2658,7 @@ def plan_dual_grasp_pairs(
                     "inserter_shortlist_count": len(inserter_shortlist),
                     "possible_shortlisted_pair_count": (len(holder_shortlist) * len(inserter_shortlist)),
                     "checked_pair_count": len(evaluations),
-                    "pair_check_limit_reached": (
-                        len(holder_shortlist) * len(inserter_shortlist) > len(evaluations)
-                    ),
+                    "pair_check_limit_reached": (len(holder_shortlist) * len(inserter_shortlist) > len(evaluations)),
                     "broadphase_clear_count": (len(evaluations) - exact_count),
                     "exact_fcl_pair_check_count": exact_count,
                     "compatible_pair_count": compatible_count,

@@ -58,9 +58,7 @@ def main() -> None:
         raise ValueError(f"{args.bundle} has no execution_world_pose metadata.")
     nominal_object_pose = ObjectWorldPose(
         position_world=tuple(float(value) for value in pose_raw["position_world"]),
-        orientation_xyzw_world=tuple(
-            float(value) for value in pose_raw["orientation_xyzw_world"]
-        ),
+        orientation_xyzw_world=tuple(float(value) for value in pose_raw["orientation_xyzw_world"]),
     )
     metadata_paths = sorted(args.dataset_dir.glob("episode_*.json"))
     if not metadata_paths:
@@ -108,19 +106,10 @@ def main() -> None:
                 "path": _rounded(geometry["path"]),
                 "initial_rotation": _rounded(geometry["initial_rotation"]),
                 "final_rotation": _rounded(geometry["final_rotation"]),
-                "final_position_error_mm": round(
-                    geometry["final_position_error_m"] * 1000.0, 4
-                ),
-                "final_rotation_error_deg": round(
-                    geometry["final_rotation_error_deg"], 5
-                ),
-                "offset_grasp_mm": _rounded(
-                    np.asarray(stress.get("offset_grasp_m", (0.0, 0.0, 0.0)))
-                    * 1000.0
-                ),
-                "rotation_xyz_deg": _rounded(
-                    stress.get("rotation_xyz_deg", (0.0, 0.0, 0.0))
-                ),
+                "final_position_error_mm": round(geometry["final_position_error_m"] * 1000.0, 4),
+                "final_rotation_error_deg": round(geometry["final_rotation_error_deg"], 5),
+                "offset_grasp_mm": _rounded(np.asarray(stress.get("offset_grasp_m", (0.0, 0.0, 0.0))) * 1000.0),
+                "rotation_xyz_deg": _rounded(stress.get("rotation_xyz_deg", (0.0, 0.0, 0.0))),
             }
         )
         if item_index % 256 == 0 or item_index == len(metadata_paths):
@@ -140,8 +129,7 @@ def main() -> None:
             @ (nominal_pregrasp - nominal_object_pose.translation_world)
         ),
         "grasp": _rounded(
-            nominal_object_pose.rotation_world_from_object.T
-            @ (nominal_grasp - nominal_object_pose.translation_world)
+            nominal_object_pose.rotation_world_from_object.T @ (nominal_grasp - nominal_object_pose.translation_world)
         ),
         "initial_percent": args.initial_percent,
     }
@@ -205,10 +193,7 @@ redraw();
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(html, encoding="utf-8")
-    print(
-        f"Wrote {len(episodes)} selectable episodes to {args.output} "
-        f"({args.output.stat().st_size / 1.0e6:.1f} MB)."
-    )
+    print(f"Wrote {len(episodes)} selectable episodes to {args.output} ({args.output.stat().st_size / 1.0e6:.1f} MB).")
 
 
 if __name__ == "__main__":

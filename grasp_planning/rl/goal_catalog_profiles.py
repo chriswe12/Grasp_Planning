@@ -14,9 +14,7 @@ from grasp_planning.visual_servo_workspace import (
 )
 
 MUJOCO_GOAL_RENDERER_BACKEND = "filament"
-MUJOCO_GOAL_RENDERER_PROFILE = (
-    "mujoco_filament_pdz_d405_ibl_matte_visual_mesh_tslot_parity_v4"
-)
+MUJOCO_GOAL_RENDERER_PROFILE = "mujoco_filament_pdz_d405_ibl_matte_visual_mesh_tslot_parity_v4"
 
 # Filament and Isaac/Omniverse do not produce the same perceptual roughness for
 # identical USD Preview Surface numbers.  These are deliberately backend

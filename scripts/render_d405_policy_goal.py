@@ -105,9 +105,7 @@ FILAMENT_FALLBACK_ENVIRONMENT_LIGHT_INTENSITY = 6500.0
 def _csv_floats(raw: str, *, count: int, label: str) -> tuple[float, ...]:
     values = tuple(float(value) for value in str(raw).split(",") if value.strip())
     if len(values) != count or not all(math.isfinite(value) for value in values):
-        raise argparse.ArgumentTypeError(
-            f"{label} must contain {count} finite comma-separated values."
-        )
+        raise argparse.ArgumentTypeError(f"{label} must contain {count} finite comma-separated values.")
     return values
 
 
@@ -143,17 +141,13 @@ def _bundle_object_pose(bundle: object) -> ObjectWorldPose:
         raise ValueError("Stage-2 bundle has no execution_world_pose metadata.")
     return ObjectWorldPose(
         position_world=tuple(float(value) for value in raw["position_world"]),
-        orientation_xyzw_world=tuple(
-            float(value) for value in raw["orientation_xyzw_world"]
-        ),
+        orientation_xyzw_world=tuple(float(value) for value in raw["orientation_xyzw_world"]),
     )
 
 
 def _atomic_savez(path: Path, payload: dict[str, np.ndarray]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.stem}-", suffix=".npz", dir=path.parent
-    )
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
@@ -203,9 +197,7 @@ def _fixed_link_transform(
     while current != str(ancestor_link):
         joint = child_to_joint.get(current)
         if joint is None or str(joint.get("type")) != "fixed":
-            raise ValueError(
-                f"No fixed URDF transform from '{ancestor_link}' to '{descendant_link}'."
-            )
+            raise ValueError(f"No fixed URDF transform from '{ancestor_link}' to '{descendant_link}'.")
         parent = joint.find("parent")
         if parent is None:
             raise ValueError(f"Joint '{joint.get('name')}' has no parent link.")
@@ -297,8 +289,7 @@ def _restore_pdz_gripper_visual_meshes(root: ET.Element, robot_urdf: Path) -> No
         ]
         if len(matching_geoms) != 1:
             raise RuntimeError(
-                f"Expected one imported {body_name}/{geom_name or imported_mesh} geom, "
-                f"found {len(matching_geoms)}."
+                f"Expected one imported {body_name}/{geom_name or imported_mesh} geom, found {len(matching_geoms)}."
             )
         matching_geoms[0].set("mesh", visual_mesh)
 
@@ -376,9 +367,7 @@ def _scene_model(
         mount_profile=camera_mount_profile_from_camera_profile(camera_profile),
     )
     camera_position, camera_quat_ros = camera_pose_in_link7(camera_cfg)
-    camera_quat_gl = _ros_camera_quat_to_opengl(
-        np.asarray(camera_quat_ros, dtype=np.float64)
-    )
+    camera_quat_gl = _ros_camera_quat_to_opengl(np.asarray(camera_quat_ros, dtype=np.float64))
     scale_x = WIDTH / float(camera_cfg.width)
     scale_y = HEIGHT / float(camera_cfg.height)
     ET.SubElement(
@@ -390,10 +379,7 @@ def _scene_model(
         resolution=f"{WIDTH} {HEIGHT}",
         sensorsize=f"{WIDTH} {HEIGHT}",
         focalpixel=f"{camera_cfg.fx * scale_x:.12g} {camera_cfg.fy * scale_y:.12g}",
-        principalpixel=(
-            f"{camera_cfg.cx * scale_x - WIDTH / 2.0:.12g} "
-            f"{HEIGHT / 2.0 - camera_cfg.cy * scale_y:.12g}"
-        ),
+        principalpixel=(f"{camera_cfg.cx * scale_x - WIDTH / 2.0:.12g} {HEIGHT / 2.0 - camera_cfg.cy * scale_y:.12g}"),
     )
 
     compiler = root.find("compiler")
@@ -420,9 +406,7 @@ def _scene_model(
                 link7_xml.remove(geom)
                 removed_base = True
         if not (removed_box and removed_base):
-            raise RuntimeError(
-                "Could not remove the camera enclosure surfaces that contain the optical origin."
-            )
+            raise RuntimeError("Could not remove the camera enclosure surfaces that contain the optical origin.")
         _restore_pdz_gripper_visual_meshes(root, robot_urdf)
 
     finger_names = (
@@ -484,17 +468,14 @@ def _scene_model(
     model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
     if is_pdz and model.nlight != 0:
         raise RuntimeError(
-            "The canonical Filament scene must have no physical lights so its "
-            "environment illumination remains active."
+            "The canonical Filament scene must have no physical lights so its environment illumination remains active."
         )
     return model
 
 
 def _apply_filament_materials(model: mujoco.MjModel, materials: dict[str, object]) -> None:
     for name, material in materials.items():
-        material_id = mujoco.mj_name2id(
-            model, mujoco.mjtObj.mjOBJ_MATERIAL, name
-        )
+        material_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MATERIAL, name)
         if material_id < 0:
             raise RuntimeError(f"MuJoCo material '{name}' was not compiled.")
         model.mat_rgba[material_id, :3] = material.color
@@ -542,19 +523,12 @@ def _set_gripper_width(model: mujoco.MjModel, data: mujoco.MjData, width_m: floa
 def main() -> None:  # noqa: C901
     args = _parse_args()
     if os.environ.get("MUJOCO_FILAMENT_ACTIVE") != "1":
-        raise RuntimeError(
-            "Runtime goal rendering must be launched through "
-            "scripts/run_mujoco_filament.sh."
-        )
+        raise RuntimeError("Runtime goal rendering must be launched through scripts/run_mujoco_filament.sh.")
     maximum_approach_width = float(args.maximum_approach_width_m)
     approach_width = float(args.approach_width_m)
     if not math.isfinite(maximum_approach_width) or maximum_approach_width <= 0.0:
         raise ValueError("--maximum-approach-width-m must be finite and positive.")
-    if (
-        not math.isfinite(approach_width)
-        or approach_width <= 0.0
-        or approach_width > maximum_approach_width + 1.0e-9
-    ):
+    if not math.isfinite(approach_width) or approach_width <= 0.0 or approach_width > maximum_approach_width + 1.0e-9:
         raise ValueError(
             "Selected grasp exceeds the physical gripper approach aperture: "
             f"requested={approach_width:.6f} m maximum={maximum_approach_width:.6f} m."
@@ -608,27 +582,11 @@ def main() -> None:  # noqa: C901
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     urdf_root = ET.parse(robot_urdf).getroot()
-    tcp_link = (
-        "pdz_gripper_tcp"
-        if urdf_root.find("./link[@name='pdz_gripper_tcp']") is not None
-        else "gripper_tcp"
-    )
+    tcp_link = "pdz_gripper_tcp" if urdf_root.find("./link[@name='pdz_gripper_tcp']") is not None else "gripper_tcp"
     is_pdz = tcp_link == "pdz_gripper_tcp"
-    materials = (
-        PDZ_GOAL_FILAMENT_MATERIALS
-        if is_pdz
-        else LEGACY_Y_GOAL_FILAMENT_MATERIALS
-    )
-    renderer_backend = (
-        PDZ_GOAL_RENDERER_BACKEND
-        if is_pdz
-        else LEGACY_Y_GOAL_RENDERER_BACKEND
-    )
-    renderer_profile = (
-        PDZ_GOAL_RENDERER_PROFILE
-        if is_pdz
-        else LEGACY_Y_GOAL_RENDERER_PROFILE
-    )
+    materials = PDZ_GOAL_FILAMENT_MATERIALS if is_pdz else LEGACY_Y_GOAL_FILAMENT_MATERIALS
+    renderer_backend = PDZ_GOAL_RENDERER_BACKEND if is_pdz else LEGACY_Y_GOAL_RENDERER_BACKEND
+    renderer_profile = PDZ_GOAL_RENDERER_PROFILE if is_pdz else LEGACY_Y_GOAL_RENDERER_PROFILE
     tcp_position_link7, tcp_rotation_link7 = _fixed_link_transform(
         urdf_root,
         ancestor_link="link7",
@@ -670,15 +628,9 @@ def main() -> None:  # noqa: C901
             tcp_rotation_link7,
         )
         desired_rotation = Rotation.from_quat(goal_orientation).as_matrix()
-        position_error = float(
-            np.linalg.norm(np.asarray(goal_position, dtype=np.float64) - actual_position)
-        )
+        position_error = float(np.linalg.norm(np.asarray(goal_position, dtype=np.float64) - actual_position))
         rotation_error_deg = math.degrees(
-            float(
-                np.linalg.norm(
-                    Rotation.from_matrix(desired_rotation @ actual_rotation.T).as_rotvec()
-                )
-            )
+            float(np.linalg.norm(Rotation.from_matrix(desired_rotation @ actual_rotation.T).as_rotvec()))
         )
         actual_orientation_xyzw = Rotation.from_matrix(actual_rotation).as_quat()
         actual_orientation_wxyz = actual_orientation_xyzw[[3, 0, 1, 2]]
@@ -694,9 +646,7 @@ def main() -> None:  # noqa: C901
         finally:
             renderer.close()
 
-    depth = np.nan_to_num(depth, nan=0.50, posinf=0.50, neginf=0.04).astype(
-        np.float32
-    )
+    depth = np.nan_to_num(depth, nan=0.50, posinf=0.50, neginf=0.04).astype(np.float32)
     depth_std = float(depth.std())
     validation_passed = bool(
         position_error <= float(args.maximum_position_error_m)
@@ -716,9 +666,7 @@ def main() -> None:  # noqa: C901
             "goal_rgb": rgb,
             "goal_depth": depth,
             "goal_camera_profile": np.asarray(str(args.camera_profile)),
-            "goal_observation_profile": np.asarray(
-                D405_VISUAL_SERVO_OBSERVATION_PROFILE
-            ),
+            "goal_observation_profile": np.asarray(D405_VISUAL_SERVO_OBSERVATION_PROFILE),
             "visual_material_profile": np.asarray(VISUAL_SERVO_MATERIAL_PROFILE),
             "visual_scene_profile": np.asarray(VISUAL_SERVO_SCENE_PROFILE if is_pdz else ""),
             "visual_workspace_profile": np.asarray(VISUAL_SERVO_TSLOT_PROFILE),
@@ -728,21 +676,13 @@ def main() -> None:  # noqa: C901
             "goal_joint_positions": np.asarray(moveit_joints, dtype=np.float32),
             "mujoco_joint_positions": np.asarray(moveit_joints, dtype=np.float32),
             "goal_tcp_position": np.asarray(goal_position, dtype=np.float64),
-            "goal_tcp_orientation_xyzw": np.asarray(
-                goal_orientation, dtype=np.float64
-            ),
+            "goal_tcp_orientation_xyzw": np.asarray(goal_orientation, dtype=np.float64),
             "actual_tcp_position": actual_position.astype(np.float64),
-            "actual_tcp_orientation_wxyz": actual_orientation_wxyz.astype(
-                np.float64
-            ),
+            "actual_tcp_orientation_wxyz": actual_orientation_wxyz.astype(np.float64),
             "tcp_position_error_m": np.asarray(position_error, dtype=np.float64),
-            "tcp_rotation_error_deg": np.asarray(
-                rotation_error_deg, dtype=np.float64
-            ),
+            "tcp_rotation_error_deg": np.asarray(rotation_error_deg, dtype=np.float64),
             "goal_depth_std_m": np.asarray(depth_std, dtype=np.float32),
-            "render_validation_passed": np.asarray(
-                validation_passed, dtype=np.bool_
-            ),
+            "render_validation_passed": np.asarray(validation_passed, dtype=np.bool_),
         },
     )
     if not validation_passed:

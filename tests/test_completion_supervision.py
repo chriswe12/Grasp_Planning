@@ -7,8 +7,7 @@ from pathlib import Path
 import torch
 
 MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/completion.py"
+    Path(__file__).resolve().parents[1] / "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/completion.py"
 )
 SPEC = importlib.util.spec_from_file_location("completion_reward_contract", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None

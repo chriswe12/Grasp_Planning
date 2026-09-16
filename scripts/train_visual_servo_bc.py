@@ -96,13 +96,7 @@ def _run_epoch(
     live_randomizers: dict[int, LiveObservationRandomizer] = {}
     for batch_index, batch in enumerate(loader):
         if "live_rgb" in batch:
-            live_rgb = (
-                batch["live_rgb"]
-                .to(device=device, non_blocking=True)
-                .permute(0, 3, 1, 2)
-                .float()
-                .div_(255.0)
-            )
+            live_rgb = batch["live_rgb"].to(device=device, non_blocking=True).permute(0, 3, 1, 2).float().div_(255.0)
             live_depth = (
                 batch["live_depth"]
                 .to(device=device, non_blocking=True)
@@ -156,9 +150,7 @@ def _run_epoch(
         )
         for image_name in ("live_rgbd", "goal_rgbd"):
             if tuple(inputs[image_name].shape[-2:]) != observation_size:
-                inputs[image_name] = F.interpolate(
-                    inputs[image_name], size=observation_size, mode="area"
-                )
+                inputs[image_name] = F.interpolate(inputs[image_name], size=observation_size, mode="area")
         if training and live_observation_randomization:
             live_rgbd = inputs["live_rgbd"]
             batch_size = int(live_rgbd.shape[0])
@@ -173,25 +165,17 @@ def _run_epoch(
             else:
                 randomizer.sample(torch.arange(batch_size, device=device))
             live_rgb = live_rgbd[:, :3].permute(0, 2, 3, 1)
-            live_depth_m = (
-                live_rgbd[:, 3:4]
-                .permute(0, 2, 3, 1)
-                .mul(DEPTH_MAX_M - DEPTH_MIN_M)
-                .add(DEPTH_MIN_M)
-            )
+            live_depth_m = live_rgbd[:, 3:4].permute(0, 2, 3, 1).mul(DEPTH_MAX_M - DEPTH_MIN_M).add(DEPTH_MIN_M)
             live_rgb, live_depth_m = randomizer.apply(live_rgb, live_depth_m)
-            live_depth = (
-                live_depth_m.sub(DEPTH_MIN_M)
-                .div(DEPTH_MAX_M - DEPTH_MIN_M)
-                .clamp(0.0, 1.0)
-            )
-            inputs["live_rgbd"] = torch.cat(
-                (live_rgb, live_depth), dim=-1
-            ).permute(0, 3, 1, 2)
+            live_depth = live_depth_m.sub(DEPTH_MIN_M).div(DEPTH_MAX_M - DEPTH_MIN_M).clamp(0.0, 1.0)
+            inputs["live_rgbd"] = torch.cat((live_rgb, live_depth), dim=-1).permute(0, 3, 1, 2)
         target = batch["residual_twist_camera"].to(device=device, non_blocking=True)
-        with torch.set_grad_enabled(training), torch.amp.autocast(
-            device_type=device.type,
-            enabled=amp,
+        with (
+            torch.set_grad_enabled(training),
+            torch.amp.autocast(
+                device_type=device.type,
+                enabled=amp,
+            ),
         ):
             prediction = model(**inputs)
             loss = loss_fn(prediction, target)
@@ -233,9 +217,7 @@ def _run_epoch(
             elapsed_s = max(time.monotonic() - epoch_started_at, 1.0e-6)
             batches_per_s = completed_batches / elapsed_s
             remaining_s = (
-                (batch_count_total - completed_batches) / batches_per_s
-                if batches_per_s > 0.0
-                else float("inf")
+                (batch_count_total - completed_batches) / batches_per_s if batches_per_s > 0.0 else float("inf")
             )
             print(
                 f"[{phase.upper()}] epoch={epoch} "
@@ -246,16 +228,8 @@ def _run_epoch(
             )
     return {
         "loss": loss_sum / sample_count,
-        "linear_mae_mm_s": (
-            linear_absolute_sum / sample_count * LINEAR_ACTION_SCALE_M_S * 1000.0
-        ),
-        "angular_mae_deg_s": (
-            angular_absolute_sum
-            / sample_count
-            * ANGULAR_ACTION_SCALE_RAD_S
-            * 180.0
-            / np.pi
-        ),
+        "linear_mae_mm_s": (linear_absolute_sum / sample_count * LINEAR_ACTION_SCALE_M_S * 1000.0),
+        "angular_mae_deg_s": (angular_absolute_sum / sample_count * ANGULAR_ACTION_SCALE_RAD_S * 180.0 / np.pi),
     }
 
 
@@ -316,10 +290,7 @@ def main() -> None:
         "--live-observation-randomization",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help=(
-            "Randomize only live RGB-D during training; goal and validation images "
-            "remain canonical."
-        ),
+        help=("Randomize only live RGB-D during training; goal and validation images remain canonical."),
     )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
@@ -374,11 +345,7 @@ def main() -> None:
         episode_shuffle_block_size=args.episode_shuffle_block_size,
         shared_goal=bool(args.shared_goal),
         amp=amp_enabled,
-        training_cache_dir=(
-            str(args.training_cache_dir.resolve())
-            if args.training_cache_dir is not None
-            else None
-        ),
+        training_cache_dir=(str(args.training_cache_dir.resolve()) if args.training_cache_dir is not None else None),
         mmap_shuffle_block_size=args.mmap_shuffle_block_size,
         live_observation_randomization=bool(args.live_observation_randomization),
         observation_profile=D405_VISUAL_SERVO_OBSERVATION_PROFILE,
@@ -388,12 +355,8 @@ def main() -> None:
     if using_mmap_cache:
         if args.max_train_episodes or args.max_validation_episodes:
             parser.error("Episode limits cannot be used with --training-cache-dir.")
-        train_dataset = MmapVisualServoFrameDataset(
-            args.training_cache_dir, split="train"
-        )
-        validation_dataset = MmapVisualServoFrameDataset(
-            args.training_cache_dir, split="validation"
-        )
+        train_dataset = MmapVisualServoFrameDataset(args.training_cache_dir, split="train")
+        validation_dataset = MmapVisualServoFrameDataset(args.training_cache_dir, split="validation")
     else:
         train_dataset = VisualServoFrameDataset(
             args.dataset_dir,
@@ -481,11 +444,7 @@ def main() -> None:
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tensorboard_dir = args.output_dir / "tensorboard"
-    writer = (
-        SummaryWriter(log_dir=str(tensorboard_dir))
-        if SummaryWriter is not None
-        else None
-    )
+    writer = SummaryWriter(log_dir=str(tensorboard_dir)) if SummaryWriter is not None else None
     if writer is None:
         print(
             "[TRAIN] TensorBoard is unavailable in this Python environment; "
@@ -519,9 +478,7 @@ def main() -> None:
             map_location=device,
             weights_only=False,
         )
-        checkpoint_dataset_dir = checkpoint.get("training_config", {}).get(
-            "dataset_dir"
-        )
+        checkpoint_dataset_dir = checkpoint.get("training_config", {}).get("dataset_dir")
         if checkpoint_dataset_dir is None:
             raise ValueError(
                 f"{args.resume_checkpoint} is a legacy checkpoint without dataset identity; "
@@ -541,16 +498,11 @@ def main() -> None:
         best_validation_loss = float(
             checkpoint.get(
                 "best_validation_loss",
-                checkpoint.get("metrics", {})
-                .get("validation", {})
-                .get("loss", float("inf")),
+                checkpoint.get("metrics", {}).get("validation", {}).get("loss", float("inf")),
             )
         )
         best_checkpoint_path = args.output_dir / "best.pt"
-        if (
-            "best_validation_loss" not in checkpoint
-            and best_checkpoint_path.exists()
-        ):
+        if "best_validation_loss" not in checkpoint and best_checkpoint_path.exists():
             best_checkpoint = torch.load(
                 best_checkpoint_path,
                 map_location="cpu",
@@ -561,9 +513,7 @@ def main() -> None:
                 float(
                     best_checkpoint.get(
                         "best_validation_loss",
-                        best_checkpoint.get("metrics", {})
-                        .get("validation", {})
-                        .get("loss", float("inf")),
+                        best_checkpoint.get("metrics", {}).get("validation", {}).get("loss", float("inf")),
                     )
                 ),
             )
@@ -592,9 +542,7 @@ def main() -> None:
             amp=amp_enabled,
             progress_every_batches=args.progress_every_batches,
             shared_goal=bool(args.shared_goal),
-            live_observation_randomization=bool(
-                args.live_observation_randomization
-            ),
+            live_observation_randomization=bool(args.live_observation_randomization),
         )
         validation_metrics = _run_epoch(
             model,
@@ -641,9 +589,7 @@ def main() -> None:
             "action_semantics": "normalized_residual_camera_twist",
             "linear_action_scale_m_s": LINEAR_ACTION_SCALE_M_S,
             "angular_action_scale_rad_s": ANGULAR_ACTION_SCALE_RAD_S,
-            "rotation_camera_in_tcp": list(
-                D405WristCameraConfig().rotation_camera_in_calibration_parent
-            ),
+            "rotation_camera_in_tcp": list(D405WristCameraConfig().rotation_camera_in_calibration_parent),
         }
         torch.save(checkpoint, args.output_dir / "last.pt")
         if validation_metrics["loss"] < best_validation_loss:
@@ -653,9 +599,7 @@ def main() -> None:
             json.dumps(history, indent=2) + "\n",
             encoding="utf-8",
         )
-    history_path.write_text(
-        json.dumps(history, indent=2) + "\n", encoding="utf-8"
-    )
+    history_path.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
     if writer is not None:
         writer.close()
     print(

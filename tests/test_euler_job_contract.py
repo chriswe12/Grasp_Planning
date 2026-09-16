@@ -33,7 +33,7 @@ def test_submit_supports_explicit_gpu_benchmark_resources() -> None:
         assert option in source
     assert '--gpus="${gpu_type}:${gpu_count}"' in source
     assert '--gres="gpumem:${gpu_memory}"' in source
-    assert 'EULER_SKIP_SYNC:-0' in source
+    assert "EULER_SKIP_SYNC:-0" in source
     assert '[[ "${mode}" =~ ^(smoke|lift)$ && "${gpu_count}" != "1" ]]' in source
     assert "--gpu-count greater than one configures the Slurm ranks automatically" in source
     assert "smoke|lift|probe|train" in source
@@ -51,7 +51,7 @@ def test_batch_job_launches_one_slurm_task_per_allocated_gpu() -> None:
     assert "euler/slurm_rank_launcher.sh" in source
     assert "--distributed" in source
     assert "completion_count < requested_gpu_count" in source
-    assert 'APPTAINERENV_ISAAC_RL_EXPERIMENT_NAME=' in source
+    assert "APPTAINERENV_ISAAC_RL_EXPERIMENT_NAME=" in source
 
 
 def test_batch_job_samples_and_summarizes_every_allocated_gpu() -> None:
@@ -67,9 +67,9 @@ def test_batch_job_samples_and_summarizes_every_allocated_gpu() -> None:
 def test_distributed_jobs_do_not_reuse_writable_kit_caches() -> None:
     source = _read("euler/job.sbatch")
     launcher_source = _read("euler/slurm_rank_launcher.sh")
-    assert 'if (( requested_gpu_count > 1 )); then' in source
+    assert "if (( requested_gpu_count > 1 )); then" in source
     assert '"${EULER_CACHE_DIR}/cache/torch/" "${local_cache}/cache/torch/"' in source
-    assert 'if (( requested_gpu_count == 1 )); then' in source
+    assert "if (( requested_gpu_count == 1 )); then" in source
     assert "Keeping distributed writable Kit caches job-local" in source
     assert 'flock -s "${cache_lock}" rsync' in source
     assert 'euler/slurm_rank_launcher.sh\n        "${local_cache}"' in source
@@ -86,7 +86,7 @@ def test_rl_games_entrypoint_records_distributed_batch_contract() -> None:
     source = _read("isaac_rl/scripts/rl_games/train.py")
     assert 'world_size = int(os.getenv("WORLD_SIZE", "1"))' in source
     assert 'os.getenv("ISAAC_RL_EXPERIMENT_NAME")' in source
-    assert 'if global_rank == 0:' in source
+    assert "if global_rank == 0:" in source
     assert '"environments_per_rank": None' in source
     assert "global_rollout_batch_size = rollout_batch_size * world_size" in source
     assert "global rollout batch={global_rollout_batch_size}" in source
@@ -106,9 +106,7 @@ def test_rl_games_entrypoint_does_not_retain_nonzero_rank_episode_tensors() -> N
 
 
 def test_completion_ppo_reuses_distributed_gradient_buffers() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/agents/completion_ppo.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/agents/completion_ppo.py")
     assert "class _ReusableGradientAllReduce" in source
     assert "torch.cat(all_grads_list)" not in source
     assert "_central_value_calc_gradients_with_reusable_buffer" in source
@@ -116,17 +114,14 @@ def test_completion_ppo_reuses_distributed_gradient_buffers() -> None:
 
 
 def test_lift_dls_slices_environment_and_joint_dimensions_separately() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
-    assert "env_ids, self.context.ee_jacobi_body_idx\n        ][:, :, self.arm_ids]" in source
-    assert "env_ids, self.context.ee_jacobi_body_idx, :, self.arm_ids" not in source
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
+    compact_source = "".join(source.split())
+    assert "[env_ids,self.context.ee_jacobi_body_idx][:,:,self.arm_ids]" in compact_source
+    assert "[env_ids,self.context.ee_jacobi_body_idx,:,self.arm_ids]" not in compact_source
 
 
 def test_lift_mode_sizes_physx_patch_buffer_for_production_environment_count() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     init_start = source.index("def __init__")
     init_end = source.index("def _setup_scene", init_start)
     init_source = source[init_start:init_end]
@@ -136,17 +131,13 @@ def test_lift_mode_sizes_physx_patch_buffer_for_production_environment_count() -
 
 
 def test_lift_gravity_updates_use_full_physx_view_tensor() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     assert "(int(part.root_physx_view.count), 1)" in source
     assert "torch.full((cpu_ids.numel(), 1)" not in source
 
 
 def test_lift_physics_only_enables_the_selected_part_clone() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     assert "def _enable_only_selected_part_simulation" in source
     assert "part.root_physx_view.set_disable_simulations(disabled, cpu_env_ids)" in source
     assert "selected_parts = self.target_part_indices[self.target_index[env_ids]]" in source
@@ -154,9 +145,7 @@ def test_lift_physics_only_enables_the_selected_part_clone() -> None:
 
 
 def test_lift_part_types_do_not_expand_the_startup_broadphase() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     setup_start = source.index("def _setup_scene")
     setup_end = source.index("def _active_part_pose", setup_start)
     setup_source = source[setup_start:setup_end]
@@ -165,18 +154,14 @@ def test_lift_part_types_do_not_expand_the_startup_broadphase() -> None:
 
 
 def test_lift_material_uses_scene_default_without_per_clone_usd_binding() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     assert "cfg.sim.physics_material = sim_utils.RigidBodyMaterialCfg(" in source
     assert "bind_physics_material" not in source
     assert "policy_lift_high_friction" not in source
 
 
 def test_lift_gravity_updates_skip_inactive_part_clones() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
     gravity_method = source.split("def _set_part_gravity_disabled", maxsplit=1)[1].split(
         "def _enable_only_selected_part_simulation", maxsplit=1
     )[0]
@@ -186,15 +171,9 @@ def test_lift_gravity_updates_skip_inactive_part_clones() -> None:
 
 
 def test_lift_approach_fixture_is_not_rewritten_every_physics_substep() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py"
-    )
-    pre_step = source.split("def _pre_physics_step", maxsplit=1)[1].split(
-        "def _begin_lift_attempts", maxsplit=1
-    )[0]
-    apply_action = source.split("def _apply_action", maxsplit=1)[1].split(
-        "def _advance_lift_phases", maxsplit=1
-    )[0]
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/isaac_rl_env.py")
+    pre_step = source.split("def _pre_physics_step", maxsplit=1)[1].split("def _begin_lift_attempts", maxsplit=1)[0]
+    apply_action = source.split("def _apply_action", maxsplit=1)[1].split("def _advance_lift_phases", maxsplit=1)[0]
     assert "self._restore_selected_part_fixture(approach_ids)" in pre_step
     assert "self.lift_phase == self._LIFT_PHASE_CLOSE" in apply_action
     assert "fixture_mask = normal_mask" not in apply_action
@@ -217,7 +196,7 @@ def test_slurm_launcher_isolates_each_gpu_before_apptainer_starts() -> None:
     assert 'exec "${runtime_args[@]}"' in source
     assert "APPTAINERENV_ISAAC_RL_STARTUP_LOCK=" in batch_source
     assert "APPTAINERENV_ISAAC_RL_DISTRIBUTED_READY_DIR=" in batch_source
-    assert '.isaac-startup-${node_name}.lock' in batch_source
+    assert ".isaac-startup-${node_name}.lock" in batch_source
     assert "startup_lock_handle = _acquire_distributed_startup_lock()" in train_source
     assert train_source.index("startup_lock_handle = _acquire_distributed_startup_lock()") < train_source.index(
         "app_launcher = AppLauncher(args_cli)"
@@ -227,7 +206,9 @@ def test_slurm_launcher_isolates_each_gpu_before_apptainer_starts() -> None:
         train_source.index("env = gym.make("),
     )
     assert "def _wait_for_distributed_environment_barrier" in train_source
-    assert train_source.index("_wait_for_distributed_environment_barrier(global_rank, world_size)") < train_source.index(
+    assert train_source.index(
+        "_wait_for_distributed_environment_barrier(global_rank, world_size)"
+    ) < train_source.index(
         'runner.run({"train": True',
     )
 

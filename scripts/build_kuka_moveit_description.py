@@ -195,9 +195,7 @@ def build_moveit_xacro(
     # The SRDF and MoveIt configuration package are named "iiwa7". The names
     # must match exactly or MoveIt silently drops semantic groups.
     root = ET.Element("robot", {"name": "iiwa7"})
-    root.append(
-        ET.Comment(f" Generated from {_source_label(source_urdf)}; do not hand-edit. ")
-    )
+    root.append(ET.Comment(f" Generated from {_source_label(source_urdf)}; do not hand-edit. "))
     ET.SubElement(
         root,
         f"{{{XACRO_NS}}}include",
@@ -304,8 +302,7 @@ def build_dual_moveit_xacro(
     gripper_label = "calibrated Y-gripper" if "y_gripper" in source_urdf.name else "calibrated PDZ gripper"
     root.append(
         ET.Comment(
-            f" Generated from {_source_label(source_urdf)}; "
-            f"both arms carry the {gripper_label}; do not hand-edit. "
+            f" Generated from {_source_label(source_urdf)}; both arms carry the {gripper_label}; do not hand-edit. "
         )
     )
     ET.SubElement(
@@ -399,8 +396,7 @@ def build_dual_pdz_srdf(*, template_srdf: Path, output_srdf: Path) -> Path:
             element.set(attribute, value)
 
     existing_pairs = {
-        (str(element.get("link1")), str(element.get("link2")))
-        for element in root.findall("disable_collisions")
+        (str(element.get("link1")), str(element.get("link2"))) for element in root.findall("disable_collisions")
     }
     for robot_name in DUAL_ARM_BASE_Y_M:
         model_specific_pairs = (

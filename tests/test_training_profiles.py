@@ -30,7 +30,7 @@ def _agent_cfg() -> dict:
                     "lr_schedule": "linear",
                     "network": {"mlp": {"units": [256, 128, 64]}},
                 },
-            }
+            },
         }
     }
 
@@ -149,9 +149,7 @@ def test_lift_reward_profiles_preserve_guidance_but_change_priority() -> None:
     conservative_env = _env_cfg()
     primary_env = _env_cfg()
 
-    conservative = apply_training_profile(
-        conservative_env, conservative_agent, "lift_conservative"
-    )
+    conservative = apply_training_profile(conservative_env, conservative_agent, "lift_conservative")
     primary = apply_training_profile(primary_env, primary_agent, "lift_primary")
 
     assert conservative.changes_reward and primary.changes_reward

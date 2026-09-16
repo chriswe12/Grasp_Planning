@@ -251,11 +251,7 @@ def _fake_trajectory(
 
 
 def _initial_robot_state() -> dict[str, float]:
-    return {
-        f"lbr_{robot}_A{index}": 0.0
-        for robot in ("one", "two")
-        for index in range(1, 8)
-    }
+    return {f"lbr_{robot}_A{index}": 0.0 for robot in ("one", "two") for index in range(1, 8)}
 
 
 def _preplanned_sequence(stop_after: str) -> PreplannedDualSequence:
@@ -635,9 +631,7 @@ def test_execute_sequence_continues_when_inserter_gripper_is_unavailable(
     assert success is True
     assert status == "stopped_at_inserter_preinsertion"
     assert last_completed == "inserter_preinsertion"
-    assert commanders["inserter"].executed == [
-        name for role, name in MOTION_SEQUENCE if role == "inserter"
-    ]
+    assert commanders["inserter"].executed == [name for role, name in MOTION_SEQUENCE if role == "inserter"]
     assert holder_gripper.calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"])),
         ("close", SERVO_GRIPPER_CLOSED_WIDTH_M),
@@ -674,9 +668,7 @@ def test_execute_sequence_stops_before_holder_close_at_pregrasp(
     assert status == "stopped_at_holder_pregrasp"
     assert last_completed == "holder_pregrasp"
     assert commanders["inserter"].executed == []
-    assert grippers["holder"].calls == [
-        ("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"]))
-    ]
+    assert grippers["holder"].calls == [("open", kuka_gripper_approach_width(plan["grasps"]["holder"]["jaw_width_m"]))]
     assert grippers["inserter"].calls == [
         ("open", kuka_gripper_approach_width(plan["grasps"]["inserter_pickup"]["jaw_width_m"]))
     ]
@@ -1258,8 +1250,7 @@ def test_ranked_preflight_caches_identical_failed_connected_prefix() -> None:
     assert summary["cached_prefix_rejections"] == 1
     assert summary["records"][1]["roles"]["holder"]["cache_hit"] is True
     assert not any(
-        step["name"] == "preflight_plan_holder_pregrasp" and step.get("candidate_rank") == 2
-        for step in steps
+        step["name"] == "preflight_plan_holder_pregrasp" and step.get("candidate_rank") == 2 for step in steps
     )
 
 

@@ -20,8 +20,7 @@ def _parse_args() -> argparse.Namespace:
         "usd",
         nargs="?",
         type=Path,
-        default=REPO_ROOT
-        / "assets/usd/kuka_iiwa7_pdz_gripper/configuration/kuka_iiwa7_pdz_gripper_base.usd",
+        default=REPO_ROOT / "assets/usd/kuka_iiwa7_pdz_gripper/configuration/kuka_iiwa7_pdz_gripper_base.usd",
     )
     parser.add_argument("--headless", action="store_true")
     return parser.parse_args()
@@ -45,8 +44,7 @@ def main() -> None:
     metadata = author_pdz_gripper_material_variants(stage)
     stage.GetRootLayer().Save()
     print(
-        f"[DONE] usd={usd_path} roots={metadata['visual_roots']} "
-        f"variants={metadata['variants']}",
+        f"[DONE] usd={usd_path} roots={metadata['visual_roots']} variants={metadata['variants']}",
         flush=True,
     )
 

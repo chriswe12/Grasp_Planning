@@ -36,9 +36,7 @@ def _simulate(*, initial_transverse_error_m: float) -> list[dict[str, float | st
     rows: list[dict[str, float | str]] = []
     for step in range(config.step_count):
         elapsed = step * config.policy_dt_s
-        progress, progress_rate = smooth_trajectory_progress(
-            elapsed, config.approach_duration_s
-        )
+        progress, progress_rate = smooth_trajectory_progress(elapsed, config.approach_duration_s)
         target = pregrasp + progress * (grasp - pregrasp)
         nominal = np.concatenate(
             (
@@ -49,9 +47,7 @@ def _simulate(*, initial_transverse_error_m: float) -> list[dict[str, float | st
         for controller in ("legacy", "funnel"):
             error = np.concatenate((target - states[controller], np.zeros(3)))
             if controller == "legacy":
-                full, _ = expert_twist(
-                    nominal_twist=nominal, pose_error=error, config=config
-                )
+                full, _ = expert_twist(nominal_twist=nominal, pose_error=error, config=config)
                 diagnostics = {
                     "approach_scale": 1.0,
                     "funnel_half_width_m": 0.0,
@@ -105,10 +101,7 @@ def _polyline(
         py = y + height * (1.0 - min(max(float(row[key]), 0.0), maximum) / maximum)
         points.append(f"{px:.1f},{py:.1f}")
     color = "#d1495b" if controller == "legacy" else "#00798c"
-    return (
-        f'<polyline points="{" ".join(points)}" fill="none" '
-        f'stroke="{color}" stroke-width="3"/>'
-    )
+    return f'<polyline points="{" ".join(points)}" fill="none" stroke="{color}" stroke-width="3"/>'
 
 
 def _write_html(
@@ -226,14 +219,12 @@ def _write_path_html(
             for row in selected
         ]
         point_text = " ".join(f"{px:.1f},{py:.1f}" for px, py in points)
-        parts.append(
-            f'<polyline points="{point_text}" fill="none" stroke="{color}" stroke-width="4"/>'
-        )
+        parts.append(f'<polyline points="{point_text}" fill="none" stroke="{color}" stroke-width="4"/>')
         for row, (px, py) in zip(selected[::15], points[::15], strict=True):
             parts.append(
                 f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="{color}">'
-                f'<title>t={float(row["time_s"]):.2f}s, lateral={float(row["tcp_closing_axis_mm"]):.2f}mm, '
-                f'approach={float(row["tcp_approach_axis_mm"]):.2f}mm</title></circle>'
+                f"<title>t={float(row['time_s']):.2f}s, lateral={float(row['tcp_closing_axis_mm']):.2f}mm, "
+                f"approach={float(row['tcp_approach_axis_mm']):.2f}mm</title></circle>"
             )
     object_x, object_y = point(0.0, 0.0)
     parts.extend(
@@ -268,8 +259,7 @@ def _write_video(
 
     width, height = 1280, 720
     grouped = {
-        controller: [row for row in rows if row["controller"] == controller]
-        for controller in ("legacy", "funnel")
+        controller: [row for row in rows if row["controller"] == controller] for controller in ("legacy", "funnel")
     }
     colors = {"legacy": (209, 73, 91), "funnel": (0, 121, 140)}
     frames = []
@@ -380,14 +370,10 @@ def main() -> None:
         default=Path("artifacts/visual_servo_expert_debug"),
     )
     args = parser.parse_args()
-    rows = _simulate(
-        initial_transverse_error_m=float(args.initial_transverse_error_mm) / 1000.0
-    )
+    rows = _simulate(initial_transverse_error_m=float(args.initial_transverse_error_mm) / 1000.0)
     csv_path = args.output_prefix.with_suffix(".csv")
     html_path = args.output_prefix.with_suffix(".html")
-    path_html_path = args.output_prefix.with_name(
-        f"{args.output_prefix.name}_path"
-    ).with_suffix(".html")
+    path_html_path = args.output_prefix.with_name(f"{args.output_prefix.name}_path").with_suffix(".html")
     video_path = args.output_prefix.with_suffix(".gif")
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
@@ -408,11 +394,7 @@ def main() -> None:
     for controller in ("legacy", "funnel"):
         selected = [row for row in rows if row["controller"] == controller]
         first_advance = next(
-            (
-                float(row["time_s"])
-                for row in selected
-                if float(row["approach_velocity_mm_s"]) > 1.0
-            ),
+            (float(row["time_s"]) for row in selected if float(row["approach_velocity_mm_s"]) > 1.0),
             float("nan"),
         )
         print(

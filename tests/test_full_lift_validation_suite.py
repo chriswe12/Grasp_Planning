@@ -111,9 +111,7 @@ def test_full_suite_requires_and_writes_exact_catalog_coverage(tmp_path: Path) -
         status="object_unstable_before_grasp",
     )
 
-    verification, rows = verify_and_merge_suite(
-        _manifest(), logs_root=logs_root, catalog_path=catalog_path
-    )
+    verification, rows = verify_and_merge_suite(_manifest(), logs_root=logs_root, catalog_path=catalog_path)
     assert verification["exact_catalog_coverage"] is True
     assert verification["summary"]["status_counts"] == {
         "object_not_lifted": 1,
@@ -145,9 +143,7 @@ def test_full_suite_rejects_duplicate_target_coverage(tmp_path: Path) -> None:
 
 
 def test_full_lift_submission_is_bounded_and_report_only() -> None:
-    source = (
-        Path(__file__).resolve().parents[1] / "euler/submit_full_lift_validation.sh"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "euler/submit_full_lift_validation.sh").read_text(encoding="utf-8")
     assert 'BATCH_SIZE="${LIFT_BATCH_SIZE:-96}"' in source
     assert "--target-offset" in source
     assert "--max-targets" in source

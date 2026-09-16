@@ -101,7 +101,12 @@ class LiveObservationRandomizationCfg:
                 raise ValueError(f"{name} must be in [0, 1].")
         if not 0.0 <= self.patch_area_fraction[0] <= self.patch_area_fraction[1] <= 0.25:
             raise ValueError("patch_area_fraction must be ordered inside [0, 0.25].")
-        if not 0.0 <= self.depth_structured_dropout_seed_probability[0] <= self.depth_structured_dropout_seed_probability[1] <= 0.25:
+        if (
+            not 0.0
+            <= self.depth_structured_dropout_seed_probability[0]
+            <= self.depth_structured_dropout_seed_probability[1]
+            <= 0.25
+        ):
             raise ValueError("depth_structured_dropout_seed_probability must be ordered inside [0, 0.25].")
         if len(self.structured_dropout_field_shape) != 2 or min(self.structured_dropout_field_shape) < 3:
             raise ValueError("structured_dropout_field_shape must contain two dimensions >= 3.")
@@ -295,9 +300,9 @@ class LiveObservationRandomizer:
         self.depth_structured_dropout_enabled[env_ids] = torch.rand(len(env_ids), device=self.device) < (
             self.cfg.depth_structured_dropout_probability * strength_flat
         )
-        seed_probability = self._uniform(
-            env_ids, self.cfg.depth_structured_dropout_seed_probability
-        ).reshape(-1, 1, 1, 1)
+        seed_probability = self._uniform(env_ids, self.cfg.depth_structured_dropout_seed_probability).reshape(
+            -1, 1, 1, 1
+        )
         seeds = torch.rand_like(self.depth_structured_dropout_field[env_ids], dtype=torch.float32) < seed_probability
         dilation = int(self.cfg.structured_dropout_dilation)
         connected = F.max_pool2d(
@@ -529,11 +534,15 @@ class LiveObservationRandomizer:
             randomized_depth.new_full((), self.cfg.depth_max_m),
             randomized_depth,
         )
-        structured_mask = F.interpolate(
-            self.depth_structured_dropout_field.float(),
-            size=(height, width),
-            mode="nearest",
-        ).permute(0, 2, 3, 1).bool()
+        structured_mask = (
+            F.interpolate(
+                self.depth_structured_dropout_field.float(),
+                size=(height, width),
+                mode="nearest",
+            )
+            .permute(0, 2, 3, 1)
+            .bool()
+        )
         randomized_depth = torch.where(
             structured_mask & self.depth_structured_dropout_enabled.view(-1, 1, 1, 1),
             randomized_depth.new_full((), self.cfg.depth_max_m),

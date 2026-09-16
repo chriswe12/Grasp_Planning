@@ -79,9 +79,7 @@ def load_overview_frames(npz_path: str | Path, *, expected_steps: int) -> np.nda
     if frames.ndim != 4 or frames.shape[-1] != 3:
         raise ValueError(f"overview_rgb must have shape (T, H, W, 3), got {frames.shape}.")
     if frames.shape[0] != expected_steps:
-        raise ValueError(
-            f"Overview has {frames.shape[0]} frames but episode has {expected_steps} steps."
-        )
+        raise ValueError(f"Overview has {frames.shape[0]} frames but episode has {expected_steps} steps.")
     return frames
 
 
@@ -144,9 +142,7 @@ def render_episode_frame(episode: EpisodeVisualization, step_index: int) -> np.n
     live = np.asarray(arrays["rgb_live"][step_index], dtype=np.uint8)
     height, width = live.shape[:2]
     bilinear = getattr(getattr(Image, "Resampling", Image), "BILINEAR")
-    goal = np.asarray(
-        Image.fromarray(np.asarray(arrays["rgb_goal"], dtype=np.uint8)).resize((width, height), bilinear)
-    )
+    goal = np.asarray(Image.fromarray(np.asarray(arrays["rgb_goal"], dtype=np.uint8)).resize((width, height), bilinear))
     depth = _depth_rgb(
         arrays["depth_live"][step_index],
         minimum_m=episode.depth_min_m,
@@ -171,11 +167,7 @@ def render_episode_frame(episode: EpisodeVisualization, step_index: int) -> np.n
     panel_image = Image.new("RGB", (panel_width, 2 * height), (22, 22, 22))
     panel_draw = ImageDraw.Draw(panel_image)
     metadata = episode.metadata
-    action_label = (
-        "policy "
-        if metadata.get("controller") == "learned_policy"
-        else "expert "
-    )
+    action_label = "policy " if metadata.get("controller") == "learned_policy" else "expert "
     progress = float(arrays["trajectory_progress"][step_index])
     position_error_mm = np.asarray(arrays["pose_error"][step_index, :3]) * 1000.0
     rotation_error_deg = np.rad2deg(np.asarray(arrays["pose_error"][step_index, 3:]))

@@ -6,9 +6,7 @@ import colorsys
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-VISUAL_SERVO_MATERIAL_PROFILE = (
-    "muted_fdm_palette_pdz_black_whitepads_leafbindings_small_tslot_v7"
-)
+VISUAL_SERVO_MATERIAL_PROFILE = "muted_fdm_palette_pdz_black_whitepads_leafbindings_small_tslot_v7"
 
 _FINGER_LINK_NAMES = frozenset(
     {
@@ -19,9 +17,7 @@ _FINGER_LINK_NAMES = frozenset(
     }
 )
 _CONTACT_PAD_PATH_TOKENS = ("pad_8mm", "tpu_pad")
-_VISUAL_GEOMETRY_TYPE_NAMES = frozenset(
-    {"Capsule", "Cone", "Cube", "Cylinder", "Mesh", "Sphere"}
-)
+_VISUAL_GEOMETRY_TYPE_NAMES = frozenset({"Capsule", "Cone", "Cube", "Cylinder", "Mesh", "Sphere"})
 
 
 @dataclass(frozen=True)
@@ -89,9 +85,7 @@ class VisualServoGripperAppearanceVariant:
     pad_roughness: float
 
 
-def _clamped_scaled_color(
-    color: tuple[float, float, float], scale: float
-) -> tuple[float, float, float]:
+def _clamped_scaled_color(color: tuple[float, float, float], scale: float) -> tuple[float, float, float]:
     return tuple(min(1.0, max(0.0, channel * scale)) for channel in color)  # type: ignore[return-value]
 
 
@@ -104,8 +98,7 @@ def _finger_variant_color(scale: float, hue_shift_deg: float) -> tuple[float, fl
 def _pad_variant_color(scale: float, temperature_shift: float) -> tuple[float, float, float]:
     gains = (1.0 + temperature_shift, 1.0, 1.0 - temperature_shift)
     shifted = tuple(
-        min(1.0, max(0.0, channel * gain))
-        for channel, gain in zip(VISUAL_SERVO_CONTACT_PAD_COLOR, gains, strict=True)
+        min(1.0, max(0.0, channel * gain)) for channel, gain in zip(VISUAL_SERVO_CONTACT_PAD_COLOR, gains, strict=True)
     )
     return _clamped_scaled_color(shifted, scale)
 
@@ -238,8 +231,7 @@ def nearest_gripper_appearance_variant(
             for actual, requested in zip(variant.finger_color, finger_color, strict=True)
         )
         pad_color_error = sum(
-            ((actual - requested) / 0.20) ** 2
-            for actual, requested in zip(variant.pad_color, pad_color, strict=True)
+            ((actual - requested) / 0.20) ** 2 for actual, requested in zip(variant.pad_color, pad_color, strict=True)
         )
         return (
             finger_color_error
@@ -326,9 +318,7 @@ def author_pdz_gripper_material_variants(stage) -> dict[str, tuple[str, ...]]:
                 shader_input.Set(Gf.Vec3f(*color))
                 color_written = True
         if not color_written:
-            shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(
-                Gf.Vec3f(*color)
-            )
+            shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
         roughness_written = False
         for name in ("roughness", "reflection_roughness_constant"):
             shader_input = shader.GetInput(name)
@@ -336,9 +326,7 @@ def author_pdz_gripper_material_variants(stage) -> dict[str, tuple[str, ...]]:
                 shader_input.Set(float(roughness))
                 roughness_written = True
         if not roughness_written:
-            shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(
-                float(roughness)
-            )
+            shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(float(roughness))
 
     visual_root_paths = tuple(
         str(prim.GetPath())
@@ -352,8 +340,7 @@ def author_pdz_gripper_material_variants(stage) -> dict[str, tuple[str, ...]]:
     )
     if len(visual_root_paths) != 2:
         raise RuntimeError(
-            "Expected exactly two instanceable PDZ finger visual scopes in the base USD, "
-            f"found {visual_root_paths}."
+            f"Expected exactly two instanceable PDZ finger visual scopes in the base USD, found {visual_root_paths}."
         )
     for path in visual_root_paths:
         stage.GetPrimAtPath(path).SetInstanceable(False)
@@ -375,8 +362,7 @@ def author_pdz_gripper_material_variants(stage) -> dict[str, tuple[str, ...]]:
                 observed[kind].add(str(material.GetPath()))
             if not material_paths["finger"] or not material_paths["pad"]:
                 raise RuntimeError(
-                    f"PDZ visual scope {root_path} does not contain both finger and pad materials: "
-                    f"{material_paths}"
+                    f"PDZ visual scope {root_path} does not contain both finger and pad materials: {material_paths}"
                 )
 
             variant_set = root.GetVariantSets().AddVariantSet(PDZ_GRIPPER_APPEARANCE_VARIANT_SET)
@@ -558,9 +544,7 @@ def apply_visual_servo_materials() -> dict[str, Any]:
     return {
         "profile": VISUAL_SERVO_MATERIAL_PROFILE,
         "parts": tuple(part_paths),
-        "parts_by_env": {
-            env_index: tuple(paths) for env_index, paths in sorted(part_paths_by_env.items())
-        },
+        "parts_by_env": {env_index: tuple(paths) for env_index, paths in sorted(part_paths_by_env.items())},
         "fingers": tuple(finger_paths),
         "finger_geometry": tuple(finger_geometry_paths),
         "contact_pads": tuple(contact_pad_geometry_paths),
@@ -568,12 +552,9 @@ def apply_visual_servo_materials() -> dict[str, Any]:
         "editable_contact_pads": tuple(editable_contact_pad_geometry_paths),
         "gripper_appearance_variant_roots": tuple(gripper_appearance_variant_roots),
         "gripper_appearance_variant_roots_by_env": {
-            env_index: tuple(paths)
-            for env_index, paths in sorted(gripper_appearance_variant_roots_by_env.items())
+            env_index: tuple(paths) for env_index, paths in sorted(gripper_appearance_variant_roots_by_env.items())
         },
-        "gripper_appearance_variants": tuple(
-            variant.name for variant in VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS
-        ),
+        "gripper_appearance_variants": tuple(variant.name for variant in VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS),
         "robot_material_source": (
             "authored_pdz_usd_material_variants"
             if gripper_appearance_variant_roots

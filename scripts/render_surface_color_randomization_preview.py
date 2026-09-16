@@ -31,12 +31,12 @@ args.enable_cameras = True
 app = AppLauncher(args).app
 
 import gymnasium as gym  # noqa: E402
-import isaac_rl.tasks  # noqa: E402, F401
 import omni.usd  # noqa: E402
 import torch  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 from pxr import Gf, UsdShade  # noqa: E402
 
+import isaac_rl.tasks  # noqa: E402, F401
 from grasp_planning.isaac_visual_materials import (  # noqa: E402
     PDZ_GRIPPER_APPEARANCE_VARIANT_SET,
     VISUAL_SERVO_MATERIAL_PROFILE,
@@ -172,8 +172,7 @@ def _write_sheet(goal: np.ndarray, live: np.ndarray, output: Path) -> None:
         gripper = GRIPPER_VARIANTS[index]
         draw.text(
             (x + 8, y + 58),
-            f"gripper={gripper.name} finger_r={gripper.finger_roughness:.2f} "
-            f"pad_r={gripper.pad_roughness:.2f}",
+            f"gripper={gripper.name} finger_r={gripper.finger_roughness:.2f} pad_r={gripper.pad_roughness:.2f}",
             fill=(126, 142, 160),
         )
         goal_panel = Image.fromarray(goal[index]).resize((width, height), Image.Resampling.LANCZOS)
@@ -200,8 +199,7 @@ def _write_gripper_sheet(frames: np.ndarray, output: Path) -> None:
         draw.text((x + 8, y + 6), variant.name.upper(), fill=(245, 247, 250))
         draw.text(
             (x + 8, y + 23),
-            f"finger_r={variant.finger_roughness:.2f} pad_r={variant.pad_roughness:.2f} "
-            f"frame_MAE={mean_abs_delta:.3f}",
+            f"finger_r={variant.finger_roughness:.2f} pad_r={variant.pad_roughness:.2f} frame_MAE={mean_abs_delta:.3f}",
             fill=(150, 165, 183),
         )
         panel = Image.fromarray(frame).resize((width, height), Image.Resampling.LANCZOS)
@@ -244,9 +242,7 @@ def main() -> None:
         task = env.unwrapped
         stage = omni.usd.get_context().get_stage()
         shader_paths = task.visual_material_bindings["part_shaders_by_env"]
-        gripper_roots_by_env = task.visual_material_bindings[
-            "gripper_appearance_variant_roots_by_env"
-        ]
+        gripper_roots_by_env = task.visual_material_bindings["gripper_appearance_variant_roots_by_env"]
         _report_gripper_material_bindings(stage, task.visual_material_bindings)
         _set_shader(stage, shader_paths[GOAL_ENV_INDEX], 2, 0.82, 0.0)
         gripper_frames = []
@@ -285,8 +281,7 @@ def main() -> None:
             Image.fromarray(goal[index]).save(output_dir / f"{name}_goal.png")
             Image.fromarray(live[index]).save(output_dir / f"{name}_live.png")
         print(
-            f"[DONE] material={VISUAL_SERVO_MATERIAL_PROFILE} markings={SURFACE_MARKING_PROFILE} "
-            f"output={output_dir}",
+            f"[DONE] material={VISUAL_SERVO_MATERIAL_PROFILE} markings={SURFACE_MARKING_PROFILE} output={output_dir}",
             flush=True,
         )
     finally:

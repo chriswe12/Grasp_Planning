@@ -3,8 +3,8 @@
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
@@ -13,11 +13,13 @@ parser.add_argument("--num-envs", type=int, default=1)
 parser.add_argument("--steps", type=int, default=0, help="0 keeps the viewer running; headless defaults to 60.")
 parser.add_argument("--output-dir", type=Path, default=Path("artifacts/franka_training_scene"))
 parser.add_argument(
-    "--physics-inspector", action="store_true",
+    "--physics-inspector",
+    action="store_true",
     help="Use CPU physics and USD updates; let Physics Inspector own joint drive targets.",
 )
 parser.add_argument(
-    "--test-inspector-control", action="store_true",
+    "--test-inspector-control",
+    action="store_true",
     help="With --physics-inspector, verify that a USD joint-drive edit moves joint 1 (120 steps).",
 )
 AppLauncher.add_app_launcher_args(parser)
@@ -35,17 +37,19 @@ if args.test_inspector_control:
 args.enable_cameras = True
 app = AppLauncher(args).app
 
-import numpy as np  # noqa: E402
-from PIL import Image  # noqa: E402
-import torch  # noqa: E402
 import isaaclab.sim as sim_utils  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
 from isaaclab.sensors import Camera, CameraCfg  # noqa: E402
+from PIL import Image  # noqa: E402
 from pxr import UsdPhysics  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from grasp_planning.rl.franka_training_scene import (  # noqa: E402
-    FRANKA_SCENE_PROFILE, FrankaTrainingSceneCfg, make_franka_render_cfg,
+    FRANKA_SCENE_PROFILE,
+    FrankaTrainingSceneCfg,
+    make_franka_render_cfg,
 )
 
 
@@ -57,10 +61,14 @@ def handoff_to_inspector(sim):
 
 
 def main():
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(
-        dt=1.0 / 120.0, device=args.device, render=make_franka_render_cfg(),
-        use_fabric=not args.physics_inspector,
-    ))
+    sim = sim_utils.SimulationContext(
+        sim_utils.SimulationCfg(
+            dt=1.0 / 120.0,
+            device=args.device,
+            render=make_franka_render_cfg(),
+            use_fabric=not args.physics_inspector,
+        )
+    )
     sim.set_camera_view((1.5, 1.3, 1.0), (0.35, 0.0, 0.15))
     cfg = FrankaTrainingSceneCfg(num_envs=args.num_envs, env_spacing=2.0)
     scene = InteractiveScene(cfg)
@@ -79,12 +87,18 @@ def main():
                 UsdPhysics.DriveAPI.Get(prim, "linear").GetTargetPositionAttr().Set(0.04)
         if inspector_drive is None:
             raise RuntimeError("Could not find the Panda joint-1 USD drive")
-    overview = Camera(CameraCfg(
-        prim_path="/World/OverviewCamera", width=960, height=640,
-        data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(
-            focal_length=18.0, clipping_range=(0.01, 10.0),
-        ),
-    ))
+    overview = Camera(
+        CameraCfg(
+            prim_path="/World/OverviewCamera",
+            width=960,
+            height=640,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=18.0,
+                clipping_range=(0.01, 10.0),
+            ),
+        )
+    )
     sim.reset()
     robot = scene["robot"]
     root_state = robot.data.default_root_state.clone()
@@ -145,7 +159,8 @@ def main():
                 "camera_convention": cfg.wrist_camera.offset.convention,
                 "camera_position_m": cfg.wrist_camera.offset.pos,
                 "camera_quaternion_wxyz": cfg.wrist_camera.offset.rot,
-                "rgb_shape": list(rgb.shape), "depth_shape": list(depth.shape),
+                "rgb_shape": list(rgb.shape),
+                "depth_shape": list(depth.shape),
                 "finite_depth_fraction": float(np.isfinite(depth).mean()),
                 "joint_names": robot.joint_names,
                 "joint_positions": robot.data.joint_pos.cpu().tolist(),

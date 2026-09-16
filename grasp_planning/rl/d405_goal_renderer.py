@@ -60,11 +60,7 @@ def render_d405_goal_for_grasp(
     maximum_approach_width = float(maximum_approach_width_m)
     if not math.isfinite(maximum_approach_width) or maximum_approach_width <= 0.0:
         raise ValueError("Maximum approach width must be finite and positive.")
-    if (
-        not math.isfinite(approach_width)
-        or approach_width <= 0.0
-        or approach_width > maximum_approach_width + 1.0e-9
-    ):
+    if not math.isfinite(approach_width) or approach_width <= 0.0 or approach_width > maximum_approach_width + 1.0e-9:
         raise ValueError(
             "Selected grasp does not fit the physical gripper approach aperture: "
             f"requested={approach_width:.6f} m maximum={maximum_approach_width:.6f} m."

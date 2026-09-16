@@ -51,14 +51,20 @@ def test_lift_height_threshold_can_define_a_practical_retry_profile() -> None:
         "relative_drift_m": 0.0127,
     }
 
-    assert classify_scripted_lift(
-        **measurements,
-        thresholds=ScriptedLiftThresholds(),
-    ) == "object_not_lifted"
-    assert classify_scripted_lift(
-        **measurements,
-        thresholds=ScriptedLiftThresholds(minimum_final_lift_m=0.035),
-    ) == "success"
+    assert (
+        classify_scripted_lift(
+            **measurements,
+            thresholds=ScriptedLiftThresholds(),
+        )
+        == "object_not_lifted"
+    )
+    assert (
+        classify_scripted_lift(
+            **measurements,
+            thresholds=ScriptedLiftThresholds(minimum_final_lift_m=0.035),
+        )
+        == "success"
+    )
 
 
 def test_summary_excludes_simulator_invalid_attempts_from_grasp_rate() -> None:

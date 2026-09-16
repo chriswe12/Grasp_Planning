@@ -1331,9 +1331,7 @@ def filter_grasps_against_assembly(
                 )
                 for collision_model in candidate_models
             ):
-                kept.append(
-                    offset_candidate
-                )
+                kept.append(offset_candidate)
                 break
     return kept
 
@@ -1577,11 +1575,7 @@ def candidate_payload(
         center = np.asarray(candidate.grasp_position_obj, dtype=float)
         rotation = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)
         closing_axis = (point_b - point_a) / np.linalg.norm(point_b - point_a)
-        pregrasp_position = (
-            None
-            if pregrasp_offset_m is None
-            else center - rotation[:, 2] * float(pregrasp_offset_m)
-        )
+        pregrasp_position = None if pregrasp_offset_m is None else center - rotation[:, 2] * float(pregrasp_offset_m)
         grasp_position_display = _display_point(
             candidate.grasp_position_obj,
             object_pose_world=object_pose_world,
@@ -1596,8 +1590,7 @@ def candidate_payload(
             if pregrasp_position_display is None
             else fmt_vec(
                 (
-                    np.asarray(pregrasp_position_display, dtype=float)
-                    - np.asarray(grasp_position_display, dtype=float)
+                    np.asarray(pregrasp_position_display, dtype=float) - np.asarray(grasp_position_display, dtype=float)
                 ).tolist()
             )
         )
@@ -1796,7 +1789,7 @@ def write_debug_html(
             "corners_obj": [
                 _display_point(point, object_pose_world=display_object_pose_world)
                 for point in ground_plane["corners_obj"]
-            ]
+            ],
         }
     )
     data = {

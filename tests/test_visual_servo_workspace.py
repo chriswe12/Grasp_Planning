@@ -29,8 +29,8 @@ def test_tracked_tslot_asset_is_render_only_and_not_cache_local() -> None:
     assert ".cache" not in VISUAL_SERVO_TSLOT_ASSET.parts
     source = VISUAL_SERVO_TSLOT_ASSET.read_text(encoding="utf-8")
     assert "CollisionAPI" not in source
-    assert 'double3 xformOp:translate = (0, 0, -0.003)' in source
-    assert 'double3 xformOp:scale = (0.0205, 0.60, 0.003)' in source
+    assert "double3 xformOp:translate = (0, 0, -0.003)" in source
+    assert "double3 xformOp:scale = (0.0205, 0.60, 0.003)" in source
     assert VISUAL_SERVO_TSLOT_PITCH_M == pytest.approx(0.0255)
     assert VISUAL_SERVO_TSLOT_SCALE == pytest.approx((1.0, 1.0, 1.0))
 

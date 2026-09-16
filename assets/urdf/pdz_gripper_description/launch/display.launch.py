@@ -16,9 +16,7 @@ def generate_launch_description():
     use_pads = LaunchConfiguration("use_pads")
     pad_thickness = LaunchConfiguration("pad_thickness")
     use_camera = LaunchConfiguration("use_camera")
-    camera_use_nominal_extrinsics = LaunchConfiguration(
-        "camera_use_nominal_extrinsics"
-    )
+    camera_use_nominal_extrinsics = LaunchConfiguration("camera_use_nominal_extrinsics")
     robot_description = ParameterValue(
         Command(
             [
