@@ -28,8 +28,8 @@ def test_combined_profile_uses_small_tslot_with_sensor_and_appearance_randomizat
     assert cfg.scene_appearance_randomization_enabled
     assert cfg.scene_tslot_surface_enabled
     assert cfg.scene_tslot_geometry_randomization_enabled
-    assert cfg.scene_tslot_nominal_fraction == pytest.approx(0.60)
-    assert cfg.scene_tslot_phase_fraction == pytest.approx(0.20)
+    assert cfg.scene_tslot_nominal_fraction == pytest.approx(0.0)
+    assert cfg.scene_tslot_phase_fraction == pytest.approx(0.0)
     assert cfg.live_observation_delay_max_steps == 1
     assert cfg.motion_action_delay_max_steps == 1
     assert cfg.motion_action_two_step_probability == 0.0
@@ -46,11 +46,7 @@ def test_clutter_profile_changes_only_clutter_fields_from_combined() -> None:
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(clutter_cfg, "combined_clutter")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(clutter_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(clutter_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "scene_clutter_enabled",
@@ -66,11 +62,7 @@ def test_depth_robust_profile_strengthens_depth_only_from_combined() -> None:
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(depth_cfg, "combined_depth_robust")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(depth_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(depth_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "live_depth_scale",
@@ -84,6 +76,8 @@ def test_depth_robust_profile_strengthens_depth_only_from_combined() -> None:
         "live_depth_dropout_probability",
         "live_depth_edge_dropout_probability",
         "live_depth_patch_dropout_probability",
+        "live_depth_structured_dropout_probability",
+        "live_depth_structured_dropout_seed_probability",
         "live_patch_area_fraction",
     }
     assert depth_cfg.live_depth_bias_m == pytest.approx((-0.0035, 0.0035))
@@ -98,11 +92,7 @@ def test_busy_background_profile_adds_background_and_denser_clutter_only() -> No
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(background_cfg, "combined_busy_background")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(background_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(background_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "scene_clutter_enabled",

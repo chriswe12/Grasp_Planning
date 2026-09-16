@@ -6,12 +6,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=euler.env
 source "${SCRIPT_DIR}/euler.env"
 
-for command_name in curl rsync sha256sum ssh; do
+for command_name in curl python3 rsync sha256sum ssh; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "[ERROR] Required command not found: ${command_name}" >&2
         exit 1
     fi
 done
+
+python3 "${REPO_ROOT}/isaac_rl/scripts/verify_fabrica_training_dataset.py" \
+    --root "${REPO_ROOT}"
 
 if [[ "${EULER_LOCAL_TORCH_CACHE}" = /* ]]; then
     local_torch_cache="${EULER_LOCAL_TORCH_CACHE}"
@@ -63,4 +66,6 @@ ssh "${EULER_LOGIN}" \
      test -f '${EULER_PROJECT_DIR}/assets/usd/kuka_iiwa7_pdz_gripper/kuka_iiwa7_pdz_gripper.usd' && \
      test -f '${EULER_PROJECT_DIR}/assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda' && \
      test -f '${EULER_PROJECT_DIR}/artifacts/isaac_bundle_assets/pipeline_stage2_ground_feasible_bundle_local.usd' && \
+     python3 '${EULER_PROJECT_DIR}/isaac_rl/scripts/verify_fabrica_training_dataset.py' \
+         --root '${EULER_PROJECT_DIR}' && \
      echo '[INFO] Required Euler project files are present'"

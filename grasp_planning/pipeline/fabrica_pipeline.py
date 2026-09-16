@@ -1017,9 +1017,16 @@ def generate_stage1_result(
 
 
 def write_stage1_artifacts(
-    result: Stage1Result, *, geometry: GeometryConfig, planning: PlanningConfig, output_json: Path, output_html: Path
+    result: Stage1Result,
+    *,
+    geometry: GeometryConfig,
+    planning: PlanningConfig,
+    output_json: Path,
+    output_html: Path | None,
 ) -> None:
     save_grasp_bundle(result.bundle, output_json)
+    if output_html is None:
+        return
     obstacle_mesh_local = None
     if result.obstacle_mesh_world is not None:
         obstacle_mesh_local = _mesh_in_source_frame(result.obstacle_mesh_world, result.target_pose_in_obj_world)
@@ -1777,9 +1784,11 @@ def recheck_stage2_result(
 
 
 def write_stage2_artifacts(
-    result: GroundRecheckResult, *, planning: PlanningConfig, output_json: Path, output_html: Path
+    result: GroundRecheckResult, *, planning: PlanningConfig, output_json: Path, output_html: Path | None
 ) -> None:
     save_grasp_bundle(result.accepted_bundle, output_json)
+    if output_html is None:
+        return
     from grasp_planning.grasping.fabrica_grasp_debug import ground_plane_overlay_obj
 
     write_debug_html(

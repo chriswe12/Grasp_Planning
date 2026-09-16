@@ -89,12 +89,8 @@ def test_alignment_funnel_defers_small_correction_until_near_grasp() -> None:
         "grasp_orientation_xyzw": np.array([0.0, 0.0, 0.0, 1.0]),
         "config": config,
     }
-    far, _, far_debug = alignment_funnel_expert_twist(
-        trajectory_progress=0.2, **arguments
-    )
-    near, _, near_debug = alignment_funnel_expert_twist(
-        trajectory_progress=0.95, **arguments
-    )
+    far, _, far_debug = alignment_funnel_expert_twist(trajectory_progress=0.2, **arguments)
+    near, _, near_debug = alignment_funnel_expert_twist(trajectory_progress=0.95, **arguments)
     assert np.isclose(far[0], 0.0)
     assert near[0] > 0.0
     assert far_debug["funnel_half_width_m"] > near_debug["funnel_half_width_m"]

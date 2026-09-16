@@ -1,0 +1,89 @@
+target_root: obj/fabrica
+benchmark:
+  output_dir: artifacts/franka_all_20260915/grasps
+  write_full_grasp_html: false
+stable_orientations:
+  robust_tilt_deg: 5.0
+  min_support_area_m2: 1.0e-06
+  min_support_area_fraction: 0.01
+  coplanar_tolerance_m: 1.0e-06
+  xy_world:
+  - 0.0
+  - 0.0
+planning:
+  stage1_cache_enabled: true
+  stage1_cache_dir: artifacts/franka_all_20260915/stage1_cache
+  num_surface_samples: 1024
+  min_jaw_width: 0.002
+  max_jaw_width: 0.07
+  antipodal_cosine_threshold: 0.984807753012208
+  roll_angle_step_deg: 15.0
+  max_pair_checks: 40960
+  detailed_finger_contact_gap_m: 0.002
+  gripper_collision_model: franka_hand
+  floor_clearance_margin_m: 0.01
+  top_grasp_score_weight: 0.35
+  regrasp_transfer_top_grasp_score_weight: 0.85
+  symmetry_pickup_enabled: false
+  symmetry_asset_path: ''
+  symmetry_max_transforms: 0
+  symmetry_next_orientation_limit: 24
+  contact_lateral_offsets_m:
+  - -0.002916666666666667
+  - 0.0
+  - 0.002916666666666667
+  contact_approach_offsets_m:
+  - -0.0030833333333333333
+  - 0.0
+  - 0.0030833333333333333
+  rng_seed: 0
+  skip_stage1_collision_checks: true
+geometry:
+  mesh_scale: 0.01
+fallback:
+  enabled: false
+  yaw_angles_deg:
+  - 0.0
+  - 90.0
+  - 180.0
+  - 270.0
+  max_orientations: 96
+  max_placement_options: 72
+  min_facet_area_m2: 1.0e-06
+  stability_margin_m: 0.0
+  coplanar_tolerance_m: 1.0e-06
+  staging_xy_offsets_m:
+  - - 0.0
+    - 0.0
+  - - 0.06
+    - 0.0
+  - - -0.06
+    - 0.0
+  - - 0.0
+    - 0.06
+  - - 0.0
+    - -0.06
+  - - 0.12
+    - 0.0
+  - - -0.12
+    - 0.0
+  - - 0.0
+    - 0.12
+  - - 0.0
+    - -0.12
+  - - 0.06
+    - 0.06
+  - - 0.06
+    - -0.06
+  - - -0.06
+    - 0.06
+  - - -0.06
+    - -0.06
+handover_fallback:
+  enabled: false
+  max_final_candidates: 80
+  max_transfer_candidates: 160
+  max_pair_checks: 4000
+  max_accepted_pairs: 48
+  max_rejected_pairs: 200
+  transfer_floor_clearance_margin_m: 0.0

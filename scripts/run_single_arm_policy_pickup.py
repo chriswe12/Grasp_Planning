@@ -164,9 +164,7 @@ def write_resolved_configs(
     maximum_contact_width = min(float(real["gripper_open_width"]), planning_max_width)
     minimum_contact_width = max(float(real["gripper_closed_width"]), planning_min_width)
     if maximum_contact_width <= minimum_contact_width:
-        raise ValueError(
-            "The configured gripper opening leaves no valid jaw-width range."
-        )
+        raise ValueError("The configured gripper opening leaves no valid jaw-width range.")
     planning["max_jaw_width"] = maximum_contact_width
     planning["min_jaw_width"] = minimum_contact_width
     planning["gripper_collision_model"] = collision_model
@@ -193,10 +191,7 @@ def main() -> None:
     parser.add_argument(
         "--camera",
         default="realsense_1",
-        help=(
-            "RGB-D camera namespace or complete camera-node namespace. "
-            "Default: realsense_1."
-        ),
+        help=("RGB-D camera namespace or complete camera-node namespace. Default: realsense_1."),
     )
     parser.add_argument(
         "--output-root",
@@ -233,9 +228,7 @@ def main() -> None:
                 )
             else:
                 result = "held-out-validation=pending"
-            print(
-                f"{name:22s} context={str(record.get('policy_context', 'action')):21s} {result}"
-            )
+            print(f"{name:22s} context={str(record.get('policy_context', 'action')):21s} {result}")
         return
     if not args.policy:
         parser.error("--policy is required unless --list-policies is used")
@@ -246,9 +239,7 @@ def main() -> None:
         registry_path=registry_path,
     )
     part_id = (
-        str(args.part_id).strip()
-        if args.part_id is not None
-        else str(registry.get("default_part_id", "0")).strip()
+        str(args.part_id).strip() if args.part_id is not None else str(registry.get("default_part_id", "0")).strip()
     )
     part_mesh = _validate_part_id(part_id)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -271,18 +262,12 @@ def main() -> None:
     print(f"[SINGLE-PICK] arm={robot_name} FRI-peer={fri_peer} namespace=/lbr")
     print(f"[SINGLE-PICK] assembly=plumbers_block part={part_id} policy={policy_name}")
     print("[SINGLE-PICK] grasp=live stage-2 score order; no stored target or grasp whitelist")
-    print(
-        "[SINGLE-PICK] goal_rgbd=MuJoCo Filament on demand after "
-        "collision-aware MoveIt grasp selection"
-    )
+    print("[SINGLE-PICK] goal_rgbd=MuJoCo Filament on demand after collision-aware MoveIt grasp selection")
     print(
         "[SINGLE-PICK] live_rgbd=compressed JPEG color + lossless compressedDepth; "
         "publisher_header_age=warning-only; local_receipt_timeout=0.50s"
     )
-    print(
-        f"[SINGLE-PICK] camera={camera_driver_root(str(args.camera))}; "
-        "serial/intrinsics=diagnostic-only"
-    )
+    print(f"[SINGLE-PICK] camera={camera_driver_root(str(args.camera))}; serial/intrinsics=diagnostic-only")
     print("[SINGLE-PICK] TEST-ONLY robot_feedback_timeout=0.50s")
     print("[SINGLE-PICK] ros_executor=4-thread; GPU inference and feedback callbacks overlap")
     print(
@@ -295,10 +280,7 @@ def main() -> None:
         f"rate={float(assets['policy_rate_hz']):g}Hz; "
         f"camera_rotation={'live PDZ TF' if assets['gripper_model'] == 'pdz_gripper' else 'legacy calibrated link7 fallback'}"
     )
-    print(
-        f"[SINGLE-PICK] gripper=/{args.robot}/gripper_controller; stroke=7-74mm; "
-        "position=closure_fraction"
-    )
+    print(f"[SINGLE-PICK] gripper=/{args.robot}/gripper_controller; stroke=7-74mm; position=closure_fraction")
     print(
         f"[SINGLE-PICK] required_moveit=./run_pipeline.sh --mode real --robots {args.robot} "
         f"--bringup-only --servo --gripper-model {assets['gripper_model']}"

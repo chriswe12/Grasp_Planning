@@ -40,9 +40,7 @@ def resolve_policy_context(mode: str) -> PolicyContextSpec:
         return PolicyContextSpec(normalized, 12, True, False)
     if normalized == POLICY_CONTEXT_ACTION_TWIST_ROTATION:
         return PolicyContextSpec(normalized, 18, True, True)
-    raise ValueError(
-        f"Unknown policy context '{mode}'. Expected one of {', '.join(POLICY_CONTEXT_CHOICES)}."
-    )
+    raise ValueError(f"Unknown policy context '{mode}'. Expected one of {', '.join(POLICY_CONTEXT_CHOICES)}.")
 
 
 def policy_observation_size(

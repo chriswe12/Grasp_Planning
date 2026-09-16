@@ -1,0 +1,27 @@
+{
+  "profile": "franka_pencil_episode_appearance_v1",
+  "goal_appearance": "canonical_saved_reference",
+  "palette": {
+    "blue": [0.045, 0.18, 0.42], "red": [0.48, 0.045, 0.035],
+    "green": [0.055, 0.30, 0.09], "yellow": [0.62, 0.43, 0.035],
+    "orange": [0.65, 0.18, 0.025], "purple": [0.24, 0.06, 0.37],
+    "teal": [0.025, 0.32, 0.31], "white": [0.72, 0.72, 0.68],
+    "gray": [0.24, 0.25, 0.27], "charcoal": [0.035, 0.04, 0.045]
+  },
+  "canonical_part_fraction": 0.15,
+  "part_color_gain": [0.85, 1.15],
+  "part_roughness": [0.28, 0.85],
+  "table_gain": [0.70, 1.25],
+  "table_channel_gain": [0.88, 1.12],
+  "table_roughness": [0.28, 0.82],
+  "wall_gain": [0.70, 1.08],
+  "wear_visible_fraction": 0.80,
+  "light_intensity": [1800.0, 6500.0],
+  "light_radius_m": [0.07, 0.32],
+  "light_x_m": [-0.15, 1.0],
+  "light_y_m": [-0.65, 0.25],
+  "light_z_m": [1.1, 1.9],
+  "light_temperature_k": [3500.0, 7500.0],
+  "exposure_ev": [-0.25, 0.25],
+  "white_balance_gain": [0.94, 1.06]
+}

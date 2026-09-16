@@ -76,9 +76,7 @@ def _validated_assets(
         "agent_config": agent_config,
         "policy_context_mode": context_mode,
         "policy_rate_hz": float(record.get("policy_rate_hz", metadata.get("policy_rate_hz", 30.0))),
-        "action_delta_limit": float(
-            record.get("action_delta_limit", metadata.get("action_delta_limit", 0.25))
-        ),
+        "action_delta_limit": float(record.get("action_delta_limit", metadata.get("action_delta_limit", 0.25))),
         "camera_profile": str(metadata.get("camera_profile", "")),
         "gripper_model": str(record.get("gripper_model", metadata.get("gripper_model", "y_gripper"))),
     }

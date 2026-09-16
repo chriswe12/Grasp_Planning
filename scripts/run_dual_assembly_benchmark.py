@@ -670,7 +670,9 @@ def _moveit_failure_summary(payload: Mapping[str, object]) -> dict[str, object]:
 
     moveit = dict(payload.get("moveit", {}) or {})
     raw_attempts = payload.get("attempts", moveit.get("attempts", []))
-    attempts = [dict(value) for value in raw_attempts if isinstance(value, Mapping)] if isinstance(raw_attempts, list) else []
+    attempts = (
+        [dict(value) for value in raw_attempts if isinstance(value, Mapping)] if isinstance(raw_attempts, list) else []
+    )
     primary_counts: dict[str, int] = {}
     fallback_counts: dict[str, int] = {}
     classified: list[dict[str, str]] = []
@@ -1042,23 +1044,19 @@ def _is_existing_stack_ownership_conflict(message: object) -> bool:
     """Return true only for the wrapper's explicit do-not-reuse conflict."""
 
     normalized = str(message).lower()
-    return "a dual moveit stack already exists" in normalized or (
-        "stop it first" in normalized and "pass --reuse-moveit" in normalized
-    ) or (
-        "stop it before using --start-moveit" in normalized
-        and "persistent-stack reuse" in normalized
+    return (
+        "a dual moveit stack already exists" in normalized
+        or ("stop it first" in normalized and "pass --reuse-moveit" in normalized)
+        or ("stop it before using --start-moveit" in normalized and "persistent-stack reuse" in normalized)
     )
 
 
 def _is_reused_stack_unavailable(message: object) -> bool:
     normalized = str(message).lower()
     return (
-        "--reuse-moveit was requested" in normalized and "services are not ready" in normalized
-    ) or (
-        "no reusable dual moveit stack is ready" in normalized
-    ) or (
-        "missing /lbr_dual_arm/compute_ik" in normalized
-        and "/lbr_dual_arm/plan_kinematic_path" in normalized
+        ("--reuse-moveit was requested" in normalized and "services are not ready" in normalized)
+        or ("no reusable dual moveit stack is ready" in normalized)
+        or ("missing /lbr_dual_arm/compute_ik" in normalized and "/lbr_dual_arm/plan_kinematic_path" in normalized)
     )
 
 
@@ -1367,9 +1365,7 @@ def _owned_process_group_is_current(
         # cannot be reused while any old member remains, so the private handoff
         # still identifies it unambiguously.
         return True
-    if expected_start_time_ticks is not None and current_start_time != int(
-        expected_start_time_ticks
-    ):
+    if expected_start_time_ticks is not None and current_start_time != int(expected_start_time_ticks):
         return False
     try:
         return os.getpgid(process_group_id) == process_group_id
@@ -1451,10 +1447,7 @@ def _terminate_process_group(
     if signal_and_wait(signal.SIGKILL, kill_timeout_s):
         return
     survivors = ", ".join(str(value) for value in live_owned_groups()) or "unknown"
-    raise RuntimeError(
-        "Active benchmark case cleanup could not terminate owned process "
-        f"group(s): {survivors}."
-    )
+    raise RuntimeError(f"Active benchmark case cleanup could not terminate owned process group(s): {survivors}.")
 
 
 def _managed_mock_moveit_command(
@@ -1503,10 +1496,7 @@ def _wait_for_managed_moveit(
                 f"See {log_path}. Last output: {log_tail[-2000:]}"
             )
         time.sleep(0.2)
-    raise RuntimeError(
-        f"Managed mock MoveIt did not become ready within {float(timeout_s):.1f}s. "
-        f"See {log_path}."
-    )
+    raise RuntimeError(f"Managed mock MoveIt did not become ready within {float(timeout_s):.1f}s. See {log_path}.")
 
 
 @contextmanager
@@ -1597,16 +1587,15 @@ def _run_case(
     )
     started_at = time.time()
     interrupted = False
-    with paths["log"].open("w", encoding="utf-8") as log, tempfile.TemporaryDirectory(
-        prefix="dual-assembly-benchmark-case-"
-    ) as runtime_dir:
+    with (
+        paths["log"].open("w", encoding="utf-8") as log,
+        tempfile.TemporaryDirectory(prefix="dual-assembly-benchmark-case-") as runtime_dir,
+    ):
         log.write(f"$ {' '.join(command)}\n")
         log.flush()
         moveit_process_group_file = Path(runtime_dir) / "moveit-process-group"
         case_environment = dict(os.environ)
-        case_environment["DUAL_MOVEIT_PROCESS_GROUP_FILE"] = str(
-            moveit_process_group_file
-        )
+        case_environment["DUAL_MOVEIT_PROCESS_GROUP_FILE"] = str(moveit_process_group_file)
         process = subprocess.Popen(
             command,
             cwd=REPO_ROOT,
@@ -2445,14 +2434,14 @@ def _ik_diagnostic_report_html(records: list[dict[str, object]]) -> str:
     return f"""
 <section class="analysis"><div class="analysis-head"><div><h2>Exact IK and collision diagnostics</h2>
 <span class="muted">Collision-disabled KDL IK separates geometry/numerical failure from MoveIt state invalidity. Contacts cover the complete two-arm robot and work surface used by exact preflight; target-part AABBs are not active in this phase.</span></div></div>
-<section class="stats"><div class="stat">Diagnostic cases<strong>{int(diagnostics['case_count'])}</strong></div>
-<div class="stat">IK requests<strong>{int(diagnostics['ik_requests'])}</strong></div>
-<div class="stat">IK cache hits<strong>{int(diagnostics['kinematic_cache_hits'])}</strong></div>
-<div class="stat">IK states returned<strong>{int(diagnostics['collision_disabled_ik_solutions'])}</strong></div>
-<div class="stat">No IK returned<strong>{int(diagnostics['kinematic_or_numerical_failures'])}</strong></div>
-<div class="stat">Collision-invalid<strong>{int(diagnostics['invalid_states'])}</strong></div>
-<div class="stat">Valid states<strong>{int(diagnostics['valid_states'])}</strong></div></section>
-<section class="breakdown"><h3>Failure and validity by exact target</h3><table><thead><tr><th>Role / target</th><th>Evaluated</th><th>Stopped here</th><th>Seed evaluations</th><th>IK calls</th><th>IK cache hits</th><th>IK returned</th><th>No IK</th><th>Invalid</th><th>Valid</th><th>Top contact</th></tr></thead><tbody>{''.join(target_rows)}</tbody></table></section>
+<section class="stats"><div class="stat">Diagnostic cases<strong>{int(diagnostics["case_count"])}</strong></div>
+<div class="stat">IK requests<strong>{int(diagnostics["ik_requests"])}</strong></div>
+<div class="stat">IK cache hits<strong>{int(diagnostics["kinematic_cache_hits"])}</strong></div>
+<div class="stat">IK states returned<strong>{int(diagnostics["collision_disabled_ik_solutions"])}</strong></div>
+<div class="stat">No IK returned<strong>{int(diagnostics["kinematic_or_numerical_failures"])}</strong></div>
+<div class="stat">Collision-invalid<strong>{int(diagnostics["invalid_states"])}</strong></div>
+<div class="stat">Valid states<strong>{int(diagnostics["valid_states"])}</strong></div></section>
+<section class="breakdown"><h3>Failure and validity by exact target</h3><table><thead><tr><th>Role / target</th><th>Evaluated</th><th>Stopped here</th><th>Seed evaluations</th><th>IK calls</th><th>IK cache hits</th><th>IK returned</th><th>No IK</th><th>Invalid</th><th>Valid</th><th>Top contact</th></tr></thead><tbody>{"".join(target_rows)}</tbody></table></section>
 <div class="control-row"><section class="breakdown" style="flex:1"><h3>Collision classes</h3><table><thead><tr><th>Class</th><th>Contacts</th></tr></thead><tbody>{class_rows}</tbody></table></section>
 <section class="breakdown" style="flex:2"><h3>Exact colliding body pairs (top 30)</h3><table><thead><tr><th>MoveIt bodies</th><th>Contacts</th></tr></thead><tbody>{pair_rows}</tbody></table></section></div></section>
 """
@@ -2532,9 +2521,7 @@ def _write_html(
             f'<div class="failure-callout">Failed at: {html.escape(failure_label)}</div>' if status == "failed" else ""
         )
         raw_case_ik_diagnostics = record.get("ik_collision_diagnostics", {})
-        case_ik_diagnostics = (
-            dict(raw_case_ik_diagnostics) if isinstance(raw_case_ik_diagnostics, Mapping) else {}
-        )
+        case_ik_diagnostics = dict(raw_case_ik_diagnostics) if isinstance(raw_case_ik_diagnostics, Mapping) else {}
         top_contact_pairs = sorted(
             (
                 (str(name), int(count))

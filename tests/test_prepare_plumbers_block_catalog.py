@@ -67,9 +67,7 @@ def test_target_subset_paths_follow_rotation_reset_order(tmp_path: Path) -> None
         )
         assert data["moveit_plan_validated"].tolist() == [True, True]
         assert data["orientation_names"].tolist() == ["o0", "o1"]
-        np.testing.assert_array_equal(
-            data["reset_path_progress"], np.asarray([0.0, 1.0])
-        )
+        np.testing.assert_array_equal(data["reset_path_progress"], np.asarray([0.0, 1.0]))
 
 
 def test_target_subset_paths_reject_unknown_rotation_target(tmp_path: Path) -> None:
@@ -149,9 +147,7 @@ def test_finalize_promotes_passing_goals_and_matching_rotation_rows(
     with np.load(tmp_path / "rotation_resets.npz", allow_pickle=False) as resets:
         assert resets["target_ids"].tolist() == ["a", "c"]
         assert resets["rotation_joint_trajectories"].shape == (2, 2, 2, 7)
-    with np.load(
-        tmp_path / "goal_catalog_failed_validation.npz", allow_pickle=False
-    ) as diagnostic:
+    with np.load(tmp_path / "goal_catalog_failed_validation.npz", allow_pickle=False) as diagnostic:
         assert len(diagnostic["target_ids"]) == 3
 
 

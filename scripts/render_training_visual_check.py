@@ -47,11 +47,11 @@ args.enable_cameras = True
 app = AppLauncher(args).app
 
 import gymnasium as gym  # noqa: E402
-import isaac_rl.tasks  # noqa: E402, F401
 import omni.usd  # noqa: E402
 import torch  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
+import isaac_rl.tasks  # noqa: E402, F401
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE  # noqa: E402
 from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE  # noqa: E402
 from grasp_planning.rl.sim2real_profiles import apply_sim2real_profile  # noqa: E402
@@ -201,14 +201,10 @@ def main() -> None:
 
         stage = omni.usd.get_context().get_stage()
         clutter_prims = tuple(
-            str(prim.GetPath())
-            for prim in stage.Traverse()
-            if "/VisualClutter/Object_" in str(prim.GetPath())
+            str(prim.GetPath()) for prim in stage.Traverse() if "/VisualClutter/Object_" in str(prim.GetPath())
         )
         busy_background_prims = tuple(
-            str(prim.GetPath())
-            for prim in stage.Traverse()
-            if "/BusyBackground/Slot_" in str(prim.GetPath())
+            str(prim.GetPath()) for prim in stage.Traverse() if "/BusyBackground/Slot_" in str(prim.GetPath())
         )
         clutter_profiles = {"combined_clutter", "combined_busy_background"}
         if args.sim2real_profile in clutter_profiles and not clutter_prims:
@@ -221,8 +217,7 @@ def main() -> None:
             raise RuntimeError("combined_busy_background did not author any busy-background prims.")
         if args.sim2real_profile != "combined_busy_background" and busy_background_prims:
             raise RuntimeError(
-                f"Profile {args.sim2real_profile} unexpectedly contains busy-background prims: "
-                f"{busy_background_prims}"
+                f"Profile {args.sim2real_profile} unexpectedly contains busy-background prims: {busy_background_prims}"
             )
 
         overview = _rgb_uint8(task.debug_camera.data.output["rgb"])[0]
@@ -252,9 +247,7 @@ def main() -> None:
             clutter_count=len(clutter_prims),
             background_count=len(task.busy_background_visual_bindings["prim_paths"]),
             people_count=int(task.busy_background_visual_bindings["people_count"]),
-            worker_reach_count=int(
-                task.busy_background_visual_bindings["worker_reach_count"]
-            ),
+            worker_reach_count=int(task.busy_background_visual_bindings["worker_reach_count"]),
             background_styles=dict(task.busy_background_visual_bindings["style_counts"]),
         )
         metadata = {
@@ -279,9 +272,7 @@ def main() -> None:
                 "active_environment_count"
             ],
             "busy_background_people_count": task.busy_background_visual_bindings["people_count"],
-            "busy_background_worker_reach_count": task.busy_background_visual_bindings[
-                "worker_reach_count"
-            ],
+            "busy_background_worker_reach_count": task.busy_background_visual_bindings["worker_reach_count"],
             "busy_background_style_counts": task.busy_background_visual_bindings["style_counts"],
             "collision_surface": task.tslot_visual_bindings["collision_surface"],
         }

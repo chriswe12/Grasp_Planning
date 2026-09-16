@@ -49,11 +49,14 @@ def test_four_gpu_batch_preserves_single_gpu_effective_minibatch() -> None:
 
 
 def test_batch_resolver_uses_valid_divisor_for_non_power_of_two_world_size() -> None:
-    assert resolve_local_minibatch_size(
-        rollout_batch_size_per_rank=256 * 64,
-        target_global_minibatch_size=1024,
-        world_size=6,
-    ) == 128
+    assert (
+        resolve_local_minibatch_size(
+            rollout_batch_size_per_rank=256 * 64,
+            target_global_minibatch_size=1024,
+            world_size=6,
+        )
+        == 128
+    )
 
 
 def test_completion_diagnostics_exclude_ambiguous_labels() -> None:

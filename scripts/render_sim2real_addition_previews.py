@@ -36,13 +36,13 @@ args.enable_cameras = True
 app = AppLauncher(args).app
 
 import gymnasium as gym  # noqa: E402
-import isaac_rl.tasks  # noqa: E402, F401
 import isaaclab.sim as sim_utils  # noqa: E402
 import omni.usd  # noqa: E402
 import torch  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 from pxr import Gf, UsdGeom  # noqa: E402
 
+import isaac_rl.tasks  # noqa: E402, F401
 from grasp_planning.isaac_visual_materials import VISUAL_SERVO_MATERIAL_PROFILE  # noqa: E402
 from grasp_planning.isaac_visual_scene import VISUAL_SERVO_SCENE_PROFILE  # noqa: E402
 from grasp_planning.visual_servo_workspace import VISUAL_SERVO_TSLOT_PROFILE  # noqa: E402
@@ -176,9 +176,7 @@ def _write_preview_catalog(source_path: Path, source_target_index: int) -> Path:
     with np.load(source_path, allow_pickle=False) as source:
         target_count = len(source["target_ids"])
         if not 0 <= source_target_index < target_count:
-            raise ValueError(
-                f"--target-index={source_target_index} is outside the {target_count}-target catalog."
-            )
+            raise ValueError(f"--target-index={source_target_index} is outside the {target_count}-target catalog.")
         payload = {
             name: (
                 value[source_target_index : source_target_index + 1].copy()

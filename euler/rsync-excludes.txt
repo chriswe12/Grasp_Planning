@@ -5,8 +5,10 @@
 /.pytest_cache/
 /.ruff_cache/
 /.mypy_cache/
+/.worktrees/
 /.venv/
 /artifacts/multigrasp_50_debug/
+/artifacts/grasp_generation_benchmark_pdz/
 /artifacts/plumbers_block_catalog_debug/
 /artifacts/rl_goal_alignment_cad_flange/
 /artifacts/rl_goal_alignment_fixed/
@@ -24,6 +26,14 @@
 /isaac_rl/data/plumbers_block/plans/
 /isaac_rl/data/plumbers_block/rotation_cache/
 /isaac_rl/data/plumbers_block/sources/
+/isaac_rl/data/fabrica_all_v1/merged/goal_catalog.npz
+/isaac_rl/data/fabrica_all_v1/merged/paths.npz
+/isaac_rl/data/fabrica_all_v1/merged/rotation_resets.npz
+/isaac_rl/data/fabrica_all_v1/merged/plans/
+/isaac_rl/data/fabrica_all_v1/merged/rotation_cache/
+/isaac_rl/data/fabrica_all_v1/assemblies/*/plans/
+/isaac_rl/data/fabrica_all_v1/assemblies/*/rotation_cache/
+/isaac_rl/data/fabrica_all_v1/assemblies/*/sources/
 /logs/
 /outputs/
 /ros2_ws/build/

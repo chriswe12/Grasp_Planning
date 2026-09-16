@@ -3469,6 +3469,7 @@ def _benchmark_one_target(
     output_dir: Path,
     target_index: int,
     target_count: int,
+    write_full_grasp_html: bool = True,
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
     part_dir = output_dir / "parts" / _safe_id(target.assembly) / _safe_id(target.part_id)
     stage1_dir = part_dir / "stage1"
@@ -3558,7 +3559,11 @@ def _benchmark_one_target(
         stage1_json = stage1_dir / "grasps.json"
         stage1_html = stage1_dir / "grasps.html"
         write_stage1_artifacts(
-            stage1, geometry=geometry, planning=planning, output_json=stage1_json, output_html=stage1_html
+            stage1,
+            geometry=geometry,
+            planning=planning,
+            output_json=stage1_json,
+            output_html=stage1_html if write_full_grasp_html else None,
         )
         _write_json(stage1_dir / "raw_grasps.json", _raw_stage1_payload(stage1, target))
         part_frame_html = part_dir / "part_frame.html"
@@ -3566,7 +3571,7 @@ def _benchmark_one_target(
         part_record.update(
             {
                 "stage1_json": str(stage1_json),
-                "stage1_html": str(stage1_html),
+                "stage1_html": str(stage1_html) if write_full_grasp_html else "",
                 "part_frame_html": str(part_frame_html),
                 "stage1_raw_count": stage1.raw_candidate_count,
                 "stage1_assembly_feasible_count": len(stage1.bundle.candidates),
@@ -3605,7 +3610,12 @@ def _benchmark_one_target(
                 planning=planning,
                 object_pose_world=orientation.object_pose_world,
             )
-            write_stage2_artifacts(stage2, planning=planning, output_json=stage2_json, output_html=stage2_html)
+            write_stage2_artifacts(
+                stage2,
+                planning=planning,
+                output_json=stage2_json,
+                output_html=stage2_html if write_full_grasp_html else None,
+            )
             plan = None
             handover_result = None
             if fallback_config.enabled and len(stage1.bundle.candidates) > 0 and not stage2.accepted:
@@ -3692,7 +3702,7 @@ def _benchmark_one_target(
             )
             row_links = {
                 "stage2_json": _relative_link(output_dir, stage2_json),
-                "stage2_html": _relative_link(output_dir, stage2_html),
+                "stage2_html": _relative_link(output_dir, stage2_html) if write_full_grasp_html else "",
                 "fallback_json": _relative_link(output_dir, fallback_json) if fallback_summary is not None else "",
                 "fallback_html": _relative_link(output_dir, fallback_html) if fallback_summary is not None else "",
                 "handover_json": _relative_link(output_dir, handover_json) if handover_result is not None else "",
@@ -3709,49 +3719,50 @@ def _benchmark_one_target(
                     "transfer_floor_clearance_margin_m",
                     handover_config.transfer_floor_clearance_margin_m,
                 )
-            all_grasps_html = orientation_dir / "all_generated_grasps.html"
-            try:
-                overview_counts = _write_all_generated_grasps_html(
-                    all_grasps_html,
-                    target=target,
-                    orientation=orientation,
-                    status=status,
-                    stage1=stage1,
-                    planning=planning,
-                    simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
-                    stage2=stage2,
-                )
-                row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
-                row["all_generated_grasp_count"] = sum(overview_counts.values())
-                row["all_generated_grasp_status_counts"] = overview_counts
-            except Exception as debug_exc:
-                row["all_generated_grasps_error"] = "".join(
-                    traceback.format_exception_only(type(debug_exc), debug_exc)
-                ).strip()
-            if status not in SUCCESS_STATUSES:
-                failed_html = orientation_dir / "failed_grasps.html"
+            if write_full_grasp_html:
+                all_grasps_html = orientation_dir / "all_generated_grasps.html"
                 try:
-                    stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
-                    failed_count, failed_constraint_counts = _write_failed_grasps_html(
-                        failed_html,
+                    overview_counts = _write_all_generated_grasps_html(
+                        all_grasps_html,
                         target=target,
                         orientation=orientation,
                         status=status,
                         stage1=stage1,
                         planning=planning,
-                        mesh_scale=mesh_scale,
+                        simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
                         stage2=stage2,
-                        stage1_failure_statuses=stage1_failure_statuses,
-                        stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
                     )
-                    row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
-                    row["failed_grasp_count_displayed"] = failed_count
-                    row["failed_constraint_counts"] = failed_constraint_counts
-                    row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
+                    row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
+                    row["all_generated_grasp_count"] = sum(overview_counts.values())
+                    row["all_generated_grasp_status_counts"] = overview_counts
                 except Exception as debug_exc:
-                    row["failed_grasps_error"] = "".join(
+                    row["all_generated_grasps_error"] = "".join(
                         traceback.format_exception_only(type(debug_exc), debug_exc)
                     ).strip()
+                if status not in SUCCESS_STATUSES:
+                    failed_html = orientation_dir / "failed_grasps.html"
+                    try:
+                        stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
+                        failed_count, failed_constraint_counts = _write_failed_grasps_html(
+                            failed_html,
+                            target=target,
+                            orientation=orientation,
+                            status=status,
+                            stage1=stage1,
+                            planning=planning,
+                            mesh_scale=mesh_scale,
+                            stage2=stage2,
+                            stage1_failure_statuses=stage1_failure_statuses,
+                            stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
+                        )
+                        row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
+                        row["failed_grasp_count_displayed"] = failed_count
+                        row["failed_constraint_counts"] = failed_constraint_counts
+                        row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
+                    except Exception as debug_exc:
+                        row["failed_grasps_error"] = "".join(
+                            traceback.format_exception_only(type(debug_exc), debug_exc)
+                        ).strip()
             row["links"] = row_links
             rows.append(row)
             orientation_frames.append(
@@ -3796,48 +3807,49 @@ def _benchmark_one_target(
                 error=error,
             )
             row_links: dict[str, str] = {}
-            failed_html = orientation_dir / "failed_grasps.html"
-            all_grasps_html = orientation_dir / "all_generated_grasps.html"
-            try:
-                overview_counts = _write_all_generated_grasps_html(
-                    all_grasps_html,
-                    target=target,
-                    orientation=orientation,
-                    status="orientation_error",
-                    stage1=stage1,
-                    planning=planning,
-                    simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
-                    error=error,
-                )
-                row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
-                row["all_generated_grasp_count"] = sum(overview_counts.values())
-                row["all_generated_grasp_status_counts"] = overview_counts
-            except Exception as debug_exc:
-                row["all_generated_grasps_error"] = "".join(
-                    traceback.format_exception_only(type(debug_exc), debug_exc)
-                ).strip()
-            try:
-                stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
-                failed_count, failed_constraint_counts = _write_failed_grasps_html(
-                    failed_html,
-                    target=target,
-                    orientation=orientation,
-                    status="orientation_error",
-                    stage1=stage1,
-                    planning=planning,
-                    mesh_scale=mesh_scale,
-                    error=error,
-                    stage1_failure_statuses=stage1_failure_statuses,
-                    stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
-                )
-                row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
-                row["failed_grasp_count_displayed"] = failed_count
-                row["failed_constraint_counts"] = failed_constraint_counts
-                row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
-            except Exception as debug_exc:
-                row["failed_grasps_error"] = "".join(
-                    traceback.format_exception_only(type(debug_exc), debug_exc)
-                ).strip()
+            if write_full_grasp_html:
+                failed_html = orientation_dir / "failed_grasps.html"
+                all_grasps_html = orientation_dir / "all_generated_grasps.html"
+                try:
+                    overview_counts = _write_all_generated_grasps_html(
+                        all_grasps_html,
+                        target=target,
+                        orientation=orientation,
+                        status="orientation_error",
+                        stage1=stage1,
+                        planning=planning,
+                        simple_pickup_floor_clearance_margin_m=handover_config.transfer_floor_clearance_margin_m,
+                        error=error,
+                    )
+                    row_links["all_generated_grasps_html"] = _relative_link(output_dir, all_grasps_html)
+                    row["all_generated_grasp_count"] = sum(overview_counts.values())
+                    row["all_generated_grasp_status_counts"] = overview_counts
+                except Exception as debug_exc:
+                    row["all_generated_grasps_error"] = "".join(
+                        traceback.format_exception_only(type(debug_exc), debug_exc)
+                    ).strip()
+                try:
+                    stage1_failure_statuses, stage1_failure_obstacle_parts = _stage1_failure_debug()
+                    failed_count, failed_constraint_counts = _write_failed_grasps_html(
+                        failed_html,
+                        target=target,
+                        orientation=orientation,
+                        status="orientation_error",
+                        stage1=stage1,
+                        planning=planning,
+                        mesh_scale=mesh_scale,
+                        error=error,
+                        stage1_failure_statuses=stage1_failure_statuses,
+                        stage1_failure_obstacle_parts=stage1_failure_obstacle_parts,
+                    )
+                    row_links["failed_grasps_html"] = _relative_link(output_dir, failed_html)
+                    row["failed_grasp_count_displayed"] = failed_count
+                    row["failed_constraint_counts"] = failed_constraint_counts
+                    row["failed_grasp_display_frame"] = FAILED_GRASP_DISPLAY_FRAME
+                except Exception as debug_exc:
+                    row["failed_grasps_error"] = "".join(
+                        traceback.format_exception_only(type(debug_exc), debug_exc)
+                    ).strip()
             row["links"] = row_links
             rows.append(row)
             orientation_frames.append(
@@ -4012,6 +4024,7 @@ def main() -> None:
                 output_dir=output_dir,
                 target_index=index,
                 target_count=len(targets),
+                write_full_grasp_html=bool(payload.get("benchmark", {}).get("write_full_grasp_html", True)),
             )
             part_records.append(part_record)
             rows.extend(part_rows)
@@ -4034,6 +4047,7 @@ def main() -> None:
                     output_dir=output_dir,
                     target_index=index,
                     target_count=len(targets),
+                    write_full_grasp_html=bool(payload.get("benchmark", {}).get("write_full_grasp_html", True)),
                 ): index
                 for index, target in enumerate(targets, start=1)
             }

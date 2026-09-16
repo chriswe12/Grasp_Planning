@@ -1,0 +1,23 @@
+{
+  "source_url": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd",
+  "entry": "panda_instanceable.usd",
+  "files": {
+    "panda_instanceable.usd": "7f5a0c0aa6760cfbd348e08bc464d4b94341f027f51c2d9e42406ceefcc7787f",
+    "Props/instanceable_collision_meshes.usd": "e2d053fdd789ea000f04c243d2323167038a4aa0883a9e418c92d936c771417e",
+    "Props/panda_rightfinger.usd": "c156a8aa36191c5debacb1048fd17a0d6d1939403d936db2235c8fd4ebcec926",
+    "Materials/Materials.usd": "163ad21137370dfa8f8fda6337fa5a84aab3b7dbcdd134c91792239272c33691",
+    "Props/panda_leftfinger.usd": "53725ac396c13d8f90960780626c00ef05acdf1d1a6043f7bd7bd879750e6270",
+    "Props/panda_hand.usd": "9bead1ccc72d702d333074ae30e5352f4328290e7e64dbf072696f052ba12a90",
+    "Props/panda_link7.usd": "2f18324e59305650cf650d24d37e5bbe04e8f7e781da6e309105f6ec99840e0f",
+    "Props/panda_link6.usd": "ca05c47f20b3711dea3a36aa27c70d9047ce8fbdf5945eb2fbdb4069cd76308c",
+    "Props/panda_link5.usd": "4b67be8b886c6705455b389ce6be7d710c75187397a8607381f1515c7b1e626c",
+    "Props/panda_link4.usd": "9dc792ca5a4fc5506cec8b7be83332d121727c0f32e3b133ad5a8478ab6a10e0",
+    "Props/panda_link3.usd": "bf5b30913f51811cd7f772651d25ead0f48ed37d994a25c9fbccb38c8479dbf8",
+    "Props/panda_link2.usd": "f05fd2f8ce2533f06bb6b5bf916a0e8e8b151e5d1f58e270ce5617507590b27e",
+    "Props/panda_link1.usd": "9f3f8b7d980865d2023ead815fd2faed9727af533959077b5700e28f6242187b",
+    "Props/panda_link0.usd": "4b46e614cf37f745ef5f8212137ac6af06aaef34b3858ae02f2f67d2f2c988a7"
+  },
+  "builtin_material_modules": [
+    "OmniPBR.mdl"
+  ]
+}

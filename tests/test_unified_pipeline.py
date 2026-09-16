@@ -245,8 +245,6 @@ def test_dual_policy_config_uses_prefixed_tf_feedback_and_servo_routes(tmp_path:
     assert block["command_frame"] == "base_link"
     assert block["tcp_frame"] == "lbr_two_pdz_gripper_tcp"
     assert block["joint_state_topic"] == "/lbr_dual_arm/joint_states"
-    assert block["force_topic"] == (
-        "/lbr_dual_arm/lbr_two_control/lbr_two_force_torque_broadcaster/wrench"
-    )
+    assert block["force_topic"] == ("/lbr_dual_arm/lbr_two_control/lbr_two_force_torque_broadcaster/wrench")
     assert block["expected_joint_names"] == [f"lbr_two_A{index}" for index in range(1, 8)]
     assert block["moveit_servo_twist_topic"] == "/lbr_dual_arm/lbr_two_servo_node/delta_twist_cmds"

@@ -423,10 +423,7 @@ def test_camera_contract_warns_for_trained_intrinsics_difference_but_continues()
     node.validate_camera_contract()
 
     assert logger.warning.call_count == 2
-    assert all(
-        "continuing with the live CameraInfo" in call.args[0]
-        for call in logger.warning.call_args_list
-    )
+    assert all("continuing with the live CameraInfo" in call.args[0] for call in logger.warning.call_args_list)
 
 
 def test_policy_preparation_strict_loads_runtime_before_ros_node_creation(tmp_path: Path) -> None:
@@ -539,7 +536,7 @@ def test_armed_policy_loop_uses_four_thread_executor(monkeypatch, tmp_path: Path
 
     monkeypatch.setattr(d405_visual_servo, "D405VisualServoNode", mock.Mock(return_value=node))
     monkeypatch.setattr(d405_visual_servo, "MultiThreadedExecutor", FakeExecutor)
-    monkeypatch.setattr(d405_visual_servo.rclpy, "ok", mock.Mock(return_value=True))
+    monkeypatch.setattr(d405_visual_servo, "rclpy", SimpleNamespace(ok=mock.Mock(return_value=True)))
 
     result = d405_visual_servo.run_d405_policy_visual_servo(
         config_path=tmp_path / "unused.yaml",
