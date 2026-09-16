@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -153,6 +152,7 @@ class ExternalGpdGraspGeneratorTests(unittest.TestCase):
                 GpdGraspGeneratorConfig(
                     command_template=f"{sys.executable} {script_path}",
                     output_json=str(output_path),
+                    artifact_dir=temp_dir,
                     check_target_collision=False,
                 )
             )

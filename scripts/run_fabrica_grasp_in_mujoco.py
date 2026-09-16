@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
@@ -30,6 +31,7 @@ from grasp_planning.grasping.world_constraints import ObjectWorldPose
 from grasp_planning.mujoco import (
     MujocoExecutionConfig,
     MujocoRegraspAttemptResult,
+    MujocoVideoConfig,
     build_bundle_local_mesh,
     load_robot_config,
     run_regrasp_plan_in_mujoco,
@@ -39,6 +41,7 @@ from grasp_planning.mujoco import (
 from grasp_planning.pipeline.regrasp_fallback import load_mujoco_regrasp_plan
 from grasp_planning.ros2.moveit_pose_commander import MoveItPoseCommander, MoveItPoseCommanderConfig, PoseTarget, rclpy
 from grasp_planning.ros2.moveit_world_grasp import pose_target_from_world, world_grasp_pose_targets
+from grasp_planning.ros2.multi_ik_planner import MultiIkPlanningConfig, plan_pose_sequence_multi_ik
 
 
 def _parse_vec2(raw: str) -> tuple[float, float]:
@@ -53,6 +56,10 @@ def _parse_float_tuple(raw: str) -> tuple[float, ...]:
     if not values:
         raise ValueError(f"Expected at least one comma-separated float, got '{raw}'.")
     return values
+
+
+def _parse_optional_float_tuple(raw: str) -> tuple[float, ...]:
+    return _parse_float_tuple(raw) if str(raw).strip() else ()
 
 
 def _parse_str_tuple(raw: str) -> tuple[str, ...]:
@@ -127,6 +134,10 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
     defaults["robot_cfg_updates"] = robot_cfg_updates
 
     execution_cfg_kwargs: dict[str, object] = {}
+    if "mass_kg" in object_raw and "density_kg_m3" in object_raw:
+        raise ValueError("Configure either scene.object.mass_kg or scene.object.density_kg_m3, not both.")
+    if "density_kg_m3" in object_raw:
+        execution_cfg_kwargs["object_density_kg_m3"] = float(object_raw["density_kg_m3"])
     if "mass_kg" in object_raw:
         execution_cfg_kwargs["object_mass_kg"] = float(object_raw["mass_kg"])
     if "scale" in object_raw:
@@ -171,6 +182,14 @@ def _load_simulation_defaults(path: Path | None) -> dict[str, object]:
         execution_cfg_kwargs["waypoint_settle_steps"] = int(robot_raw["waypoint_settle_steps"])
     if "speed_scale" in robot_raw:
         execution_cfg_kwargs["arm_speed_scale"] = float(robot_raw["speed_scale"])
+    if "adaptive_speed_enabled" in robot_raw:
+        execution_cfg_kwargs["adaptive_speed_enabled"] = bool(robot_raw["adaptive_speed_enabled"])
+    if "approach_speed_scale" in robot_raw:
+        execution_cfg_kwargs["approach_speed_scale"] = float(robot_raw["approach_speed_scale"])
+    if "approach_slowdown_start_fraction" in robot_raw:
+        execution_cfg_kwargs["approach_slowdown_start_fraction"] = float(robot_raw["approach_slowdown_start_fraction"])
+    if "joint_target_tolerance_rad" in robot_raw:
+        execution_cfg_kwargs["joint_target_tolerance_rad"] = float(robot_raw["joint_target_tolerance_rad"])
     if "lift_height_m" in robot_raw:
         execution_cfg_kwargs["lift_height_m"] = float(robot_raw["lift_height_m"])
     if "regrasp_transport_clearance_m" in robot_raw:
@@ -291,6 +310,9 @@ def _attempt_result_payload(*, selected_grasp, result) -> dict[str, object]:
             "position_error_m": result.position_error_m,
             "orientation_error_rad": result.orientation_error_rad,
             "generated_scene_xml": result.generated_scene_xml,
+            "trajectory_diagnostics": list(getattr(result, "trajectory_diagnostics", ())),
+            "video_path": getattr(result, "video_path", None),
+            "video_frame_count": getattr(result, "video_frame_count", 0),
         },
     }
 
@@ -453,6 +475,8 @@ def _moveit_config_from_args(args_cli, *, joint_names: tuple[str, ...]) -> MoveI
         planning_group=str(args_cli.moveit_planning_group),
         pose_link=str(args_cli.moveit_pose_link),
         joint_names=joint_names,
+        moveit_namespace=str(args_cli.moveit_namespace),
+        pipeline_id=str(args_cli.moveit_pipeline_id),
         planner_id=str(args_cli.moveit_planner_id),
         wait_for_moveit_timeout_s=float(args_cli.moveit_wait_for_moveit_timeout_s),
         ik_timeout_s=float(args_cli.moveit_ik_timeout_s),
@@ -486,6 +510,29 @@ def _plan_moveit_target_sequence(
         commander = MoveItPoseCommander(moveit_config, node_name="mujoco_moveit_trajectory_planner")
         commander.wait_for_moveit(require_execute=False)
         start_joint_positions = _home_arm_joint_positions(robot_cfg)
+        multi_ik_config = MultiIkPlanningConfig(
+            candidate_count=int(args_cli.moveit_ik_candidate_count),
+            beam_width=int(args_cli.moveit_ik_beam_width),
+            seed_perturbation_rad=float(args_cli.moveit_ik_seed_perturbation_rad),
+            dedup_tolerance_rad=float(args_cli.moveit_ik_dedup_tolerance_rad),
+            joint_weights=_parse_optional_float_tuple(args_cli.moveit_ik_joint_weights),
+        )
+        if multi_ik_config.enabled:
+            result = plan_pose_sequence_multi_ik(
+                commander,
+                targets=targets,
+                labels=labels,
+                start_joint_positions=start_joint_positions,
+                joint_names=tuple(robot_cfg.arm_joint_names),
+                config=multi_ik_config,
+                label_prefix="mujoco",
+            )
+            print(
+                f"[MUJOCO] Multi-IK selected sequence: cost={result.joint_path_cost:.4f} "
+                f"beam_width={multi_ik_config.beam_width}.",
+                flush=True,
+            )
+            return dict(result.trajectories)
         planned: dict[str, tuple[tuple[float, ...], ...]] = {}
         for label in labels:
             trajectory, message = commander.plan_to_pose(
@@ -807,6 +854,12 @@ def main() -> None:
         help="Optional detailed Franka finger contact gap used during the ground recheck.",
     )
     parser.add_argument("--object-mass-kg", type=float, default=None, help="Optional target object mass in kg.")
+    parser.add_argument(
+        "--object-density-kg-m3",
+        type=float,
+        default=None,
+        help="Optional target object density in kg/m^3; mutually exclusive with --object-mass-kg.",
+    )
     parser.add_argument("--object-scale", type=float, default=None, help="Optional uniform object mesh scale.")
     parser.add_argument("--lift-height-m", type=float, default=None, help="Optional vertical lift height after grasp.")
     parser.add_argument(
@@ -845,14 +898,42 @@ def main() -> None:
         action="store_true",
         help="Keep the generated MuJoCo scene XML for inspection.",
     )
+    parser.add_argument("--record-video", type=Path, default=None, help="Optional MP4/AVI path for offscreen video.")
+    parser.add_argument("--video-fps", type=float, default=30.0, help="Recorded video frame rate.")
+    parser.add_argument("--video-width", type=int, default=960, help="Recorded video width in pixels.")
+    parser.add_argument("--video-height", type=int, default=540, help="Recorded video height in pixels.")
+    parser.add_argument("--video-camera-azimuth", type=float, default=135.0, help="MuJoCo free-camera azimuth.")
+    parser.add_argument("--video-camera-elevation", type=float, default=-25.0, help="MuJoCo free-camera elevation.")
+    parser.add_argument("--video-camera-distance", type=float, default=1.45, help="MuJoCo free-camera distance.")
+    parser.add_argument(
+        "--video-camera-lookat",
+        type=float,
+        nargs=3,
+        default=(0.35, 0.0, 0.28),
+        metavar=("X", "Y", "Z"),
+        help="MuJoCo free-camera lookat point.",
+    )
+    parser.add_argument(
+        "--video-mujoco-gl",
+        type=str,
+        default="egl",
+        help="MUJOCO_GL value used for offscreen recording when MUJOCO_GL is unset.",
+    )
     parser.add_argument("--moveit-frame-id", type=str, default="base", help="MoveIt planning frame.")
     parser.add_argument("--moveit-planning-group", type=str, default="fr3_arm", help="MoveIt planning group.")
     parser.add_argument("--moveit-pose-link", type=str, default="fr3_hand_tcp", help="MoveIt pose link.")
+    parser.add_argument("--moveit-namespace", type=str, default="", help="Optional MoveIt namespace.")
+    parser.add_argument("--moveit-pipeline-id", type=str, default="", help="Optional MoveIt planning pipeline id.")
     parser.add_argument("--moveit-planner-id", type=str, default="", help="Optional MoveIt planner id.")
     parser.add_argument("--moveit-wait-for-moveit-timeout-s", type=float, default=15.0)
     parser.add_argument("--moveit-ik-timeout-s", type=float, default=2.0)
     parser.add_argument("--moveit-planning-time-s", type=float, default=5.0)
     parser.add_argument("--moveit-num-planning-attempts", type=int, default=5)
+    parser.add_argument("--moveit-ik-candidate-count", type=int, default=1)
+    parser.add_argument("--moveit-ik-beam-width", type=int, default=1)
+    parser.add_argument("--moveit-ik-seed-perturbation-rad", type=float, default=0.35)
+    parser.add_argument("--moveit-ik-dedup-tolerance-rad", type=float, default=0.05)
+    parser.add_argument("--moveit-ik-joint-weights", type=str, default="")
     parser.add_argument("--moveit-velocity-scale", type=float, default=0.05)
     parser.add_argument("--moveit-acceleration-scale", type=float, default=0.05)
     parser.add_argument("--moveit-execute-timeout-s", type=float, default=120.0)
@@ -876,6 +957,24 @@ def main() -> None:
         help="Maximum final grasps considered per placement option during MoveIt regrasp selection.",
     )
     args_cli = parser.parse_args()
+    if args_cli.object_mass_kg is not None and args_cli.object_density_kg_m3 is not None:
+        parser.error("--object-mass-kg and --object-density-kg-m3 are mutually exclusive.")
+    video_cfg = (
+        None
+        if args_cli.record_video is None
+        else MujocoVideoConfig(
+            output_path=str(args_cli.record_video),
+            fps=float(args_cli.video_fps),
+            width=int(args_cli.video_width),
+            height=int(args_cli.video_height),
+            camera_azimuth=float(args_cli.video_camera_azimuth),
+            camera_elevation=float(args_cli.video_camera_elevation),
+            camera_distance=float(args_cli.video_camera_distance),
+            camera_lookat=tuple(float(value) for value in args_cli.video_camera_lookat),
+        )
+    )
+    if video_cfg is not None and not os.environ.get("MUJOCO_GL"):
+        os.environ["MUJOCO_GL"] = str(args_cli.video_mujoco_gl)
     simulation_defaults = _load_simulation_defaults(args_cli.simulation_config)
     pregrasp_offset = (
         float(args_cli.pregrasp_offset)
@@ -903,6 +1002,10 @@ def main() -> None:
     execution_cfg_kwargs = dict(simulation_defaults["execution_cfg_kwargs"])
     if args_cli.object_mass_kg is not None:
         execution_cfg_kwargs["object_mass_kg"] = float(args_cli.object_mass_kg)
+        execution_cfg_kwargs["object_density_kg_m3"] = None
+    if args_cli.object_density_kg_m3 is not None:
+        execution_cfg_kwargs["object_density_kg_m3"] = float(args_cli.object_density_kg_m3)
+        execution_cfg_kwargs.pop("object_mass_kg", None)
     if args_cli.object_scale is not None:
         execution_cfg_kwargs["object_scale"] = float(args_cli.object_scale)
     if args_cli.lift_height_m is not None:
@@ -1185,6 +1288,7 @@ def main() -> None:
                         viewer_realtime=not args_cli.viewer_no_realtime,
                         viewer_hold_seconds=args_cli.viewer_hold_seconds,
                         viewer_block_at_end=args_cli.viewer_block_at_end,
+                        video_cfg=video_cfg,
                     )
                     attempts.append(
                         {
@@ -1406,6 +1510,7 @@ def main() -> None:
                             viewer_realtime=not args_cli.viewer_no_realtime,
                             viewer_hold_seconds=args_cli.viewer_hold_seconds,
                             viewer_block_at_end=args_cli.viewer_block_at_end,
+                            video_cfg=video_cfg,
                         )
                         attempts.append(
                             {
@@ -1473,7 +1578,9 @@ def main() -> None:
                     placement_reached=False,
                     final_pregrasp_reached=False,
                     final_grasp_reached=False,
-                    initial_object_position_world=tuple(float(v) for v in plan.initial_object_pose_world.position_world),
+                    initial_object_position_world=tuple(
+                        float(v) for v in plan.initial_object_pose_world.position_world
+                    ),
                     staged_object_position_world=tuple(
                         float(v) for v in active_plan.staging_object_pose_world.position_world
                     ),
@@ -1556,6 +1663,7 @@ def main() -> None:
                 viewer_realtime=not args_cli.viewer_no_realtime,
                 viewer_hold_seconds=args_cli.viewer_hold_seconds,
                 viewer_block_at_end=args_cli.viewer_block_at_end,
+                video_cfg=video_cfg,
             )
             attempt_payload = _attempt_result_payload(selected_grasp=selected_world_grasp, result=result)
             attempt_payload["attempt_index"] = attempt_index

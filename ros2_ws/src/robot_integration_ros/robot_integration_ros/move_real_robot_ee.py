@@ -1,4 +1,4 @@
-"""Standalone terminal entrypoint for MoveIt-driven FR3 end-effector moves."""
+"""Standalone terminal entrypoint for MoveIt-driven end-effector moves."""
 
 from __future__ import annotations
 
@@ -15,15 +15,25 @@ from .moveit_pose_commander import (
 )
 
 
+def _parse_joint_names(raw: str) -> tuple[str, ...]:
+    if not str(raw).strip():
+        return ()
+    values = tuple(part.strip() for part in str(raw).split(",") if part.strip())
+    if not values:
+        raise ValueError("Expected at least one comma-separated joint name.")
+    return values
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Plan or execute a single FR3 end-effector pose target through MoveIt.",
+        description="Plan or execute a single end-effector pose target through MoveIt.",
         epilog=(
             "Examples:\n"
             "  ros2 run robot_integration_ros move_real_robot_ee --x 0.35 --y 0.00 --z 0.40\n"
             "  ros2 run robot_integration_ros move_real_robot_ee --x 0.35 --y 0.00 --z 0.40 --execute\n"
             "  ros2 run robot_integration_ros move_real_robot_ee --x 0.32 --y -0.10 --z 0.28 --roll 3.14159 --pitch 0 --yaw 1.5708 --execute\n"
-            "  ros2 run robot_integration_ros move_real_robot_ee --x 0.32 --y -0.10 --z 0.28 --qx 0 --qy 1 --qz 0 --qw 0 --execute"
+            "  ros2 run robot_integration_ros move_real_robot_ee --x 0.32 --y -0.10 --z 0.28 --qx 0 --qy 1 --qz 0 --qw 0 --execute\n"
+            "  ros2 run robot_integration_ros move_real_robot_ee --x 0.45 --y 0 --z 0.35 --frame-id lbr_link_0 --planning-group arm --pose-link lbr_link_ee --moveit-namespace /lbr --joint-names lbr_A1,lbr_A2,lbr_A3,lbr_A4,lbr_A5,lbr_A6,lbr_A7"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -56,6 +66,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label", default="ee_target", help="Label used in MoveIt goal constraints and logging.")
     parser.add_argument("--planning-group", default="fr3_arm", help="MoveIt planning group name.")
     parser.add_argument("--pose-link", default="fr3_hand_tcp", help="IK end-effector link name.")
+    parser.add_argument(
+        "--moveit-namespace",
+        default="",
+        help="Optional MoveIt namespace, for example /lbr for the LBR stack.",
+    )
+    parser.add_argument(
+        "--joint-names",
+        default="",
+        help="Optional comma-separated arm joint names. Defaults to fr3_joint1..fr3_joint7.",
+    )
     parser.add_argument("--planner-id", default="", help="Optional MoveIt planner id. Empty means use the default.")
     parser.add_argument("--ik-timeout-s", type=float, default=2.0, help="IK timeout in seconds.")
     parser.add_argument("--planning-time-s", type=float, default=5.0, help="Allowed planning time in seconds.")
@@ -135,9 +155,12 @@ def pose_target_from_args(
 
 
 def commander_config_from_args(args: argparse.Namespace) -> MoveItPoseCommanderConfig:
+    joint_names = _parse_joint_names(getattr(args, "joint_names", ""))
     return MoveItPoseCommanderConfig(
         planning_group=args.planning_group,
         pose_link=args.pose_link,
+        joint_names=joint_names or MoveItPoseCommanderConfig().joint_names,
+        moveit_namespace=getattr(args, "moveit_namespace", ""),
         planner_id=args.planner_id,
         wait_for_moveit_timeout_s=args.wait_for_moveit_timeout_s,
         ik_timeout_s=args.ik_timeout_s,

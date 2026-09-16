@@ -1,0 +1,23 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.15, nodesep=0.28, ranksep=0.5,
+         fontname="Helvetica", fontsize=18, label="From Policy Output to Robot Motion and Termination", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9,
+        color="#34495e", fillcolor="white", margin="0.12,0.07"];
+  edge [color="#34495e", penwidth=1.15, arrowsize=0.65, fontname="Helvetica", fontsize=8];
+
+  sample [label="Sampled action\n6-D motion + stop", fillcolor="#eaf3fb"];
+  rate [label="Clip motion to [-1,1]\nlimit delta action to 0.25", fillcolor="#ddf3ef"];
+  hold [label="If stop candidate:\ncommand zero twist immediately", fillcolor="#fff1d6"];
+  scale [label="Scale camera twist\nlinear <= 0.04 m/s\nangular <= 0.24 rad/s", fillcolor="#ddf3ef"];
+  frames [label="Rotate twist\ncamera -> world -> robot base", fillcolor="#ddf3ef"];
+  ik [label="Damped least-squares IK\nqdot = J^T (J J^T + lambda^2 I)^-1 twist", fillcolor="#ddf3ef"];
+  command [label="q_target = q + qdot * dt\nclip to joint limits", fillcolor="#ddf3ef"];
+  gate [label="Stop gate\np(stop) >= 0.95\nlow TCP speed\n4 consecutive frames", fillcolor="#fff1d6"];
+  terminal [label="Terminal outcome\nsuccess / premature stop / contact\n/ divergence / timeout", fillcolor="#fff0f0"];
+  reward [label="Potential-difference reward\nposition + rotation progress\nplus terminal and safety costs", fillcolor="#fff7e8"];
+
+  sample -> rate -> hold -> scale -> frames -> ik -> command;
+  sample -> gate -> terminal;
+  command -> reward;
+  terminal -> reward;
+}

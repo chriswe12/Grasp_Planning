@@ -1,0 +1,46 @@
+default_velocity_scaling_factor: 0.1
+default_acceleration_scaling_factor: 0.1
+
+joint_limits:
+  lbr_one_A1: &a1
+    has_velocity_limits: true
+    max_velocity: 1.7104226669544429
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A2: &a2
+    has_velocity_limits: true
+    max_velocity: 1.7104226669544429
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A3: &a3
+    has_velocity_limits: true
+    max_velocity: 1.7453292519943295
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A4: &a4
+    has_velocity_limits: true
+    max_velocity: 2.2689280275926285
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A5: &a5
+    has_velocity_limits: true
+    max_velocity: 2.4434609527920612
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A6: &a6
+    has_velocity_limits: true
+    max_velocity: 3.141592653589793
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_one_A7: &a7
+    has_velocity_limits: true
+    max_velocity: 3.141592653589793
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  lbr_two_A1: *a1
+  lbr_two_A2: *a2
+  lbr_two_A3: *a3
+  lbr_two_A4: *a4
+  lbr_two_A5: *a5
+  lbr_two_A6: *a6
+  lbr_two_A7: *a7

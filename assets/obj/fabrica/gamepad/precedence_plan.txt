@@ -1,0 +1,55 @@
+Assembly: gamepad
+Source: logs/precedence_only/gamepad/precedence.pkl
+
+Direction semantics:
+  edge A -> B means A is a prerequisite/support for B in forward assembly.
+  A valid disassembly order is the reverse of a forward topological order.
+
+Parts (6): 0, 1, 2, 3, 4, 5
+Forward assembly order: 3 -> 0 -> 1 -> 2 -> 4 -> 5
+Valid disassembly order: 5 -> 4 -> 2 -> 1 -> 0 -> 3
+
+Immediate precedence edges:
+  3 -> 0 (contact points: 401)
+  3 -> 1 (contact points: 1623)
+  3 -> 2 (contact points: 1506)
+  3 -> 4 (contact points: 898)
+  3 -> 5 (contact points: 426)
+
+Per-part summary:
+  Part 0:
+    all assembly prerequisites: 3
+    all assembly dependents: none
+    center of mass: [-1.976412, -16.384979, 2.975018]
+    removal action: [-0.0, -0.0, 1.0]
+    disassembly path waypoints: 303
+  Part 1:
+    all assembly prerequisites: 3
+    all assembly dependents: none
+    center of mass: [-4.370805, -14.854695, 2.346581]
+    removal action: [-0.0, 0.0, 1.0]
+    disassembly path waypoints: 505
+  Part 2:
+    all assembly prerequisites: 3
+    all assembly dependents: none
+    center of mass: [4.354866, -14.847723, 2.309281]
+    removal action: [0.0, 0.0, 1.0]
+    disassembly path waypoints: 505
+  Part 3:
+    all assembly prerequisites: none
+    all assembly dependents: 0, 1, 2, 4, 5
+    center of mass: [0.012833, -16.121668, 1.257281]
+    removal action: None
+    disassembly path waypoints: 0
+  Part 4:
+    all assembly prerequisites: 3
+    all assembly dependents: none
+    center of mass: [0.004038, -13.09738, 1.242536]
+    removal action: [-0.0, 1.0, 0.0]
+    disassembly path waypoints: 505
+  Part 5:
+    all assembly prerequisites: 3
+    all assembly dependents: none
+    center of mass: [1.976411, -16.384979, 2.975018]
+    removal action: [0.0, -0.0, 1.0]
+    disassembly path waypoints: 303

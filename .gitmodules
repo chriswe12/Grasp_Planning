@@ -1,0 +1,3 @@
+[submodule "isaac_rl"]
+	path = isaac_rl
+	url = https://github.com/chriswe12/grasping_rl.git

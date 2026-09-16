@@ -8,7 +8,7 @@ grasp:
 
 scene:
   object:
-    mass_kg: 0.15
+    density_kg_m3: 1240.0  # PLA-like plastic density; use mass_kg instead for fixed-mass experiments.
     scale: 1.0
     friction: [7.5, 0.16, 0.03]
     condim: 6
@@ -23,6 +23,10 @@ robot:
   timestep_s: 0.002
   control_substeps: 8
   speed_scale: 5.0
+  adaptive_speed_enabled: true
+  approach_speed_scale: 1.0
+  approach_slowdown_start_fraction: 0.65
+  joint_target_tolerance_rad: 0.02
   settle_steps: 120
   ik_max_iters: 200
   ik_damping: 0.001

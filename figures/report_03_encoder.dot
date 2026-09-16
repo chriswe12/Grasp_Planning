@@ -1,0 +1,23 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="white", pad=0.15, nodesep=0.25, ranksep=0.45,
+         fontname="Helvetica", fontsize=18, label="Shared RGB-D Encoding and Spatial Goal Comparison", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9,
+        color="#34495e", fillcolor="white", margin="0.12,0.07"];
+  edge [color="#34495e", penwidth=1.15, arrowsize=0.65, fontname="Helvetica", fontsize=8];
+
+  live [label="Live RGB-D\n[B,72,128,4]", fillcolor="#eaf3fb"];
+  goal [label="Goal RGB-D\n[B,72,128,4]", fillcolor="#eaf3fb"];
+  rgb [label="SHARED RGB ENCODER\nImageNet ResNet-18 through layer3\nstem + layer1 + layer2 frozen\nlayer3 trainable; BN statistics frozen\n[B,3,72,128] -> [B,256,5,8]", fillcolor="#dcecff"];
+  depth [label="SHARED DEPTH CNN\nConv5 s2 1->32, then Conv3 s2\n32->64->96->128; ELU after each\n[B,1,72,128] -> [B,128,5,8]", fillcolor="#ddf3ef"];
+  feature [label="Concatenate RGB + depth\nL or G [B,384,5,8]", fillcolor="#f3f7fa"];
+  compare [label="concat(L, G, L-G, |L-G|, L*G)\n[B,1920,5,8]", fillcolor="#fff1d6"];
+  fusion [label="Spatial fusion\nConv1x1 1920->256 + ELU\nConv3x3 256->128 + ELU\n[B,128,5,8]", fillcolor="#fff1d6"];
+  trunk [label="Visual trunk\nFlatten 5120\nLinear 5120->512->256, ELU\nz_v [B,256]", fillcolor="#eee8fa"];
+  geom [label="Geometry trunk\nLinear 256->128 + ELU\nz_g [B,128]", fillcolor="#eee8fa"];
+
+  live -> rgb [label="RGB"]; goal -> rgb [label="RGB"];
+  live -> depth [label="depth"]; goal -> depth [label="depth"];
+  rgb -> feature; depth -> feature;
+  feature -> compare [label="live L and goal G"];
+  compare -> fusion -> trunk -> geom;
+}

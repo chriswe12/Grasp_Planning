@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
@@ -47,6 +48,30 @@ class SavedGraspTransformTests(unittest.TestCase):
         np.testing.assert_allclose(world_grasp.position_w, (0.3, -0.1, 0.2), atol=1e-6)
         np.testing.assert_allclose(world_grasp.contact_point_a_w, (0.3, -0.12, 0.2), atol=1e-6)
         np.testing.assert_allclose(world_grasp.contact_point_b_w, (0.3, -0.08, 0.2), atol=1e-6)
+
+    def test_saved_grasp_to_world_grasp_applies_contact_patch_offset_to_tcp(self) -> None:
+        candidate = replace(
+            self._candidate(),
+            contact_patch_lateral_offset_m=0.015,
+            contact_patch_approach_offset_m=0.005,
+        )
+
+        world_grasp = saved_grasp_to_world_grasp(
+            candidate,
+            ObjectWorldPose(
+                position_world=(0.3, -0.1, 0.2),
+                orientation_xyzw_world=(0.0, 0.0, 0.0, 1.0),
+            ),
+            pregrasp_offset=0.1,
+            gripper_width_clearance=0.0,
+        )
+
+        # The sampled contact center remains at the object origin, while the
+        # physical robot TCP is shifted so the requested pad patch reaches it.
+        np.testing.assert_allclose(world_grasp.position_w, (0.285, -0.1, 0.195), atol=1e-9)
+        np.testing.assert_allclose(world_grasp.pregrasp_position_w, (0.285, -0.1, 0.095), atol=1e-9)
+        np.testing.assert_allclose(world_grasp.contact_point_a_w, (0.3, -0.12, 0.2), atol=1e-9)
+        np.testing.assert_allclose(world_grasp.contact_point_b_w, (0.3, -0.08, 0.2), atol=1e-9)
 
     def test_saved_grasp_to_world_grasp_applies_rotation(self) -> None:
         yaw_90 = rotmat_to_quat_xyzw(

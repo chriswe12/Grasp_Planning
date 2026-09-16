@@ -1,0 +1,477 @@
+{
+  "assembly": "plumbers_block",
+  "source": "logs/precedence_only/plumbers_block/precedence.pkl",
+  "units": {
+    "positions": "centimeters unless field name ends in _m",
+    "rotations": "Euler xyz radians",
+    "transform_convention": "4x4 row-major matrices applied to homogeneous column vectors"
+  },
+  "frame_notes": [
+    "The OBJ meshes in this asset set are already in their assembled part coordinates unless a config final_state is supplied.",
+    "For an OBJ already sitting in the assembled pose, apply final_to_pre_insertion_transform_* to move that part to its pre-insertion pose.",
+    "The insertion motion is the reverse: move from pre_insertion_pose_world_* toward final_pose_world_* along pre_to_final_insertion_vector_*.",
+    "static_base parts have no pre-insertion pose because they are the assembly seed/support part."
+  ],
+  "parts": {
+    "0": {
+      "role": "moving_part",
+      "final_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_insertion_pose_world_cm_euler_xyz": [
+        -0.0,
+        -21.565001,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "final_to_pre_insertion_transform_cm": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -6.565001
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.06565
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_pose_cm_euler_xyz": [
+        -0.0,
+        -6.565001,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_cm": [
+        0.0,
+        6.565001,
+        -0.0
+      ],
+      "pre_to_final_insertion_vector_m": [
+        0.0,
+        0.06565,
+        -0.0
+      ],
+      "pre_to_final_insertion_distance_cm": 6.565001,
+      "pre_to_final_insertion_distance_m": 0.06565,
+      "disassembly_path_waypoints": 1313
+    },
+    "1": {
+      "role": "moving_part",
+      "final_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_insertion_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        5.05,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "final_to_pre_insertion_transform_cm": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          5.05
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_pose_cm_euler_xyz": [
+        0.0,
+        0.0,
+        5.05,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_cm": [
+        -0.0,
+        0.0,
+        -5.05
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.0505
+      ],
+      "pre_to_final_insertion_distance_cm": 5.05,
+      "pre_to_final_insertion_distance_m": 0.0505,
+      "disassembly_path_waypoints": 1010
+    },
+    "2": {
+      "role": "moving_part",
+      "final_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_insertion_pose_world_cm_euler_xyz": [
+        3.535,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "final_to_pre_insertion_transform_cm": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          3.535
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.03535
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_pose_cm_euler_xyz": [
+        3.535,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_cm": [
+        -3.535,
+        0.0,
+        -0.0
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.03535,
+        0.0,
+        -0.0
+      ],
+      "pre_to_final_insertion_distance_cm": 3.535,
+      "pre_to_final_insertion_distance_m": 0.03535,
+      "disassembly_path_waypoints": 707
+    },
+    "3": {
+      "role": "moving_part",
+      "final_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_insertion_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.505,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "final_to_pre_insertion_transform_cm": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.00505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_pose_cm_euler_xyz": [
+        0.0,
+        0.0,
+        0.505,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_cm": [
+        -0.0,
+        0.0,
+        -0.505
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.00505
+      ],
+      "pre_to_final_insertion_distance_cm": 0.505,
+      "pre_to_final_insertion_distance_m": 0.00505,
+      "disassembly_path_waypoints": 101
+    },
+    "4": {
+      "role": "moving_part",
+      "final_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_insertion_pose_world_cm_euler_xyz": [
+        0.0,
+        -15.0,
+        5.05,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "final_to_pre_insertion_transform_cm": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          5.05
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_pose_cm_euler_xyz": [
+        0.0,
+        0.0,
+        5.05,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_cm": [
+        -0.0,
+        0.0,
+        -5.05
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.0505
+      ],
+      "pre_to_final_insertion_distance_cm": 5.05,
+      "pre_to_final_insertion_distance_m": 0.0505,
+      "disassembly_path_waypoints": 1010
+    }
+  }
+}

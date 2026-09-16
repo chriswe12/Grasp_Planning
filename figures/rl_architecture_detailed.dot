@@ -1,0 +1,88 @@
+digraph architecture {
+  graph [rankdir=LR, bgcolor="white", pad=0.18, nodesep=0.22, ranksep=0.48,
+         fontname="Helvetica", fontsize=18,
+         label="Goal-Conditioned RGB-D Policy with Asymmetric PPO Training", labelloc=t];
+  node [shape=box, style="rounded,filled", fillcolor="white", color="#34495e",
+        fontname="Helvetica", fontsize=9, margin="0.10,0.06"];
+  edge [color="#34495e", arrowsize=0.65, penwidth=1.1, fontname="Helvetica", fontsize=8];
+
+  subgraph cluster_actor {
+    label="DEPLOYMENT ACTOR"; color="#2463a6"; penwidth=1.6; style="rounded";
+
+    live [label="Live RGB-D\n[B,72,128,4]", fillcolor="#eaf3fb"];
+    goal [label="Goal RGB-D\n[B,72,128,4]", fillcolor="#eaf3fb"];
+    prev [label="Previous executed motion\na(t-1) [B,6]", fillcolor="#eaf3fb"];
+
+    rgb [label="SHARED RGB ENCODER\nImageNet ResNet-18\nstem + layer1 + layer2 frozen\nlayer3 trainable; BN stats frozen\nRGB [B,3,72,128] -> [B,256,5,8]", fillcolor="#dcecff"];
+    depth [label="SHARED DEPTH CNN\nConv5x5 s2: 1->32 + ELU\nConv3x3 s2: 32->64 + ELU\nConv3x3 s2: 64->96 + ELU\nConv3x3 s2: 96->128 + ELU\n[B,1,72,128] -> [B,128,5,8]", fillcolor="#ddf3ef"];
+    pair [label="Per-image RGB-D concat\nL, G: [B,384,5,8]", fillcolor="#f3f7fa"];
+    compare [label="Spatial comparison\nconcat[L, G, L-G, |L-G|, L*G]\n[B,1920,5,8]", fillcolor="#fff1d6"];
+    fuse [label="SPATIAL FUSION\nConv1x1: 1920->256 + ELU\nConv3x3: 256->128 + ELU\n[B,128,5,8]", fillcolor="#fff1d6"];
+    visual [label="VISUAL TRUNK\nFlatten: 5120\nLinear 5120->512 + ELU\nLinear 512->256 + ELU\nz_v [B,256]", fillcolor="#eee8fa"];
+    geometry [label="GEOMETRY TRUNK\nLinear 256->128 + ELU\nz_g [B,128]", fillcolor="#eee8fa"];
+    shared [label="Shared representation\nconcat[z_v,z_g] [B,384]", fillcolor="#eee8fa"];
+
+    motion [label="MOTION HEAD\ninput concat[z_v,z_g,a(t-1)] [B,390]\nLinear 390->256 + ELU\nLinear 256->6 + tanh\nmu [B,6] + learned log sigma [6]\n=> Gaussian 6-DoF twist", fillcolor="#dcecff"];
+    completion [label="COMPLETION HEAD\ninput [z_v,z_g] [B,384]\nLinear 384->128 + ELU\nLinear 128->1\nlogit -> sigmoid -> p_stop [B,1]\n=> Bernoulli stop", fillcolor="#dcecff"];
+    pose [label="AUXILIARY POSE HEAD\ninput z_g [B,128]\nLinear 128->128 + ELU\nLinear 128->6\npredicted normalized camera-frame\npose error [B,6]", fillcolor="#dcecff"];
+    slowdown [label="Detached completion slowdown\nscale(p_stop.detach()) multiplies\nmu and log sigma\n(no motion gradient to completion)", fillcolor="#fff7e8", color="#d17b00"];
+
+    live -> rgb [label="RGB"];
+    goal -> rgb [label="RGB"];
+    live -> depth [label="depth"];
+    goal -> depth [label="depth"];
+    rgb -> pair; depth -> pair;
+    pair -> compare [label="live L + goal G"];
+    compare -> fuse -> visual -> geometry;
+    visual -> shared [label="z_v"];
+    geometry -> shared [label="z_g"];
+    shared -> motion;
+    prev -> motion;
+    shared -> completion;
+    geometry -> pose;
+    completion -> slowdown [color="#d17b00", style=dashed];
+    slowdown -> motion [color="#d17b00", style=dashed];
+  }
+
+  subgraph cluster_aux {
+    label="AUXILIARY SUPERVISION — TRAINING ONLY"; color="#d17b00"; penwidth=1.6; style="rounded";
+    pose_target [label="Privileged pose target\nnormalized camera-frame error [B,6]", fillcolor="#fff7e8"];
+    pose_loss [label="Smooth-L1 position + rotation\nweight 0.2", fillcolor="#fff1d6"];
+    comp_target [label="Privileged completion target [B,2]\nready label + supervision mask", fillcolor="#fff7e8"];
+    comp_loss [label="Masked BCEWithLogits\npos_weight 3.0; loss weight 0.2", fillcolor="#fff1d6"];
+    sharing [label="MULTI-TASK SHARING\nHeads exchange no hidden state.\nSummed losses backpropagate through shared\nfeatures/parameters, requiring the shared\nrepresentation to support all three tasks.", fillcolor="#fffaf0"];
+
+    pose_target -> pose_loss [style=dashed, color="#d17b00"];
+    comp_target -> comp_loss [style=dashed, color="#d17b00"];
+    pose -> pose_loss [style=dashed, color="#d17b00", constraint=false];
+    completion -> comp_loss [style=dashed, color="#d17b00", constraint=false];
+    pose_loss -> sharing [style=dashed, color="#d17b00"];
+    comp_loss -> sharing [style=dashed, color="#d17b00"];
+    sharing -> geometry [style=dashed, color="#d17b00", label="gradients", constraint=false];
+    sharing -> visual [style=dashed, color="#d17b00", constraint=false];
+    sharing -> fuse [style=dashed, color="#d17b00", constraint=false];
+    sharing -> depth [style=dashed, color="#d17b00", constraint=false];
+    sharing -> rgb [style=dashed, color="#d17b00", label="to trainable layer3", constraint=false];
+  }
+
+  subgraph cluster_critic {
+    label="PRIVILEGED CENTRALIZED CRITIC — TRAINING ONLY"; color="#19857b"; penwidth=1.6; style="rounded";
+    state [label="Critic state s [B,26]\nq [7] + qdot [7] + world position error [3]\n+ rotation error [3] + a(t-1) [6]", fillcolor="#ddf3ef"];
+    critic [label="CENTRALIZED CRITIC MLP\nLinear 26->256 + ELU\nLinear 256->128 + ELU\nLinear 128->64 + ELU\nLinear 64->1", fillcolor="#ddf3ef"];
+    value [label="V(s) [B,1]", fillcolor="#ddf3ef"];
+    value_loss [label="Value loss", fillcolor="#ddf3ef"];
+    ppo [label="PPO advantage / return\ncomputation", fillcolor="#eef4ff", color="#2463a6"];
+    nofeature [label="No critic features or V(s) feed\nthe pose/completion heads.\nActor-critic coupling is algorithmic only.", fillcolor="#f4fbfa"];
+
+    state -> critic -> value -> value_loss;
+    value -> ppo [style=dotted, color="#2463a6"];
+    ppo -> motion [style=dotted, color="#2463a6", label="policy advantage", constraint=false];
+    value -> nofeature [style=dotted, color="#2463a6"];
+  }
+
+  rollout [label="Full rollout observation [B,73742]\nimages 73728 + previous action 6\n+ pose target 6 + completion target 2\nLAST 8 VALUES ARE SLICED OFF\nBEFORE POLICY INFERENCE", fillcolor="#fff0f0", color="#b33a3a"];
+  rollout -> live [style=dashed, color="#b33a3a", label="first 73728"];
+  rollout -> prev [style=dashed, color="#b33a3a", label="next 6"];
+  rollout -> pose_target [style=dashed, color="#b33a3a", label="last 8: labels"];
+  rollout -> comp_target [style=dashed, color="#b33a3a"];
+}

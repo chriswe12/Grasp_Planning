@@ -1,0 +1,98 @@
+schema_version: 1
+asset_root: "../.cache/d405_policy_deployment"
+agent_config: "../configs/rl_games_multipart_ppo_deployment.yaml"
+default_part_id: "0"
+
+policies:
+  combined-v4:
+    checkpoint: "combined-v4.pth"
+    metadata: "combined-v4.deployment.json"
+    source_job: "11417200"
+    gripper_model: "y_gripper"
+    policy_context: "action"
+    policy_rate_hz: 30.0
+    action_delta_limit: 0.25
+    validation_percent:
+      nominal: 61.2
+      clutter: 26.6
+      depth_errors: 27.6
+  clutter-v5:
+    checkpoint: "clutter-v5.pth"
+    metadata: "clutter-v5.deployment.json"
+    source_job: "11419483"
+    gripper_model: "y_gripper"
+    policy_context: "action"
+    policy_rate_hz: 30.0
+    action_delta_limit: 0.25
+    validation_percent:
+      nominal: 69.2
+      clutter: 50.2
+      depth_errors: 50.8
+  depth-v5-a:
+    checkpoint: "depth-v5-a.pth"
+    metadata: "depth-v5-a.deployment.json"
+    source_job: "11419528"
+    gripper_model: "y_gripper"
+    policy_context: "action"
+    policy_rate_hz: 30.0
+    action_delta_limit: 0.25
+    validation_percent:
+      nominal: 68.2
+      clutter: 38.0
+      depth_errors: 44.6
+  depth-v5-b:
+    checkpoint: "depth-v5-b.pth"
+    metadata: "depth-v5-b.deployment.json"
+    source_job: "11419904"
+    gripper_model: "y_gripper"
+    policy_context: "action"
+    policy_rate_hz: 30.0
+    action_delta_limit: 0.25
+    validation_percent:
+      nominal: 68.1
+      clutter: 42.0
+      depth_errors: 52.4
+
+  baseline:
+    checkpoint: "pdz-baseline-v1.pth"
+    metadata: "pdz-baseline-v1.deployment.json"
+    source_job: "11746645"
+    source_epoch: 3810
+    checkpoint_selection: "final_epoch; held-out selection pending"
+    gripper_model: "pdz_gripper"
+    policy_context: "action"
+    policy_rate_hz: 15.0
+    action_delta_limit: 0.50
+
+  background:
+    checkpoint: "pdz-background-v1.pth"
+    metadata: "pdz-background-v1.deployment.json"
+    source_job: "11746654"
+    source_epoch: 3810
+    checkpoint_selection: "final_epoch; held-out selection pending"
+    gripper_model: "pdz_gripper"
+    policy_context: "action"
+    policy_rate_hz: 15.0
+    action_delta_limit: 0.50
+
+  velocity:
+    checkpoint: "pdz-velocity-v1.pth"
+    metadata: "pdz-velocity-v1.deployment.json"
+    source_job: "11746657"
+    source_epoch: 3810
+    checkpoint_selection: "final_epoch; held-out selection pending"
+    gripper_model: "pdz_gripper"
+    policy_context: "action_twist"
+    policy_rate_hz: 15.0
+    action_delta_limit: 0.50
+
+  velocity-rotation:
+    checkpoint: "pdz-velocity-rotation-v1.pth"
+    metadata: "pdz-velocity-rotation-v1.deployment.json"
+    source_job: "11746661"
+    source_epoch: 3810
+    checkpoint_selection: "final_epoch; held-out selection pending"
+    gripper_model: "pdz_gripper"
+    policy_context: "action_twist_rotation"
+    policy_rate_hz: 15.0
+    action_delta_limit: 0.50

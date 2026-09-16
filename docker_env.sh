@@ -31,6 +31,8 @@ Commands:
   build              Build the Docker image
   run [command...]   Run the container, optionally executing command
   pipeline [args...] Run run_pipeline.sh inside the container
+  collect-expert-dataset [episodes] [output_dir] [seed]
+                     Start detached parallel Isaac expert collection
   play-bag <bag>     Play a ROS2 bag from a matching ROS2 container
   stop               Stop the running container
   remove             Remove the container
@@ -195,6 +197,67 @@ run_pipeline() {
         bash "$@"
 }
 
+collect_expert_dataset() {
+    local episodes="${1:-4096}"
+    local dataset_dir="${2:-artifacts/curriculum_overnight_${episodes}}"
+    local seed="${3:-101}"
+    if ! [[ "${episodes}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "episodes must be a positive integer." >&2
+        exit 1
+    fi
+    if ! [[ "${seed}" =~ ^[0-9]+$ ]]; then
+        echo "seed must be a nonnegative integer." >&2
+        exit 1
+    fi
+    case "${dataset_dir}" in
+        artifacts/*) ;;
+        *)
+            echo "output_dir must be a relative path under artifacts/." >&2
+            exit 1
+            ;;
+    esac
+    if compgen -G "${WORKSPACE_DIR}/${dataset_dir}/episode_*.json" >/dev/null; then
+        echo "Refusing to overwrite existing episodes under ${dataset_dir}." >&2
+        exit 1
+    fi
+
+    ensure_container_running
+    local log_path="${dataset_dir}.log"
+    docker exec -d "${CONTAINER_NAME}" /bin/bash -lc '
+        cd "${GRASP_WORKSPACE:-/workspace/add_isaac}"
+        exec /isaac-sim/python.sh scripts/run_fabrica_grasp_in_isaac.py \
+          --input-json artifacts/pipeline_stage2_ground_feasible.json \
+          --fr3-usd assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda \
+          --grasp-id g1973 \
+          --pregrasp-offset 0.10 \
+          --gripper-width-clearance 0.01 \
+          --object-density-kg-m3 1240 \
+          --moveit-plan-json artifacts/sim_isaac_pick_attempt_moveit_plan.json \
+          --moveit-frame-id lbr_link_0 \
+          --moveit-pose-link gripper_tcp \
+          --moveit-planning-group arm \
+          --moveit-joint-names lbr_A1,lbr_A2,lbr_A3,lbr_A4,lbr_A5,lbr_A6,lbr_A7 \
+          --enable-d405-wrist-camera \
+          --d405-width 848 --d405-height 480 \
+          --d405-fx 470.900 --d405-fy 432.971 \
+          --d405-cx 423.5 --d405-cy 239.5 \
+          --curriculum-dataset-dir "$1" \
+          --curriculum-episodes "$2" \
+          --curriculum-seed "$3" \
+          --curriculum-episode-offset 0 \
+          --curriculum-num-envs 16 \
+          --curriculum-writer-workers 4 \
+          --curriculum-sample-hz 10 \
+          --curriculum-ee-position-noise-grasp-m 0.035 0.035 0.020 \
+          --curriculum-ee-rotation-noise-deg 20 20 25 \
+          --headless > "$4" 2>&1
+    ' bash "${dataset_dir}" "${episodes}" "${seed}" "${log_path}"
+    echo "Started ${episodes} episodes in 16 parallel Isaac environments."
+    echo "Dataset: ${WORKSPACE_DIR}/${dataset_dir}"
+    echo "Log:     ${WORKSPACE_DIR}/${log_path}"
+    echo "Watch:   tail -f ${log_path}"
+}
+
 play_bag() {
     if [[ $# -lt 1 ]]; then
         echo "Usage: $0 play-bag <bag_path> [ros2 bag play args...]" >&2
@@ -247,6 +310,9 @@ case "${COMMAND}" in
         ;;
     pipeline)
         run_pipeline "$@"
+        ;;
+    collect-expert-dataset)
+        collect_expert_dataset "$@"
         ;;
     play-bag)
         play_bag "$@"

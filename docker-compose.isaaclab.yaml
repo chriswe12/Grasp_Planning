@@ -1,0 +1,6 @@
+services:
+  isaac-lab-base:
+    volumes:
+      - type: bind
+        source: /media/pdz/Elements1/Grasp_Planning_grasping_rl
+        target: /workspace/grasping_rl

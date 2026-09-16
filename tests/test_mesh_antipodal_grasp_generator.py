@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ from grasp_planning.grasping import (
     FrankaHandFingerCollisionModel,
     GraspCollisionEvaluator,
     HalfSpaceWorldConstraint,
+    KukaYGripperCollisionModel,
     ObjectFrameGraspCandidate,
     ObjectWorldPose,
     TriangleMesh,
@@ -22,8 +24,14 @@ from grasp_planning.grasping import (
     export_grasp_candidates_json,
     filter_grasp_candidates_above_plane,
     finger_boxes_from_grasp,
+    make_gripper_collision_model,
 )
-from grasp_planning.grasping.collision import trimesh_fcl_backend_available
+from grasp_planning.grasping.collision import (
+    _load_kuka_y_gripper_mesh,
+    _place_kuka_y_left_finger_for_grasp,
+    _place_kuka_y_right_finger_for_grasp,
+    trimesh_fcl_backend_available,
+)
 
 
 def _make_cube_mesh(side_length: float) -> TriangleMesh:
@@ -145,6 +153,73 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         self.assertIsInstance(generator._collision_evaluator._collision_model, FrankaHandFingerCollisionModel)  # type: ignore[attr-defined]
         self.assertAlmostEqual(generator._config.detailed_finger_contact_gap_m, 0.002)  # type: ignore[attr-defined]
 
+    def test_generator_can_select_kuka_y_gripper_collision_model(self) -> None:
+        generator = AntipodalMeshGraspGenerator(AntipodalGraspGeneratorConfig(gripper_collision_model="kuka_y_gripper"))
+
+        self.assertIsInstance(generator._collision_evaluator._collision_model, KukaYGripperCollisionModel)  # type: ignore[attr-defined]
+        self.assertEqual(generator._config.gripper_collision_model, "kuka_y_gripper")  # type: ignore[attr-defined]
+
+    def test_kuka_y_gripper_collision_model_closes_fingers_to_grasp_width(self) -> None:
+        base_vertices = np.array([[0.0, 0.0, 0.0], [0.004, 0.0, 0.0], [0.0, 0.004, 0.0]], dtype=float)
+        left_vertices = np.array([[0.0, -0.02, 0.0], [0.004, 0.0, 0.0], [0.0, -0.01, 0.004]], dtype=float)
+        right_vertices = np.array([[0.0, 0.0, 0.0], [0.004, 0.02, 0.0], [0.0, 0.01, 0.004]], dtype=float)
+        faces = np.array([[0, 1, 2]], dtype=np.int64)
+        model = KukaYGripperCollisionModel(
+            base_vertices_local=base_vertices,
+            base_faces=faces,
+            left_finger_vertices_local=left_vertices,
+            left_finger_faces=faces,
+            right_finger_vertices_local=right_vertices,
+            right_finger_faces=faces,
+            contact_gap_m=0.002,
+            tcp_to_grasp_center_m=(0.0, 0.0, 0.1455),
+        )
+
+        primitives = model.primitives_for_grasp(
+            grasp_rotmat=np.eye(3, dtype=float),
+            contact_point_a=np.array([0.0, -0.01, 0.0], dtype=float),
+            contact_point_b=np.array([0.0, 0.01, 0.0], dtype=float),
+        )
+
+        self.assertEqual(
+            [primitive.name for primitive in primitives],
+            ["kuka_y_gripper_base", "kuka_y_left_finger", "kuka_y_right_finger"],
+        )
+        # The physical mount is rotated pi around the unchanged TCP, so the
+        # source-left and source-right fingers exchange TCP-frame sides.
+        self.assertAlmostEqual(float(np.min(primitives[1].vertices_obj[:, 1])), 0.012)
+        self.assertAlmostEqual(float(np.max(primitives[2].vertices_obj[:, 1])), -0.012)
+        self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455)
+
+    def test_kuka_y_gripper_places_real_fingertips_at_grasp_width(self) -> None:
+        left_vertices, _ = _load_kuka_y_gripper_mesh("left_finger")
+        right_vertices, _ = _load_kuka_y_gripper_mesh("right_finger")
+        half_opening_m = 0.00635
+
+        left_shifted = _place_kuka_y_left_finger_for_grasp(left_vertices, half_opening_m)
+        right_shifted = _place_kuka_y_right_finger_for_grasp(right_vertices, half_opening_m)
+        left_tip = left_shifted[left_shifted[:, 2] >= 0.08]
+        right_tip = right_shifted[right_shifted[:, 2] >= 0.08]
+
+        self.assertAlmostEqual(float(np.max(left_tip[:, 1])), -half_opening_m)
+        self.assertAlmostEqual(float(np.min(right_tip[:, 1])), half_opening_m)
+
+    def test_kuka_y_collision_model_uses_grasp_center_as_tcp_when_provided(self) -> None:
+        model = KukaYGripperCollisionModel(contact_gap_m=0.002)
+
+        primitives = model.primitives_for_grasp(
+            grasp_rotmat=np.eye(3, dtype=float),
+            contact_point_a=np.array([0.0, -0.01, 0.0], dtype=float),
+            contact_point_b=np.array([0.0, 0.01, 0.0], dtype=float),
+            grasp_center=np.array([0.03, 0.0, 0.0], dtype=float),
+        )
+
+        self.assertAlmostEqual(float(np.min(primitives[0].vertices_obj[:, 2])), -0.1455 - 0.005000000476837158)
+        self.assertLess(float(np.mean(primitives[0].vertices_obj[:, 0])), 0.03)
+
+    def test_gripper_collision_model_factory_accepts_kuka_alias(self) -> None:
+        self.assertIsInstance(make_gripper_collision_model("lbr_iiwa7_y_gripper"), KukaYGripperCollisionModel)
+
     def test_default_config_generates_candidates_for_cube_and_cylinder(self) -> None:
         cube_candidates = AntipodalMeshGraspGenerator().generate(_make_cube_mesh(side_length=0.05))
         cylinder_candidates = AntipodalMeshGraspGenerator().generate(
@@ -224,6 +299,31 @@ class AntipodalMeshGraspGeneratorTests(unittest.TestCase):
         self.assertTrue(base_groups.issubset(set(rolled_group_counts)))
         for count in rolled_group_counts.values():
             self.assertIn(count, {1, 2})
+
+    def test_upright_roll_reference_adds_exact_top_down_angle(self) -> None:
+        generator = AntipodalMeshGraspGenerator(
+            AntipodalGraspGeneratorConfig(
+                roll_angles_rad=(0.0,),
+                upright_approach_axes_obj=((0.0, 0.0, -1.0),),
+            )
+        )
+        closing_axis = np.array([0.0, 1.0, 0.0], dtype=float)
+        base_rotmat = generator._base_grasp_rotmat(closing_axis)
+
+        roll_angles = generator._roll_angles_for_pair(base_rotmat, closing_axis)
+
+        self.assertEqual(len(roll_angles), 2)
+        self.assertTrue(
+            any(
+                abs(math.atan2(math.sin(angle - 1.5 * math.pi), math.cos(angle - 1.5 * math.pi))) < 1.0e-6
+                for angle in roll_angles
+            )
+        )
+        best_alignment = max(
+            float(np.dot(np.sin(angle) * base_rotmat[:, 0] + np.cos(angle) * base_rotmat[:, 2], [0.0, 0.0, -1.0]))
+            for angle in roll_angles
+        )
+        self.assertAlmostEqual(best_alignment, 1.0, places=6)
 
     def test_cylinder_generation_finds_side_grasps(self) -> None:
         cylinder_mesh = _make_cylinder_mesh(radius=0.02, height=0.05, radial_segments=24)

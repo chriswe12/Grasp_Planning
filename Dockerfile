@@ -85,9 +85,13 @@ RUN python3 -m venv --system-site-packages /opt/grasp-pipeline-venv \
 RUN --mount=type=cache,target=/root/.cache/pip \
     /isaac-sim/python.sh -m pip install -e ".[test]"
 
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /isaac-sim/python.sh -m pip install "tensorboard>=2.16"
+
 RUN /isaac-sim/python.sh - <<'PY'
 import os
 import torch
+import tensorboard
 from isaaclab.app import AppLauncher
 
 isaaclab_source_root = "/isaac-sim/kit/python/lib/python3.11/site-packages/isaaclab/source/isaaclab"
@@ -96,6 +100,7 @@ if not os.path.exists(isaaclab_source_root):
 
 print(torch.__version__)
 print(torch.__file__)
+print(tensorboard.__version__)
 print(AppLauncher)
 print(isaaclab_source_root)
 PY

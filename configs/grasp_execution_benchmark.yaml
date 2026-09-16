@@ -1,0 +1,111 @@
+generation_results: "artifacts/grasp_generation_benchmark/results.json"
+
+execution_benchmark:
+  output_dir: "artifacts/grasp_execution_benchmark"
+  backend: "mujoco"  # mujoco, isaac, both
+  resume: true
+  record_video: "all"  # all or none
+
+placement:
+  # Execution benchmark bundles keep their saved stable orientation and Z height,
+  # but are shifted to this robot-workspace XY before MuJoCo/Isaac execution.
+  # Set to null, or pass --use-bundle-placement, to use the generation bundle pose verbatim.
+  xy_world: [0.5, 0.0]
+
+selection:
+  assemblies: []
+  parts: []
+  orientations: []
+  grasp_ids: []
+  limit_orientations:
+  max_grasps_per_orientation:
+  max_gripper_width_m: 0.08
+  limit_attempts:
+
+mujoco:
+  python_executable: ""
+  robot_config: "configs/mujoco_fr3_with_hand.json"
+  simulation_config: "configs/mujoco_simulation.yaml"
+  controller: "moveit"
+  pregrasp_offset:
+  gripper_width_clearance:
+  contact_gap_m:
+  object_mass_kg:
+  object_density_kg_m3: 1240.0
+  object_scale:
+  lift_height_m:
+  success_height_margin_m:
+  keep_generated_scene: false
+  moveit_frame_id: "base"
+  moveit_planning_group: "fr3_arm"
+  moveit_pose_link: "fr3_hand_tcp"
+  moveit_pipeline_id: "isaac_ros_cumotion"
+  moveit_planner_id: "cuMotion"
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_execute_timeout_s: 120.0
+  moveit_allow_collisions: false
+  video:
+    fps: 30.0
+    width: 960
+    height: 540
+    camera_azimuth: 135.0
+    camera_elevation: -25.0
+    camera_distance: 1.45
+    camera_lookat: [0.35, 0.0, 0.28]
+
+isaac:
+  python_executable: "/media/pdz/Elements1/IsaacLab/isaaclab.sh -p"
+  controller: "moveit"
+  headless: true
+  pregrasp_offset: 0.10
+  gripper_width_clearance: 0.01
+  contact_gap_m: 0.002
+  close_width: 0.0
+  object_mass_kg:
+  object_density_kg_m3: 1240.0
+  lift_height_m: 0.08
+  success_height_margin_m: 0.05
+  tcp_to_grasp_offset: [0.0, 0.0, 0.0]
+  run_seconds: 0.0
+  part_usd: ""
+  use_provided_part_usd: false
+  fr3_usd: "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.usda"
+  moveit_frame_id: "lbr_link_0"
+  moveit_target_position_signs: [1.0, 1.0, 1.0]
+  moveit_planning_group: "arm"
+  moveit_pose_link: "gripper_tcp"
+  moveit_namespace: "/lbr"
+  moveit_joint_names:
+    - "lbr_A1"
+    - "lbr_A2"
+    - "lbr_A3"
+    - "lbr_A4"
+    - "lbr_A5"
+    - "lbr_A6"
+    - "lbr_A7"
+  moveit_start_joint_positions: [0.0, 0.5, 0.0, -1.3962634015954636, 0.0, 1.1, 0.0]
+  moveit_pipeline_id: ""
+  moveit_planner_id: ""
+  moveit_wait_for_moveit_timeout_s: 15.0
+  moveit_ik_timeout_s: 2.0
+  moveit_planning_time_s: 5.0
+  moveit_num_planning_attempts: 5
+  moveit_velocity_scale: 0.05
+  moveit_acceleration_scale: 0.05
+  moveit_execution_speed_rad_s: 0.60
+  moveit_grasp_settle_time_s: 1.0
+  gripper_close_duration_s: 1.5
+  gripper_close_max_duration_s: 10.0
+  postclose_hold_s: 1.0
+  moveit_allow_collisions: false
+  video:
+    fps: 30.0
+    width: 960
+    height: 540
+    camera_eye: [1.6, -1.2, 1.0]
+    camera_target: [0.35, 0.0, 0.3]

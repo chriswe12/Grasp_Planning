@@ -1,0 +1,48 @@
+Assembly: beam
+Source: logs/precedence_only/beam/precedence.pkl
+
+Direction semantics:
+  edge A -> B means A is a prerequisite/support for B in forward assembly.
+  A valid disassembly order is the reverse of a forward topological order.
+
+Parts (5): 0, 1, 2, 3, 6
+Forward assembly order: 6 -> 2 -> 0 -> 3 -> 1
+Valid disassembly order: 1 -> 3 -> 0 -> 2 -> 6
+
+Immediate precedence edges:
+  2 -> 0 (contact points: 519)
+  3 -> 1 (contact points: 517)
+  6 -> 2 (contact points: 459)
+  6 -> 3 (contact points: 479)
+
+Per-part summary:
+  Part 0:
+    all assembly prerequisites: 2, 6
+    all assembly dependents: none
+    center of mass: [-4.445008, -15.0, 7.112163]
+    removal action: [0.0, -0.0, 1.0]
+    disassembly path waypoints: 404
+  Part 1:
+    all assembly prerequisites: 3, 6
+    all assembly dependents: none
+    center of mass: [4.444992, -15.0, 7.112163]
+    removal action: [0.0, -0.0, 1.0]
+    disassembly path waypoints: 404
+  Part 2:
+    all assembly prerequisites: 6
+    all assembly dependents: 0
+    center of mass: [-4.446351, -15.0, 3.769173]
+    removal action: [0.0, -0.0, 1.0]
+    disassembly path waypoints: 404
+  Part 3:
+    all assembly prerequisites: 6
+    all assembly dependents: 1
+    center of mass: [4.446336, -15.0, 3.769173]
+    removal action: [0.0, 0.0, 1.0]
+    disassembly path waypoints: 404
+  Part 6:
+    all assembly prerequisites: none
+    all assembly dependents: 0, 1, 2, 3
+    center of mass: [-1.5e-05, -15.0, 0.633277]
+    removal action: None
+    disassembly path waypoints: 0
