@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-VISUAL_SERVO_MATERIAL_PROFILE = (
-    "muted_fdm_palette_pdz_black_whitepads_leafbindings_small_tslot_v7"
-)
+VISUAL_SERVO_MATERIAL_PROFILE = "muted_fdm_palette_pdz_black_whitepads_leafbindings_small_tslot_v7"
 
 _FINGER_LINK_NAMES = frozenset(
     {
@@ -18,9 +16,7 @@ _FINGER_LINK_NAMES = frozenset(
     }
 )
 _CONTACT_PAD_PATH_TOKENS = ("pad_8mm", "tpu_pad")
-_VISUAL_GEOMETRY_TYPE_NAMES = frozenset(
-    {"Capsule", "Cone", "Cube", "Cylinder", "Mesh", "Sphere"}
-)
+_VISUAL_GEOMETRY_TYPE_NAMES = frozenset({"Capsule", "Cone", "Cube", "Cylinder", "Mesh", "Sphere"})
 
 
 @dataclass(frozen=True)
@@ -253,18 +249,14 @@ def apply_visual_servo_materials() -> dict[str, Any]:
     return {
         "profile": VISUAL_SERVO_MATERIAL_PROFILE,
         "parts": tuple(part_paths),
-        "parts_by_env": {
-            env_index: tuple(paths) for env_index, paths in sorted(part_paths_by_env.items())
-        },
+        "parts_by_env": {env_index: tuple(paths) for env_index, paths in sorted(part_paths_by_env.items())},
         "fingers": tuple(finger_paths),
         "finger_geometry": tuple(finger_geometry_paths),
         "contact_pads": tuple(contact_pad_geometry_paths),
         "editable_finger_geometry": tuple(editable_finger_geometry_paths),
         "editable_contact_pads": tuple(editable_contact_pad_geometry_paths),
         "robot_material_source": (
-            "runtime_leaf_bindings"
-            if editable_contact_pad_geometry_paths
-            else "authored_pdz_usd_instance_materials"
+            "runtime_leaf_bindings" if editable_contact_pad_geometry_paths else "authored_pdz_usd_instance_materials"
         ),
         "materials": material_paths,
         "part_materials_by_env": part_materials_by_env,

@@ -314,9 +314,7 @@ def test_policy_execution_queue_fails_clearly_when_no_grasp_fits_physical_grippe
 
 
 def test_moveit_pose_execution_rejects_selected_grasp_outside_physical_stroke() -> None:
-    bundle = SimpleNamespace(
-        candidates=(_policy_saved_grasp("g0001", score=0.9, jaw_width=0.080),)
-    )
+    bundle = SimpleNamespace(candidates=(_policy_saved_grasp("g0001", score=0.9, jaw_width=0.080),))
     config = RealExecutionConfig(
         grasp_approach_controller="moveit_pose",
         gripper_closed_width=0.007,

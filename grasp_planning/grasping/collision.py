@@ -262,9 +262,7 @@ KUKA_Y_GRIPPER_TCP_TO_GRASP_CENTER_M = np.array([0.0, 0.0, 0.1455], dtype=float)
 # frame and every saved grasp pose remain unchanged while the collision body is
 # represented in its real mounting orientation.
 KUKA_Y_GRIPPER_BODY_ROTATION_TCP = _rpy_to_rotmat(0.0, 0.0, np.pi)
-KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION = (
-    "kuka_y_body_yaw_pi_tcp_preserving_dual_opening_contact_offsets_v3"
-)
+KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION = "kuka_y_body_yaw_pi_tcp_preserving_dual_opening_contact_offsets_v3"
 _KUKA_Y_GRIPPER_MESH_NAMES = {
     "base": "hand.STL",
     "left_finger": "left_finger.STL",
@@ -494,9 +492,7 @@ class KukaYGripperCollisionModel:
         jaw_width = float(np.linalg.norm(contact_b - contact_a))
         half_opening_m = 0.5 * jaw_width + float(self.contact_gap_m)
         nominal_grasp_center_obj = (
-            0.5 * (contact_a + contact_b)
-            if grasp_center is None
-            else np.asarray(grasp_center, dtype=float)
+            0.5 * (contact_a + contact_b) if grasp_center is None else np.asarray(grasp_center, dtype=float)
         )
         tcp_center_obj = (
             nominal_grasp_center_obj
@@ -557,14 +553,11 @@ class KukaYGripperCollisionModel:
             - grasp_rotmat[:, 0] * float(self.contact_patch_lateral_offset_m)
             - grasp_rotmat[:, 2] * float(self.contact_patch_approach_offset_m)
         )
-        base_origin_obj = tcp_center_obj - body_rotmat_obj @ np.asarray(
-            self.tcp_to_grasp_center_m, dtype=float
-        )
+        base_origin_obj = tcp_center_obj - body_rotmat_obj @ np.asarray(self.tcp_to_grasp_center_m, dtype=float)
         rotation_world_from_object = np.asarray(rotation_world_from_object, dtype=float)
         body_rotmat_world = rotation_world_from_object @ body_rotmat_obj
-        base_origin_world = (
-            rotation_world_from_object @ base_origin_obj
-            + np.asarray(translation_world_from_object, dtype=float)
+        base_origin_world = rotation_world_from_object @ base_origin_obj + np.asarray(
+            translation_world_from_object, dtype=float
         )
         local_z_projection = body_rotmat_world[2, :]
 
@@ -605,14 +598,11 @@ class KukaYGripperCollisionModel:
             - grasp_rotmat[:, 0] * float(self.contact_patch_lateral_offset_m)
             - grasp_rotmat[:, 2] * float(self.contact_patch_approach_offset_m)
         )
-        base_origin_obj = tcp_center_obj - body_rotmat_obj @ np.asarray(
-            self.tcp_to_grasp_center_m, dtype=float
-        )
+        base_origin_obj = tcp_center_obj - body_rotmat_obj @ np.asarray(self.tcp_to_grasp_center_m, dtype=float)
         rotation_world_from_object = np.asarray(rotation_world_from_object, dtype=float)
         body_rotmat_world = rotation_world_from_object @ body_rotmat_obj
-        base_origin_world = (
-            rotation_world_from_object @ base_origin_obj
-            + np.asarray(translation_world_from_object, dtype=float)
+        base_origin_world = rotation_world_from_object @ base_origin_obj + np.asarray(
+            translation_world_from_object, dtype=float
         )
 
         base_vertices, _ = self._mesh("base")
@@ -663,7 +653,9 @@ class KukaYGripperCollisionModel:
         )
 
 
-_PDZ_GRIPPER_MESH_DIR = Path(__file__).resolve().parents[2] / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "meshes" / "collision"
+_PDZ_GRIPPER_MESH_DIR = (
+    Path(__file__).resolve().parents[2] / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "meshes" / "collision"
+)
 _PDZ_GRIPPER_MESH_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 _PDZ_GRIPPER_HULL_CACHE: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 # The Slim(3) pad vertical midpoint is the planner's sampled grasp/contact
@@ -723,9 +715,7 @@ def _load_pdz_gripper_collision_hull(key: str) -> tuple[np.ndarray, np.ndarray]:
         offset = sum(len(part) for part in vertices_parts)
         vertices_parts.append(vertices)
         faces_parts.append(faces + offset)
-    merged = trimesh.Trimesh(
-        vertices=np.vstack(vertices_parts), faces=np.vstack(faces_parts), process=False
-    )
+    merged = trimesh.Trimesh(vertices=np.vstack(vertices_parts), faces=np.vstack(faces_parts), process=False)
     hull = merged.convex_hull
     result = (np.asarray(hull.vertices, dtype=float), np.asarray(hull.faces, dtype=np.int64))
     _PDZ_GRIPPER_HULL_CACHE[key] = result
@@ -766,9 +756,7 @@ class PdzGripperCollisionModel:
         contact_a = np.asarray(contact_point_a, dtype=float)
         contact_b = np.asarray(contact_point_b, dtype=float)
         nominal_grasp_center_obj = (
-            0.5 * (contact_a + contact_b)
-            if grasp_center is None
-            else np.asarray(grasp_center, dtype=float)
+            0.5 * (contact_a + contact_b) if grasp_center is None else np.asarray(grasp_center, dtype=float)
         )
         tcp_center_obj = (
             nominal_grasp_center_obj
@@ -782,10 +770,14 @@ class PdzGripperCollisionModel:
         if finger_position_m > 0.032 + 1.0e-9:
             raise ValueError(f"PDZ jaw opening {opening_m:.4f} m exceeds the URDF maximum of 0.076 m.")
         return (
-            ("pdz_gripper_base", "base", np.zeros(3)),
-            ("pdz_left_finger", "left_finger", np.array([-finger_position_m, 0.0, 0.0])),
-            ("pdz_right_finger", "right_finger", np.array([finger_position_m, 0.0, 0.0])),
-        ), base_origin_obj, body_rotmat
+            (
+                ("pdz_gripper_base", "base", np.zeros(3)),
+                ("pdz_left_finger", "left_finger", np.array([-finger_position_m, 0.0, 0.0])),
+                ("pdz_right_finger", "right_finger", np.array([finger_position_m, 0.0, 0.0])),
+            ),
+            base_origin_obj,
+            body_rotmat,
+        )
 
     def primitives_for_grasp(
         self,
@@ -871,7 +863,11 @@ GripperCollisionModel = (
 GRIPPER_COLLISION_MODEL_FRANKA = "franka_hand"
 GRIPPER_COLLISION_MODEL_KUKA_Y = "kuka_y_gripper"
 GRIPPER_COLLISION_MODEL_PDZ = "pdz_gripper"
-SUPPORTED_GRIPPER_COLLISION_MODELS = (GRIPPER_COLLISION_MODEL_FRANKA, GRIPPER_COLLISION_MODEL_KUKA_Y, GRIPPER_COLLISION_MODEL_PDZ)
+SUPPORTED_GRIPPER_COLLISION_MODELS = (
+    GRIPPER_COLLISION_MODEL_FRANKA,
+    GRIPPER_COLLISION_MODEL_KUKA_Y,
+    GRIPPER_COLLISION_MODEL_PDZ,
+)
 
 
 def normalize_gripper_collision_model_name(name: str) -> str:

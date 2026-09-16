@@ -68,9 +68,7 @@ def main() -> None:
     rgb_tensor = torch.as_tensor(rgb, dtype=torch.float32).div(255.0).unsqueeze(0)
     depth_tensor = torch.as_tensor(depth, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
     preprocess_cfg = D405ObservationPreprocessCfg()
-    rgb_tensor, depth_tensor, _ = resize_aligned_rgbd_torch(
-        rgb_tensor, depth_tensor, cfg=preprocess_cfg
-    )
+    rgb_tensor, depth_tensor, _ = resize_aligned_rgbd_torch(rgb_tensor, depth_tensor, cfg=preprocess_cfg)
     randomizer = LiveObservationRandomizer(
         LiveObservationRandomizationCfg(clean_episode_fraction=0.0),
         num_envs=1,

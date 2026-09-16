@@ -146,8 +146,7 @@ def _waypoints(trajectory, *, joint_names: tuple[str, ...]) -> tuple[tuple[float
     if missing:
         raise RuntimeError(f"MoveIt trajectory is missing arm joints: {missing}.")
     result = tuple(
-        tuple(float(point.positions[source_index[name]]) for name in joint_names)
-        for point in joint_trajectory.points
+        tuple(float(point.positions[source_index[name]]) for name in joint_names) for point in joint_trajectory.points
     )
     if not result:
         raise RuntimeError("MoveIt returned a trajectory with no points.")
@@ -240,8 +239,7 @@ def preplan_saved_stage2_for_isaac(
                 "joint_names": list(config.joint_names),
                 "start_joint_positions": list(config.start_joint_positions),
                 "trajectories": {
-                    label: [list(waypoint) for waypoint in waypoints]
-                    for label, waypoints in planned.items()
+                    label: [list(waypoint) for waypoint in waypoints] for label, waypoints in planned.items()
                 },
                 "moveit": {
                     "frame_id": config.frame_id,

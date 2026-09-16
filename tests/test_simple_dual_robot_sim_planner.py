@@ -398,16 +398,11 @@ def test_preflight_detaches_once_after_post_pickup_failure(monkeypatch) -> None:
 def test_pickup_offset_retry_requires_pure_pickup_kinematic_no_ik() -> None:
     retryable = {
         "failure_kind": "kinematic_no_ik",
-        "failure": (
-            "inserter grasp incoming failed "
-            "inserter_pickup_pregrasp: IK failed with code=-31"
-        ),
+        "failure": ("inserter grasp incoming failed inserter_pickup_pregrasp: IK failed with code=-31"),
     }
 
     assert _is_retryable_pickup_kinematic_failure(retryable)
-    assert not _is_retryable_pickup_kinematic_failure(
-        {**retryable, "failure_kind": "state_collision"}
-    )
+    assert not _is_retryable_pickup_kinematic_failure({**retryable, "failure_kind": "state_collision"})
     assert not _is_retryable_pickup_kinematic_failure(
         {
             **retryable,
@@ -462,10 +457,7 @@ def test_runtime_queue_visits_unique_inserter_pickups_before_pair_repeats() -> N
 
 
 def test_runtime_ik_screen_queue_preserves_full_diverse_pool_before_path_limit() -> None:
-    tasks = [
-        _task(f"pair_a{index}", f"holder_{index}", "inserter_a", 1.0 - index / 1000.0)
-        for index in range(300)
-    ]
+    tasks = [_task(f"pair_a{index}", f"holder_{index}", "inserter_a", 1.0 - index / 1000.0) for index in range(300)]
     tasks.extend(
         [
             _task("pair_b", "holder_b", "inserter_b", 0.2),
@@ -497,10 +489,7 @@ def test_holder_only_ik_screen_queue_deduplicates_without_applying_path_limit() 
 
 
 def test_exact_ik_screen_is_lazy_and_reaches_candidates_beyond_legacy_prefix() -> None:
-    tasks = [
-        _task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0)
-        for index in range(8)
-    ]
+    tasks = [_task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0) for index in range(8)]
     screened: list[str] = []
 
     def evaluate(task, candidate_rank):
@@ -536,10 +525,7 @@ def test_exact_ik_screen_is_lazy_and_reaches_candidates_beyond_legacy_prefix() -
 
 
 def test_exact_ik_screen_limit_is_explicit_and_does_not_count_failures_as_path_attempts() -> None:
-    tasks = [
-        _task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0)
-        for index in range(6)
-    ]
+    tasks = [_task(f"pair_{index}", f"holder_{index}", f"inserter_{index}", 1.0 - index / 100.0) for index in range(6)]
 
     screened: list[int] = []
 
@@ -899,10 +885,9 @@ def test_normal_preflight_reuses_active_arm_ik_but_revalidates_complete_state() 
     assert len(inserter.seed_states) == first_ik_count
     assert len(inserter.validity_states) > first_validity_count
     assert state["ik_kinematic_cache_hits"] > 0
-    assert (
-        state["ik_state_validity_requests"] + state["post_grasp_state_validity_requests"]
-        == len(holder.validity_states) + len(inserter.validity_states)
-    )
+    assert state["ik_state_validity_requests"] + state["post_grasp_state_validity_requests"] == len(
+        holder.validity_states
+    ) + len(inserter.validity_states)
     assert "collision_diagnostics" not in state
 
 
@@ -1046,8 +1031,7 @@ def test_plan_and_execute_uses_every_validated_pickup_approach_joint_target() ->
 
 def test_validated_pickup_approach_sequence_uses_numeric_order_beyond_99_steps() -> None:
     joint_targets = {
-        f"inserter_pickup_grasp__approach_{index:02d}_of_101": (float(index),) * 7
-        for index in range(1, 101)
+        f"inserter_pickup_grasp__approach_{index:02d}_of_101": (float(index),) * 7 for index in range(1, 101)
     }
     joint_targets["inserter_pickup_grasp"] = (101.0,) * 7
 
@@ -1056,9 +1040,7 @@ def test_validated_pickup_approach_sequence_uses_numeric_order_beyond_99_steps()
         target_name="inserter_pickup_grasp",
     )
 
-    assert [joints[0] for _name, joints in sequence] == list(
-        map(float, range(1, 102))
-    )
+    assert [joints[0] for _name, joints in sequence] == list(map(float, range(1, 102)))
     assert sequence[98][0].endswith("approach_99_of_101")
     assert sequence[99][0].endswith("approach_100_of_101")
     assert sequence[-1][0] == "inserter_pickup_grasp"
@@ -1083,15 +1065,10 @@ def test_preflight_returns_and_serializes_every_pickup_approach_joint_target() -
         pickup_approach_ik_steps=5,
     )
 
-    expected_approach_names = [
-        f"inserter_pickup_grasp__approach_{index:02d}_of_05"
-        for index in range(1, 5)
-    ]
+    expected_approach_names = [f"inserter_pickup_grasp__approach_{index:02d}_of_05" for index in range(1, 5)]
     assert ok
     assert failure == ""
-    assert list(joint_targets).index(expected_approach_names[0]) < list(joint_targets).index(
-        "inserter_pickup_grasp"
-    )
+    assert list(joint_targets).index(expected_approach_names[0]) < list(joint_targets).index("inserter_pickup_grasp")
     assert all(name in joint_targets for name in expected_approach_names)
     pair_record = state["pair_records"][0]
     assert pair_record["validated_joint_target_order"] == list(joint_targets)

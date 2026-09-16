@@ -88,9 +88,7 @@ class NormalizedPositionGripperClient:
             ("stop", self._stop_client),
         ):
             if not client.wait_for_service(timeout_sec=float(timeout_s)):
-                raise RuntimeError(
-                    f"Normalized gripper {label} service '{self._names[label]}' is unavailable."
-                )
+                raise RuntimeError(f"Normalized gripper {label} service '{self._names[label]}' is unavailable.")
 
     def initialize_open(self) -> tuple[bool, str]:
         """Open an already calibrated persistent controller."""
@@ -114,8 +112,7 @@ class NormalizedPositionGripperClient:
         ok, message = self.initialize_open()
         return (
             ok,
-            f"open endpoint={self._open_width_m:.4f} m "
-            f"planned_approach={requested_width:.4f} m: {message}",
+            f"open endpoint={self._open_width_m:.4f} m planned_approach={requested_width:.4f} m: {message}",
         )
 
     def close(self, *, width: float) -> tuple[bool, str]:
@@ -128,8 +125,7 @@ class NormalizedPositionGripperClient:
             time.sleep(max(self._grasp_settle_time_s, 0.0))
         return (
             ok,
-            f"close endpoint={self._closed_width_m:.4f} m "
-            f"planned_contact={requested_width:.4f} m: {message}",
+            f"close endpoint={self._closed_width_m:.4f} m planned_contact={requested_width:.4f} m: {message}",
         )
 
     def command_width(
@@ -160,10 +156,7 @@ class NormalizedPositionGripperClient:
         wait_for_feedback: bool,
     ) -> tuple[bool, str]:
         normalized = max(0.0, min(1.0, float(position)))
-        changed = (
-            self._last_requested_position is None
-            or abs(normalized - self._last_requested_position) > 1.0e-9
-        )
+        changed = self._last_requested_position is None or abs(normalized - self._last_requested_position) > 1.0e-9
         if changed:
             message = Float64()
             message.data = normalized
@@ -213,8 +206,7 @@ class NormalizedPositionGripperClient:
         rclpy.spin_until_future_complete(self._node, future, timeout_sec=self._timeout_s)
         if not future.done():
             raise TimeoutError(
-                f"Normalized gripper {label} service '{self._names[label]}' timed out after "
-                f"{self._timeout_s:.1f}s"
+                f"Normalized gripper {label} service '{self._names[label]}' timed out after {self._timeout_s:.1f}s"
             )
         exception = future.exception()
         if exception is not None:

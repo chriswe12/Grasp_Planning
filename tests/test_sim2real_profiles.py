@@ -46,11 +46,7 @@ def test_clutter_profile_changes_only_clutter_fields_from_combined() -> None:
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(clutter_cfg, "combined_clutter")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(clutter_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(clutter_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "scene_clutter_enabled",
@@ -66,11 +62,7 @@ def test_depth_robust_profile_strengthens_depth_only_from_combined() -> None:
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(depth_cfg, "combined_depth_robust")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(depth_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(depth_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "live_depth_scale",
@@ -98,11 +90,7 @@ def test_busy_background_profile_adds_background_and_denser_clutter_only() -> No
     apply_sim2real_profile(combined_cfg, "combined_sim2real")
     apply_sim2real_profile(background_cfg, "combined_busy_background")
 
-    differing = {
-        key
-        for key in vars(combined_cfg)
-        if getattr(combined_cfg, key) != getattr(background_cfg, key)
-    }
+    differing = {key for key in vars(combined_cfg) if getattr(combined_cfg, key) != getattr(background_cfg, key)}
     assert differing == {
         "sim2real_randomization_profile",
         "scene_clutter_enabled",

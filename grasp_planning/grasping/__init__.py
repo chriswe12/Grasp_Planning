@@ -24,7 +24,6 @@ from .fabrica_grasp_debug import (
     select_first_feasible_grasp,
 )
 from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
-from .grasp_transforms import WorldFrameGraspCandidate, grasp_approach_axis_world, saved_grasp_to_world_grasp
 from .gpd_grasp_generator import (
     ExternalGpdGraspGenerator,
     GpdGraspGeneratorConfig,
@@ -32,6 +31,7 @@ from .gpd_grasp_generator import (
     write_ascii_pcd,
     write_normals_csv,
 )
+from .grasp_transforms import WorldFrameGraspCandidate, grasp_approach_axis_world, saved_grasp_to_world_grasp
 from .mesh_antipodal_grasp_generator import (
     AntipodalGraspGeneratorConfig,
     AntipodalMeshGraspGenerator,

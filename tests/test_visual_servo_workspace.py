@@ -29,8 +29,8 @@ def test_tracked_tslot_asset_is_render_only_and_not_cache_local() -> None:
     assert ".cache" not in VISUAL_SERVO_TSLOT_ASSET.parts
     source = VISUAL_SERVO_TSLOT_ASSET.read_text(encoding="utf-8")
     assert "CollisionAPI" not in source
-    assert 'double3 xformOp:translate = (0, 0, -0.003)' in source
-    assert 'double3 xformOp:scale = (0.0205, 0.60, 0.003)' in source
+    assert "double3 xformOp:translate = (0, 0, -0.003)" in source
+    assert "double3 xformOp:scale = (0.0205, 0.60, 0.003)" in source
     assert VISUAL_SERVO_TSLOT_PITCH_M == pytest.approx(0.0255)
     assert VISUAL_SERVO_TSLOT_SCALE == pytest.approx((1.0, 1.0, 1.0))
 
@@ -58,9 +58,7 @@ def test_part_palette_is_muted_weighted_and_canonical_brown_is_dominant() -> Non
     assert len(VISUAL_SERVO_PART_PALETTE) == 24
     assert VISUAL_SERVO_CANONICAL_PART_INDEX == 0
     assert VISUAL_SERVO_PART_PALETTE[0].name == "soft_brown"
-    assert VISUAL_SERVO_PART_PALETTE[0].weight == max(
-        entry.weight for entry in VISUAL_SERVO_PART_PALETTE
-    )
+    assert VISUAL_SERVO_PART_PALETTE[0].weight == max(entry.weight for entry in VISUAL_SERVO_PART_PALETTE)
     assert all(entry.weight > 0.0 for entry in VISUAL_SERVO_PART_PALETTE)
     assert all(0.0 <= channel <= 0.5 for entry in VISUAL_SERVO_PART_PALETTE for channel in entry.color)
     assert sample_weighted_part_palette_index(0.0) == VISUAL_SERVO_CANONICAL_PART_INDEX

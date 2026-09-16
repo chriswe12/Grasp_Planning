@@ -88,9 +88,7 @@ def test_renderer_uses_only_the_moveit_selected_grasp_and_validates_runtime_rgbd
     assert float(command[command.index("--maximum-approach-width-m") + 1]) == 0.064
     joint_argument = next(value for value in command if value.startswith("--goal-joint-positions="))
     position_argument = next(value for value in command if value.startswith("--goal-tcp-position="))
-    orientation_argument = next(
-        value for value in command if value.startswith("--goal-tcp-orientation-xyzw=")
-    )
+    orientation_argument = next(value for value in command if value.startswith("--goal-tcp-orientation-xyzw="))
     np.testing.assert_allclose(
         [float(value) for value in joint_argument.split("=", 1)[1].split(",")],
         (-0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7),

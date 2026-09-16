@@ -16,9 +16,7 @@ assert SPEC is not None and SPEC.loader is not None
 object_pose_sampling = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(object_pose_sampling)
 apply_planar_object_pose_delta = object_pose_sampling.apply_planar_object_pose_delta
-sample_collision_safe_yaw_offsets_from_profile = (
-    object_pose_sampling.sample_collision_safe_yaw_offsets_from_profile
-)
+sample_collision_safe_yaw_offsets_from_profile = object_pose_sampling.sample_collision_safe_yaw_offsets_from_profile
 yaw_offset_profile = object_pose_sampling.yaw_offset_profile
 
 

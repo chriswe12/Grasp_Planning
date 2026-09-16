@@ -19,9 +19,7 @@ def test_run_process_group_starts_private_session_and_always_reaps_group(
         mock.patch.object(subprocess_lifecycle.subprocess, "Popen", return_value=process) as popen,
         mock.patch.object(subprocess_lifecycle, "terminate_process_group") as terminate,
     ):
-        result = subprocess_lifecycle.run_process_group(
-            ["renderer", "--goal", "g1"], cwd=tmp_path, timeout_s=12.0
-        )
+        result = subprocess_lifecycle.run_process_group(["renderer", "--goal", "g1"], cwd=tmp_path, timeout_s=12.0)
 
     assert result == 7
     popen.assert_called_once_with(
@@ -42,8 +40,6 @@ def test_run_process_group_reaps_group_after_timeout(tmp_path: Path) -> None:
         mock.patch.object(subprocess_lifecycle, "terminate_process_group") as terminate,
         pytest.raises(subprocess.TimeoutExpired),
     ):
-        subprocess_lifecycle.run_process_group(
-            ["renderer"], cwd=tmp_path, timeout_s=1.0
-        )
+        subprocess_lifecycle.run_process_group(["renderer"], cwd=tmp_path, timeout_s=1.0)
 
     terminate.assert_called_once_with(process)

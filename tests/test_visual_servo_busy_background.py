@@ -28,9 +28,7 @@ def test_busy_background_sampler_is_reproducible_and_preserves_clean_environment
     assert sum(not layout.primitives for layout in first) == 77
     assert {layout.style for layout in first if layout.primitives} == {"office", "factory", "mixed"}
     assert all(2 <= layout.people_count <= 4 for layout in first if layout.primitives)
-    assert all(
-        layout.worker_reach_count == layout.people_count for layout in first if layout.primitives
-    )
+    assert all(layout.worker_reach_count == layout.people_count for layout in first if layout.primitives)
 
 
 def test_busy_background_has_unique_slots_and_stays_behind_the_task_corridor() -> None:
@@ -69,43 +67,23 @@ def test_busy_background_has_unique_slots_and_stays_behind_the_task_corridor() -
         # T-slot backing at z=-0.011 so no black seam remains.
         assert by_role["rear_wall"].position[0] - 0.5 * by_role["rear_wall"].size[0] > 0.75
         assert by_role["back_wall"].position[0] + 0.5 * by_role["back_wall"].size[0] < 0.10
-        assert (
-            by_role["negative_y_wall"].position[1]
-            + 0.5 * by_role["negative_y_wall"].size[1]
-            < -0.25
-        )
-        assert (
-            by_role["positive_y_wall"].position[1]
-            - 0.5 * by_role["positive_y_wall"].size[1]
-            > 0.35
-        )
+        assert by_role["negative_y_wall"].position[1] + 0.5 * by_role["negative_y_wall"].size[1] < -0.25
+        assert by_role["positive_y_wall"].position[1] - 0.5 * by_role["positive_y_wall"].size[1] > 0.35
         assert all(wall.position[2] - 0.5 * wall.size[2] <= -0.05 for wall in walls)
         assert all(wall.position[2] + 0.5 * wall.size[2] >= 0.45 for wall in walls)
 
         for side in ("rear", "back", "negative_y", "positive_y"):
             side_props = [primitive for primitive in props if primitive.role == f"{side}_gap_prop"]
-            side_cables = [
-                primitive for primitive in cables if primitive.role == f"{side}_gap_cable"
-            ]
-            side_hands = [
-                primitive for primitive in hands if primitive.role == f"{side}_worker_hand"
-            ]
+            side_cables = [primitive for primitive in cables if primitive.role == f"{side}_gap_cable"]
+            side_hands = [primitive for primitive in hands if primitive.role == f"{side}_worker_hand"]
             assert len(side_props) == 2
             assert len(side_cables) == 2
             assert len(side_hands) == 1
 
         assert all(0.75 < prop.position[0] < 0.90 for prop in props if prop.role == "rear_gap_prop")
         assert all(-0.18 < prop.position[0] < 0.10 for prop in props if prop.role == "back_gap_prop")
-        assert all(
-            -0.40 < prop.position[1] < -0.25
-            for prop in props
-            if prop.role == "negative_y_gap_prop"
-        )
-        assert all(
-            0.35 < prop.position[1] < 0.50
-            for prop in props
-            if prop.role == "positive_y_gap_prop"
-        )
+        assert all(-0.40 < prop.position[1] < -0.25 for prop in props if prop.role == "negative_y_gap_prop")
+        assert all(0.35 < prop.position[1] < 0.50 for prop in props if prop.role == "positive_y_gap_prop")
 
 
 def test_busy_background_varies_materials_geometry_people_and_reaches_across_environments() -> None:
@@ -127,17 +105,11 @@ def test_busy_background_varies_materials_geometry_people_and_reaches_across_env
     reach_endpoints = set()
     for layout in layouts:
         walls = [primitive for primitive in layout.primitives if primitive.role.endswith("_wall")]
-        panels = [
-            primitive for primitive in layout.primitives if primitive.role.endswith("_wall_panel")
-        ]
+        panels = [primitive for primitive in layout.primitives if primitive.role.endswith("_wall_panel")]
         props = [primitive for primitive in layout.primitives if primitive.role.endswith("_gap_prop")]
-        torsos = [
-            primitive for primitive in layout.primitives if primitive.role.endswith("_person_torso")
-        ]
+        torsos = [primitive for primitive in layout.primitives if primitive.role.endswith("_person_torso")]
         heads = [primitive for primitive in layout.primitives if primitive.role == "person_head"]
-        hands = [
-            primitive for primitive in layout.primitives if primitive.role.endswith("_worker_hand")
-        ]
+        hands = [primitive for primitive in layout.primitives if primitive.role.endswith("_worker_hand")]
         wall_material_signatures.add(tuple(primitive.material_index for primitive in walls))
         panel_geometry_signatures.add(
             tuple(
@@ -146,14 +118,10 @@ def test_busy_background_varies_materials_geometry_people_and_reaches_across_env
             )
         )
         prop_materials.update(primitive.material_index for primitive in props)
-        prop_geometry_signatures.add(
-            tuple(round(value, 3) for primitive in props for value in primitive.size)
-        )
+        prop_geometry_signatures.add(tuple(round(value, 3) for primitive in props for value in primitive.size))
         torso_materials.update(primitive.material_index for primitive in torsos)
         head_heights.update(round(primitive.position[2], 3) for primitive in heads)
-        reach_endpoints.update(
-            tuple(round(value, 3) for value in primitive.position) for primitive in hands
-        )
+        reach_endpoints.update(tuple(round(value, 3) for value in primitive.position) for primitive in hands)
 
     assert len(wall_material_signatures) >= 12
     assert len(panel_geometry_signatures) >= 80

@@ -235,9 +235,7 @@ class D405VisualServoDeploymentConfig:
                 ),
                 base_dir=base_dir,
             ),
-            goal_renderer_python_command=str(
-                payload.get("goal_renderer_python_command", "python3")
-            ).strip(),
+            goal_renderer_python_command=str(payload.get("goal_renderer_python_command", "python3")).strip(),
             goal_renderer_script=_resolve_config_path(
                 payload.get("goal_renderer_script", "../scripts/render_d405_policy_goal.py"),
                 base_dir=base_dir,
@@ -249,57 +247,33 @@ class D405VisualServoDeploymentConfig:
                 ),
                 base_dir=base_dir,
             ),
-            goal_renderer_backend=str(
-                payload.get("goal_renderer_backend", "filament")
-            ).strip().lower(),
+            goal_renderer_backend=str(payload.get("goal_renderer_backend", "filament")).strip().lower(),
             goal_renderer_timeout_s=float(payload.get("goal_renderer_timeout_s", 240.0)),
             model_device=str(payload.get("model_device", "cuda:0")),
-            expected_camera_profile=str(
-                payload.get("expected_camera_profile", D405_VISUAL_SERVO_CAMERA_PROFILE)
-            ),
+            expected_camera_profile=str(payload.get("expected_camera_profile", D405_VISUAL_SERVO_CAMERA_PROFILE)),
             expected_observation_profile=str(
                 payload.get("expected_observation_profile", D405_VISUAL_SERVO_OBSERVATION_PROFILE)
             ),
             color_topic=str(payload.get("color_topic", cls.color_topic)),
             depth_topic=str(payload.get("depth_topic", cls.depth_topic)),
-            color_camera_info_topic=str(
-                payload.get("color_camera_info_topic", cls.color_camera_info_topic)
-            ),
-            depth_camera_info_topic=str(
-                payload.get("depth_camera_info_topic", cls.depth_camera_info_topic)
-            ),
+            color_camera_info_topic=str(payload.get("color_camera_info_topic", cls.color_camera_info_topic)),
+            depth_camera_info_topic=str(payload.get("depth_camera_info_topic", cls.depth_camera_info_topic)),
             joint_state_topic=str(payload.get("joint_state_topic", cls.joint_state_topic)),
             force_topic=str(payload.get("force_topic", "")),
             deadman_topic=str(payload.get("deadman_topic", cls.deadman_topic)),
-            emergency_stop_topic=str(
-                payload.get("emergency_stop_topic", cls.emergency_stop_topic)
-            ),
+            emergency_stop_topic=str(payload.get("emergency_stop_topic", cls.emergency_stop_topic)),
             camera_optical_frame=str(payload.get("camera_optical_frame", cls.camera_optical_frame)),
-            allow_camera_topic_frame_alias=bool(
-                payload.get("allow_camera_topic_frame_alias", False)
-            ),
-            allow_pdz_camera_rotation_fallback=bool(
-                payload.get("allow_pdz_camera_rotation_fallback", False)
-            ),
+            allow_camera_topic_frame_alias=bool(payload.get("allow_camera_topic_frame_alias", False)),
+            allow_pdz_camera_rotation_fallback=bool(payload.get("allow_pdz_camera_rotation_fallback", False)),
             command_frame=str(payload.get("command_frame", cls.command_frame)),
             tcp_frame=str(payload.get("tcp_frame", cls.tcp_frame)),
             command_sink=str(payload.get("command_sink", "dry_run")).strip().lower(),
-            moveit_servo_twist_topic=str(
-                payload.get("moveit_servo_twist_topic", cls.moveit_servo_twist_topic)
-            ),
-            moveit_servo_status_topic=str(
-                payload.get("moveit_servo_status_topic", cls.moveit_servo_status_topic)
-            ),
-            moveit_servo_start_service=str(
-                payload.get("moveit_servo_start_service", cls.moveit_servo_start_service)
-            ),
-            moveit_servo_stop_service=str(
-                payload.get("moveit_servo_stop_service", cls.moveit_servo_stop_service)
-            ),
+            moveit_servo_twist_topic=str(payload.get("moveit_servo_twist_topic", cls.moveit_servo_twist_topic)),
+            moveit_servo_status_topic=str(payload.get("moveit_servo_status_topic", cls.moveit_servo_status_topic)),
+            moveit_servo_start_service=str(payload.get("moveit_servo_start_service", cls.moveit_servo_start_service)),
+            moveit_servo_stop_service=str(payload.get("moveit_servo_stop_service", cls.moveit_servo_stop_service)),
             real_motion_approved=bool(payload.get("real_motion_approved", False)),
-            allow_gripper_close_on_completion=bool(
-                payload.get("allow_gripper_close_on_completion", False)
-            ),
+            allow_gripper_close_on_completion=bool(payload.get("allow_gripper_close_on_completion", False)),
             first_test_speed_fraction=float(payload.get("first_test_speed_fraction", 0.25)),
             linear_action_scale_m_s=float(payload.get("linear_action_scale_m_s", 0.04)),
             angular_action_scale_rad_s=float(payload.get("angular_action_scale_rad_s", 0.24)),
@@ -320,18 +294,10 @@ class D405VisualServoDeploymentConfig:
             max_operator_signal_age_s=float(payload.get("max_operator_signal_age_s", 0.25)),
             minimum_valid_depth_fraction=float(payload.get("minimum_valid_depth_fraction", 0.20)),
             maximum_trial_duration_s=float(payload.get("maximum_trial_duration_s", 15.0)),
-            completion_probability_threshold=float(
-                payload.get("completion_probability_threshold", 0.95)
-            ),
-            completion_required_consecutive_steps=int(
-                payload.get("completion_required_consecutive_steps", 4)
-            ),
-            completion_max_linear_speed_m_s=float(
-                payload.get("completion_max_linear_speed_m_s", 0.005)
-            ),
-            completion_max_angular_speed_rad_s=float(
-                payload.get("completion_max_angular_speed_rad_s", 0.03)
-            ),
+            completion_probability_threshold=float(payload.get("completion_probability_threshold", 0.95)),
+            completion_required_consecutive_steps=int(payload.get("completion_required_consecutive_steps", 4)),
+            completion_max_linear_speed_m_s=float(payload.get("completion_max_linear_speed_m_s", 0.005)),
+            completion_max_angular_speed_rad_s=float(payload.get("completion_max_angular_speed_rad_s", 0.03)),
             workspace_min_xyz_m=_tuple_floats(
                 payload.get("workspace_min_xyz_m", [-2.0, -2.0, -0.2]),
                 count=3,
@@ -346,9 +312,7 @@ class D405VisualServoDeploymentConfig:
                 payload.get("joint_position_limits_rad", ()),
                 field_name="joint_position_limits_rad",
             ),
-            max_joint_velocity_rad_s=tuple(
-                float(value) for value in payload.get("max_joint_velocity_rad_s", ())
-            ),
+            max_joint_velocity_rad_s=tuple(float(value) for value in payload.get("max_joint_velocity_rad_s", ())),
             max_joint_acceleration_rad_s2=tuple(
                 float(value) for value in payload.get("max_joint_acceleration_rad_s2", ())
             ),
@@ -390,9 +354,7 @@ class D405VisualServoDeploymentConfig:
             if not path.is_file():
                 raise FileNotFoundError(f"{path_name} does not exist: {path}")
         if str(self.goal_observation_path) not in {"", "."} and not self.goal_observation_path.is_file():
-            raise FileNotFoundError(
-                f"goal_observation_path does not exist: {self.goal_observation_path}"
-            )
+            raise FileNotFoundError(f"goal_observation_path does not exist: {self.goal_observation_path}")
         if not self.goal_renderer_python_command:
             raise ValueError("goal_renderer_python_command must be non-empty.")
         if self.goal_renderer_backend != "filament":
@@ -478,8 +440,7 @@ def prepare_d405_policy_visual_servo(
         )
     if not config.goal_observation_path.is_file():
         raise FileNotFoundError(
-            "A runtime-rendered goal observation is required before policy loading: "
-            f"{config.goal_observation_path}"
+            f"A runtime-rendered goal observation is required before policy loading: {config.goal_observation_path}"
         )
     runtime = D405PolicyRuntime(
         checkpoint_path=config.checkpoint_path,
@@ -664,7 +625,9 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
         if config.deadman_topic:
             self.create_subscription(Bool, config.deadman_topic, self._on_deadman, qos_profile_sensor_data)
         if config.emergency_stop_topic:
-            self.create_subscription(Bool, config.emergency_stop_topic, self._on_emergency_stop, qos_profile_sensor_data)
+            self.create_subscription(
+                Bool, config.emergency_stop_topic, self._on_emergency_stop, qos_profile_sensor_data
+            )
         self._tcp_pose_timer = self.create_timer(0.01, self._refresh_tcp_pose_from_tf)
         self._watchdog_timer = self.create_timer(
             0.02,
@@ -834,10 +797,7 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
         if (
             not self.config.enforce_source_image_age
             and source_age_s > self.config.max_image_age_s
-            and (
-                self._last_stale_source_warning_s is None
-                or receipt_s - self._last_stale_source_warning_s >= 2.0
-            )
+            and (self._last_stale_source_warning_s is None or receipt_s - self._last_stale_source_warning_s >= 2.0)
         ):
             self.get_logger().warning(
                 "TEST MODE: accepting RGB-D frame with publisher-header age "
@@ -859,10 +819,7 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
             self._inference_active = False
 
     def _lookup_camera_rotation(self, *, frame: SynchronizedD405Frame):
-        if (
-            frame.camera_frame_id != self.config.camera_optical_frame
-            and not self.config.allow_camera_topic_frame_alias
-        ):
+        if frame.camera_frame_id != self.config.camera_optical_frame and not self.config.allow_camera_topic_frame_alias:
             raise ValueError(
                 f"Color frame '{frame.camera_frame_id}' does not match configured optical frame "
                 f"'{self.config.camera_optical_frame}'."
@@ -900,13 +857,9 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
                 )
             )
             camera_cfg = D405WristCameraConfig(
-                mount_profile=camera_mount_profile_from_camera_profile(
-                    self.config.expected_camera_profile
-                )
+                mount_profile=camera_mount_profile_from_camera_profile(self.config.expected_camera_profile)
             )
-            rotation_command_from_camera = (
-                rotation_command_from_link7 @ camera_rotation_in_link7(camera_cfg)
-            )
+            rotation_command_from_camera = rotation_command_from_link7 @ camera_rotation_in_link7(camera_cfg)
             transform_stamp_s = ros_stamp_seconds(link7_transform.header.stamp)
             if transform_stamp_s <= 0.0:
                 transform_stamp_s = self.now_seconds()
@@ -1020,17 +973,11 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
                 "depth_stamp_s": frame.depth_stamp_s,
                 "image_source_age_s": now_s - min(frame.color_stamp_s, frame.depth_stamp_s),
                 "image_receipt_age_s": (
-                    None
-                    if self.latest_frame_receipt_s is None
-                    else now_s - self.latest_frame_receipt_s
+                    None if self.latest_frame_receipt_s is None else now_s - self.latest_frame_receipt_s
                 ),
                 "image_skew_s": abs(frame.color_stamp_s - frame.depth_stamp_s),
-                "joint_state_age_s": (
-                    None if feedback.joint_stamp_s is None else now_s - feedback.joint_stamp_s
-                ),
-                "force_age_s": (
-                    None if feedback.force_stamp_s is None else now_s - feedback.force_stamp_s
-                ),
+                "joint_state_age_s": (None if feedback.joint_stamp_s is None else now_s - feedback.joint_stamp_s),
+                "force_age_s": (None if feedback.force_stamp_s is None else now_s - feedback.force_stamp_s),
                 "tcp_pose_age_s": now_s - feedback.pose_stamp_s,
                 "camera_transform_age_s": now_s - transform_stamp_s,
                 "policy_inference_duration_s": inference_duration_s,
@@ -1089,23 +1036,14 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
                 "image_source_age_s": (
                     None
                     if self.latest_frame is None
-                    else now_s
-                    - min(self.latest_frame.color_stamp_s, self.latest_frame.depth_stamp_s)
+                    else now_s - min(self.latest_frame.color_stamp_s, self.latest_frame.depth_stamp_s)
                 ),
                 "image_receipt_age_s": (
-                    None
-                    if self.latest_frame_receipt_s is None
-                    else now_s - self.latest_frame_receipt_s
+                    None if self.latest_frame_receipt_s is None else now_s - self.latest_frame_receipt_s
                 ),
-                "joint_state_age_s": (
-                    None if feedback.joint_stamp_s is None else now_s - feedback.joint_stamp_s
-                ),
-                "force_age_s": (
-                    None if feedback.force_stamp_s is None else now_s - feedback.force_stamp_s
-                ),
-                "tcp_pose_age_s": (
-                    None if feedback.pose_stamp_s is None else now_s - feedback.pose_stamp_s
-                ),
+                "joint_state_age_s": (None if feedback.joint_stamp_s is None else now_s - feedback.joint_stamp_s),
+                "force_age_s": (None if feedback.force_stamp_s is None else now_s - feedback.force_stamp_s),
+                "tcp_pose_age_s": (None if feedback.pose_stamp_s is None else now_s - feedback.pose_stamp_s),
             }
         )
 
@@ -1116,23 +1054,14 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
         missing: list[str] = []
         feedback = self._robot_feedback_snapshot()
         if self.latest_frame is None:
-            missing.append(
-                "synchronized compressed RGB-D "
-                f"({self.config.color_topic}, {self.config.depth_topic})"
-            )
+            missing.append(f"synchronized compressed RGB-D ({self.config.color_topic}, {self.config.depth_topic})")
         if feedback.pose_stamp_s is None or feedback.tcp_position_m is None:
             missing.append(f"TCP TF ({self.config.command_frame} <- {self.config.tcp_frame})")
-        if self.config.expected_joint_names and (
-            not feedback.joint_positions_rad or feedback.joint_stamp_s is None
-        ):
+        if self.config.expected_joint_names and (not feedback.joint_positions_rad or feedback.joint_stamp_s is None):
             missing.append(f"joint state ({self.config.joint_state_topic})")
-        if self.config.require_force_measurement and (
-            feedback.force_norm_n is None or feedback.force_stamp_s is None
-        ):
+        if self.config.require_force_measurement and (feedback.force_norm_n is None or feedback.force_stamp_s is None):
             missing.append(f"force measurement ({self.config.force_topic})")
-        if self.config.require_deadman and (
-            not feedback.deadman_active or feedback.deadman_receipt_s is None
-        ):
+        if self.config.require_deadman and (not feedback.deadman_active or feedback.deadman_receipt_s is None):
             missing.append(f"active deadman ({self.config.deadman_topic})")
         if self.config.emergency_stop_topic and feedback.emergency_stop_receipt_s is None:
             missing.append(f"emergency-stop heartbeat ({self.config.emergency_stop_topic})")
@@ -1205,7 +1134,9 @@ class D405VisualServoNode(Node):  # pragma: no cover - ROS integration path
             projection = tuple(float(value) for value in info.p)
             actual = (projection[0], projection[5], projection[2], projection[6])
             expected = (camera.fx, camera.fy, camera.cx, camera.cy)
-            if any(abs(lhs - rhs) > self.config.intrinsics_tolerance_px for lhs, rhs in zip(actual, expected, strict=True)):
+            if any(
+                abs(lhs - rhs) > self.config.intrinsics_tolerance_px for lhs, rhs in zip(actual, expected, strict=True)
+            ):
                 delta = tuple(lhs - rhs for lhs, rhs in zip(actual, expected, strict=True))
                 self.get_logger().warning(
                     f"{label} rectified intrinsics {actual} differ from trained intrinsics "
@@ -1308,9 +1239,7 @@ def run_d405_policy_visual_servo(
             expected_grasp_id=expected_grasp_id,
             expected_part_id=expected_part_id,
         )
-    if preparation.expected_grasp_id != str(expected_grasp_id) or preparation.expected_part_id != str(
-        expected_part_id
-    ):
+    if preparation.expected_grasp_id != str(expected_grasp_id) or preparation.expected_part_id != str(expected_part_id):
         raise ValueError("Prepared D405 policy identity does not match the requested stage-2 grasp.")
     config = preparation.config
     if config.command_sink == "moveit_servo" and not allow_real_motion:
@@ -1355,11 +1284,7 @@ def run_d405_policy_visual_servo(
             message=message,
             goal_id=node.runtime.goal.goal_id,
             motion_applied=node.nonzero_command_sent,
-            allow_gripper_close=bool(
-                completed
-                and node.sink.is_real
-                and config.allow_gripper_close_on_completion
-            ),
+            allow_gripper_close=bool(completed and node.sink.is_real and config.allow_gripper_close_on_completion),
             step_count=node.step_count,
             run_directory=node.run_directory,
         )

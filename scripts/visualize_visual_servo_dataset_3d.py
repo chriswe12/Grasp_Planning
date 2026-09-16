@@ -62,36 +62,21 @@ def _episode_geometry(
     with np.load(npz_path) as episode:
         progress = np.asarray(episode["trajectory_progress"], dtype=np.float64)
         pose_error = np.asarray(episode["pose_error"], dtype=np.float64)
-        goal_tcp_position = np.asarray(
-            episode["goal_tcp_position_w"], dtype=np.float64
-        )
-        goal_tcp_rotation = quat_to_rotmat_xyzw(
-            np.asarray(episode["goal_tcp_orientation_xyzw_w"], dtype=np.float64)
-        )
-        goal_object_position = np.asarray(
-            episode["goal_object_position_w"], dtype=np.float64
-        )
+        goal_tcp_position = np.asarray(episode["goal_tcp_position_w"], dtype=np.float64)
+        goal_tcp_rotation = quat_to_rotmat_xyzw(np.asarray(episode["goal_tcp_orientation_xyzw_w"], dtype=np.float64))
+        goal_object_position = np.asarray(episode["goal_object_position_w"], dtype=np.float64)
         goal_object_rotation = quat_to_rotmat_xyzw(
             np.asarray(episode["goal_object_orientation_xyzw_w"], dtype=np.float64)
         )
-    tcp_position_object = goal_object_rotation.T @ (
-        goal_tcp_position - goal_object_position
-    )
+    tcp_position_object = goal_object_rotation.T @ (goal_tcp_position - goal_object_position)
     tcp_rotation_object = goal_object_rotation.T @ goal_tcp_rotation
     grasp_tcp = object_position + object_rotation @ tcp_position_object
     pregrasp_tcp = grasp_tcp + yaw_rotation @ (nominal_pregrasp - nominal_grasp)
     target_tcp_rotation = object_rotation @ tcp_rotation_object
-    targets = (
-        pregrasp_tcp[None, :]
-        + progress[:, None] * (grasp_tcp - pregrasp_tcp)[None, :]
-    )
+    targets = pregrasp_tcp[None, :] + progress[:, None] * (grasp_tcp - pregrasp_tcp)[None, :]
     path_world = targets - pose_error[:, :3]
-    initial_rotation_world = (
-        _rotation_from_rotvec(pose_error[0, 3:]).T @ target_tcp_rotation
-    )
-    final_rotation_world = (
-        _rotation_from_rotvec(pose_error[-1, 3:]).T @ target_tcp_rotation
-    )
+    initial_rotation_world = _rotation_from_rotvec(pose_error[0, 3:]).T @ target_tcp_rotation
+    final_rotation_world = _rotation_from_rotvec(pose_error[-1, 3:]).T @ target_tcp_rotation
     # Normalize every sample into its own randomized part frame.  This removes
     # absolute scene placement and exposes only the TCP/target relationship to
     # the part, which is the relationship the visual servo policy must learn.

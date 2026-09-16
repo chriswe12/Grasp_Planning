@@ -67,9 +67,7 @@ def _set_material_inputs(
             break
     if source is None:
         outputs = [output.GetFullName() for output in material.GetOutputs()]
-        raise RuntimeError(
-            f"Material {material.GetPath()} has no supported surface shader; outputs={outputs}."
-        )
+        raise RuntimeError(f"Material {material.GetPath()} has no supported surface shader; outputs={outputs}.")
     shader = UsdShade.Shader(source[0])
     color_written = False
     for name in ("diffuseColor", "diffuse_color_constant", "diffuse_color"):
@@ -78,9 +76,7 @@ def _set_material_inputs(
             shader_input.Set(Gf.Vec3f(*color))
             color_written = True
     if not color_written:
-        shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(
-            Gf.Vec3f(*color)
-        )
+        shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
         color_written = True
     roughness_written = False
     for name in ("roughness", "reflection_roughness_constant"):
@@ -91,9 +87,7 @@ def _set_material_inputs(
     if not roughness_written:
         # OmniPBR importer materials omit inputs that retain their MDL default.
         # It is valid to author the standard input explicitly.
-        shader.CreateInput(
-            "reflection_roughness_constant", Sdf.ValueTypeNames.Float
-        ).Set(float(roughness))
+        shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(float(roughness))
         roughness_written = True
     if not color_written or not roughness_written:
         raise RuntimeError(
@@ -145,23 +139,15 @@ def _author_pdz_finger_materials(stage: Usd.Stage) -> None:
             _set_material_inputs(
                 material,
                 color=VISUAL_SERVO_CONTACT_PAD_COLOR if is_pad else VISUAL_SERVO_FINGER_COLOR,
-                roughness=(
-                    VISUAL_SERVO_CONTACT_PAD_ROUGHNESS
-                    if is_pad
-                    else VISUAL_SERVO_FINGER_ROUGHNESS
-                ),
+                roughness=(VISUAL_SERVO_CONTACT_PAD_ROUGHNESS if is_pad else VISUAL_SERVO_FINGER_ROUGHNESS),
             )
         if not observed["finger"] or not observed["pad"]:
-            raise RuntimeError(
-                "Imported PDZ USD did not expose both finger and TPU-pad visual materials: "
-                f"{observed}"
-            )
+            raise RuntimeError(f"Imported PDZ USD did not expose both finger and TPU-pad visual materials: {observed}")
     finally:
         for prim in instance_roots:
             prim.SetInstanceable(True)
     print(
-        "Authored PDZ visual materials: "
-        f"finger={sorted(observed['finger'])} pad={sorted(observed['pad'])}",
+        f"Authored PDZ visual materials: finger={sorted(observed['finger'])} pad={sorted(observed['pad'])}",
         flush=True,
     )
 
@@ -211,11 +197,7 @@ def _resolve_camera_frame(stage: Usd.Stage) -> str:
 
     if stage.GetPrimAtPath(CAMERA_FRAME).IsValid():
         return CAMERA_FRAME
-    matches = [
-        str(prim.GetPath())
-        for prim in stage.Traverse()
-        if prim.GetName() == CAMERA_OPTICAL_FRAME_NAME
-    ]
+    matches = [str(prim.GetPath()) for prim in stage.Traverse() if prim.GetName() == CAMERA_OPTICAL_FRAME_NAME]
     if len(matches) == 1:
         return matches[0]
     if not matches:
@@ -253,9 +235,7 @@ def _author_camera_and_drive(output_path: Path) -> None:
     camera.GetVerticalApertureAttr().Set(2.0 * 1.93 * math.tan(math.radians(58.0 / 2.0)))
     camera.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 10.0))
     camera.GetPrim().CreateAttribute("pdz:nominalResolution", Sdf.ValueTypeNames.Int2).Set(Gf.Vec2i(848, 480))
-    camera.GetPrim().CreateAttribute("pdz:rosOpticalFrame", Sdf.ValueTypeNames.String).Set(
-        "camera_depth_optical_frame"
-    )
+    camera.GetPrim().CreateAttribute("pdz:rosOpticalFrame", Sdf.ValueTypeNames.String).Set("camera_depth_optical_frame")
 
     # The established KUKA Isaac backend represents A4 as a +Y USD joint and
     # converts the physical MoveIt coordinate at the backend boundary.  The

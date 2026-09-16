@@ -53,15 +53,9 @@ def _write_complete_fixture(logs_root: Path) -> None:
     (logs_root / "slurm-123.out").write_text(stdout, encoding="utf-8")
     (logs_root / "slurm-123.err").write_text("", encoding="utf-8")
     (params_dir / "agent.yaml").write_text("params: {}\n", encoding="utf-8")
-    (params_dir / "env.yaml").write_text(
-        yaml.safe_dump({"policy_context_mode": "action"}), encoding="utf-8"
-    )
+    (params_dir / "env.yaml").write_text(yaml.safe_dump({"policy_context_mode": "action"}), encoding="utf-8")
     (params_dir / "sim2real_profile.yaml").write_text(
-        "profile: combined_sim2real\n"
-        "overrides:\n"
-        "  live_rgb_gamma: !!python/tuple\n"
-        "  - 0.9\n"
-        "  - 1.1\n",
+        "profile: combined_sim2real\noverrides:\n  live_rgb_gamma: !!python/tuple\n  - 0.9\n  - 1.1\n",
         encoding="utf-8",
     )
     (run_dir / "nn/policy.pth").write_bytes(b"checkpoint")

@@ -57,9 +57,7 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     command = benchmark._command(payload=payload, spec=spec, paths=paths)
 
     assert command[:5] == [str(REPO_ROOT / "run_pipeline.sh"), "--workflow", "dual", "--mode", "sim"]
-    assert command[command.index("--artifact-root") + 1] == str(
-        (REPO_ROOT / "artifacts/dual_grasp_planning").resolve()
-    )
+    assert command[command.index("--artifact-root") + 1] == str((REPO_ROOT / "artifacts/dual_grasp_planning").resolve())
     assert command[command.index("--inserter-arm") + 1] == "auto"
     assert command[command.index("--max-pair-attempts") + 1] == "256"
     assert command[command.index("--max-ik-screen-candidates") + 1] == "0"
@@ -76,9 +74,7 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     assert command[command.index("--exact-ik-beam-width") + 1] == "4"
     assert command[command.index("--exact-ik-seed-perturbation-rad") + 1] == "0.6"
     assert command[command.index("--pickup-approach-ik-steps") + 1] == "5"
-    assert command[command.index("--pickup-pregrasp-offsets-m") + 1] == (
-        "0.1,0.075,0.05,0.025"
-    )
+    assert command[command.index("--pickup-pregrasp-offsets-m") + 1] == ("0.1,0.075,0.05,0.025")
     assert command[command.index("--planning-time-s") + 1] == "15.0"
     assert command[command.index("--planning-attempts") + 1] == "16"
     assert "--headless" in command
@@ -342,10 +338,7 @@ def test_plan_summary_keeps_joint_path_failure_primary_over_fallback_ik(tmp_path
                 "attempts": [
                     {
                         "success": False,
-                        "failure": (
-                            "ik_preflight: holder grasp h1 failed holder_pregrasp: "
-                            "IK failed with code=-31"
-                        ),
+                        "failure": ("ik_preflight: holder grasp h1 failed holder_pregrasp: IK failed with code=-31"),
                     },
                     {
                         "success": False,
@@ -378,9 +371,7 @@ def test_plan_summary_keeps_joint_path_failure_primary_over_fallback_ik(tmp_path
         "joint_path_planning": 1,
     }
     assert summary["moveit_fallback_failure_kind_counts"] == {"fallback_pose_ik": 1}
-    assert summary["moveit_primary_failure_message"] == (
-        "inserter_pickup_grasp: Planning failed with code=99999"
-    )
+    assert summary["moveit_primary_failure_message"] == ("inserter_pickup_grasp: Planning failed with code=99999")
     assert "IK failed" not in str(summary["moveit_primary_failure_message"])
     assert summary["moveit_fallback_failure_kind"] == "fallback_pose_ik"
     assert summary["moveit_fallback_failure_message"] == "IK failed with code=-31"
@@ -730,19 +721,12 @@ def test_failure_phase_classifies_holder_and_grounded_pickup_failures() -> None:
 
 
 def test_failure_phase_classifies_existing_moveit_stack_as_setup() -> None:
-    message = (
-        "[DUAL-RUN] Stop it before using --start-moveit, or use the default "
-        "persistent-stack reuse."
-    )
+    message = "[DUAL-RUN] Stop it before using --start-moveit, or use the default persistent-stack reuse."
 
     assert benchmark._failure_phase(message) == ("setup", "MoveIt/Isaac setup")
     assert benchmark._is_existing_stack_ownership_conflict(message)
-    assert not benchmark._is_existing_stack_ownership_conflict(
-        "No reusable dual MoveIt stack is ready on ROS domain 0"
-    )
-    assert benchmark._is_reused_stack_unavailable(
-        "No reusable dual MoveIt stack is ready on ROS domain 0"
-    )
+    assert not benchmark._is_existing_stack_ownership_conflict("No reusable dual MoveIt stack is ready on ROS domain 0")
+    assert benchmark._is_reused_stack_unavailable("No reusable dual MoveIt stack is ready on ROS domain 0")
     assert benchmark._is_reused_stack_unavailable(
         "Missing /lbr_dual_arm/compute_ik or /lbr_dual_arm/plan_kinematic_path"
     )
@@ -791,8 +775,7 @@ def test_benchmark_stops_after_recording_first_existing_stack_conflict(
                 "status": "failed",
                 "success": False,
                 "message": (
-                    "[DUAL-RUN] Stop it before using --start-moveit, or use the "
-                    "default persistent-stack reuse."
+                    "[DUAL-RUN] Stop it before using --start-moveit, or use the default persistent-stack reuse."
                 ),
                 "duration_s": 0.1,
             },
@@ -842,14 +825,17 @@ def test_reused_real_preflight_stops_after_first_missing_stack_case(
     monkeypatch.setattr(benchmark, "_run_case", fake_run_case)
     events_path = tmp_path / "events.jsonl"
 
-    assert benchmark._run_selected_cases(
-        args=args,
-        payload=payload,
-        output_dir=tmp_path,
-        specs=specs,
-        latest={},
-        events_path=events_path,
-    ) == 2
+    assert (
+        benchmark._run_selected_cases(
+            args=args,
+            payload=payload,
+            output_dir=tmp_path,
+            specs=specs,
+            latest={},
+            events_path=events_path,
+        )
+        == 2
+    )
     assert calls == [str(specs[0]["case_id"])]
 
 

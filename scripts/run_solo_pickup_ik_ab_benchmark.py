@@ -101,8 +101,7 @@ def _assembly_mesh_in_source_frame(
     """Express an asset/assembly-frame mesh in the saved grasp source frame."""
 
     vertices_source = (
-        np.asarray(mesh_assembly.vertices_obj, dtype=float)
-        - source_pose_assembly.translation_world[None, :]
+        np.asarray(mesh_assembly.vertices_obj, dtype=float) - source_pose_assembly.translation_world[None, :]
     ) @ source_pose_assembly.rotation_world_from_object
     return TriangleMesh(
         vertices_obj=vertices_source,
@@ -115,10 +114,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-summary",
         type=Path,
-        default=Path(
-            "artifacts/dual_assembly_benchmark/"
-            "plumbers_block_ik_after_gripper_fix_20260811/summary.json"
-        ),
+        default=Path("artifacts/dual_assembly_benchmark/plumbers_block_ik_after_gripper_fix_20260811/summary.json"),
         help="Existing dual-arm benchmark summary providing the A cases/results.",
     )
     parser.add_argument(
@@ -305,9 +301,7 @@ def _solve_candidate(
 ) -> tuple[bool, str, dict[str, object]]:
     joint_names = tuple(str(value) for value in ARM_SPEC_BY_ROBOT[active_robot]["joint_names"])
     start_state = _complete_start_state()
-    start_state.update(
-        kuka_moveit_gripper_state(active_robot, kuka_gripper_clamp_width(grasp.gripper_width))
-    )
+    start_state.update(kuka_moveit_gripper_state(active_robot, kuka_gripper_clamp_width(grasp.gripper_width)))
     branches = [start_state]
     diagnostics: Counter = Counter()
     target_records: list[dict[str, object]] = []
@@ -381,17 +375,25 @@ def _solve_candidate(
             }
         )
         if not expanded:
-            return False, target_name, {
-                **{key: int(value) for key, value in diagnostics.items()},
-                "ik_duration_s": float(diagnostics["ik_duration_us"]) / 1.0e6,
-                "targets": target_records,
-            }
+            return (
+                False,
+                target_name,
+                {
+                    **{key: int(value) for key, value in diagnostics.items()},
+                    "ik_duration_s": float(diagnostics["ik_duration_us"]) / 1.0e6,
+                    "targets": target_records,
+                },
+            )
         branches = [state for _cost, state in sorted(expanded, key=lambda item: item[0])[: int(beam_width)]]
-    return True, "", {
-        **{key: int(value) for key, value in diagnostics.items()},
-        "ik_duration_s": float(diagnostics["ik_duration_us"]) / 1.0e6,
-        "targets": target_records,
-    }
+    return (
+        True,
+        "",
+        {
+            **{key: int(value) for key, value in diagnostics.items()},
+            "ik_duration_s": float(diagnostics["ik_duration_us"]) / 1.0e6,
+            "targets": target_records,
+        },
+    )
 
 
 def _incoming_case_candidates(record: Mapping[str, object]) -> IncomingCaseCandidates:
@@ -446,12 +448,10 @@ def _incoming_case_candidates(record: Mapping[str, object]) -> IncomingCaseCandi
         floor_z_world_m=float(record["floor_z"]),
         floor_clearance_margin_m=DEFAULT_PICKUP_FLOOR_CLEARANCE_MARGIN_M,
         contact_lateral_offsets_m=tuple(
-            float(value)
-            for value in metadata.get("contact_lateral_offsets_m", (-0.0029166667, 0.0, 0.0029166667))
+            float(value) for value in metadata.get("contact_lateral_offsets_m", (-0.0029166667, 0.0, 0.0029166667))
         ),
         contact_approach_offsets_m=tuple(
-            float(value)
-            for value in metadata.get("contact_approach_offsets_m", (-0.0030833333, 0.0, 0.0030833333))
+            float(value) for value in metadata.get("contact_approach_offsets_m", (-0.0030833333, 0.0, 0.0030833333))
         ),
     )
     accepted = [status.grasp for status in statuses if status.status == "accepted"]
@@ -625,9 +625,8 @@ def _ground_plane_overlay(
     return {
         "label": f"work surface z={float(floor_z):.3f} m",
         "corners_obj": [
-            [float(value) for value in world_point_to_object(point, case.pickup_pose)]
-            for point in corners_world
-        ]
+            [float(value) for value in world_point_to_object(point, case.pickup_pose)] for point in corners_world
+        ],
     }
 
 
@@ -696,10 +695,7 @@ def _candidate_arm_label(result: Mapping[str, object] | None) -> str:
     if result is None:
         return "not_tested"
     if bool(result.get("success", False)):
-        return (
-            f"PASS(ik={int(result.get('ik_requests', 0))},"
-            f"valid={int(result.get('valid_states', 0))})"
-        )
+        return f"PASS(ik={int(result.get('ik_requests', 0))},valid={int(result.get('valid_states', 0))})"
     return (
         f"FAIL@{result.get('failed_target', 'unknown')}"
         f"(ik={int(result.get('ik_requests', 0))},"
@@ -732,10 +728,7 @@ def _write_case_grasp_debug(
             CandidateStatus(
                 grasp=candidate,
                 status="accepted" if reachable else "rejected",
-                reason=(
-                    f"lbr_one={_candidate_arm_label(one)}; "
-                    f"lbr_two={_candidate_arm_label(two)}"
-                ),
+                reason=(f"lbr_one={_candidate_arm_label(one)}; lbr_two={_candidate_arm_label(two)}"),
             )
         )
 
@@ -825,16 +818,12 @@ def _aggregate(records: list[dict[str, object]]) -> dict[str, object]:
         "assigned_pickups_solo_success": assigned_pickups_success,
         "either_assignment_solo_success": either_assignment_success,
         "lbr_one_solo_success": sum(
-            bool(dict(record.get("solo", {})).get("lbr_one", {}).get("success", False))
-            for record in complete
+            bool(dict(record.get("solo", {})).get("lbr_one", {}).get("success", False)) for record in complete
         ),
         "lbr_two_solo_success": sum(
-            bool(dict(record.get("solo", {})).get("lbr_two", {}).get("success", False))
-            for record in complete
+            bool(dict(record.get("solo", {})).get("lbr_two", {}).get("success", False)) for record in complete
         ),
-        "incoming_either_arm_solo_success": sum(
-            bool(record.get("either_solo_success", False)) for record in complete
-        ),
+        "incoming_either_arm_solo_success": sum(bool(record.get("either_solo_success", False)) for record in complete),
         "outcome_matrix": dict(matrix),
     }
 
@@ -879,15 +868,11 @@ def _write_html(path: Path, payload: Mapping[str, object]) -> None:
     viewer_records = [
         record
         for record in records
-        if record.get("status") == "complete"
-        and not record.get("dual_success")
-        and record.get("grasp_debug_html")
+        if record.get("status") == "complete" and not record.get("dual_success") and record.get("grasp_debug_html")
     ]
     if not viewer_records:
         viewer_records = [
-            record
-            for record in records
-            if record.get("status") == "complete" and record.get("grasp_debug_html")
+            record for record in records if record.get("status") == "complete" and record.get("grasp_debug_html")
         ]
     viewer_cases = [
         {
@@ -1039,7 +1024,10 @@ def main() -> int:
             for record in existing_payload.get("records", [])
             if isinstance(record, dict) and record.get("status") == "complete"
         }
-    records = [existing.get(str(record["case_id"]), {"case_id": str(record["case_id"]), "status": "pending"}) for record in baseline_records]
+    records = [
+        existing.get(str(record["case_id"]), {"case_id": str(record["case_id"]), "status": "pending"})
+        for record in baseline_records
+    ]
     _checkpoint(output_dir, baseline_summary=baseline_path, records=records)
 
     rclpy.init()

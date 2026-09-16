@@ -36,13 +36,9 @@ DEFAULT_KUKA_ARM_START_JOINT_POS = {
 DEFAULT_HAND_OPEN_WIDTH = 0.04
 KUKA_Y_GRIPPER_TRAVEL_M = 0.04
 KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M = 0.084
-KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M = (
-    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * KUKA_Y_GRIPPER_TRAVEL_M
-)
+KUKA_Y_GRIPPER_SOURCE_CLOSED_WIDTH_M = KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - 2.0 * KUKA_Y_GRIPPER_TRAVEL_M
 KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
-KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = (
-    2.0 * KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
-)
+KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = 2.0 * KUKA_Y_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
 KUKA_Y_GRIPPER_APPROACH_PROFILE = "jaw_width_plus_10mm_v1"
 PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M = 0.005
 PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M = 2.0 * PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M
@@ -85,9 +81,7 @@ def kuka_y_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
 
     jaw_width = float(jaw_width_m)
     if not math.isfinite(jaw_width) or jaw_width < 0.0:
-        raise ValueError(
-            f"KUKA Y-gripper jaw width must be finite and non-negative, got {jaw_width_m}."
-        )
+        raise ValueError(f"KUKA Y-gripper jaw width must be finite and non-negative, got {jaw_width_m}.")
     approach_width = jaw_width + KUKA_Y_GRIPPER_APPROACH_CLEARANCE_TOTAL_M
     if approach_width > KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M + 1.0e-9:
         raise ValueError(
@@ -104,8 +98,7 @@ def pdz_gripper_approach_width_from_jaw_width(jaw_width_m: float) -> float:
     jaw_width = float(jaw_width_m)
     if not math.isfinite(jaw_width) or jaw_width < PDZ_GRIPPER_CLOSED_WIDTH_M:
         raise ValueError(
-            f"PDZ jaw width must be finite and at least {PDZ_GRIPPER_CLOSED_WIDTH_M:.3f} m, "
-            f"got {jaw_width_m}."
+            f"PDZ jaw width must be finite and at least {PDZ_GRIPPER_CLOSED_WIDTH_M:.3f} m, got {jaw_width_m}."
         )
     approach_width = jaw_width + PDZ_GRIPPER_APPROACH_CLEARANCE_TOTAL_M
     if approach_width > PDZ_GRIPPER_OPEN_WIDTH_M + 1.0e-9:

@@ -31,7 +31,7 @@ def test_submit_supports_explicit_gpu_benchmark_resources() -> None:
         assert option in source
     assert '--gpus="${gpu_type}:${gpu_count}"' in source
     assert '--gres="gpumem:${gpu_memory}"' in source
-    assert 'EULER_SKIP_SYNC:-0' in source
+    assert "EULER_SKIP_SYNC:-0" in source
     assert '[[ "${mode}" == "smoke" && "${gpu_count}" != "1" ]]' in source
     assert "--gpu-count greater than one configures the Slurm ranks automatically" in source
 
@@ -45,7 +45,7 @@ def test_batch_job_launches_one_slurm_task_per_allocated_gpu() -> None:
     assert "euler/slurm_rank_launcher.sh" in source
     assert "--distributed" in source
     assert "completion_count < requested_gpu_count" in source
-    assert 'APPTAINERENV_ISAAC_RL_EXPERIMENT_NAME=' in source
+    assert "APPTAINERENV_ISAAC_RL_EXPERIMENT_NAME=" in source
 
 
 def test_batch_job_samples_and_summarizes_every_allocated_gpu() -> None:
@@ -62,7 +62,7 @@ def test_rl_games_entrypoint_records_distributed_batch_contract() -> None:
     source = _read("isaac_rl/scripts/rl_games/train.py")
     assert 'world_size = int(os.getenv("WORLD_SIZE", "1"))' in source
     assert 'os.getenv("ISAAC_RL_EXPERIMENT_NAME")' in source
-    assert 'if global_rank == 0:' in source
+    assert "if global_rank == 0:" in source
     assert '"environments_per_rank": None' in source
     assert "global_rollout_batch_size = rollout_batch_size * world_size" in source
     assert "global rollout batch={global_rollout_batch_size}" in source
@@ -82,9 +82,7 @@ def test_rl_games_entrypoint_does_not_retain_nonzero_rank_episode_tensors() -> N
 
 
 def test_completion_ppo_reuses_distributed_gradient_buffers() -> None:
-    source = _read(
-        "isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/agents/completion_ppo.py"
-    )
+    source = _read("isaac_rl/source/isaac_rl/isaac_rl/tasks/direct/isaac_rl/agents/completion_ppo.py")
     assert "class _ReusableGradientAllReduce" in source
     assert "torch.cat(all_grads_list)" not in source
     assert "_central_value_calc_gradients_with_reusable_buffer" in source

@@ -38,10 +38,11 @@ args.enable_cameras = True
 app = AppLauncher(args).app
 
 import gymnasium as gym  # noqa: E402
-import isaac_rl.tasks  # noqa: E402, F401
 import torch  # noqa: E402
 from isaaclab.utils.math import matrix_from_quat  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
+
+import isaac_rl.tasks  # noqa: E402, F401
 
 TASK_ID = "Grasp-Visual-Servo-RGBD-MultiPart-Direct-v0"
 CASES = (
@@ -108,9 +109,7 @@ def _capture_case(task, case_name: str) -> dict[str, object]:
     )
     relative_rotation = rotation_object.transpose(0, 1) @ rotation_goal
     nominal_relative_rotation = rotation_nominal_object.transpose(0, 1) @ rotation_nominal_goal
-    relative_position_error_mm = float(
-        torch.linalg.norm(relative_position - nominal_relative_position).item() * 1000.0
-    )
+    relative_position_error_mm = float(torch.linalg.norm(relative_position - nominal_relative_position).item() * 1000.0)
     relative_rotation_error_deg = _rotation_angle_deg(relative_rotation, nominal_relative_rotation)
 
     return {
@@ -118,19 +117,11 @@ def _capture_case(task, case_name: str) -> dict[str, object]:
         "target_index": target_index,
         "target_id": task.target_ids[target_index],
         "part_id": task.part_names[part_index],
-        "translation_xy_mm": (
-            task.reset_position_offset[0, :2].detach().cpu().numpy() * 1000.0
-        ).tolist(),
-        "translation_magnitude_mm": float(
-            torch.linalg.norm(task.reset_position_offset[0]).item() * 1000.0
-        ),
+        "translation_xy_mm": (task.reset_position_offset[0, :2].detach().cpu().numpy() * 1000.0).tolist(),
+        "translation_magnitude_mm": float(torch.linalg.norm(task.reset_position_offset[0]).item() * 1000.0),
         "object_yaw_deg": float(torch.rad2deg(task.reset_object_yaw_offset[0]).item()),
-        "requested_object_yaw_deg": float(
-            torch.rad2deg(task.reset_object_yaw_requested[0]).item()
-        ),
-        "safe_object_yaw_cap_deg": float(
-            torch.rad2deg(task.reset_object_yaw_safe_cap[0]).item()
-        ),
+        "requested_object_yaw_deg": float(torch.rad2deg(task.reset_object_yaw_requested[0]).item()),
+        "safe_object_yaw_cap_deg": float(torch.rad2deg(task.reset_object_yaw_safe_cap[0]).item()),
         "initial_position_error_mm": float(task.initial_position_error[0].item() * 1000.0),
         "initial_rotation_error_deg": float(torch.rad2deg(task.initial_rotation_error[0]).item()),
         "part_relative_target_position_error_mm": relative_position_error_mm,
@@ -280,9 +271,7 @@ def main() -> None:
             raise RuntimeError(f"Case {case_name} initialized in collision.")
         case_dir = output_dir / case_name
         case_dir.mkdir(parents=True, exist_ok=True)
-        serializable = {
-            key: value for key, value in capture.items() if key not in {"overview", "live_rgb", "goal_rgb"}
-        }
+        serializable = {key: value for key, value in capture.items() if key not in {"overview", "live_rgb", "goal_rgb"}}
         (case_dir / "metadata.json").write_text(
             json.dumps(serializable, indent=2) + "\n",
             encoding="utf-8",
@@ -290,16 +279,15 @@ def main() -> None:
         Image.fromarray(capture["overview"]).save(case_dir / "scene_overview.png")
         Image.fromarray(capture["live_rgb"]).save(case_dir / "policy_live_rgb_native.png")
         Image.fromarray(capture["goal_rgb"]).save(case_dir / "policy_goal_rgb_native.png")
-        Image.fromarray(capture["live_rgb"]).resize(
-            (512, 288), Image.Resampling.NEAREST
-        ).save(case_dir / "policy_live_rgb.png")
-        Image.fromarray(capture["goal_rgb"]).resize(
-            (512, 288), Image.Resampling.NEAREST
-        ).save(case_dir / "policy_goal_rgb.png")
+        Image.fromarray(capture["live_rgb"]).resize((512, 288), Image.Resampling.NEAREST).save(
+            case_dir / "policy_live_rgb.png"
+        )
+        Image.fromarray(capture["goal_rgb"]).resize((512, 288), Image.Resampling.NEAREST).save(
+            case_dir / "policy_goal_rgb.png"
+        )
         assembled = _assemble_existing_cases(output_dir)
         print(
-            f"[DONE] rendered collision-free case {case_name} to {case_dir}; "
-            f"comparison_sheet_ready={assembled}",
+            f"[DONE] rendered collision-free case {case_name} to {case_dir}; comparison_sheet_ready={assembled}",
             flush=True,
         )
     finally:
