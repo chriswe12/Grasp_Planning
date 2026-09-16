@@ -1,0 +1,453 @@
+{
+  "schema_version": 1,
+  "kind": "fabrica_assembly_sequence",
+  "generated_by": "scripts/build_assembly_sequence.py",
+  "assembly": "plumbers_block",
+  "base_part_id": "2",
+  "base_part_source": "selected_order[0]",
+  "base_part_order_index": 0,
+  "first_holder_step_index": 1,
+  "selected_order_source": "forward_assembly_orders[0]",
+  "selected_order": [
+    "2",
+    "0",
+    "3",
+    "1",
+    "4"
+  ],
+  "mesh_scale": 0.01,
+  "frame_contract": {
+    "assembly_frame": "Fabrica OBJ assembled coordinates scaled by mesh_scale",
+    "part_final_pose": "OBJ vertices are already authored in final assembled coordinates",
+    "pre_insertion_pose": "final assembled OBJ vertices transformed by final_to_pre_insertion_transform_m",
+    "table_frame": "assembly asset frame"
+  },
+  "table": {
+    "z_assembly_m": 0.0,
+    "contact_tolerance_m": 1e-06,
+    "contact_part_ids": [
+      "2"
+    ]
+  },
+  "source_assets": {
+    "precedence_plan": {
+      "path": "assets/obj/fabrica/plumbers_block/precedence_plan.json",
+      "size": 1015652,
+      "mtime_ns": 1784882288837891100
+    },
+    "pre_insertion_poses": {
+      "path": "assets/obj/fabrica/plumbers_block/pre_insertion_poses.json",
+      "size": 8595,
+      "mtime_ns": 1784882288831802600
+    }
+  },
+  "parts": {
+    "2": {
+      "part_id": "2",
+      "mesh_path": "assets/obj/fabrica/plumbers_block/2.obj",
+      "role": "moving_part",
+      "bounds_assembly_m": {
+        "min": [
+          -0.08,
+          -0.018734200000000003,
+          0.0
+        ],
+        "max": [
+          0.08,
+          0.0212658,
+          0.065
+        ]
+      },
+      "table_clearance_m": 0.0,
+      "touches_table": true,
+      "vertex_count": 1376,
+      "face_count": 2756,
+      "asset_record": {
+        "path": "assets/obj/fabrica/plumbers_block/2.obj",
+        "size": 183798,
+        "mtime_ns": 1784882288829944700
+      }
+    },
+    "0": {
+      "part_id": "0",
+      "mesh_path": "assets/obj/fabrica/plumbers_block/0.obj",
+      "role": "moving_part",
+      "bounds_assembly_m": {
+        "min": [
+          -0.021361400000000003,
+          -0.04,
+          0.02715836
+        ],
+        "max": [
+          0.021361520000000002,
+          0.04,
+          0.0766584
+        ]
+      },
+      "table_clearance_m": 0.02715836,
+      "touches_table": false,
+      "vertex_count": 484,
+      "face_count": 968,
+      "asset_record": {
+        "path": "assets/obj/fabrica/plumbers_block/0.obj",
+        "size": 62451,
+        "mtime_ns": 1784882288827929900
+      }
+    },
+    "3": {
+      "part_id": "3",
+      "mesh_path": "assets/obj/fabrica/plumbers_block/3.obj",
+      "role": "moving_part",
+      "bounds_assembly_m": {
+        "min": [
+          -0.05,
+          -0.018734200000000003,
+          0.065
+        ],
+        "max": [
+          0.05,
+          0.0212658,
+          0.0911473
+        ]
+      },
+      "table_clearance_m": 0.065,
+      "touches_table": false,
+      "vertex_count": 758,
+      "face_count": 1520,
+      "asset_record": {
+        "path": "assets/obj/fabrica/plumbers_block/3.obj",
+        "size": 98697,
+        "mtime_ns": 1784882288830869700
+      }
+    },
+    "1": {
+      "part_id": "1",
+      "mesh_path": "assets/obj/fabrica/plumbers_block/1.obj",
+      "role": "moving_part",
+      "bounds_assembly_m": {
+        "min": [
+          -0.0544164,
+          -0.011234800000000001,
+          0.035
+        ],
+        "max": [
+          -0.0255836,
+          0.013766400000000002,
+          0.105
+        ]
+      },
+      "table_clearance_m": 0.035,
+      "touches_table": false,
+      "vertex_count": 313,
+      "face_count": 622,
+      "asset_record": {
+        "path": "assets/obj/fabrica/plumbers_block/1.obj",
+        "size": 40286,
+        "mtime_ns": 1784882288828519800
+      }
+    },
+    "4": {
+      "part_id": "4",
+      "mesh_path": "assets/obj/fabrica/plumbers_block/4.obj",
+      "role": "moving_part",
+      "bounds_assembly_m": {
+        "min": [
+          0.0255836,
+          -0.011234800000000001,
+          0.035
+        ],
+        "max": [
+          0.0544164,
+          0.013766400000000002,
+          0.105
+        ]
+      },
+      "table_clearance_m": 0.035,
+      "touches_table": false,
+      "vertex_count": 313,
+      "face_count": 622,
+      "asset_record": {
+        "path": "assets/obj/fabrica/plumbers_block/4.obj",
+        "size": 39973,
+        "mtime_ns": 1784882288831430500
+      }
+    }
+  },
+  "steps": [
+    {
+      "step_id": "step_000_part_2",
+      "step_index": 0,
+      "incoming_part_id": "2",
+      "incoming_part_role": "moving_part",
+      "assembled_part_ids_before": [],
+      "assembled_part_ids_after": [
+        "2"
+      ],
+      "base_part_status": "incoming",
+      "holder_base_available": false,
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.03535
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_translation_m": [
+        0.03535,
+        0.0,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.03535,
+        0.0,
+        -0.0
+      ],
+      "insertion_distance_m": 0.03535,
+      "disassembly_path_waypoints": 707
+    },
+    {
+      "step_id": "step_001_part_0",
+      "step_index": 1,
+      "incoming_part_id": "0",
+      "incoming_part_role": "moving_part",
+      "assembled_part_ids_before": [
+        "2"
+      ],
+      "assembled_part_ids_after": [
+        "2",
+        "0"
+      ],
+      "base_part_status": "assembled",
+      "holder_base_available": true,
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          -0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.06565
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_translation_m": [
+        -0.0,
+        -0.06565,
+        0.0
+      ],
+      "pre_to_final_insertion_vector_m": [
+        0.0,
+        0.06565,
+        -0.0
+      ],
+      "insertion_distance_m": 0.06565,
+      "disassembly_path_waypoints": 1313
+    },
+    {
+      "step_id": "step_002_part_3",
+      "step_index": 2,
+      "incoming_part_id": "3",
+      "incoming_part_role": "moving_part",
+      "assembled_part_ids_before": [
+        "2",
+        "0"
+      ],
+      "assembled_part_ids_after": [
+        "2",
+        "0",
+        "3"
+      ],
+      "base_part_status": "assembled",
+      "holder_base_available": true,
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.00505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_translation_m": [
+        0.0,
+        0.0,
+        0.00505
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.00505
+      ],
+      "insertion_distance_m": 0.00505,
+      "disassembly_path_waypoints": 101
+    },
+    {
+      "step_id": "step_003_part_1",
+      "step_index": 3,
+      "incoming_part_id": "1",
+      "incoming_part_role": "moving_part",
+      "assembled_part_ids_before": [
+        "2",
+        "0",
+        "3"
+      ],
+      "assembled_part_ids_after": [
+        "2",
+        "0",
+        "3",
+        "1"
+      ],
+      "base_part_status": "assembled",
+      "holder_base_available": true,
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_translation_m": [
+        0.0,
+        0.0,
+        0.0505
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.0505
+      ],
+      "insertion_distance_m": 0.0505,
+      "disassembly_path_waypoints": 1010
+    },
+    {
+      "step_id": "step_004_part_4",
+      "step_index": 4,
+      "incoming_part_id": "4",
+      "incoming_part_role": "moving_part",
+      "assembled_part_ids_before": [
+        "2",
+        "0",
+        "3",
+        "1"
+      ],
+      "assembled_part_ids_after": [
+        "2",
+        "0",
+        "3",
+        "1",
+        "4"
+      ],
+      "base_part_status": "assembled",
+      "holder_base_available": true,
+      "final_to_pre_insertion_transform_m": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0505
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "final_to_pre_insertion_translation_m": [
+        0.0,
+        0.0,
+        0.0505
+      ],
+      "pre_to_final_insertion_vector_m": [
+        -0.0,
+        0.0,
+        -0.0505
+      ],
+      "insertion_distance_m": 0.0505,
+      "disassembly_path_waypoints": 1010
+    }
+  ],
+  "warnings": []
+}

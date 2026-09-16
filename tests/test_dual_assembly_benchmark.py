@@ -12,10 +12,13 @@ from types import SimpleNamespace
 from scripts import run_dual_assembly_benchmark as benchmark
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DUAL_ARTIFACT_ROOT = REPO_ROOT / "tests/fixtures/dual_grasp_planning"
 
 
 def _payload() -> dict[str, object]:
-    return benchmark._read_mapping(REPO_ROOT / "configs/dual_assembly_benchmark.yaml")
+    payload = benchmark._read_mapping(REPO_ROOT / "configs/dual_assembly_benchmark.yaml")
+    payload["benchmark"]["artifact_root"] = str(DUAL_ARTIFACT_ROOT)
+    return payload
 
 
 def test_default_benchmark_covers_every_step_side_position_and_orientation() -> None:
@@ -57,7 +60,7 @@ def test_benchmark_command_is_headless_resumable_and_high_grip(tmp_path: Path) -
     command = benchmark._command(payload=payload, spec=spec, paths=paths)
 
     assert command[:5] == [str(REPO_ROOT / "run_pipeline.sh"), "--workflow", "dual", "--mode", "sim"]
-    assert command[command.index("--artifact-root") + 1] == str((REPO_ROOT / "artifacts/dual_grasp_planning").resolve())
+    assert command[command.index("--artifact-root") + 1] == str(DUAL_ARTIFACT_ROOT.resolve())
     assert command[command.index("--inserter-arm") + 1] == "auto"
     assert command[command.index("--max-pair-attempts") + 1] == "256"
     assert command[command.index("--max-ik-screen-candidates") + 1] == "0"

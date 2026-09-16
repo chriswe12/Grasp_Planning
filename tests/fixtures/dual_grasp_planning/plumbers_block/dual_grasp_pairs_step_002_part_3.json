@@ -1,0 +1,3204 @@
+{
+  "schema_version": 3,
+  "kind": "dual_grasp_pairs_step",
+  "step_id": "step_002_part_3",
+  "step_index": 2,
+  "incoming_part_id": "3",
+  "assembled_part_ids_before": [
+    "2",
+    "0"
+  ],
+  "motion": {
+    "insertion_translation_start_m": [
+      0.0,
+      0.0,
+      0.00505
+    ],
+    "insertion_translation_end_m": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "retreat_translation_end_m": [
+      0.0,
+      0.0,
+      0.05
+    ]
+  },
+  "transition_symmetry": {
+    "source_path": "assets/obj/fabrica/plumbers_block/symmetries.json",
+    "load_status": "loaded",
+    "sequence_mesh_scale": 0.01,
+    "asset_mesh_scale": 0.01,
+    "translation_scale": 1.0,
+    "part_transform_counts": {
+      "0": 6,
+      "1": 6,
+      "2": 2,
+      "3": 2,
+      "4": 6
+    },
+    "schema_version": 1,
+    "enabled": true,
+    "geometry_tolerance_m": 0.001,
+    "yaw_only": true,
+    "base_symmetry_candidate_count": 2,
+    "incoming_symmetry_candidate_count": 2,
+    "incoming_symmetry_match_record_count": 2,
+    "accepted_partial_assembly_symmetry_count": 1,
+    "raw_transition_combination_count": 2,
+    "transition_candidate_count": 2,
+    "deduplicated_transition_combination_count": 0,
+    "rejected_partial_assembly_symmetries": [
+      {
+        "partial_assembly_symmetry_name": "object_z_bounds_center_order2_step1",
+        "reason": "assembled_prefix_not_equivalent",
+        "part_id": "0",
+        "transform_match_error_m": 0.0025316000028440533
+      }
+    ],
+    "pair_conditioned_validation": "retained grasp pairs rechecked against assembled prefix, table, and holder gripper",
+    "checked_retained_pair_transition_count": 400,
+    "compatible_retained_pair_transition_count": 290,
+    "identity_only_nonretained_pair_count": 11588,
+    "retained_execution_candidate_count": 256,
+    "retained_execution_corridor_count": 1,
+    "candidates": [
+      {
+        "transition_id": "tr_identity__part_identity",
+        "partial_assembly_symmetry_name": "identity",
+        "incoming_destination_symmetry_name": "identity",
+        "incoming_equivalence_symmetry_name": "identity",
+        "is_identity": true,
+        "partial_assembly_transform_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "incoming_symmetry_source_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "incoming_destination_transform_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "final_source_pose_assembly": {
+          "position_assembly_m": [
+            5.332668311075611e-09,
+            0.0012657981794560597,
+            0.07574611206932652
+          ],
+          "orientation_xyzw_assembly": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "matrix_assembly_m": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              5.332668311075611e-09
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0012657981794560597
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.07574611206932652
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        "preinsertion_source_pose_assembly": {
+          "position_assembly_m": [
+            5.332668311075611e-09,
+            0.0012657981794560597,
+            0.08079611206932652
+          ],
+          "orientation_xyzw_assembly": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "matrix_assembly_m": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              5.332668311075611e-09
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0012657981794560597
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.08079611206932652
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        "pre_to_final_translation_assembly_m": [
+          0.0,
+          0.0,
+          -0.005049999999999999
+        ],
+        "prefix_symmetry_matches": {
+          "0": "identity",
+          "2": "identity"
+        },
+        "maximum_transform_match_error_m": 0.0,
+        "validation": {
+          "status": "accepted",
+          "geometry_tolerance_m": 0.001,
+          "yaw_only": true,
+          "final_geometry_equivalence_checked": true,
+          "assembled_prefix_equivalence_checked": true,
+          "gripper_sweep_checked": false,
+          "robot_path_checked": false
+        }
+      },
+      {
+        "transition_id": "tr_identity__part_object_z_bounds_center_order2_step1",
+        "partial_assembly_symmetry_name": "identity",
+        "incoming_destination_symmetry_name": "object_z_bounds_center_order2_step1",
+        "incoming_equivalence_symmetry_name": "identity",
+        "is_identity": false,
+        "partial_assembly_transform_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "incoming_symmetry_source_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -1.0665336622151221e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            3.6410878808540437e-09
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "incoming_destination_transform_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "final_source_pose_assembly": {
+          "position_assembly_m": [
+            -5.332668311075611e-09,
+            0.0012658018205439405,
+            0.07574611206932652
+          ],
+          "orientation_xyzw_assembly": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "matrix_assembly_m": [
+            [
+              -1.0,
+              0.0,
+              0.0,
+              -5.332668311075611e-09
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0,
+              0.0012658018205439405
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.07574611206932652
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        "preinsertion_source_pose_assembly": {
+          "position_assembly_m": [
+            -5.332668311075611e-09,
+            0.0012658018205439405,
+            0.08079611206932652
+          ],
+          "orientation_xyzw_assembly": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "matrix_assembly_m": [
+            [
+              -1.0,
+              0.0,
+              0.0,
+              -5.332668311075611e-09
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0,
+              0.0012658018205439405
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.08079611206932652
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        "pre_to_final_translation_assembly_m": [
+          0.0,
+          0.0,
+          -0.005049999999999999
+        ],
+        "prefix_symmetry_matches": {
+          "0": "identity",
+          "2": "identity"
+        },
+        "maximum_transform_match_error_m": 0.0,
+        "validation": {
+          "status": "accepted",
+          "geometry_tolerance_m": 0.001,
+          "yaw_only": true,
+          "final_geometry_equivalence_checked": true,
+          "assembled_prefix_equivalence_checked": true,
+          "gripper_sweep_checked": false,
+          "robot_path_checked": false
+        }
+      }
+    ]
+  },
+  "candidate_sources": {
+    "holder": {
+      "artifact": "holder_state_feasibility.json",
+      "candidate_collection": "candidates",
+      "state_selector": "step_002_part_3"
+    },
+    "inserter": {
+      "artifact": "inserter_candidates_step_002_part_3.json",
+      "candidate_collection": "candidates"
+    }
+  },
+  "evaluations": [
+    {
+      "pair_id": "p002_h1241_i3_0167",
+      "holder_grasp_id": "h1241",
+      "inserter_grasp_id": "i3_0167",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9151183238981411,
+      "score_components": {
+        "holder": 0.8472066424913276,
+        "inserter": 0.9768732736831534,
+        "clearance": 0.9428236161962469
+      },
+      "minimum_clearance_m": 0.04714118080981235,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.04714118080981235
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 8.31876755199995e-05,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 8.31876755199995e-05,
+              "table_minimum_clearance_m": 0.07674158767552,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.014737934421640123
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0990_i3_0800",
+      "holder_grasp_id": "h0990",
+      "inserter_grasp_id": "i3_0800",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8919187655110866,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.9489629821108333,
+        "clearance": 0.8331609292111287
+      },
+      "minimum_clearance_m": 0.04165804646055644,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.04165804646055644,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.04165804646055644
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0009670464975202027,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0009670464975202027,
+              "table_minimum_clearance_m": 0.07638203842974785,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0970_i3_0800__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0970",
+      "inserter_grasp_id": "i3_0800__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8990121686544141,
+      "score_components": {
+        "holder": 0.8498036986453661,
+        "inserter": 0.9489629821108333,
+        "clearance": 0.8956716231412448
+      },
+      "minimum_clearance_m": 0.04478358115706224,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.04478358115706224,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.04478358115706224
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0009670658959688074,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0009670658959688074,
+              "table_minimum_clearance_m": 0.07638203842974785,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_5"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0837_i3_0167__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0837",
+      "inserter_grasp_id": "i3_0167__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9013510591772201,
+      "score_components": {
+        "holder": 0.854371313654583,
+        "inserter": 0.9768732736831534,
+        "clearance": 0.7729099487523878
+      },
+      "minimum_clearance_m": 0.03864549743761939,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.03864549743761939
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 8.31876755199995e-05,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 8.31876755199995e-05,
+              "table_minimum_clearance_m": 0.07674158767552,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.002965736253423539
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0990_i3_2114__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0990",
+      "inserter_grasp_id": "i3_2114__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8839814901048233,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.928087199109547,
+        "clearance": 0.8477291986542835
+      },
+      "minimum_clearance_m": 0.04238645993271418,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.04238645993271418,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.04238645993271418
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 6.084257577625735e-05,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 6.084257577625735e-05,
+              "table_minimum_clearance_m": 0.0764316780598691,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0970_i3_0808",
+      "holder_grasp_id": "h0970",
+      "inserter_grasp_id": "i3_0808",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8994450063402898,
+      "score_components": {
+        "holder": 0.8498036986453661,
+        "inserter": 0.9267407598886112,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.06155490938633385,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.06155490938633385,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.06155490938633385
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.001014930063583626,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.001014930063583626,
+              "table_minimum_clearance_m": 0.05591172447593469,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1241_i3_0360",
+      "holder_grasp_id": "h1241",
+      "inserter_grasp_id": "i3_0360",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9208031096009458,
+      "score_components": {
+        "holder": 0.8472066424913276,
+        "inserter": 0.9768002677329964,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05046003721405933,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.05046003721405933
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.0003766251367522677,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0003766251367522677,
+              "table_minimum_clearance_m": 0.07703502513675226,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.011866293272625486
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0988_i3_2122",
+      "holder_grasp_id": "h0988",
+      "inserter_grasp_id": "i3_2122",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8992085702393949,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.928087199109547,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05552997312498306,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.05552997312498306,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.05552997312498306
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.00010749928963889214,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.00010749928963889214,
+              "table_minimum_clearance_m": 0.05607685901626576,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0970_i3_2122__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0970",
+      "inserter_grasp_id": "i3_2122__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9000509039897109,
+      "score_components": {
+        "holder": 0.8498036986453661,
+        "inserter": 0.928087199109547,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.060075587779567015,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.060075587779567015,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.060075587779567015
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.00010748415600607377,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.00010748415600607377,
+              "table_minimum_clearance_m": 0.05607685901626577,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0837_i3_0360__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0837",
+      "inserter_grasp_id": "i3_0360__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9127295990768343,
+      "score_components": {
+        "holder": 0.854371313654583,
+        "inserter": 0.9768002677329964,
+        "clearance": 0.8870238745242354
+      },
+      "minimum_clearance_m": 0.04435119372621177,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.04435119372621177
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.0003766251367522677,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0003766251367522677,
+              "table_minimum_clearance_m": 0.07703502513675226,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.0031844906005800075
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0988_i3_0808__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0988",
+      "inserter_grasp_id": "i3_0808__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8986026725899738,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.9267407598886112,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05700929473174987,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.05700929473174987,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.05700929473174987
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0010149494620322027,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0010149494620322027,
+              "table_minimum_clearance_m": 0.05591172447593466,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0970_i3_0809",
+      "holder_grasp_id": "h0970",
+      "inserter_grasp_id": "i3_0809",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8994450063402898,
+      "score_components": {
+        "holder": 0.8498036986453661,
+        "inserter": 0.9267407598886112,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.06269202863965027,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.06269202863965027,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.06269202863965027
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0009356174661042447,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0009356174661042447,
+              "table_minimum_clearance_m": 0.02619896363509127,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0990_i3_1348",
+      "holder_grasp_id": "h0990",
+      "inserter_grasp_id": "i3_1348",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9189597630762406,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.9719787387469816,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.053992459064780174,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.053992459064780174,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.053992459064780174
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0004286579507552579,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0004286579507552579,
+              "table_minimum_clearance_m": 0.07534715950160872,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1263_i3_1798",
+      "holder_grasp_id": "h1263",
+      "inserter_grasp_id": "i3_1798",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8926096203296655,
+      "score_components": {
+        "holder": 0.8498639333784107,
+        "inserter": 0.9114907784652904,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05058779879965658,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.05058779879965658,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.05058779879965658
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.002829861782962166,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.002829861782962166,
+              "table_minimum_clearance_m": 0.07381556524028748,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1883_i3_1800__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1883",
+      "inserter_grasp_id": "i3_1800__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8921324168532337,
+      "score_components": {
+        "holder": 0.8488034812085623,
+        "inserter": 0.9114907784652904,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.06320787868006392,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.06320787868006392,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.06320787868006392
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0006768510842224094,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0006768510842224094,
+              "table_minimum_clearance_m": 0.02386180665566663,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1241_i3_1350__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1241",
+      "inserter_grasp_id": "i3_1350__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9186334215572391,
+      "score_components": {
+        "holder": 0.8472066424913276,
+        "inserter": 0.9719787387469816,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05257506959085085,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.05257506959085085
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.0015169557319235222,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0015169557319235222,
+              "table_minimum_clearance_m": 0.0781753557319235,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.005521520743021052
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0988_i3_0809__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0988",
+      "inserter_grasp_id": "i3_0809__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8986026725899738,
+      "score_components": {
+        "holder": 0.8479318458668863,
+        "inserter": 0.9267407598886112,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.058146413985066286,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.058146413985066286,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.058146413985066286
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0009356258449900142,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0009356258449900142,
+              "table_minimum_clearance_m": 0.02619896363509127,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1883_i3_1390",
+      "holder_grasp_id": "h1883",
+      "inserter_grasp_id": "i3_1390",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8965956863427703,
+      "score_components": {
+        "holder": 0.8488034812085623,
+        "inserter": 0.9214091551087052,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.061295701484171544,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.061295701484171544,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.061295701484171544
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0006752641045398958,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0006752641045398958,
+              "table_minimum_clearance_m": 0.05518113400440984,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1241_i3_1349",
+      "holder_grasp_id": "h1241",
+      "inserter_grasp_id": "i3_1349",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9186334215572391,
+      "score_components": {
+        "holder": 0.8472066424913276,
+        "inserter": 0.9719787387469816,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05249713351845441,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.05249713351845441
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.0018839371354919233,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0018839371354919233,
+              "table_minimum_clearance_m": 0.07653511306627292,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.012075741069976373
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1263_i3_1800",
+      "holder_grasp_id": "h1263",
+      "inserter_grasp_id": "i3_1800",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8926096203296655,
+      "score_components": {
+        "holder": 0.8498639333784107,
+        "inserter": 0.9114907784652904,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05260443029970323,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.05260443029970323,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.05260443029970323
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.000676898388983397,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.000676898388983397,
+              "table_minimum_clearance_m": 0.02386180665566663,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1883_i3_0249__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1883",
+      "inserter_grasp_id": "i3_0249__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8822003505099961,
+      "score_components": {
+        "holder": 0.8488034812085623,
+        "inserter": 0.903455816109818,
+        "clearance": 0.9368366671672501
+      },
+      "minimum_clearance_m": 0.046841833358362506,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.046841833358362506,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.046841833358362506
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0023118285802899573,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0023118285802899573,
+              "table_minimum_clearance_m": 0.07821649675887932,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_3",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_8"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1250_i3_1637__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1250",
+      "inserter_grasp_id": "i3_1637__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.9176295761930021,
+      "score_components": {
+        "holder": 0.8454469681133209,
+        "inserter": 0.9715076456489061,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.05764757698960432,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.05764757698960432
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.000724719925513093,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.000724719925513093,
+              "table_minimum_clearance_m": 0.07737539547451416,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.002689904304424673
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1263_i3_1390__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1263",
+      "inserter_grasp_id": "i3_1390__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8970728898192021,
+      "score_components": {
+        "holder": 0.8498639333784107,
+        "inserter": 0.9214091551087052,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.050692253103810855,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.050692253103810855,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.050692253103810855
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0006752944635753308,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0006752944635753308,
+              "table_minimum_clearance_m": 0.05518113400440984,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1883_i3_0770",
+      "holder_grasp_id": "h1883",
+      "inserter_grasp_id": "i3_0770",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8931199992409592,
+      "score_components": {
+        "holder": 0.8488034812085623,
+        "inserter": 0.9136854059935691,
+        "clearance": 1.0
+      },
+      "minimum_clearance_m": 0.06824738800362215,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.06824738800362215,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.06824738800362215
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "rejected",
+            "reason": "end_effector_sweep_collision",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.002104046872200434,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.002104046872200434,
+              "table_minimum_clearance_m": 0.06831086350012237,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": [
+                  "inserter_sweep_0",
+                  "inserter_sweep_1",
+                  "inserter_sweep_2",
+                  "inserter_sweep_3",
+                  "inserter_sweep_4",
+                  "inserter_sweep_5",
+                  "inserter_sweep_6",
+                  "inserter_sweep_7",
+                  "inserter_sweep_8",
+                  "inserter_sweep_9"
+                ],
+                "sampled_collision_diagnostic": false
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1071_i3_0801__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1071",
+      "inserter_grasp_id": "i3_0801__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8345480724526659,
+      "score_components": {
+        "holder": 0.8485993806944242,
+        "inserter": 0.9267407598886112,
+        "clearance": 0.3564500919029995
+      },
+      "minimum_clearance_m": 0.017822504595149974,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.017822504595149974,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.017822504595149974
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0008822093285586024,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0008822093285586024,
+              "table_minimum_clearance_m": 0.07670425717296832,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1071_i3_0802__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1071",
+      "inserter_grasp_id": "i3_0802__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8351300095991973,
+      "score_components": {
+        "holder": 0.8485993806944242,
+        "inserter": 0.9267407598886112,
+        "clearance": 0.3622694633683134
+      },
+      "minimum_clearance_m": 0.018113473168415672,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.018113473168415672,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.018113473168415672
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.0015346033577869516,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0015346033577869516,
+              "table_minimum_clearance_m": 0.07736137744841226,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": true,
+                "aabb_distance_lower_bound_m": 0.0036778898402033966
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1922_i3_1675",
+      "holder_grasp_id": "h1922",
+      "inserter_grasp_id": "i3_1675",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8405137160691799,
+      "score_components": {
+        "holder": 0.8488005295211313,
+        "inserter": 0.9181167881155614,
+        "clearance": 0.45400923132668236
+      },
+      "minimum_clearance_m": 0.02270046156633412,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.02270046156633412,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.02270046156633412
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0003439710338332093,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0003439710338332093,
+              "table_minimum_clearance_m": 0.07685484002636567,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1819_i3_1794",
+      "holder_grasp_id": "h1819",
+      "inserter_grasp_id": "i3_1794",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8426633587835652,
+      "score_components": {
+        "holder": 0.8508019597307348,
+        "inserter": 0.9114907784652904,
+        "clearance": 0.49631626595353917
+      },
+      "minimum_clearance_m": 0.02481581329767696,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.02481581329767696
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.001021346781966752,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.001021346781966752,
+              "table_minimum_clearance_m": 0.07575791334702828,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1072_i3_0506__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1072",
+      "inserter_grasp_id": "i3_0506__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8255989134165553,
+      "score_components": {
+        "holder": 0.8485993806944242,
+        "inserter": 0.9078048873804098,
+        "clearance": 0.3521699278288002
+      },
+      "minimum_clearance_m": 0.01760849639144001,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.01760849639144001,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.01760849639144001
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0010876289778020487,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0010876289778020487,
+              "table_minimum_clearance_m": 0.0776238772498293,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1923_i3_0251__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1923",
+      "inserter_grasp_id": "i3_0251__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8241877049641618,
+      "score_components": {
+        "holder": 0.8488005295211313,
+        "inserter": 0.903455816109818,
+        "clearance": 0.3567234943023465
+      },
+      "minimum_clearance_m": 0.017836174715117326,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.017836174715117326,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.017836174715117326
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0027647661376587074,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0027647661376587074,
+              "table_minimum_clearance_m": 0.07934380811123604,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1819_i3_0825__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1819",
+      "inserter_grasp_id": "i3_0825__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8436656809532352,
+      "score_components": {
+        "holder": 0.8508019597307348,
+        "inserter": 0.9004953301300467,
+        "clearance": 0.5558190051588358
+      },
+      "minimum_clearance_m": 0.02779095025794179,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.02779095025794179
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.00042324979353229673,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.00042324979353229673,
+              "table_minimum_clearance_m": 0.07504756838636784,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h0192_i3_0252__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h0192",
+      "inserter_grasp_id": "i3_0252__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8326555830417329,
+      "score_components": {
+        "holder": 0.847251433041299,
+        "inserter": 0.903455816109818,
+        "clearance": 0.44837320923730245
+      },
+      "minimum_clearance_m": 0.022418660461865123,
+      "collision_check": "exact_fcl",
+      "details": {
+        "minimum_clearance_is_lower_bound": false,
+        "aabb_distance_lower_bound_m": 0.0,
+        "colliding_inserter_sweep_primitives": [],
+        "compatible_transition_ids": [
+          "tr_identity__part_identity",
+          "tr_identity__part_object_z_bounds_center_order2_step1"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.022418660461865123
+          },
+          "tr_identity__part_object_z_bounds_center_order2_step1": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "transformed_corridor_fcl",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "exact_fcl",
+            "minimum_clearance_m": 0.0038468202969191953,
+            "details": {
+              "assembled_prefix_obstacle_part_ids": [],
+              "assembled_prefix_minimum_clearance_m": 0.0038468202969191953,
+              "table_minimum_clearance_m": 0.08048579392387581,
+              "insertion_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.005049999999999999
+              ],
+              "retreat_translation_assembly_m": [
+                0.0,
+                0.0,
+                0.05
+              ],
+              "holder_pair": {
+                "minimum_clearance_is_lower_bound": false,
+                "aabb_distance_lower_bound_m": 0.0,
+                "colliding_inserter_sweep_primitives": []
+              }
+            }
+          }
+        },
+        "transition_validation_policy": "identity inherits canonical checks; every nonidentity corridor is rechecked against the assembled prefix, table, and selected holder gripper"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_0167",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_0167",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8577705588596216,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9768732736831534,
+        "clearance": 0.31003469162356384
+      },
+      "minimum_clearance_m": 0.015501734581178192,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.015501734581178192,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.015501734581178192
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_0167__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_0167__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8568959061049017,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9768732736831534,
+        "clearance": 0.3012881640763654
+      },
+      "minimum_clearance_m": 0.01506440820381827,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.01506440820381827,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.01506440820381827
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_0360",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_0360",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8635688239191345,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9768002677329964,
+        "clearance": 0.36834586899439886
+      },
+      "minimum_clearance_m": 0.018417293449719943,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.018417293449719943,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.018417293449719943
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_0360__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_0360__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8551002870095242,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9768002677329964,
+        "clearance": 0.2836604998982961
+      },
+      "minimum_clearance_m": 0.014183024994914806,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.014183024994914806,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.014183024994914806
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_1348",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_1348",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8617783115008406,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9719787387469816,
+        "clearance": 0.3721376252485268
+      },
+      "minimum_clearance_m": 0.01860688126242634,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.01860688126242634,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.01860688126242634
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_1349",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_1349",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8624609054925323,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9719787387469816,
+        "clearance": 0.37896356516544316
+      },
+      "minimum_clearance_m": 0.01894817825827216,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.01894817825827216,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.01894817825827216
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_1350__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_1350__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.856257045648188,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9719787387469816,
+        "clearance": 0.3169249667220006
+      },
+      "minimum_clearance_m": 0.01584624833610003,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.01584624833610003,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.01584624833610003
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    },
+    {
+      "pair_id": "p002_h1208_i3_1637__sym_object_z_bounds_center_order2_step1",
+      "holder_grasp_id": "h1208",
+      "inserter_grasp_id": "i3_1637__sym_object_z_bounds_center_order2_step1",
+      "status": "accepted",
+      "reason": "accepted",
+      "score": 0.8574087878687701,
+      "score_components": {
+        "holder": 0.8603869256441027,
+        "inserter": 0.9715076456489061,
+        "clearance": 0.33056230786916135
+      },
+      "minimum_clearance_m": 0.016528115393458068,
+      "collision_check": "aabb_separation_proof",
+      "details": {
+        "minimum_clearance_is_lower_bound": true,
+        "aabb_distance_lower_bound_m": 0.016528115393458068,
+        "compatible_transition_ids": [
+          "tr_identity__part_identity"
+        ],
+        "transition_validation": {
+          "tr_identity__part_identity": {
+            "status": "accepted",
+            "reason": "accepted",
+            "validation_source": "canonical_unary_and_pair_collision_checks",
+            "gripper_sweep_checked": true,
+            "assembled_prefix_checked": true,
+            "table_checked": true,
+            "holder_gripper_checked": true,
+            "robot_path_checked": false,
+            "collision_check": "aabb_separation_proof",
+            "minimum_clearance_m": 0.016528115393458068
+          }
+        },
+        "transition_validation_policy": "non-retained pairs remain identity-only; nonidentity corridors are validated only for the bounded retained fallback set"
+      }
+    }
+  ],
+  "retained_pair_ids": [
+    "p002_h1241_i3_0167",
+    "p002_h0990_i3_0800",
+    "p002_h0970_i3_0800__sym_object_z_bounds_center_order2_step1",
+    "p002_h0837_i3_0167__sym_object_z_bounds_center_order2_step1",
+    "p002_h0990_i3_2114__sym_object_z_bounds_center_order2_step1",
+    "p002_h0970_i3_0808",
+    "p002_h1241_i3_0360",
+    "p002_h0988_i3_2122",
+    "p002_h0970_i3_2122__sym_object_z_bounds_center_order2_step1",
+    "p002_h0837_i3_0360__sym_object_z_bounds_center_order2_step1",
+    "p002_h0988_i3_0808__sym_object_z_bounds_center_order2_step1",
+    "p002_h0970_i3_0809",
+    "p002_h0990_i3_1348",
+    "p002_h1263_i3_1798",
+    "p002_h1883_i3_1800__sym_object_z_bounds_center_order2_step1",
+    "p002_h1241_i3_1350__sym_object_z_bounds_center_order2_step1",
+    "p002_h0988_i3_0809__sym_object_z_bounds_center_order2_step1",
+    "p002_h1883_i3_1390",
+    "p002_h1241_i3_1349",
+    "p002_h1263_i3_1800",
+    "p002_h1883_i3_0249__sym_object_z_bounds_center_order2_step1",
+    "p002_h1250_i3_1637__sym_object_z_bounds_center_order2_step1",
+    "p002_h1263_i3_1390__sym_object_z_bounds_center_order2_step1",
+    "p002_h1883_i3_0770",
+    "p002_h1071_i3_0801__sym_object_z_bounds_center_order2_step1",
+    "p002_h1071_i3_0802__sym_object_z_bounds_center_order2_step1",
+    "p002_h1922_i3_1675",
+    "p002_h1072_i3_0506__sym_object_z_bounds_center_order2_step1",
+    "p002_h1819_i3_1794",
+    "p002_h1923_i3_0251__sym_object_z_bounds_center_order2_step1",
+    "p002_h0192_i3_0252__sym_object_z_bounds_center_order2_step1",
+    "p002_h1819_i3_0825__sym_object_z_bounds_center_order2_step1"
+  ],
+  "retained_execution_candidate_ids": [
+    "p002_h1241_i3_0360__tr_identity__part_identity",
+    "p002_h0990_i3_1348__tr_identity__part_identity",
+    "p002_h1241_i3_1349__tr_identity__part_identity",
+    "p002_h1241_i3_1350__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1250_i3_1637__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1241_i3_0167__tr_identity__part_identity",
+    "p002_h0837_i3_0360__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0837_i3_0167__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0970_i3_2122__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0970_i3_0808__tr_identity__part_identity",
+    "p002_h0970_i3_0809__tr_identity__part_identity",
+    "p002_h0988_i3_2122__tr_identity__part_identity",
+    "p002_h0970_i3_0800__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0988_i3_0808__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0988_i3_0809__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1263_i3_1390__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1883_i3_1390__tr_identity__part_identity",
+    "p002_h1883_i3_0770__tr_identity__part_identity",
+    "p002_h1263_i3_1798__tr_identity__part_identity",
+    "p002_h1263_i3_1800__tr_identity__part_identity",
+    "p002_h1883_i3_1800__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0990_i3_0800__tr_identity__part_identity",
+    "p002_h0990_i3_2114__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1922_i3_1675__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1883_i3_0249__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1819_i3_0825__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1819_i3_1794__tr_identity__part_identity",
+    "p002_h1922_i3_1675__tr_identity__part_identity",
+    "p002_h1071_i3_0802__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1071_i3_0801__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h0192_i3_0252__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1072_i3_0506__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1923_i3_0251__sym_object_z_bounds_center_order2_step1__tr_identity__part_identity",
+    "p002_h1241_i3_0360__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h0990_i3_1348__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h1241_i3_1349__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h1241_i3_1350__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h1250_i3_1637__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h1241_i3_0167__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h0837_i3_0360__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h0837_i3_0167__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h0990_i3_0800__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h0990_i3_2114__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1",
+    "p002_h1922_i3_1675__sym_object_z_bounds_center_order2_step1__tr_identity__part_object_z_bounds_center_order2_step1"
+  ]
+}
