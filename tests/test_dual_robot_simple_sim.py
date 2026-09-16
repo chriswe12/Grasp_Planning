@@ -36,6 +36,7 @@ from grasp_planning.pipeline.dual_robot_simple_sim import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DUAL_ARTIFACT_DIR = REPO_ROOT / "tests/fixtures/dual_grasp_planning/plumbers_block"
 
 
 def test_runtime_holder_pregrasp_matches_offline_feasibility_config() -> None:
@@ -178,7 +179,7 @@ def test_pickup_pregrasp_offset_must_remain_positive() -> None:
 
 def test_shorter_pickup_pregrasp_is_serialized_without_changing_other_targets() -> None:
     task = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         retained_only=True,
     )[0]
     original_payload = task.to_payload()
@@ -277,6 +278,7 @@ def test_selected_order_request_resolves_every_plumbers_block_step() -> None:
         selection = resolve_dual_robot_step_selection(
             assembly="plumbers_block",
             incoming_part_id=incoming_part_id,
+            artifact_root=DUAL_ARTIFACT_DIR.parent,
         )
         assert selection.base_part_id == "2"
         assert selection.step_id == step_id
@@ -592,7 +594,7 @@ def test_simple_dual_sim_scripts_keep_moveit_and_physics_responsibilities_separa
 def test_default_supported_layout_places_both_object_aabbs_on_lowered_floor() -> None:
     floor_z = -0.030
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         assembly_world=MovableFrame((0.55, 0.0, floor_z), 0.0),
         pickup_floor_z_world_m=floor_z,
@@ -639,7 +641,7 @@ def test_default_supported_layout_places_both_object_aabbs_on_lowered_floor() ->
 
 def test_runtime_task_can_swap_holder_and_inserter_robot_assignments() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         pickup_source_world_xy=(0.55, -0.26),
         holder_robot_name="lbr_two",
@@ -667,7 +669,7 @@ def test_runtime_task_can_swap_holder_and_inserter_robot_assignments() -> None:
 
 def test_pregrasp_aabb_pieces_exclude_selected_gripper_sweeps() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         retained_only=True,
     )
@@ -699,7 +701,7 @@ def test_pregrasp_aabb_pieces_exclude_selected_gripper_sweeps() -> None:
 
 def test_simple_dual_sim_filters_and_records_grounded_pickup_floor_clearance() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         retained_only=False,
     )
@@ -722,7 +724,7 @@ def test_simple_dual_sim_filters_and_records_grounded_pickup_floor_clearance() -
 def test_exact_pickup_aliases_follow_unchanged_direct_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    artifact_dir = REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"
+    artifact_dir = DUAL_ARTIFACT_DIR
     tasks = load_simple_dual_robot_pair_tasks(
         artifact_dir=artifact_dir,
         step_id="step_001_part_0",
@@ -781,7 +783,7 @@ def test_exact_pickup_aliases_are_considered_for_every_incoming_part(
     incoming_part_id: str,
 ) -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block",
+        artifact_dir=DUAL_ARTIFACT_DIR,
         step_id=step_id,
         pickup_orientation_rpy_deg=(0.0, 0.0, 0.0),
         retained_only=True,
@@ -818,7 +820,7 @@ def test_exact_pickup_aliases_are_considered_for_every_incoming_part(
 
 def test_part0_roll_pickup_uses_exact_symmetry_bridge_and_preserves_stage3_tcp() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         pickup_orientation_rpy_deg=(90.0, 0.0, 0.0),
         retained_only=True,
@@ -858,7 +860,7 @@ def test_part0_roll_pickup_uses_exact_symmetry_bridge_and_preserves_stage3_tcp()
 def test_empty_pickup_floor_queue_preserves_filter_diagnostics() -> None:
     try:
         load_simple_dual_robot_pair_tasks(
-            artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+            artifact_dir=(DUAL_ARTIFACT_DIR),
             step_id="step_001_part_0",
             retained_only=False,
             pickup_floor_clearance_margin_m=10.0,
@@ -878,7 +880,7 @@ def test_empty_pickup_floor_queue_preserves_filter_diagnostics() -> None:
 
 
 def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -> None:
-    artifact_dir = REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"
+    artifact_dir = DUAL_ARTIFACT_DIR
     retained = load_simple_dual_robot_pair_tasks(
         artifact_dir=artifact_dir,
         step_id="step_001_part_0",
@@ -936,7 +938,7 @@ def test_runtime_queue_uses_strict_clear_phase_then_only_validated_fallbacks() -
 
 def test_later_step_task_contains_the_offline_checked_assembled_prefix() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_003_part_1",
         retained_only=True,
     )
@@ -961,7 +963,7 @@ def test_later_step_task_contains_the_offline_checked_assembled_prefix() -> None
 def test_task_expansion_uses_only_pair_compatible_transitions(
     monkeypatch,
 ) -> None:
-    artifact_dir = REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"
+    artifact_dir = DUAL_ARTIFACT_DIR
     step_id = "step_001_part_0"
     baseline = load_simple_dual_robot_pair_tasks(
         artifact_dir=artifact_dir,
@@ -1047,7 +1049,7 @@ def test_task_expansion_uses_only_pair_compatible_transitions(
 
 def test_current_lowered_table_pickup_pose_keeps_feasible_pairs() -> None:
     tasks = load_simple_dual_robot_pair_tasks(
-        artifact_dir=(REPO_ROOT / "artifacts/dual_grasp_planning/plumbers_block"),
+        artifact_dir=(DUAL_ARTIFACT_DIR),
         step_id="step_001_part_0",
         pickup_source_world_xy=(0.39187130331993103, 0.028867240995168686),
         pickup_orientation_rpy_deg=(
