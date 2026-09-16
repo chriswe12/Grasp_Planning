@@ -27,9 +27,7 @@ parser.add_argument(
 parser.add_argument(
     "--part-usd",
     type=Path,
-    default=Path(
-        "artifacts/isaac_bundle_assets/pipeline_stage2_ground_feasible_bundle_local.usd"
-    ),
+    default=Path("artifacts/isaac_bundle_assets/pipeline_stage2_ground_feasible_bundle_local.usd"),
 )
 parser.add_argument("--camera-width", type=int, default=640)
 parser.add_argument("--camera-height", type=int, default=480)
@@ -94,9 +92,7 @@ def main() -> None:
     }
     missing = sorted(required.difference(arrays))
     if missing:
-        raise ValueError(
-            f"{episode_path} lacks {missing}; use data from the batched curriculum collector."
-        )
+        raise ValueError(f"{episode_path} lacks {missing}; use data from the batched curriculum collector.")
 
     robot_usd = args_cli.robot_usd.resolve()
     part_usd = args_cli.part_usd.resolve()
@@ -147,9 +143,7 @@ def main() -> None:
     zero_part_velocity = torch.zeros((1, 6), dtype=torch.float32, device=sim.device)
     overview_frames: list[np.ndarray] = []
     for step_index, joint_positions in enumerate(arrays["joint_positions"]):
-        q_arm = torch.tensor(
-            joint_positions[None, :], dtype=torch.float32, device=sim.device
-        )
+        q_arm = torch.tensor(joint_positions[None, :], dtype=torch.float32, device=sim.device)
         robot.write_joint_state_to_sim(
             q_arm,
             zero_arm_velocity,

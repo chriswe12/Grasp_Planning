@@ -15,10 +15,13 @@ from grasp_planning.isaac_visual_materials import (
     VISUAL_SERVO_CONTACT_PAD_ROUGHNESS,
     VISUAL_SERVO_FINGER_COLOR,
     VISUAL_SERVO_FINGER_ROUGHNESS,
+    VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS,
     VISUAL_SERVO_MATERIAL_PROFILE,
     VISUAL_SERVO_PART_COLOR,
     VISUAL_SERVO_PART_ROUGHNESS,
     classify_robot_finger_geometry_material,
+    get_gripper_appearance_variant,
+    nearest_gripper_appearance_variant,
 )
 from grasp_planning.isaac_visual_scene import (
     VISUAL_SERVO_DIRECT_LIGHT_SAMPLES,
@@ -98,30 +101,45 @@ def test_finger_material_classifier_binds_leaf_pad_geometry_white() -> None:
     root = "/World/envs/env_0/Robot/pdz_gripper_left_finger_link"
     assert classify_robot_finger_geometry_material(root, "Xform") is None
     assert (
-        classify_robot_finger_geometry_material(
-            f"{root}/visuals/left_finger/node_STL_BINARY_0", "Mesh"
-        )
-        == "black_pla"
+        classify_robot_finger_geometry_material(f"{root}/visuals/left_finger/node_STL_BINARY_0", "Mesh") == "black_pla"
     )
     assert (
-        classify_robot_finger_geometry_material(
-            f"{root}/visuals/left_tpu_pad/node_STL_BINARY_0", "Mesh"
-        )
+        classify_robot_finger_geometry_material(f"{root}/visuals/left_tpu_pad/node_STL_BINARY_0", "Mesh")
         == "white_contact_pad"
     )
     assert (
-        classify_robot_finger_geometry_material(
-            "/World/envs/env_0/Robot/link7/visuals/node_STL_BINARY_0", "Mesh"
-        )
+        classify_robot_finger_geometry_material("/World/envs/env_0/Robot/link7/visuals/node_STL_BINARY_0", "Mesh")
         is None
     )
 
 
-def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:
-    urdf = (
-        Path(__file__).resolve().parents[1]
-        / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
+def test_instanced_pdz_gripper_variants_preserve_black_white_identity() -> None:
+    variants = VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS
+    assert len(variants) == 9
+    assert len({variant.name for variant in variants}) == len(variants)
+    canonical = get_gripper_appearance_variant("canonical")
+    assert canonical.finger_color == VISUAL_SERVO_FINGER_COLOR
+    assert canonical.pad_color == VISUAL_SERVO_CONTACT_PAD_COLOR
+    for variant in variants:
+        assert max(variant.finger_color) <= 0.07
+        assert min(variant.pad_color) > 0.80
+        assert 0.0 <= variant.finger_roughness <= 1.0
+        assert 0.0 <= variant.pad_roughness <= 1.0
+
+
+def test_continuous_gripper_sample_quantizes_to_authored_variant() -> None:
+    expected = get_gripper_appearance_variant("bright_matte_warm")
+    selected = nearest_gripper_appearance_variant(
+        finger_color=expected.finger_color,
+        finger_roughness=expected.finger_roughness,
+        pad_color=expected.pad_color,
+        pad_roughness=expected.pad_roughness,
     )
+    assert selected == expected
+
+
+def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:
+    urdf = Path(__file__).resolve().parents[1] / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
     root = ET.parse(urdf).getroot()
     observed: dict[str, tuple[float, float, float]] = {}
     for link_name in (
@@ -134,8 +152,6 @@ def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:
             material = visual.find("material")
             color = visual.find("material/color")
             assert material is not None and color is not None
-            observed[str(material.get("name"))] = tuple(
-                float(value) for value in str(color.get("rgba")).split()[:3]
-            )
+            observed[str(material.get("name"))] = tuple(float(value) for value in str(color.get("rgba")).split()[:3])
     assert observed["pdz_finger_black"] == VISUAL_SERVO_FINGER_COLOR
     assert observed["pdz_contact_white"] == VISUAL_SERVO_CONTACT_PAD_COLOR

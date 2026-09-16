@@ -75,10 +75,7 @@ class VisualServoCurriculumConfig:
     @property
     def step_count(self) -> int:
         total_duration_s = (
-            self.capture_duration_s
-            + self.approach_duration_s
-            + self.settle_duration_s
-            + self.precision_duration_s
+            self.capture_duration_s + self.approach_duration_s + self.settle_duration_s + self.precision_duration_s
         )
         return max(2, int(round(total_duration_s * self.policy_hz)) + 1)
 
@@ -146,9 +143,7 @@ def interpolate_pose(
         quaternion = _normalize_quaternion_xyzw((1.0 - alpha) * q0 + alpha * q1)
     else:
         angle = float(np.arccos(dot))
-        quaternion = (
-            np.sin((1.0 - alpha) * angle) * q0 + np.sin(alpha * angle) * q1
-        ) / np.sin(angle)
+        quaternion = (np.sin((1.0 - alpha) * angle) * q0 + np.sin(alpha * angle) * q1) / np.sin(angle)
     return (1.0 - alpha) * start_position + alpha * goal_position, quaternion
 
 
@@ -220,41 +215,26 @@ def alignment_funnel_expert_twist(
     """
 
     progress = float(np.clip(trajectory_progress, 0.0, 1.0))
-    near_phase = _smoothstep01(
-        (progress - config.funnel_near_progress) / (1.0 - config.funnel_near_progress)
-    )
-    rotation_world_from_grasp = _rotation_matrix_from_quaternion_xyzw(
-        grasp_orientation_xyzw
-    )
+    near_phase = _smoothstep01((progress - config.funnel_near_progress) / (1.0 - config.funnel_near_progress))
+    rotation_world_from_grasp = _rotation_matrix_from_quaternion_xyzw(grasp_orientation_xyzw)
     position_error_world = np.asarray(pose_error[:3], dtype=np.float64)
     position_error_grasp = rotation_world_from_grasp.T @ position_error_world
     transverse_error = position_error_grasp[:2]
     transverse_error_norm = float(np.linalg.norm(transverse_error))
 
-    half_width = (
-        config.funnel_far_half_width_m * (1.0 - near_phase)
-        + config.funnel_near_half_width_m * near_phase
-    )
+    half_width = config.funnel_far_half_width_m * (1.0 - near_phase) + config.funnel_near_half_width_m * near_phase
     if transverse_error_norm <= half_width or transverse_error_norm <= 1.0e-12:
         controlled_transverse_error = np.zeros(2, dtype=np.float64)
     else:
-        controlled_transverse_error = transverse_error * (
-            (transverse_error_norm - half_width) / transverse_error_norm
-        )
+        controlled_transverse_error = transverse_error * ((transverse_error_norm - half_width) / transverse_error_norm)
 
     translation_gain = (
-        config.funnel_far_translation_gain * (1.0 - near_phase)
-        + config.funnel_near_translation_gain * near_phase
+        config.funnel_far_translation_gain * (1.0 - near_phase) + config.funnel_near_translation_gain * near_phase
     )
-    rotation_gain = (
-        config.funnel_far_rotation_gain * (1.0 - near_phase)
-        + config.funnel_near_rotation_gain * near_phase
-    )
+    rotation_gain = config.funnel_far_rotation_gain * (1.0 - near_phase) + config.funnel_near_rotation_gain * near_phase
     controlled_position_error_grasp = position_error_grasp.copy()
     controlled_position_error_grasp[:2] = controlled_transverse_error
-    correction_world = rotation_world_from_grasp @ (
-        translation_gain * controlled_position_error_grasp
-    )
+    correction_world = rotation_world_from_grasp @ (translation_gain * controlled_position_error_grasp)
 
     corridor_excess = max(0.0, transverse_error_norm - half_width)
     slow_excess = max(
@@ -270,22 +250,14 @@ def alignment_funnel_expert_twist(
     elif corridor_excess >= stop_excess:
         approach_scale = 0.0
     else:
-        approach_scale = 1.0 - (
-            corridor_excess - slow_excess
-        ) / (stop_excess - slow_excess)
+        approach_scale = 1.0 - (corridor_excess - slow_excess) / (stop_excess - slow_excess)
         approach_scale = _smoothstep01(approach_scale)
 
     nominal = np.asarray(nominal_twist, dtype=np.float64).copy()
     nominal[:3] *= approach_scale
-    measured = (
-        nominal.copy()
-        if measured_twist is None
-        else np.asarray(measured_twist, dtype=np.float64)
-    )
+    measured = nominal.copy() if measured_twist is None else np.asarray(measured_twist, dtype=np.float64)
     velocity_error = nominal - measured
-    residual_raw = np.concatenate(
-        (correction_world, rotation_gain * np.asarray(pose_error[3:], dtype=np.float64))
-    )
+    residual_raw = np.concatenate((correction_world, rotation_gain * np.asarray(pose_error[3:], dtype=np.float64)))
     residual_raw[:3] += config.funnel_linear_derivative_gain * velocity_error[:3]
     residual_raw[3:] += config.funnel_angular_derivative_gain * velocity_error[3:]
     full = clamp_twist(
@@ -319,10 +291,8 @@ def precision_docking_expert_twist(
     measured = np.asarray(measured_twist, dtype=np.float64)
     command = np.concatenate(
         (
-            config.precision_translation_gain * error[:3]
-            - config.precision_linear_derivative_gain * measured[:3],
-            config.precision_rotation_gain * error[3:]
-            - config.precision_angular_derivative_gain * measured[3:],
+            config.precision_translation_gain * error[:3] - config.precision_linear_derivative_gain * measured[:3],
+            config.precision_rotation_gain * error[3:] - config.precision_angular_derivative_gain * measured[3:],
         )
     )
     command = clamp_twist(

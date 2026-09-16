@@ -17,6 +17,10 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
 ## Domain awareness
 
+Follow the repository's documentation ownership and handoff rules when choosing where to record decisions. In this repository, use the companion-wiki changelog process for wiki-owned knowledge; do not create parallel CONTEXT.md or ADR files for that knowledge unless the user explicitly requests it.
+
+The CONTEXT.md and ADR workflow below applies to repository-owned documentation where those rules permit it. An explicitly requested read-only interview or audit must remain read-only.
+
 During codebase exploration, also look for existing documentation:
 
 ### File structure

@@ -1,0 +1,4903 @@
+{
+  "schema_version": 2,
+  "target": {
+    "mesh_path": "obj/fabrica/plumbers_block/4.obj",
+    "mesh_scale": 0.01,
+    "source_frame_origin_obj_world": [
+      0.04000003748376892,
+      0.0012657693058621112,
+      0.08086564763352877
+    ],
+    "source_frame_orientation_xyzw_obj_world": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "stl_path": "obj/fabrica/plumbers_block/4.obj",
+    "stl_scale": 0.01,
+    "local_frame_origin_world": [
+      0.04000003748376892,
+      0.0012657693058621112,
+      0.08086564763352877
+    ],
+    "local_frame_orientation_xyzw_world": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "metadata": {
+    "robot_model": "kuka_iiwa7",
+    "gripper_model": "kuka_y_gripper",
+    "tcp_link": "gripper_tcp",
+    "tcp_offset_m": [
+      0.0,
+      0.0,
+      0.1455
+    ],
+    "assembly_glob": null,
+    "assembly_obstacle_mode": "explicit",
+    "assembly_obstacle_sweep_vector_m": [
+      -0.0,
+      0.0,
+      -0.0505
+    ],
+    "assembly_obstacle_sweep_distance_m": 0.0505,
+    "assembly_obstacle_metadata": {
+      "assembly": "plumbers_block",
+      "step_id": "step_004_part_4",
+      "incoming_part_id": "4",
+      "assembled_part_ids_before": [
+        "2",
+        "0",
+        "3",
+        "1"
+      ],
+      "motion_equivalence": "incoming gripper moves final_to_pre while static assembly is swept by pre_to_final"
+    },
+    "collision_backend": "trimesh_fcl",
+    "gripper_collision_model": "kuka_y_gripper",
+    "stage1_collision_checks_skipped": true,
+    "stage1_cache_enabled": true,
+    "stage1_cache_hit": true,
+    "stage1_cache_path": "artifacts/dual_grasp_planning/stage1_cache/obj_fabrica_plumbers_block_4_44d81535d5d84857.json",
+    "stage1_cache_key": "44d81535d5d84857eeeb614cabeaa976358d726775cef59e743d2b3048ae3d27",
+    "grasp_scoring_algorithm": "pad_footprint_v1",
+    "num_surface_samples": 1024,
+    "surface_sample_count": 1024,
+    "raw_candidate_count": 31116,
+    "assembly_feasible_count": 5186,
+    "scored_feasible_count": 5186,
+    "assembly_obstacle_paths": [],
+    "contact_lateral_offsets_m": [
+      -0.002916666666666667,
+      0.0,
+      0.002916666666666667
+    ],
+    "contact_approach_offsets_m": [
+      -0.0030833333333333333,
+      0.0,
+      0.0030833333333333333
+    ],
+    "upright_approach_axes_obj": [
+      [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    ],
+    "stage1_cache_base_upright_approach_axes_obj": [
+      [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    ],
+    "stage1_cache_pose_upright_axes_obj": [],
+    "stage1_cache_augmented": false,
+    "stage1_cache_augmented_raw_candidate_count": 0,
+    "stage1_cache_augmented_assembly_feasible_count": 0,
+    "symmetry_pickup_enabled": true,
+    "symmetry_pickup_load_status": "loaded",
+    "symmetry_pickup_source_path": "assets/obj/fabrica/plumbers_block/symmetries.json",
+    "symmetry_pickup_asset_mesh_scale": 0.01,
+    "symmetry_pickup_translation_scale": 1.0,
+    "symmetry_pickup_source_candidate_count": 5186,
+    "symmetry_pickup_transform_count": 6,
+    "symmetry_pickup_transform_names": [
+      "identity",
+      "object_z_bounds_center_order2_step1",
+      "object_z_bounds_center_order3_step1",
+      "object_z_bounds_center_order3_step2",
+      "object_z_bounds_center_order6_step1",
+      "object_z_bounds_center_order6_step5"
+    ],
+    "symmetry_pickup_expanded_candidate_count": 31116,
+    "symmetry_pickup_derived_candidate_count": 25930,
+    "symmetry_pickup_deduplicated_candidate_count": 0,
+    "artifact_kind": "inserter_candidate_library",
+    "planning_stage": "dual_robot_stage_3_unary",
+    "generated_by": "scripts/build_dual_grasp_pairs.py",
+    "assembly": "plumbers_block",
+    "step_id": "step_004_part_4",
+    "incoming_part_id": "4",
+    "assembled_part_ids_before": [
+      "2",
+      "0",
+      "3",
+      "1"
+    ],
+    "assembly_insertion_feasible_count": 31116,
+    "table_retreat_feasible_count": 512,
+    "adaptive_inserter_shortlist": true,
+    "adaptive_inserter_shortlist_limit": 512,
+    "balance_inserter_approach_directions": true,
+    "balance_inserter_symmetry_transforms": true,
+    "accepted_approach_direction_counts_assembly": {
+      "+x": 1,
+      "+y": 20,
+      "-x": 66,
+      "-y": 28,
+      "-z": 397
+    },
+    "accepted_symmetry_transform_counts": {
+      "identity": 85,
+      "object_z_bounds_center_order2_step1": 79,
+      "object_z_bounds_center_order3_step1": 94,
+      "object_z_bounds_center_order3_step2": 86,
+      "object_z_bounds_center_order6_step1": 90,
+      "object_z_bounds_center_order6_step5": 78
+    },
+    "prefer_aabb_clear_inserter_candidates": true,
+    "tight_geometry_deferred_count": 18404,
+    "expensive_candidate_check_count": 12088,
+    "candidate_ids_renamed": true,
+    "table_filter_applied": true,
+    "retreat_filter_applied": true,
+    "pair_filter_applied": false,
+    "insertion_translation_assembly_m": [
+      0.0,
+      0.0,
+      0.0505
+    ],
+    "retreat_translation_assembly_m": [
+      0.0,
+      0.0,
+      0.05
+    ]
+  },
+  "candidates": [
+    {
+      "grasp_id": "i4_1150__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0007064791666201334,
+          1.6046375438417762e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          -0.020671156058523727,
+          0.9912293271194788,
+          0.0025226905403562807,
+          0.13050195553288535
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0012267364131319956,
+          -0.012482285430503545,
+          0.006258150103556754
+        ],
+        [
+          0.00018622192010827113,
+          0.01248549470559123,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1150",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1150__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_1150__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0007065541341579776,
+          -1.5432492680734836e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          0.9912293271194788,
+          0.020671156058523727,
+          -0.13050195553288535,
+          0.0025226905403562807
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0012268113806698398,
+          0.012482346818779314,
+          0.006258150103556754
+        ],
+        [
+          -0.00018629688764611532,
+          -0.012485433317315461,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1150",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1150__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_1151__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0007064791666201334,
+          1.6046375438417762e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          -0.020823588643261552,
+          0.9997831461486051,
+          -0.00019701871603299207,
+          4.103526563349293e-06
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0012267364131319956,
+          -0.012482285430503545,
+          0.006258150103556754
+        ],
+        [
+          0.00018622192010827113,
+          0.01248549470559123,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1151",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1151__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_1151__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0007065541341579776,
+          -1.5432492680734836e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          0.9997831461486051,
+          0.020823588643261552,
+          -4.103526563349293e-06,
+          -0.00019701871603299207
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0012268113806698398,
+          0.012482346818779314,
+          0.006258150103556754
+        ],
+        [
+          -0.00018629688764611532,
+          -0.012485433317315461,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1151",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1151__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_1152__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0007064791666201334,
+          1.6046375438417762e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          -0.020619723852923592,
+          0.9912303983548728,
+          -0.0029133569275669896,
+          -0.13049381869223586
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0012267364131319956,
+          -0.012482285430503545,
+          0.006258150103556754
+        ],
+        [
+          0.00018622192010827113,
+          0.01248549470559123,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1152",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1152__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_1152__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0007065541341579776,
+          -1.5432492680734836e-06,
+          0.006253225645714512
+        ],
+        "orientation_xyzw": [
+          0.9912303983548728,
+          0.020619723852923592,
+          0.13049381869223586,
+          -0.0029133569275669896
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0012268113806698398,
+          0.012482346818779314,
+          0.006258150103556754
+        ],
+        [
+          -0.00018629688764611532,
+          -0.012485433317315461,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02498945402202437,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9986441821628411,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1152",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1152__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_3734__sym_object_z_bounds_center_order3_step2",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0003460069416546516,
+          -7.263605302749088e-07,
+          0.005771597435547841
+        ],
+        "orientation_xyzw": [
+          0.9988310221633744,
+          -0.041892960333474796,
+          -0.001010573747849672,
+          0.02409455912165468
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0007033246658189798,
+          0.012486588934970497,
+          0.005166665112678007
+        ],
+        [
+          -0.001395338549128283,
+          -0.012488041656031046,
+          0.006376529758417676
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021720476816490084,
+          0.9999976411016522,
+          0.0
+        ],
+        [
+          0.0021633326117202374,
+          -0.9999976599932678,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025091837973549157,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9976157081189438,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3734",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step2",
+        "symmetry_pickup_description": "240\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 240.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            0.058903785
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            0.0365397162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            -8.285142650416022e-08
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            1.3627310710417895e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3734__sym_object_z_bounds_center_order3_step2"
+      }
+    },
+    {
+      "grasp_id": "i4_3734__sym_object_z_bounds_center_order6_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0003459319741168074,
+          7.877488060501403e-07,
+          0.005771597435547841
+        ],
+        "orientation_xyzw": [
+          0.041892960333474796,
+          0.9988310221633744,
+          0.02409455912165468,
+          0.001010573747849672
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.000703399633356824,
+          -0.012486527546694721,
+          0.005166665112678007
+        ],
+        [
+          0.0013952635815904389,
+          0.01248810304430682,
+          0.006376529758417676
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0021720476816490084,
+          -0.9999976411016522,
+          0.0
+        ],
+        [
+          -0.0021633326117202374,
+          0.9999976599932678,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025091837973549157,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9976157081189438,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3734",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step1",
+        "symmetry_pickup_description": "60\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 60.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            0.021096215
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            -0.0340081162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            7.883888659965255e-09
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            4.776096506481364e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3734__sym_object_z_bounds_center_order6_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_4957",
+      "grasp_pose_obj": {
+        "position": [
+          -0.001369004730031814,
+          -2.9652807048150334e-06,
+          0.006358138816589702
+        ],
+        "orientation_xyzw": [
+          0.9977580808275909,
+          0.04015999132339351,
+          -0.0021530492851167303,
+          -0.05349160325624468
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0023755102624808642,
+          0.012479881834646359,
+          0.007704809020337015
+        ],
+        [
+          -0.0003624991975827636,
+          -0.012485812396055989,
+          0.0050114686128423895
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ],
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025191113205235097,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.994840478008314,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4957",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4957"
+      }
+    },
+    {
+      "grasp_id": "i4_4957__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0013689297624939697,
+          3.026668980592867e-06,
+          0.006358138816589702
+        ],
+        "orientation_xyzw": [
+          -0.04015999132339351,
+          0.9977580808275909,
+          -0.05349160325624468,
+          0.0021530492851167303
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.00237543529494302,
+          -0.012479820446370582,
+          0.007704809020337015
+        ],
+        [
+          0.0003624242300449194,
+          0.012485873784331768,
+          0.0050114686128423895
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002171133308498237,
+          -0.9999976430873009,
+          0.0
+        ],
+        [
+          -0.0021641968128970064,
+          0.9999976581233354,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025191113205235097,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.994840478008314,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4957",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4957__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_0836__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          0.001270982124818955,
+          -0.002190503295040726,
+          0.006421889867438238
+        ],
+        "orientation_xyzw": [
+          0.8352528394070481,
+          -0.533323895873798,
+          -0.1262562139444463,
+          -0.04447116810780326
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.012594412833609472,
+          0.003171238961460138,
+          0.0056640042977214216
+        ],
+        [
+          -0.010052448583971562,
+          -0.007552245551541589,
+          0.007179775437155053
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.8649377959878225,
+          0.5018790781370827,
+          0.0
+        ],
+        [
+          -0.8649412772572109,
+          -0.501873078473696,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025103207251224398,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9944537134998952,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0836",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0836__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_0837",
+      "grasp_pose_obj": {
+        "position": [
+          0.0025325304664769836,
+          5.498983305973586e-06,
+          0.006421889867438238
+        ],
+        "orientation_xyzw": [
+          0.9987166365465462,
+          -0.040654199997576974,
+          -0.00122850305392481,
+          0.030179574018821684
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0035508408180871115,
+          0.012492748763201464,
+          0.0056640042977214216
+        ],
+        [
+          0.0015142201148668553,
+          -0.012481750796589516,
+          0.007179775437155053
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ],
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025103207251224398,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9944537134998952,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0837",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0837"
+      }
+    },
+    {
+      "grasp_id": "i4_0837__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.002532605434014828,
+          -5.437595030195752e-06,
+          0.006421889867438238
+        ],
+        "orientation_xyzw": [
+          0.040654199997576974,
+          0.9987166365465462,
+          0.030179574018821684,
+          0.00122850305392481
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0035509157856249557,
+          -0.012492687374925687,
+          0.0056640042977214216
+        ],
+        [
+          -0.0015142950824046995,
+          0.012481812184865295,
+          0.007179775437155053
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002171133308498237,
+          -0.9999976430873009,
+          0.0
+        ],
+        [
+          -0.0021641968128970064,
+          0.9999976581233354,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025103207251224398,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9944537134998952,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0837",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0837__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_4583__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0018282546166218116,
+          -3.893302259662773e-06,
+          0.006413358108969565
+        ],
+        "orientation_xyzw": [
+          -0.047977789712422225,
+          0.9975057305387582,
+          -0.05171327307930344,
+          0.0024872925189110585
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0006247194395115766,
+          -0.012486293350587268,
+          0.0077171038918622216
+        ],
+        [
+          -0.0030317897937320467,
+          0.012478506746067944,
+          0.005109612326076909
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025215753881349855,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9938127663309416,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4583",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4583__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_4583__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          0.0018281796490839674,
+          3.954690535431066e-06,
+          0.006413358108969565
+        ],
+        "orientation_xyzw": [
+          0.997505730538758,
+          0.04797778971242222,
+          -0.0024872925189110577,
+          -0.051713273079303436
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0006246444719737324,
+          0.012486354738863037,
+          0.0077171038918622216
+        ],
+        [
+          0.0030317148261942025,
+          -0.012478445357792176,
+          0.005109612326076909
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025215753881349855,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9938127663309416,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4583",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4583__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_3710__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.001070036712484435,
+          -0.001844184264549886,
+          0.006444460898790472
+        ],
+        "orientation_xyzw": [
+          0.8919510052275715,
+          -0.44928521517927617,
+          -0.0227890022468573,
+          0.045242248744167574
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.011165320213679131,
+          0.0056341802627953375,
+          0.005166665112678007
+        ],
+        [
+          -0.009025246788710261,
+          -0.009322548791895108,
+          0.007722256684902938
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.8649373370816249,
+          0.5018798690146354,
+          0.0
+        ],
+        [
+          -0.8649417109772083,
+          -0.5018723309884892,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025256559309957956,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9927531822992975,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3710",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3710__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_3710__sym_object_z_bounds_center_order3_step2",
+      "grasp_pose_obj": {
+        "position": [
+          0.0021321365747793758,
+          4.634700700269375e-06,
+          0.006444460898790472
+        ],
+        "orientation_xyzw": [
+          0.9970948370475384,
+          0.056883092728037064,
+          0.0028852694996209117,
+          0.05057543786020005
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0007033246658189798,
+          0.012486588934970497,
+          0.005166665112678007
+        ],
+        [
+          0.0035609484837397717,
+          -0.012477319533569958,
+          0.007722256684902938
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021720476816490084,
+          0.9999976411016522,
+          0.0
+        ],
+        [
+          0.0021633326117202374,
+          -0.9999976599932678,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025256559309957956,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9927531822992975,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3710",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step2",
+        "symmetry_pickup_description": "240\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 240.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            0.058903785
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            0.0365397162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            -8.285142650416022e-08
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            1.3627310710417895e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3710__sym_object_z_bounds_center_order3_step2"
+      }
+    },
+    {
+      "grasp_id": "i4_3710__sym_object_z_bounds_center_order6_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.00213221154231722,
+          -4.573312424494144e-06,
+          0.006444460898790472
+        ],
+        "orientation_xyzw": [
+          -0.056883092728037064,
+          0.9970948370475384,
+          0.05057543786020005,
+          -0.0028852694996209117
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.000703399633356824,
+          -0.012486527546694721,
+          0.005166665112678007
+        ],
+        [
+          -0.003561023451277616,
+          0.012477380921845733,
+          0.007722256684902938
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0021720476816490084,
+          -0.9999976411016522,
+          0.0
+        ],
+        [
+          -0.0021633326117202374,
+          0.9999976599932678,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025256559309957956,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9927531822992975,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3710",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step1",
+        "symmetry_pickup_description": "60\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 60.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            0.021096215
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            -0.0340081162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            7.883888659965255e-09
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            4.776096506481364e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3710__sym_object_z_bounds_center_order6_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_5031__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.002238101847225671,
+          4.920202045971586e-06,
+          0.006287976563174601
+        ],
+        "orientation_xyzw": [
+          -0.08138389049248479,
+          0.9966815953025165,
+          -0.0015632211600058342,
+          0.00012764459612894018
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0042899817743430714,
+          -0.012475654301499287,
+          0.006327651938476933
+        ],
+        [
+          0.00018622192010827113,
+          0.01248549470559123,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025296365375677577,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9921340430327958,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g5031",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g5031__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_5031__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.002238176814763515,
+          -4.8588137702032936e-06,
+          0.006287976563174601
+        ],
+        "orientation_xyzw": [
+          0.9966815953025164,
+          0.08138389049248476,
+          -0.00012764459612894013,
+          -0.0015632211600058337
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.004290056741880916,
+          0.012475715689775055,
+          0.006327651938476933
+        ],
+        [
+          -0.00018629688764611532,
+          -0.012485433317315461,
+          0.006248301187872269
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025296365375677577,
+      "roll_angle_rad": 4.71238898038469,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9921340430327958,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g5031",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g5031__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_2392__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0030560243625974014,
+          -6.640083554522298e-06,
+          0.00789275675196105
+        ],
+        "orientation_xyzw": [
+          0.9907387984660552,
+          -0.008289548185828829,
+          -0.12993693051995528,
+          -0.03852675293824445
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.002724902150302407,
+          0.012479103842137835,
+          0.008821905905362
+        ],
+        [
+          -0.0033871465748923964,
+          -0.01249238400924688,
+          0.006963607598560098
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ],
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025049292320742288,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9916790152589385,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g2392",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g2392__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_4123__sym_object_z_bounds_center_order6_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0008956040810671342,
+          1.989693556592168e-06,
+          0.008906377157595378
+        ],
+        "orientation_xyzw": [
+          -0.03547250462610201,
+          0.8651610952354082,
+          -0.04563548404674277,
+          -0.49815196808046436
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.002238236639329605,
+          -0.012480138157376457,
+          0.009454543946921174
+        ],
+        [
+          -0.00044702847719533655,
+          0.012484117544489642,
+          0.00835821036826958
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0021720476816490084,
+          -0.9999976411016522,
+          0.0
+        ],
+        [
+          -0.0021633326117202374,
+          0.9999976599932678,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025132183725113638,
+      "roll_angle_rad": 5.759586531581287,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9907825786184798,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4123",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step1",
+        "symmetry_pickup_description": "60\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 60.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            0.021096215
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            -0.0340081162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            7.883888659965255e-09
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            4.776096506481364e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4123__sym_object_z_bounds_center_order6_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_1646",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0028812981788613186,
+          -6.238189031683959e-06,
+          0.008703546103009196
+        ],
+        "orientation_xyzw": [
+          0.014849970007893116,
+          0.9905590661733246,
+          -0.04215659021052581,
+          0.1295956662640301
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.003387086095241773,
+          -0.012492358212709727,
+          0.009702283185681377
+        ],
+        [
+          -0.0023755102624808642,
+          0.012479881834646359,
+          0.007704809020337015
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ],
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025072414357006367,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.989689116310562,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1646",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1646"
+      }
+    },
+    {
+      "grasp_id": "i4_1646__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0028812232113234744,
+          6.299577307461793e-06,
+          0.008703546103009196
+        ],
+        "orientation_xyzw": [
+          0.9905590661733246,
+          -0.014849970007893116,
+          -0.1295956662640301,
+          -0.04215659021052581
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0033870111277039287,
+          0.012492419600985506,
+          0.009702283185681377
+        ],
+        [
+          0.00237543529494302,
+          -0.012479820446370582,
+          0.007704809020337015
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021641968128970064,
+          0.9999976581233354,
+          0.0
+        ],
+        [
+          0.002171133308498237,
+          -0.9999976430873009,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025072414357006367,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.989689116310562,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1646",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1646__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_1222",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0016971009695628944,
+          -3.6740422494586575e-06,
+          0.00912012545108968
+        ],
+        "orientation_xyzw": [
+          0.989689808524202,
+          0.01937185152244076,
+          -0.13098664484426253,
+          -0.05460140240290555
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0019992554393378544,
+          0.012480698735950733,
+          0.010542302140478427
+        ],
+        [
+          -0.0013949464997879343,
+          -0.01248804682044965,
+          0.007697948761700931
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ],
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025137497689667658,
+      "roll_angle_rad": 4.4505895925855405,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.989379104137544,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1222",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1222"
+      }
+    },
+    {
+      "grasp_id": "i4_1224",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0016971009695628944,
+          -3.6740422494586575e-06,
+          0.00912012545108968
+        ],
+        "orientation_xyzw": [
+          0.9898687844083848,
+          0.004579888857384249,
+          0.12962718803590326,
+          -0.05775470884547438
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0019992554393378544,
+          0.012480698735950733,
+          0.010542302140478427
+        ],
+        [
+          -0.0013949464997879343,
+          -0.01248804682044965,
+          0.007697948761700931
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ],
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025137497689667658,
+      "roll_angle_rad": 4.974188368183839,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.989379104137544,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1224",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1224"
+      }
+    },
+    {
+      "grasp_id": "i4_1228__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0008517026988238508,
+          -0.001467817076227399,
+          0.00912012545108968
+        ],
+        "orientation_xyzw": [
+          -0.4177925657323506,
+          -0.6738158422103617,
+          -0.25829823335349367,
+          0.5519996426190731
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.009809004042719217,
+          -0.00797167691202433,
+          0.010542302140478427
+        ],
+        [
+          0.01151240944036692,
+          0.0050360427595695315,
+          0.007697948761700931
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8649377959878225,
+          -0.5018790781370827,
+          0.0
+        ],
+        [
+          0.8649412772572109,
+          0.501873078473696,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025137497689667658,
+      "roll_angle_rad": 6.021385919380437,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.989379104137544,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1228",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1228__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_2090__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.002179451756450606,
+          -4.650355664586397e-06,
+          0.009589564162373032
+        ],
+        "orientation_xyzw": [
+          0.012403411867645195,
+          0.9235835657020887,
+          -0.02037783912477433,
+          -0.3826542776602164
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0022708956126423954,
+          -0.012489856893588426,
+          0.010178708855421641
+        ],
+        [
+          -0.0020880079002588156,
+          0.012480556182259253,
+          0.009000419469324422
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002164734680160233,
+          -0.9999976569591374,
+          0.0
+        ],
+        [
+          -0.002171509512384141,
+          0.9999976422704393,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.024998866833406432,
+      "roll_angle_rad": 5.497787143782138,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9893181160142711,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g2090",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g2090__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_4384__sym_object_z_bounds_center_order6_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -9.815053638204536e-05,
+          0.00016921129035104703,
+          0.010230457233438493
+        ],
+        "orientation_xyzw": [
+          -0.4130991512461975,
+          -0.5738894416520235,
+          -0.320217712736876,
+          0.63044477668513
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.011203199853072346,
+          -0.005568838090446375,
+          0.012170043320600416
+        ],
+        [
+          0.011006898780308255,
+          0.005907260671148469,
+          0.00829087114627657
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8649410073036395,
+          -0.5018735437185003,
+          0.0
+        ],
+        [
+          0.864937607166742,
+          0.5018794035509636,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025298958493020548,
+      "roll_angle_rad": 0.0,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9841413658207425,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4384",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step1",
+        "symmetry_pickup_description": "60\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 60.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            0.021096215
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            -0.0340081162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            7.883888659965255e-09
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            4.776096506481364e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4384__sym_object_z_bounds_center_order6_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_4406",
+      "grasp_pose_obj": {
+        "position": [
+          9.742070370674996e-05,
+          0.00016958945023972782,
+          0.010230457233438493
+        ],
+        "orientation_xyzw": [
+          0.7760918859351925,
+          0.38042741449649675,
+          0.4054883830881782,
+          -0.2975492195681272
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.010424400486384232,
+          0.006917819578364763,
+          0.012170043320600416
+        ],
+        [
+          0.010619241893797732,
+          -0.006578640677885307,
+          0.00829087114627657
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8671057419954855,
+          0.4981241132473501,
+          0.0
+        ],
+        [
+          0.8671091166908116,
+          -0.4981182387261887,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025298958493020548,
+      "roll_angle_rad": 5.759586531581287,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9841413658207425,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4406",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4406"
+      }
+    },
+    {
+      "grasp_id": "i4_0517__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          0.001032498352559694,
+          0.0017973925227498602,
+          0.010482661167815023
+        ],
+        "orientation_xyzw": [
+          0.401985550205041,
+          -0.5817281301659313,
+          0.3370087604815605,
+          0.6216309961373244
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.012182619768166937,
+          -0.0038571934914470992,
+          0.009128594873699184
+        ],
+        [
+          -0.010117623063047549,
+          0.00745197853694682,
+          0.011836727461930862
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.8671050435772721,
+          -0.4981253290115422,
+          0.0
+        ],
+        [
+          -0.8671093847516177,
+          0.4981177720937804,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02515019253201716,
+      "roll_angle_rad": 0.0,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9838701767927664,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0517",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0517__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_0540__sym_object_z_bounds_center_order3_step2",
+      "grasp_pose_obj": {
+        "position": [
+          0.002072791374261543,
+          4.509329905234729e-06,
+          0.010482661167815023
+        ],
+        "orientation_xyzw": [
+          0.054301287184714685,
+          -0.7910173683802724,
+          -0.026269832498594138,
+          0.6088126058413439
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0027508369460806648,
+          -0.012479072078379472,
+          0.009128594873699184
+        ],
+        [
+          0.0013947458024424209,
+          0.012488090738189942,
+          0.011836727461930862
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.0021633326117202374,
+          -0.9999976599932678,
+          0.0
+        ],
+        [
+          -0.0021720476816490084,
+          0.9999976411016522,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02515019253201716,
+      "roll_angle_rad": 6.021385919380437,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9838701767927664,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0540",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step2",
+        "symmetry_pickup_description": "240\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 240.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            0.058903785
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            0.0365397162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            -8.285142650416022e-08
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            1.3627310710417895e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0540__sym_object_z_bounds_center_order3_step2"
+      }
+    },
+    {
+      "grasp_id": "i4_4963__sym_object_z_bounds_center_order3_step2",
+      "grasp_pose_obj": {
+        "position": [
+          0.001123081716621427,
+          0.0019551563027317633,
+          0.00988644261093357
+        ],
+        "orientation_xyzw": [
+          0.40792971035514425,
+          -0.5775754075526143,
+          0.3024246021956019,
+          0.639170837872655
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.011995566985039827,
+          -0.004182675055716434,
+          0.007704809020337015
+        ],
+        [
+          -0.009749403551796973,
+          0.008092987661179961,
+          0.012068076201530125
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.8671089292962916,
+          -0.4981185649367418,
+          0.0
+        ],
+        [
+          -0.8671054740700789,
+          0.4981245796361629,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025349038231549756,
+      "roll_angle_rad": 0.0,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9828907048391586,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g4963",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step2",
+        "symmetry_pickup_description": "240\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 240.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            0.058903785
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            0.0365397162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            -8.285142650416022e-08
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            1.3627310710417895e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g4963__sym_object_z_bounds_center_order3_step2"
+      }
+    },
+    {
+      "grasp_id": "i4_3646__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0002386846227885129,
+          0.0004112772874375831,
+          0.010410692841241125
+        ],
+        "orientation_xyzw": [
+          -0.35594665228250816,
+          -0.7088735896096174,
+          -0.24071715705514946,
+          0.5593348415592734
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.010038951134492324,
+          -0.007575500554470204,
+          0.01113135617166122
+        ],
+        [
+          0.009561581888915299,
+          0.00839805512934537,
+          0.00969002951082103
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8649417109772083,
+          -0.5018723309884892,
+          0.0
+        ],
+        [
+          0.8649373370816249,
+          0.5018798690146354,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025326128771071554,
+      "roll_angle_rad": 6.021385919380437,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.98272457113056,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3646",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3646__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_0865__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.000826794422921797,
+          -0.001439173795664022,
+          0.01139528873444259
+        ],
+        "orientation_xyzw": [
+          0.7610465454372997,
+          0.41169516626086566,
+          0.4096807601426805,
+          -0.2889237278665527
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.0116630147971425,
+          0.004761804142809716,
+          0.012681039185895054
+        ],
+        [
+          0.010009425951298907,
+          -0.00764015173413776,
+          0.010109538282990124
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8671093847516177,
+          0.4981177720937804,
+          0.0
+        ],
+        [
+          0.8671050435772721,
+          -0.4981253290115422,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02510210776897612,
+      "roll_angle_rad": 5.759586531581287,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9813983126922459,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0865",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0865__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_3798__sym_object_z_bounds_center_order6_step5",
+      "grasp_pose_obj": {
+        "position": [
+          -0.002746762299249003,
+          -5.968437267973495e-06,
+          0.015646924266274467
+        ],
+        "orientation_xyzw": [
+          -0.04466059921190075,
+          -0.7056949984788288,
+          0.04474637990543268,
+          0.7056895645291623
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.00274524467769874,
+          -0.012490990109884668,
+          0.01723507463235143
+        ],
+        [
+          -0.002748279920799266,
+          0.01247905323534872,
+          0.014058773900197503
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002171509512384141,
+          -0.9999976422704393,
+          0.0
+        ],
+        [
+          -0.002164734680160233,
+          0.9999976569591374,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.02517125265456233,
+      "roll_angle_rad": 0.0,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.9566439113721267,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g3798",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step5",
+        "symmetry_pickup_description": "300\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 300.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            0.018903785
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            0.0352739162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            0.8660254038,
+            0.0,
+            -4.536765758206274e-08
+          ],
+          [
+            -0.8660254038,
+            0.5,
+            0.0,
+            -1.706682718066732e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g3798__sym_object_z_bounds_center_order6_step5"
+      }
+    },
+    {
+      "grasp_id": "i4_1035__sym_object_z_bounds_center_order3_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.001929423729033138,
+          0.003358783831932541,
+          0.01890146157667997
+        ],
+        "orientation_xyzw": [
+          0.6410791239460211,
+          0.4661482041932783,
+          -0.5374706492537953,
+          0.2878345180111097
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.009560441375021437,
+          0.008421907552771932,
+          0.02057389908027144
+        ],
+        [
+          0.013419288833087715,
+          -0.0017043398889068496,
+          0.0172290240730885
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8671050435772721,
+          0.4981253290115422,
+          0.0
+        ],
+        [
+          0.8671093847516177,
+          -0.4981177720937804,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025333714225992808,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.865558305527814,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g1035",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step1",
+        "symmetry_pickup_description": "120\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 120.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            0.061096215
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            -0.0327423162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            -0.8660254038,
+            0.0,
+            -2.9599880262132228e-08
+          ],
+          [
+            0.8660254038,
+            -0.5,
+            0.0,
+            7.845510294895996e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g1035__sym_object_z_bounds_center_order3_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_0317__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.0016521191274080377,
+          -0.002875748189722819,
+          0.019855775665410507
+        ],
+        "orientation_xyzw": [
+          0.691296704887951,
+          0.3891664508505886,
+          -0.5402412977454613,
+          0.2807092437981291
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.01217449698012963,
+          0.003871491700704285,
+          0.020260742765058064
+        ],
+        [
+          0.008870258725313555,
+          -0.009622988080149924,
+          0.01945080856576295
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8671091166908117,
+          0.49811823872618877,
+          0.0
+        ],
+        [
+          0.8671057419954853,
+          -0.49812411324735,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025012771151251,
+      "roll_angle_rad": 3.4033920413889427,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.865086544485558,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0317",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0317__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_0809",
+      "grasp_pose_obj": {
+        "position": [
+          0.003714682804988503,
+          8.0569808159894e-06,
+          0.019867847724472944
+        ],
+        "orientation_xyzw": [
+          0.8659852632561857,
+          0.007816488718085452,
+          -0.4999228057098916,
+          0.009252818942619128
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0034300876552478916,
+          0.0124924865913696,
+          0.01976531638035629
+        ],
+        [
+          0.003999277954729114,
+          -0.012476372629737621,
+          0.0199703790685896
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.0021711333084982365,
+          0.9999976430873008,
+          0.0
+        ],
+        [
+          0.002164196812897006,
+          -0.9999976581233353,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.024976187841754392,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8650094052167661,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0809",
+        "symmetry_pickup_name": "identity",
+        "symmetry_pickup_description": "Identity",
+        "symmetry_pickup_source": "identity",
+        "symmetry_pickup_angle_deg": 0.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": true,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0809"
+      }
+    },
+    {
+      "grasp_id": "i4_0809__sym_object_z_bounds_center_order6_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0018503717363183353,
+          0.0032210859275521447,
+          0.019867847724472944
+        ],
+        "orientation_xyzw": [
+          0.7460569929203116,
+          0.43976190943221494,
+          -0.4283194402026205,
+          0.2579745791192393
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.009103759033244337,
+          0.009216834103355316,
+          0.01976531638035629
+        ],
+        [
+          0.012804502505881008,
+          -0.0027746622482510263,
+          0.0199703790685896
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          -0.8671089292962916,
+          0.4981185649367418,
+          0.0
+        ],
+        [
+          0.8671054740700789,
+          -0.4981245796361629,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.024976187841754392,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8650094052167661,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0809",
+        "symmetry_pickup_name": "object_z_bounds_center_order6_step1",
+        "symmetry_pickup_description": "60\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 60.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            0.021096215
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            -0.0340081162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            0.5,
+            -0.8660254038,
+            0.0,
+            7.883888659965255e-09
+          ],
+          [
+            0.8660254038,
+            0.5,
+            0.0,
+            4.776096506481364e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0809__sym_object_z_bounds_center_order6_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_0817__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          -0.003714757772526347,
+          -7.995592540211566e-06,
+          0.019867847724472944
+        ],
+        "orientation_xyzw": [
+          0.011921420619968766,
+          -0.8659384813040514,
+          0.002142868326946893,
+          0.5000038344278654
+        ]
+      },
+      "contact_points_obj": [
+        [
+          -0.003430162622785736,
+          -0.012492425203093821,
+          0.01976531638035629
+        ],
+        [
+          -0.003999352922266958,
+          0.012476434018013398,
+          0.0199703790685896
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002171133308498237,
+          -0.9999976430873009,
+          0.0
+        ],
+        [
+          -0.0021641968128970064,
+          0.9999976581233354,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.024976187841754392,
+      "roll_angle_rad": 5.759586531581287,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8650094052167661,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g0817",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g0817__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_2565__sym_object_z_bounds_center_order2_step1",
+      "grasp_pose_obj": {
+        "position": [
+          0.0010283380693283171,
+          2.2850512273759477e-06,
+          0.02042135540643676
+        ],
+        "orientation_xyzw": [
+          0.0076426615785249825,
+          0.9236176414760064,
+          0.023383833534185362,
+          0.3825248206424532
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.0010754882808379678,
+          -0.012482642811284254,
+          0.01980832182498095
+        ],
+        [
+          0.0009811878578186663,
+          0.012487212913739006,
+          0.021034388987892574
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.002171133308498237,
+          -0.9999976430873009,
+          0.0
+        ],
+        [
+          -0.0021641968128970064,
+          0.9999976581233354,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025000116563452836,
+      "roll_angle_rad": 3.9269908169872414,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8638599843745216,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g2565",
+        "symmetry_pickup_name": "object_z_bounds_center_order2_step1",
+        "symmetry_pickup_description": "180\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 180.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            0.08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            0.0025316
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -1.0,
+            0.0,
+            0.0,
+            -7.496753784419496e-08
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0,
+            6.138827577783362e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g2565__sym_object_z_bounds_center_order2_step1"
+      }
+    },
+    {
+      "grasp_id": "i4_2564__sym_object_z_bounds_center_order3_step2",
+      "grasp_pose_obj": {
+        "position": [
+          0.0005121979184010036,
+          0.0008917572743117111,
+          0.02042135540643676
+        ],
+        "orientation_xyzw": [
+          -0.4236878281607239,
+          0.7551078055095473,
+          0.26911810580392204,
+          0.4217538043165869
+        ]
+      },
+      "contact_points_obj": [
+        [
+          0.011348037717701334,
+          -0.005309873375982203,
+          0.01980832182498095
+        ],
+        [
+          -0.010323641880899329,
+          0.007093387924605626,
+          0.021034388987892574
+        ]
+      ],
+      "contact_normals_obj": [
+        [
+          0.8671089292962916,
+          -0.4981185649367418,
+          0.0
+        ],
+        [
+          -0.8671054740700789,
+          0.4981245796361629,
+          0.0
+        ]
+      ],
+      "jaw_width": 0.025000116563452836,
+      "roll_angle_rad": 3.6651914291880923,
+      "contact_patch_offset_local": [
+        0.0,
+        0.0
+      ],
+      "score": 0.8416377621522995,
+      "metadata": {
+        "symmetry_pickup_parent_grasp_id": "g2564",
+        "symmetry_pickup_name": "object_z_bounds_center_order3_step2",
+        "symmetry_pickup_description": "240\u00b0 about +Z (bounds center)",
+        "symmetry_pickup_source": "object_frame:bounds_center",
+        "symmetry_pickup_angle_deg": 240.0,
+        "symmetry_pickup_matrix_assembly_m": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            0.058903785
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            0.0365397162
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_matrix_source": [
+          [
+            -0.5,
+            0.8660254038,
+            0.0,
+            -8.285142650416022e-08
+          ],
+          [
+            -0.8660254038,
+            -0.5,
+            0.0,
+            1.3627310710417895e-08
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "symmetry_pickup_is_identity": false,
+        "candidate_role": "assembly_inserter",
+        "incoming_part_id": "4",
+        "source_grasp_id": "g2564__sym_object_z_bounds_center_order3_step2"
+      }
+    }
+  ]
+}

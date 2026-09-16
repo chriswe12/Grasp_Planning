@@ -49,28 +49,17 @@ def _imported_gripper_root() -> ET.Element:
 
 def test_mujoco_capture_restores_detailed_gripper_visual_meshes() -> None:
     root = _imported_gripper_root()
-    urdf = REPO_ROOT / (
-        "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/"
-        "kuka_iiwa7_pdz_gripper.urdf"
-    )
+    urdf = REPO_ROOT / ("assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf")
 
     CAPTURE._restore_pdz_gripper_visual_meshes(root, urdf)
 
-    meshes = {
-        mesh.get("name"): mesh for mesh in root.findall("asset/mesh")
-    }
+    meshes = {mesh.get("name"): mesh for mesh in root.findall("asset/mesh")}
     for side in ("left", "right"):
-        finger = root.find(
-            f"worldbody/body[@name='pdz_gripper_{side}_finger_link']"
-        )
+        finger = root.find(f"worldbody/body[@name='pdz_gripper_{side}_finger_link']")
         assert finger is not None
         assert finger.find("geom").get("mesh") == f"pdz_visual_{side}_finger"
-        assert finger.find(f"geom[@name='{side}_tpu_pad']").get("mesh") == (
-            f"pdz_visual_{side}_pad"
-        )
-        assert "/meshes/visual/" in meshes[f"pdz_visual_{side}_finger"].get(
-            "file"
-        )
+        assert finger.find(f"geom[@name='{side}_tpu_pad']").get("mesh") == (f"pdz_visual_{side}_pad")
+        assert "/meshes/visual/" in meshes[f"pdz_visual_{side}_finger"].get("file")
         assert "/meshes/visual/" in meshes[f"pdz_visual_{side}_pad"].get("file")
 
 
@@ -83,10 +72,7 @@ def test_mujoco_capture_uses_environment_and_headlight_without_scene_lights() ->
     headlight = root.find("visual/headlight")
     assert headlight is not None
     assert headlight.get("active") == "1"
-    numerics = {
-        numeric.get("name"): float(numeric.get("data"))
-        for numeric in root.findall("custom/numeric")
-    }
+    numerics = {numeric.get("name"): float(numeric.get("data")) for numeric in root.findall("custom/numeric")}
     assert numerics["filament.ao.enabled"] == 0.0
     assert numerics["filament.fallback.head_light_intensity"] > 0.0
     assert numerics["filament.fallback.environment_light_intensity"] > 0.0
@@ -119,9 +105,7 @@ def test_mujoco_tslot_matches_canonical_isaac_metric_dimensions() -> None:
     land_half_size = tuple(float(value) for value in lands[0].get("size").split())
     assert 2.0 * land_half_size[0] == CAPTURE.CANONICAL_TSLOT_LAND_WIDTH_M
     x_positions = [float(land.get("pos").split()[0]) for land in lands]
-    assert x_positions[1] - x_positions[0] == pytest.approx(
-        CAPTURE.CANONICAL_TSLOT_PITCH_M
-    )
+    assert x_positions[1] - x_positions[0] == pytest.approx(CAPTURE.CANONICAL_TSLOT_PITCH_M)
     assert CAPTURE.CANONICAL_TSLOT_SLOT_WIDTH_M == pytest.approx(0.005)
 
     backing = worldbody.find("geom[@name='tslot_backing']")

@@ -410,13 +410,9 @@ class InserterShortlistDiversityTests(unittest.TestCase):
         )
 
     def test_pair_budget_covers_inserters_before_repeating_one(self) -> None:
-        holders = tuple(
-            _candidate(f"h{index}", (index * 0.1, 0.0, 0.2), score=1.0 - index * 0.1)
-            for index in range(3)
-        )
+        holders = tuple(_candidate(f"h{index}", (index * 0.1, 0.0, 0.2), score=1.0 - index * 0.1) for index in range(3))
         inserters = tuple(
-            _candidate(f"i{index}", (index * 0.1, 0.1, 0.2), score=1.0 - index * 0.1)
-            for index in range(4)
+            _candidate(f"i{index}", (index * 0.1, 0.1, 0.2), score=1.0 - index * 0.1) for index in range(4)
         )
 
         combinations = pair_planner._balanced_pair_combinations(
@@ -948,7 +944,7 @@ class InserterUnaryFilteringTests(unittest.TestCase):
                     "grasp_planning.pipeline.dual_grasp_pair_planner.make_gripper_collision_model",
                     return_value=_SmallCubeGripper(),
                 ),
-                ):
+            ):
                 with mock.patch(
                     "grasp_planning.pipeline.dual_grasp_pair_planner._candidate_primitives_assembly",
                     wraps=pair_planner._candidate_primitives_assembly,

@@ -155,11 +155,7 @@ def _saved_bundle_invocation(args: argparse.Namespace, extra: Sequence[str]) -> 
         raise ValueError("--grasp-id is required with --stage2-bundle.")
     if args.attempt_artifact is None:
         raise ValueError("--attempt-artifact is required with --stage2-bundle.")
-    python_command = (
-        shlex.split(args.backend_python)
-        if args.backend_python.strip()
-        else [_python()]
-    )
+    python_command = shlex.split(args.backend_python) if args.backend_python.strip() else [_python()]
     script = (
         "scripts/run_fabrica_grasp_in_mujoco.py"
         if args.backend == "mujoco"
@@ -263,7 +259,9 @@ def _action_invocation(args: argparse.Namespace, extra: Sequence[str]) -> Unifie
         stop_after = "inserter_pickup_lift" if args.role == "inserter" else "holder_grasp"
     command.extend(("--stop-after", stop_after))
     if args.policy:
-        command.extend(("--policy", args.policy, "--left-camera", args.left_camera, "--right-camera", args.right_camera))
+        command.extend(
+            ("--policy", args.policy, "--left-camera", args.left_camera, "--right-camera", args.right_camera)
+        )
     command.extend(extra)
     return UnifiedInvocation(tuple(command), f"{args.robots} {args.mode} GraspAssembly action server")
 

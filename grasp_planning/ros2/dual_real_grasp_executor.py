@@ -73,13 +73,11 @@ def _role_spec(plan: Mapping[str, object], role: str) -> Mapping[str, object]:
     if robot not in ARM_SPEC_BY_ROBOT:
         raise ValueError(f"Dual plan role '{role}' has unsupported robot {robot!r}.")
     spec = dict(ARM_SPEC_BY_ROBOT[robot])
-    tcp_suffix = (
-        "pdz_gripper_tcp"
-        if _gripper_model_for_plan(plan) == "pdz_gripper"
-        else "gripper_tcp"
-    )
+    tcp_suffix = "pdz_gripper_tcp" if _gripper_model_for_plan(plan) == "pdz_gripper" else "gripper_tcp"
     spec["pose_link"] = f"{robot}_{tcp_suffix}"
     return spec
+
+
 MOTION_SEQUENCE = (
     ("holder", "holder_pregrasp"),
     ("holder", "holder_grasp"),
@@ -125,11 +123,7 @@ def _motion_sequence_for(
     active_roles: Sequence[str],
 ) -> tuple[tuple[str, str], ...]:
     roles = set(_normalized_active_roles(active_roles))
-    return tuple(
-        (role, target_name)
-        for role, target_name in _motion_sequence_through(stop_after)
-        if role in roles
-    )
+    return tuple((role, target_name) for role, target_name in _motion_sequence_through(stop_after) if role in roles)
 
 
 @dataclass(frozen=True)
@@ -690,9 +684,7 @@ def _confirmation_text(
     for role, grasp_id in (("holder", holder_id), ("inserter", inserter_id)):
         if role not in active_roles:
             continue
-        role_lines.append(
-            f"  {role + ':':18s}{_role_spec(plan, role)['robot']} / {grasp_id}\n"
-        )
+        role_lines.append(f"  {role + ':':18s}{_role_spec(plan, role)['robot']} / {grasp_id}\n")
     policy_line = f"  policy:           {config.policy}\n" if config.policy else ""
     return (
         "DUAL REAL-ROBOT EXECUTION REQUESTED\n"
@@ -723,9 +715,7 @@ def _source_artifact_path(plan: Mapping[str, object], *, role: str) -> Path:
         if isinstance(offline, dict) and str(offline.get("artifact", "")).strip():
             artifact_dir = Path(str(offline["artifact"])).expanduser().resolve().parent
             filename = (
-                "holder_base_candidates.json"
-                if role == "holder"
-                else f"inserter_candidates_{plan['step_id']}.json"
+                "holder_base_candidates.json" if role == "holder" else f"inserter_candidates_{plan['step_id']}.json"
             )
             return artifact_dir / filename
     raise ValueError(f"Dual task has no source stage-2 bundle for the {role} policy goal.")
@@ -743,10 +733,7 @@ def _local_pose_for_role(
         raise ValueError("Dual task has no layout block for policy goal rendering.")
     base_key = "holder_base_world_m" if role == "holder" else "inserter_base_world_m"
     base_position = tuple(float(value) for value in layout[base_key])
-    position = tuple(
-        float(value) - float(offset)
-        for value, offset in zip(position_world, base_position, strict=True)
-    )
+    position = tuple(float(value) - float(offset) for value, offset in zip(position_world, base_position, strict=True))
     orientation = tuple(float(value) for value in orientation_xyzw_world)
     if len(position) != 3 or len(orientation) != 4:
         raise ValueError("Policy rendering requires a 3D position and XYZW orientation.")
@@ -951,8 +938,7 @@ def _write_policy_goal_debug_html(
         "figcaption{color:#aebdd0;margin-top:6px}</style>"
         "<h1>MoveIt-selected dual policy handoff</h1>"
         "<p>Each image was rendered on demand after connected collision-aware preflight. "
-        "The policy replaces only pregrasp-to-grasp; gripper closure follows its completion gate.</p>"
-        + "".join(cards),
+        "The policy replaces only pregrasp-to-grasp; gripper closure follows its completion gate.</p>" + "".join(cards),
         encoding="utf-8",
     )
     return output_path.resolve()
@@ -1018,21 +1004,15 @@ def _preflight_targets(
                 continue
         joints = None
         messages: list[str] = []
-        for seed_index, seed in enumerate(
-            kuka_iiwa_ik_seed_candidates(KUKA_MOVEIT_ARM_START_JOINT_VALUES)
-        ):
+        for seed_index, seed in enumerate(kuka_iiwa_ik_seed_candidates(KUKA_MOVEIT_ARM_START_JOINT_VALUES)):
             seed_state = dict(finger_state)
             seed_state.update(zip(_role_spec(plan, role)["joint_names"], seed))
             try:
-                candidate_joints, seed_message = _compute_ik_with_complete_seed(
-                    commanders[role], target, seed_state
-                )
+                candidate_joints, seed_message = _compute_ik_with_complete_seed(commanders[role], target, seed_state)
             except TypeError as exc:
                 if "seed_robot_state" not in str(exc):
                     raise
-                candidate_joints, seed_message = commanders[role].compute_ik(
-                    target, seed_joint_positions=seed
-                )
+                candidate_joints, seed_message = commanders[role].compute_ik(target, seed_joint_positions=seed)
             messages.append(f"seed {seed_index}: {seed_message}")
             if candidate_joints is not None:
                 joints = candidate_joints
@@ -1054,8 +1034,7 @@ def _preflight_targets(
             )
             candidate_state = dict(closed_finger_state)
             candidate_state.update(
-                (str(name), float(value))
-                for name, value in zip(_role_spec(plan, role)["joint_names"], joints)
+                (str(name), float(value)) for name, value in zip(_role_spec(plan, role)["joint_names"], joints)
             )
             check_validity = getattr(commanders[role], "check_state_validity", None)
             if callable(check_validity):
@@ -1067,9 +1046,7 @@ def _preflight_targets(
                 closed_ok = True
             if not closed_ok:
                 contacts = [] if validity is None else validity.get("contacts", [])
-                message = (
-                    f"{message}; post-grasp closed state invalid: {validity_message}; contacts={contacts}"
-                )
+                message = f"{message}; post-grasp closed state invalid: {validity_message}; contacts={contacts}"
                 ok = False
             else:
                 closed_ok, closed_message = _apply_moveit_gripper_state(
@@ -1144,9 +1121,7 @@ def _preflight_targets(
             # A failed purge leaves the shared scene unknown.  Do not cache the
             # result or evaluate another candidate against potentially stale
             # incoming-part geometry.
-            raise RuntimeError(
-                f"Could not clean up incoming attached collision geometry: {detach_message}"
-            )
+            raise RuntimeError(f"Could not clean up incoming attached collision geometry: {detach_message}")
     return success
 
 
@@ -1225,8 +1200,7 @@ def _trajectory_joint_path_cost(trajectory) -> float:
     points = tuple(getattr(joint_trajectory, "points", ()))
     positions = [tuple(float(value) for value in getattr(point, "positions", ())) for point in points]
     return sum(
-        sum(abs(right - left) for left, right in zip(first, second))
-        for first, second in zip(positions, positions[1:])
+        sum(abs(right - left) for left, right in zip(first, second)) for first, second in zip(positions, positions[1:])
     )
 
 
@@ -1240,8 +1214,13 @@ def _compute_ik_with_complete_seed(commander, target, seed_state):
 
 
 def _plan_free_space_with_multi_seed_ik(
-    *, commander, target: PoseTarget, target_name: str, role: str,
-    current_state: Mapping[str, float], config: DualRealExecutionConfig,
+    *,
+    commander,
+    target: PoseTarget,
+    target_name: str,
+    role: str,
+    current_state: Mapping[str, float],
+    config: DualRealExecutionConfig,
     plan: Mapping[str, object],
     kinematic_ik_cache: dict[tuple[object, ...], tuple[tuple[float, ...] | None, str]] | None = None,
 ) -> tuple[object | None, tuple[float, ...] | None, str]:
@@ -1279,7 +1258,9 @@ def _plan_free_space_with_multi_seed_ik(
             diagnostics.append(f"seed {seed_index}: IK failed ({ik_message})")
             continue
         solution = tuple(float(value) for value in joints)
-        if any(max(abs(a - b) for a, b in zip(solution, old)) < config.ik_solution_dedup_tolerance_rad for old in solutions):
+        if any(
+            max(abs(a - b) for a, b in zip(solution, old)) < config.ik_solution_dedup_tolerance_rad for old in solutions
+        ):
             continue
         solutions.append(solution)
         candidate_state = dict(current_state)
@@ -1303,9 +1284,13 @@ def _plan_free_space_with_multi_seed_ik(
         detail = "; ".join(diagnostics) or "no distinct IK solutions"
         return None, None, f"multi-seed IK exhausted {len(seeds)} seeds and {len(solutions)} solutions: {detail}"
     _cost, seed_index, trajectory, solution, motion_message = min(plans, key=lambda item: (item[0], item[1]))
-    return trajectory, solution, (
-        f"multi-seed IK selected seed {seed_index} from {len(seeds)} seeds, "
-        f"{len(solutions)} distinct solutions, and {len(plans)} motion-valid branches; motion: {motion_message}"
+    return (
+        trajectory,
+        solution,
+        (
+            f"multi-seed IK selected seed {seed_index} from {len(seeds)} seeds, "
+            f"{len(solutions)} distinct solutions, and {len(plans)} motion-valid branches; motion: {motion_message}"
+        ),
     )
 
 
@@ -1340,9 +1325,7 @@ def _preplan_connected_candidate(
     assert isinstance(targets, dict)
     current_state = {str(name): float(value) for name, value in initial_robot_state.items()}
     required_arm_joints = tuple(
-        str(name)
-        for role in ("holder", "inserter")
-        for name in _role_spec(plan, role)["joint_names"]
+        str(name) for role in ("holder", "inserter") for name in _role_spec(plan, role)["joint_names"]
     )
     missing = [name for name in required_arm_joints if name not in current_state]
     if missing:
@@ -1393,9 +1376,7 @@ def _preplan_connected_candidate(
                     pair_id=pair_id,
                 )
                 if not scene_ok:
-                    raise RuntimeError(
-                        f"{target_name}: could not apply phase obstacles: {scene_message}"
-                    )
+                    raise RuntimeError(f"{target_name}: could not apply phase obstacles: {scene_message}")
             try:
                 start_states[target_name] = dict(current_state)
                 if target_name in CARTESIAN_TARGETS:
@@ -1412,9 +1393,7 @@ def _preplan_connected_candidate(
                             label=target_name,
                             start_robot_state=current_state,
                             max_step_m=float(config.cartesian_max_step_m),
-                            revolute_jump_threshold_rad=float(
-                                config.cartesian_revolute_jump_threshold_rad
-                            ),
+                            revolute_jump_threshold_rad=float(config.cartesian_revolute_jump_threshold_rad),
                         )
                     segment_mode = "cartesian_linear"
                 else:
@@ -1511,8 +1490,7 @@ def _preplan_connected_candidate(
                 if validity is None or not bool(validity["valid"]):
                     contacts = [] if validity is None else validity.get("contacts", [])
                     failure = (
-                        f"{target_name}: closed complete state is invalid: "
-                        f"{validity_message}; contacts={contacts}"
+                        f"{target_name}: closed complete state is invalid: {validity_message}; contacts={contacts}"
                     )
                     break
                 closed_ok, closed_message = _apply_moveit_gripper_state(
@@ -1520,9 +1498,7 @@ def _preplan_connected_candidate(
                     closed_state,
                 )
                 if not closed_ok:
-                    raise RuntimeError(
-                        f"{target_name}: could not apply closed gripper state: {closed_message}"
-                    )
+                    raise RuntimeError(f"{target_name}: could not apply closed gripper state: {closed_message}")
                 if close_role == "inserter" and attached_objects:
                     attach_ok, attach_message = _apply_attached_collision_objects(
                         commanders["holder"],
@@ -1538,9 +1514,7 @@ def _preplan_connected_candidate(
                         pair_id=pair_id,
                     )
                     if not attach_ok:
-                        raise RuntimeError(
-                            f"Could not attach incoming collision geometry: {attach_message}"
-                        )
+                        raise RuntimeError(f"Could not attach incoming collision geometry: {attach_message}")
                     incoming_attached = True
     finally:
         if incoming_attached:
@@ -1558,9 +1532,7 @@ def _preplan_connected_candidate(
                 pair_id=pair_id,
             )
             if not detach_ok:
-                raise RuntimeError(
-                    f"Could not clean up incoming attached collision geometry: {detach_message}"
-                )
+                raise RuntimeError(f"Could not clean up incoming attached collision geometry: {detach_message}")
 
     if failure:
         return None, failure
@@ -1601,9 +1573,7 @@ def _select_ranked_preflight_candidate(
     # trajectories remain candidate-local because later phases can change the
     # complete-state continuation and attached-object scene.
     failed_prefixes: dict[str, str] = {}
-    kinematic_ik_cache: dict[
-        tuple[object, ...], tuple[tuple[float, ...] | None, str]
-    ] = {}
+    kinematic_ik_cache: dict[tuple[object, ...], tuple[tuple[float, ...] | None, str]] = {}
     cached_prefix_rejections = 0
 
     def prefix_signature(candidate: Mapping[str, object], through_target: str) -> str:
@@ -1622,23 +1592,17 @@ def _select_ranked_preflight_candidate(
             # Only jaw widths affect the planning-scene finger state. Do not
             # include the transition-specific ``inserter_preinsertion`` grasp
             # payload when caching an earlier holder/pickup prefix.
-            "role_robots": {
-                role: candidate["roles"][role]["robot"]
-                for role in ("holder", "inserter")
-            },
+            "role_robots": {role: candidate["roles"][role]["robot"] for role in ("holder", "inserter")},
             "jaw_widths_m": {
-                role: _gripper_width_for_role(candidate, role, contact=True)
-                for role in ("holder", "inserter")
+                role: _gripper_width_for_role(candidate, role, contact=True) for role in ("holder", "inserter")
             },
             "attached_objects": (
                 _attached_collision_objects(candidate)
-                if STOP_AFTER_CHOICES.index(through_target)
-                >= STOP_AFTER_CHOICES.index("inserter_pickup_grasp")
+                if STOP_AFTER_CHOICES.index(through_target) >= STOP_AFTER_CHOICES.index("inserter_pickup_grasp")
                 else {}
             ),
             "initial_robot_state": sorted(
-                (str(name), round(float(value), 9))
-                for name, value in initial_robot_state.items()
+                (str(name), round(float(value), 9)) for name, value in initial_robot_state.items()
             ),
             "ik_candidate_count": int(config.ik_candidate_count),
             "ik_beam_width": int(config.ik_beam_width),
@@ -1769,10 +1733,7 @@ def _select_ranked_preflight_candidate(
         ),
         "selected_transition_id": (str(selected.get("transition_id", "")) if selected is not None else ""),
         "selected_joint_targets": (
-            {
-                name: list(joints)
-                for name, joints in selected_preplanned.joint_targets.items()
-            }
+            {name: list(joints) for name, joints in selected_preplanned.joint_targets.items()}
             if selected_preplanned is not None
             else {}
         ),
@@ -1781,9 +1742,7 @@ def _select_ranked_preflight_candidate(
                 {
                     "name": name,
                     "mode": selected_preplanned.segment_modes[name],
-                    "point_count": len(
-                        tuple(selected_preplanned.trajectories[name].joint_trajectory.points)
-                    ),
+                    "point_count": len(tuple(selected_preplanned.trajectories[name].joint_trajectory.points)),
                 }
                 for name in selected_preplanned.trajectories
             ]
@@ -1817,18 +1776,13 @@ def _validate_preplanned_trajectory_start(
         tuple(str(name) for name in joint_names)
         if joint_names is not None
         else tuple(
-            str(name)
-            for role in _normalized_active_roles(active_roles)
-            for name in ROLE_SPECS[role]["joint_names"]
+            str(name) for role in _normalized_active_roles(active_roles) for name in ROLE_SPECS[role]["joint_names"]
         )
     )
     missing = [name for name in names if name not in current_state or name not in expected_start_state]
     if missing:
         return False, f"Live or preplanned complete state is missing dual-arm joints: {missing}"
-    errors = {
-        name: abs(float(current_state[name]) - float(expected_start_state[name]))
-        for name in names
-    }
+    errors = {name: abs(float(current_state[name]) - float(expected_start_state[name])) for name in names}
     max_joint = max(errors, key=errors.get)
     max_error = errors[max_joint]
     if max_error > float(tolerance_rad):
@@ -1978,9 +1932,7 @@ def _execute_sequence(
                 tolerance_rad=float(config.execution_start_tolerance_rad),
                 active_roles=active_roles,
                 joint_names=tuple(
-                    str(name)
-                    for active_role in active_roles
-                    for name in _role_spec(plan, active_role)["joint_names"]
+                    str(name) for active_role in active_roles for name in _role_spec(plan, active_role)["joint_names"]
                 ),
             )
             record(
@@ -2005,9 +1957,7 @@ def _execute_sequence(
                     preparation=policy.preparation,
                 )
                 ok = bool(
-                    policy_result.completed
-                    and policy_result.motion_applied
-                    and policy_result.allow_gripper_close
+                    policy_result.completed and policy_result.motion_applied and policy_result.allow_gripper_close
                 )
                 message = (
                     f"policy state={policy_result.state} completed={policy_result.completed} "
@@ -2346,10 +2296,7 @@ def execute_dual_real_plan(
         if not rclpy.ok():
             rclpy.init()
             initialized_here = True
-        commanders = {
-            role: _make_commander(role=role, config=config, plan=source_plan)
-            for role in ROLE_SPECS
-        }
+        commanders = {role: _make_commander(role=role, config=config, plan=source_plan) for role in ROLE_SPECS}
         for commander in commanders.values():
             commander.wait_for_moveit(require_execute=bool(config.execute))
 
@@ -2543,9 +2490,7 @@ def execute_dual_real_plan(
             rclpy.shutdown()
         if debug_server is not None:
             terminal_phase = result.last_completed_phase or (
-                "motion_preflight"
-                if result.status in {"preflight_ok", "motion_preflight_failed"}
-                else "complete"
+                "motion_preflight" if result.status in {"preflight_ok", "motion_preflight_failed"} else "complete"
             )
             _update_debug(
                 candidate=execution_plan,

@@ -448,10 +448,7 @@ def test_apply_and_remove_attached_collision_box_uses_robot_state_diff() -> None
             default_frame_id="base_link",
         )
 
-    cleanup_requests = [
-        call.args[0]
-        for call in commander._apply_planning_scene_client.call_async.call_args_list[-2:]
-    ]
+    cleanup_requests = [call.args[0] for call in commander._apply_planning_scene_client.call_async.call_args_list[-2:]]
     remove_request, world_remove_request = cleanup_requests
     removed = remove_request.scene.robot_state.attached_collision_objects[0]
     assert ok is True
@@ -466,12 +463,8 @@ def test_apply_and_remove_attached_collision_box_uses_robot_state_diff() -> None
 def test_attached_collision_cleanup_leaves_no_attached_or_world_copy() -> None:
     commander = object.__new__(MoveItPoseCommander)
     commander._config = MoveItPoseCommanderConfig(moveit_namespace="/lbr_dual_arm")
-    commander._apply_planning_scene_client = _StatefulPlanningSceneClient(
-        world_ids={"incoming_part"}
-    )
-    commander._wait_for_future = (
-        lambda future, *, timeout_s, label: SimpleNamespace(success=True)
-    )
+    commander._apply_planning_scene_client = _StatefulPlanningSceneClient(world_ids={"incoming_part"})
+    commander._wait_for_future = lambda future, *, timeout_s, label: SimpleNamespace(success=True)
     obstacle = {
         "id": "incoming_part",
         "type": "box",

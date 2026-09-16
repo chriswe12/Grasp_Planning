@@ -77,11 +77,7 @@ class ResidualVisualServoPolicy(nn.Module):
         if goal_map.shape[0] == 1 and live_map.shape[0] > 1:
             goal_map = goal_map.expand(live_map.shape[0], -1, -1, -1)
         elif goal_map.shape[0] != live_map.shape[0]:
-            raise ValueError(
-                "goal_rgbd batch size must be one or match live_rgbd batch size."
-            )
+            raise ValueError("goal_rgbd batch size must be one or match live_rgbd batch size.")
         comparison = self.comparison(torch.cat((goal_map, live_map - goal_map), dim=1))
-        proprioception = self.proprioception(
-            torch.cat((joint_positions, progress, nominal_twist_camera), dim=1)
-        )
+        proprioception = self.proprioception(torch.cat((joint_positions, progress, nominal_twist_camera), dim=1))
         return self.head(torch.cat((comparison, proprioception), dim=1))

@@ -574,8 +574,7 @@ def _iter_exact_ik_feasible_candidates(
     ik_screen_candidate_limit: int,
     evaluate: Callable[
         [object, int],
-        tuple[bool, str, dict[str, tuple[float, ...]]]
-        | tuple[bool, str, dict[str, tuple[float, ...]], object],
+        tuple[bool, str, dict[str, tuple[float, ...]]] | tuple[bool, str, dict[str, tuple[float, ...]], object],
     ],
 ) -> Iterator[_ExactIkFeasibleCandidate]:
     """Lazily screen a broad queue before each bounded path attempt.
@@ -597,9 +596,7 @@ def _iter_exact_ik_feasible_candidates(
 
     source_count = len(tasks)
     screen_count = (
-        source_count
-        if int(ik_screen_candidate_limit) == 0
-        else min(source_count, int(ik_screen_candidate_limit))
+        source_count if int(ik_screen_candidate_limit) == 0 else min(source_count, int(ik_screen_candidate_limit))
     )
     admitted = 0
     for screen_rank, task in enumerate(tasks[:screen_count], start=1):
@@ -1016,8 +1013,7 @@ def _plan_and_execute(
     if trajectory is None and message.startswith("IK failed"):
         fallback_seed_state = dict(gripper_robot_state or {})
         fallback_seed_state.update(
-            (str(name), float(value))
-            for name, value in zip(expected_joint_names, MOVEIT_START_JOINT_POSITIONS)
+            (str(name), float(value)) for name, value in zip(expected_joint_names, MOVEIT_START_JOINT_POSITIONS)
         )
         fallback_joints, fallback_message = commander.compute_ik(
             target,
@@ -1207,12 +1203,8 @@ def _task_approach_gripper_state(task) -> dict[str, float]:
 
     holder_grasp = getattr(task, "holder_world_grasp", None)
     inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
-    holder_robot = str(
-        getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"])
-    )
-    inserter_robot = str(
-        getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"])
-    )
+    holder_robot = str(getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"]))
+    inserter_robot = str(getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"]))
     gripper_model = str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
     state: dict[str, float] = {}
     state.update(
@@ -1243,12 +1235,8 @@ def _task_post_grasp_state_updates(task) -> dict[str, dict[str, float]]:
 
     holder_grasp = getattr(task, "holder_world_grasp", None)
     inserter_grasp = getattr(task, "inserter_pickup_world_grasp", None)
-    holder_robot = str(
-        getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"])
-    )
-    inserter_robot = str(
-        getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"])
-    )
+    holder_robot = str(getattr(task, "holder_robot_name", ARM_SPECS["holder"]["robot"]))
+    inserter_robot = str(getattr(task, "inserter_robot_name", ARM_SPECS["inserter"]["robot"]))
     gripper_model = str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
     return {
         "holder_grasp": kuka_moveit_gripper_state(
@@ -1431,6 +1419,7 @@ def _exact_ik_seed_candidates(
         candidate_count=candidate_count,
         perturbation_rad=perturbation_rad,
     )
+
 
 def _is_distinct_ik_solution(
     solution: tuple[float, ...],
@@ -1635,8 +1624,8 @@ def _solve_role_ik_branches(
                     if isinstance(diagnostics, dict):
                         diagnostics["kinematic_cache_misses"] = int(diagnostics["kinematic_cache_misses"]) + 1
                         diagnostics["ik_requests"] = int(diagnostics["ik_requests"]) + 1
-                        diagnostics["ik_request_duration_s"] = (
-                            float(diagnostics["ik_request_duration_s"]) + float(ik_duration_s)
+                        diagnostics["ik_request_duration_s"] = float(diagnostics["ik_request_duration_s"]) + float(
+                            ik_duration_s
                         )
                 else:
                     kinematic_cache_hit = True
@@ -1669,9 +1658,7 @@ def _solve_role_ik_branches(
                             int(diagnostics["collision_disabled_ik_solutions"]) + 1
                         )
                 candidate_robot_state = dict(parent_state)
-                candidate_robot_state.update(
-                    (name, float(value)) for name, value in zip(role_joint_names, joints)
-                )
+                candidate_robot_state.update((name, float(value)) for name, value in zip(role_joint_names, joints))
                 validity, validity_message = commander.check_state_validity(candidate_robot_state, group_name="")
                 state["ik_state_validity_requests"] = int(state["ik_state_validity_requests"]) + 1
                 if isinstance(diagnostics, dict):
@@ -1737,9 +1724,7 @@ def _solve_role_ik_branches(
                 )
                 if post_state_update:
                     post_grasp_state = dict(candidate_robot_state)
-                    post_grasp_state.update(
-                        (str(name), float(value)) for name, value in post_state_update.items()
-                    )
+                    post_grasp_state.update((str(name), float(value)) for name, value in post_state_update.items())
                     validity_checker = getattr(commander, "check_state_validity", None)
                     if callable(validity_checker):
                         post_validity, post_validity_message = validity_checker(
@@ -1748,9 +1733,7 @@ def _solve_role_ik_branches(
                         )
                     else:
                         post_validity, post_validity_message = ({"valid": True, "contacts": []}, "not available")
-                    state["post_grasp_state_validity_requests"] = (
-                        int(state["post_grasp_state_validity_requests"]) + 1
-                    )
+                    state["post_grasp_state_validity_requests"] = int(state["post_grasp_state_validity_requests"]) + 1
                     if post_validity is None:
                         failure_messages.append(
                             f"parent={parent_index} seed={seed_index}: post-grasp state validity failed: "
@@ -1922,10 +1905,7 @@ def _ik_preflight_pair(
     pair_beam = [
         _IkPreflightBranch(
             target_joint_positions=(),
-            terminal_robot_state=tuple(
-                (str(name), float(value))
-                for name, value in task_initial_robot_state.items()
-            ),
+            terminal_robot_state=tuple((str(name), float(value)) for name, value in task_initial_robot_state.items()),
             joint_path_cost=0.0,
         )
     ]
@@ -1991,11 +1971,7 @@ def _ik_preflight_pair(
                         state=state,
                     )
                 finally:
-                    if (
-                        role == "inserter"
-                        and attached_collision_objects
-                        and attachment_state["active"]
-                    ):
+                    if role == "inserter" and attached_collision_objects and attachment_state["active"]:
                         detach_ok, detach_message = _remove_attached_collision_objects(
                             commanders[role],
                             attached_collision_objects,
@@ -2090,8 +2066,7 @@ def _ik_preflight_pair(
     if resolved_joint_targets:
         pair_record["validated_joint_target_order"] = list(resolved_joint_targets)
         pair_record["validated_joint_targets"] = {
-            str(name): [float(value) for value in joints]
-            for name, joints in resolved_joint_targets.items()
+            str(name): [float(value) for value in joints] for name, joints in resolved_joint_targets.items()
         }
     pair_records.append(pair_record)
     return pair_feasible, failure, resolved_joint_targets
@@ -2104,10 +2079,7 @@ def _is_retryable_pickup_kinematic_failure(pair_record: Mapping[str, object]) ->
     return (
         str(pair_record.get("failure_kind", "")) == "kinematic_no_ik"
         and "inserter grasp " in failure
-        and (
-            "inserter_pickup_pregrasp:" in failure
-            or "inserter_pickup_grasp__approach_" in failure
-        )
+        and ("inserter_pickup_pregrasp:" in failure or "inserter_pickup_grasp__approach_" in failure)
     )
 
 
@@ -2268,20 +2240,14 @@ def main() -> int:
             include_nonretained_identity_fallbacks=(not strict_retained_only and not bool(args.pair_id)),
         )
     )
-    artifact_models = {
-        str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper"))
-        for task in tasks
-    }
+    artifact_models = {str(getattr(task, "pickup_gripper_collision_model", "kuka_y_gripper")) for task in tasks}
     requested_artifact_model = "pdz_gripper" if str(args.gripper_model) == "pdz_gripper" else "kuka_y_gripper"
     if artifact_models != {requested_artifact_model}:
         raise ValueError(
             "The selected MoveIt gripper model does not match the Stage-3 artifacts: "
             f"requested={requested_artifact_model} artifacts={sorted(artifact_models)}."
         )
-    tasks = [
-        with_inserter_pickup_pregrasp_offset(task, pickup_pregrasp_offsets_m[0])
-        for task in tasks
-    ]
+    tasks = [with_inserter_pickup_pregrasp_offset(task, pickup_pregrasp_offsets_m[0]) for task in tasks]
     if args.pair_id:
         tasks = [task for task in tasks if task.pair_id == str(args.pair_id)]
         if not tasks:
@@ -2305,8 +2271,7 @@ def main() -> int:
             "planner_queue_ik_screen_candidates": len(tasks),
             "planner_queue_path_candidate_limit": int(args.max_pair_attempts),
             "planner_queue_selection": (
-                "broad_noncrossing_then_round_robin_unique_pickup_exact_ik_"
-                "then_bounded_path_candidates"
+                "broad_noncrossing_then_round_robin_unique_pickup_exact_ik_then_bounded_path_candidates"
             ),
             "planner_queue_noncrossing_execution_candidates": sum(
                 not _transition_crosses_holder_corridor(task) for task in tasks
@@ -2402,9 +2367,7 @@ def main() -> int:
             collision_diagnostics=bool(args.ik_collision_diagnostics),
         )
     )
-    ik_preflight["pickup_pregrasp_offset_candidates_m"] = list(
-        pickup_pregrasp_offsets_m
-    )
+    ik_preflight["pickup_pregrasp_offset_candidates_m"] = list(pickup_pregrasp_offsets_m)
     ik_preflight["pickup_pregrasp_offset_attempts"] = []
     ik_feasible_cache: dict[str, dict[tuple[object, ...], _IkPreflightCacheEntry]] = {
         role: {} for role in IK_PREFLIGHT_TARGETS
@@ -2527,11 +2490,7 @@ def main() -> int:
         last_task = tasks[0]
         path_candidate_limit = 1 if bool(args.ik_only) else int(args.max_pair_attempts)
         ik_screen_candidate_limit = int(args.max_ik_screen_candidates)
-        ik_screen_bound = (
-            len(tasks)
-            if ik_screen_candidate_limit == 0
-            else min(len(tasks), ik_screen_candidate_limit)
-        )
+        ik_screen_bound = len(tasks) if ik_screen_candidate_limit == 0 else min(len(tasks), ik_screen_candidate_limit)
         ik_screened_candidate_count = 0
         ik_feasible_candidate_count = 0
         selected_screen_ranks: list[int] = []
@@ -2578,9 +2537,7 @@ def main() -> int:
                 attempt_index=screen_rank,
                 phase="ik_preflight",
                 status="planning",
-                message=(
-                    "Checking cached kinematic IK plus complete dual-arm state validity through the sequence."
-                ),
+                message=("Checking cached kinematic IK plus complete dual-arm state validity through the sequence."),
             )
             print(
                 f"[DUAL-SIM-PLAN] IK screen {screen_rank}/{len(tasks)} "
@@ -2595,9 +2552,7 @@ def main() -> int:
                 ik_feasible_candidate_count += 1
                 selected_screen_ranks.append(screen_rank)
                 producer_rank = int(getattr(task, "candidate_rank", 0))
-                selected_candidate_ranks.append(
-                    producer_rank if producer_rank > 0 else screen_rank
-                )
+                selected_candidate_ranks.append(producer_rank if producer_rank > 0 else screen_rank)
                 update_exact_ik_selection("path_candidate_admitted")
                 return (
                     True,
@@ -2610,9 +2565,7 @@ def main() -> int:
             pair_ik_failure = ""
             preflight_joint_targets: dict[str, tuple[float, ...]] = {}
             offset_attempts: list[dict[str, object]] = []
-            pair_tasks_checked_before_offsets = int(
-                ik_preflight["pair_tasks_checked"]
-            )
+            pair_tasks_checked_before_offsets = int(ik_preflight["pair_tasks_checked"])
             pair_tasks_after_before_offsets = int(ik_preflight["pair_tasks_after"])
             for offset_attempt_index, pickup_pregrasp_offset_m in enumerate(
                 pickup_pregrasp_offsets_m,
@@ -2654,9 +2607,7 @@ def main() -> int:
                 )
                 offset_record = {
                     "screen_rank": screen_rank,
-                    "candidate_rank": int(
-                        getattr(task, "candidate_rank", screen_rank)
-                    ),
+                    "candidate_rank": int(getattr(task, "candidate_rank", screen_rank)),
                     "pair_id": task.pair_id,
                     "execution_candidate_id": task.execution_candidate_id,
                     "offset_attempt_index": offset_attempt_index,
@@ -2668,9 +2619,7 @@ def main() -> int:
                 }
                 pair_record.update(offset_record)
                 offset_attempts.append(offset_record)
-                recorded_offset_attempts = ik_preflight[
-                    "pickup_pregrasp_offset_attempts"
-                ]
+                recorded_offset_attempts = ik_preflight["pickup_pregrasp_offset_attempts"]
                 assert isinstance(recorded_offset_attempts, list)
                 recorded_offset_attempts.append(offset_record)
                 if pair_ik_ok or not retryable:
@@ -2685,9 +2634,7 @@ def main() -> int:
             # number of adaptive offset probes. The latter are recorded in
             # pickup_pregrasp_offset_attempts and on each pair record.
             ik_preflight["pair_tasks_checked"] = pair_tasks_checked_before_offsets + 1
-            ik_preflight["pair_tasks_after"] = (
-                pair_tasks_after_before_offsets + int(pair_ik_ok)
-            )
+            ik_preflight["pair_tasks_after"] = pair_tasks_after_before_offsets + int(pair_ik_ok)
             pickup_offset_attempts_by_screen_rank[screen_rank] = offset_attempts
             last_task = selected_task
             checked = int(ik_preflight["pair_tasks_checked"])
@@ -2778,9 +2725,7 @@ def main() -> int:
             task = selected_candidate.task
             last_task = task
             attempt_index = selected_candidate.screen_rank
-            preferred_joint_targets_by_candidate[
-                task.execution_candidate_id
-            ] = selected_candidate.joint_targets
+            preferred_joint_targets_by_candidate[task.execution_candidate_id] = selected_candidate.joint_targets
             task_payload = task.to_payload()
             targets = dict(task_payload["targets"])
             pregrasp_aabb_obstacles = simple_dual_robot_pregrasp_aabb_obstacles(task)
@@ -2816,9 +2761,7 @@ def main() -> int:
                         "failure": "",
                         "steps": [],
                         "mode": "ik_only",
-                        "selected_pickup_pregrasp_offset_m": float(
-                            task.inserter_pickup_world_grasp.pregrasp_offset
-                        ),
+                        "selected_pickup_pregrasp_offset_m": float(task.inserter_pickup_world_grasp.pregrasp_offset),
                         "pickup_pregrasp_offset_attempts": pickup_offset_attempts_by_screen_rank.get(
                             selected_candidate.screen_rank,
                             [],
@@ -2845,15 +2788,12 @@ def main() -> int:
                         "representation": "pickup_world_aabb_in_grasp_tcp_frame",
                         "objects": attached_collision_objects,
                         "attach_after_target": {
-                            str(value["attach_after_target"]): key
-                            for key, value in attached_collision_objects.items()
+                            str(value["attach_after_target"]): key for key, value in attached_collision_objects.items()
                         },
                     },
                     "ik_preflight": ik_preflight,
                     "pickup_pregrasp_offset_selection": {
-                        "selected_m": float(
-                            task.inserter_pickup_world_grasp.pregrasp_offset
-                        ),
+                        "selected_m": float(task.inserter_pickup_world_grasp.pregrasp_offset),
                         "attempts": pickup_offset_attempts_by_screen_rank.get(
                             selected_candidate.screen_rank,
                             [],
@@ -2885,13 +2825,9 @@ def main() -> int:
                 time.sleep(0.10)
                 return 0
             gripper_scene_state = _task_approach_gripper_state(task)
-            scene_ok, scene_message = commanders["holder"].apply_planning_scene_robot_state(
-                gripper_scene_state
-            )
+            scene_ok, scene_message = commanders["holder"].apply_planning_scene_robot_state(gripper_scene_state)
             if not scene_ok:
-                raise RuntimeError(
-                    f"Could not set candidate-specific MoveIt approach gripper widths: {scene_message}"
-                )
+                raise RuntimeError(f"Could not set candidate-specific MoveIt approach gripper widths: {scene_message}")
             print(f"[DUAL-SIM-PLAN] approach grippers: {scene_message}", flush=True)
             post_grasp_state_updates = _task_post_grasp_state_updates(task)
             trajectories: dict[str, object] = {}
@@ -2928,19 +2864,21 @@ def main() -> int:
                         task.execution_candidate_id,
                         {},
                     )
-                    validated_joint_sequence = _validated_joint_target_sequence(
-                        candidate_joint_targets,
-                        target_name=target_name,
-                    ) if not bool(args.skip_ik_preflight) else ()
+                    validated_joint_sequence = (
+                        _validated_joint_target_sequence(
+                            candidate_joint_targets,
+                            target_name=target_name,
+                        )
+                        if not bool(args.skip_ik_preflight)
+                        else ()
+                    )
                     trajectory_payload, message = _plan_and_execute(
                         commanders[role],
                         target=target,
                         label=f"{task.pair_id}_{target_name}",
                         expected_joint_names=joint_names,
                         preferred_joint_positions=(
-                            candidate_joint_targets.get(target_name)
-                            if bool(args.skip_ik_preflight)
-                            else None
+                            candidate_joint_targets.get(target_name) if bool(args.skip_ik_preflight) else None
                         ),
                         preferred_joint_sequence=(validated_joint_sequence or None),
                         gripper_robot_state=gripper_scene_state,
@@ -2964,9 +2902,7 @@ def main() -> int:
                         "target": target_name,
                         "ok": ok,
                         "message": message,
-                        "validated_joint_targets": [
-                            name for name, _joints in validated_joint_sequence
-                        ],
+                        "validated_joint_targets": [name for name, _joints in validated_joint_sequence],
                     }
                 )
                 print(
@@ -2994,9 +2930,7 @@ def main() -> int:
                 closed_state_update = post_grasp_state_updates.get(target_name)
                 if closed_state_update:
                     gripper_scene_state.update(closed_state_update)
-                    state_ok, state_message = commanders["holder"].apply_planning_scene_robot_state(
-                        closed_state_update
-                    )
+                    state_ok, state_message = commanders["holder"].apply_planning_scene_robot_state(closed_state_update)
                     steps.append(
                         {
                             "role": role,
@@ -3068,9 +3002,7 @@ def main() -> int:
                     "inserter_reachability_proxy_score": (task.inserter_reachability_proxy_score),
                     "success": not failure,
                     "failure": failure,
-                    "selected_pickup_pregrasp_offset_m": float(
-                        task.inserter_pickup_world_grasp.pregrasp_offset
-                    ),
+                    "selected_pickup_pregrasp_offset_m": float(task.inserter_pickup_world_grasp.pregrasp_offset),
                     "pickup_pregrasp_offset_attempts": pickup_offset_attempts_by_screen_rank.get(
                         selected_candidate.screen_rank,
                         [],
@@ -3152,17 +3084,14 @@ def main() -> int:
                     "representation": "pickup_world_aabb_in_grasp_tcp_frame",
                     "objects": attached_collision_objects,
                     "attach_after_target": {
-                        str(value["attach_after_target"]): key
-                        for key, value in attached_collision_objects.items()
+                        str(value["attach_after_target"]): key for key, value in attached_collision_objects.items()
                     },
                 },
                 "arm_arm_collision_checking": True,
                 "start_joint_positions": list(MOVEIT_START_JOINT_POSITIONS),
                 "ik_preflight": ik_preflight,
                 "pickup_pregrasp_offset_selection": {
-                    "selected_m": float(
-                        task.inserter_pickup_world_grasp.pregrasp_offset
-                    ),
+                    "selected_m": float(task.inserter_pickup_world_grasp.pregrasp_offset),
                     "attempts": pickup_offset_attempts_by_screen_rank.get(
                         selected_candidate.screen_rank,
                         [],

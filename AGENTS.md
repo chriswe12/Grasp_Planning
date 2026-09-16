@@ -2,10 +2,10 @@
 
 ## Purpose
 
-This repository is for the YAML-driven Fabrica grasp-planning pipeline on Franka Research 3 with MuJoCo or Isaac execution and ROS2 pose intake.
+This repository contains YAML-driven Fabrica grasp planning and execution for Franka Research 3 and KUKA iiwa7, plus Isaac Lab visual-servo RL and Euler deployment.
 
 Current scope:
-- one user-facing entrypoint: `run_pipeline.sh`
+- unified planning/execution entrypoint: `run_pipeline.sh` (see `EXECUTION_PATHS.md`)
 - repo-specific Isaac container helper: `docker_env.sh`
 - three pipeline modes: `sim`, `pitl`, `real`
 - shared stage-1 and stage-2 Fabrica planning in `grasp_planning/pipeline/`
@@ -18,6 +18,18 @@ Current scope:
 - standalone grasp-generation benchmark over Fabrica OBJ parts in `scripts/run_grasp_generation_benchmark.py`
 - dual-KUKA holder/inserter planning and execution through `run_pipeline.sh --workflow dual`
 - resumable all-step dual-arm benchmark in `scripts/run_dual_assembly_benchmark.py`
+- visual-servo RL tasks, training, and evaluation in `isaac_rl/`; shared helpers in `grasp_planning/rl/`
+- repo-specific Euler deployment and job submission in `euler/`
+
+## Task Scope And Verification
+
+- Complete requested implementation and relevant verification using reasonable assumptions within the authorized scope. Audits and proposals do not authorize applying their suggested changes.
+- Ask for clarification only when a missing decision materially changes scope or outcome; complete independent authorized work first. Do not ask again for approval already provided in the session.
+- Preserve hardware execution gates and safe defaults. Preparing deployment or smoke readiness does not authorize starting training or submitting cluster jobs.
+- Run checks appropriate to the changed behavior. Broaden or repeat testing when failures, further changes, or unresolved concerns justify it.
+- Treat memory and the companion wiki as context; verify current paths, configuration, and behavior against this checkout. Treat benchmark results and cluster details as dated observations.
+- Apply skills only to the requested workflow. Explicit user instructions take precedence over skill guidelines; if an instruction blocks progress, cite its source and explain the concrete conflict.
+- Report what changed, what was verified, and any remaining limitation concisely.
 
 ## Companion Wiki
 
@@ -70,15 +82,13 @@ Agents operating from `../mt_wiki` are documentation agents: they may read this 
 - The generation benchmark is planning-only: `direct_success` and `fallback_success` do not imply MuJoCo, Isaac, MoveIt, or hardware execution success.
 - Planning knobs: `roll_angle_step_deg` expands a full 360 degree roll sweep; `floor_clearance_margin_m` and `top_grasp_score_weight` are stage-2 world-pose filters/scorers; `--skip-stage1-collision-checks` bypasses only stage-1 assembly collision filtering.
 - Object-local `contact_support` is pad-footprint based. If `score_grasps()` behavior changes, bump `GRASP_SCORING_ALGORITHM_VERSION` so stage-1 caches cannot reuse stale scores.
-- The MuJoCo path consumes the stage-2 bundle as the source of truth.
-- The Isaac path consumes the stage-2 bundle as the source of truth.
-- The real-robot path also consumes the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
+- For single-object execution, MuJoCo, Isaac, and the real-robot executor consume the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
 - The MuJoCo object mesh must be rebuilt in the saved bundle-local frame before execution.
 - MuJoCo can optionally use MoveIt for planning only via `mujoco_execution.controller: "moveit"`; MuJoCo still executes the planned joint waypoints and owns physics/viewer/contact evaluation.
 - MuJoCo regrasp fallback is geometry-filtered first, then MoveIt-ranked at execution time: do not choose staging poses only by static placement score when MoveIt trajectories are available.
 - Regrasp reachability scoring depends on world XY; final candidates must be scored per actual staging offset pose, not once at the base staging XY.
 - Regrasp fallback artifacts are split: `*_regrasp_plan.json/html` explain candidate resting poses and grasps; the MuJoCo attempt artifact records ranked `planned_candidates`, execution `attempts`, and trajectory diagnostics.
-- Isaac execution uses MoveIt-planned joint waypoints; do not reintroduce local Isaac-side direct controllers without an explicit request.
+- Isaac execution of saved stage-2 bundles uses MoveIt-planned joint waypoints; do not reintroduce local direct controllers in that execution path without an explicit request. Standalone Isaac Lab RL training and evaluation are separate workflows; see `isaac_rl/README.md` and `euler/README.md`.
 - Dual-arm runtime queues are producer-ranked by safety/corridor tiers, not globally by raw score. Preserve explicit `candidate_rank`, and execute the exact collision-aware IK joints accepted during preflight.
 - Propagate `--inserter-arm` into real task construction and consume task-declared roles in the executor; `auto` swaps holder/inserter across the assembly-Y line, so hard-coded logical roles invalidate half of a symmetric benchmark.
 - Dual-arm pickup filtering grounds the rotated incoming mesh on the configured world floor (default `z=-0.030 m`) before testing the gripper. Real-mode live debugging must start before this filter so an empty queue still reports its diagnostics.

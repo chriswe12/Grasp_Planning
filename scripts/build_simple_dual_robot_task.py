@@ -82,10 +82,7 @@ def _parse_args() -> argparse.Namespace:
         "--inserter-arm",
         choices=("auto", "lbr_one", "lbr_two"),
         default="lbr_two",
-        help=(
-            "Physical arm assigned to pickup. 'auto' selects lbr_one below "
-            "assembly Y and lbr_two otherwise."
-        ),
+        help=("Physical arm assigned to pickup. 'auto' selects lbr_one below assembly Y and lbr_two otherwise."),
     )
     parser.add_argument(
         "--floor-z",
@@ -240,8 +237,7 @@ def main() -> int:
                 "representation": "pickup_world_aabb_in_grasp_tcp_frame",
                 "objects": attached_collision_objects,
                 "attach_after_target": {
-                    str(value["attach_after_target"]): key
-                    for key, value in attached_collision_objects.items()
+                    str(value["attach_after_target"]): key for key, value in attached_collision_objects.items()
                 },
             },
         }
@@ -252,9 +248,7 @@ def main() -> int:
         candidate_payload["source_artifacts"] = {
             "artifact_dir": str(selection.artifact_dir),
             "holder_stage2_bundle": str(selection.artifact_dir / "holder_base_candidates.json"),
-            "inserter_stage2_bundle": str(
-                selection.artifact_dir / f"inserter_candidates_{selection.step_id}.json"
-            ),
+            "inserter_stage2_bundle": str(selection.artifact_dir / f"inserter_candidates_{selection.step_id}.json"),
         }
         candidate_payload["moveit"] = moveit_payload
         candidate_payloads.append(candidate_payload)

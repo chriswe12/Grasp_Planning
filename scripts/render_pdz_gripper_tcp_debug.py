@@ -76,8 +76,7 @@ def _add_tcp_marker(
     position = position_w.detach().cpu().numpy()
     root = UsdGeom.Xform.Define(stage, "/World/PDZTCPDebug")
     root.GetPrim().SetMetadata(
-        "documentation",
-        "Runtime PDZ TCP reconstructed from pdz_gripper_base_link: xyz=(0,0,0.1355), yaw=-90deg."
+        "documentation", "Runtime PDZ TCP reconstructed from pdz_gripper_base_link: xyz=(0,0,0.1355), yaw=-90deg."
     )
     print("[TCP-DEBUG] authoring TCP sphere", flush=True)
     _sphere(stage, "/World/PDZTCPDebug/TCP", position, 0.008, (1.0, 0.85, 0.0))
@@ -176,12 +175,8 @@ def main() -> None:
         device=sim.device,
         dtype=torch.float32,
     )
-    tcp_position_w = base_position_w + quat_apply(
-        base_quaternion_wxyz_w.unsqueeze(0), local_offset.unsqueeze(0)
-    )[0]
-    tcp_quaternion_wxyz_w = quat_mul(
-        base_quaternion_wxyz_w.unsqueeze(0), local_yaw.unsqueeze(0)
-    )[0]
+    tcp_position_w = base_position_w + quat_apply(base_quaternion_wxyz_w.unsqueeze(0), local_offset.unsqueeze(0))[0]
+    tcp_quaternion_wxyz_w = quat_mul(base_quaternion_wxyz_w.unsqueeze(0), local_yaw.unsqueeze(0))[0]
     print(
         f"[TCP-DEBUG] computed world TCP xyz={tcp_position_w.detach().cpu().tolist()}",
         flush=True,
@@ -193,12 +188,8 @@ def main() -> None:
     camera = scene["overview_camera"]
     front_offset_tcp = torch.tensor((0.0, 0.0, 0.20), device=sim.device)
     angle_offset_tcp = torch.tensor((0.12, -0.14, 0.16), device=sim.device)
-    front_eye = tcp_position_w + quat_apply(
-        tcp_quaternion_wxyz_w.unsqueeze(0), front_offset_tcp.unsqueeze(0)
-    )[0]
-    angle_eye = tcp_position_w + quat_apply(
-        tcp_quaternion_wxyz_w.unsqueeze(0), angle_offset_tcp.unsqueeze(0)
-    )[0]
+    front_eye = tcp_position_w + quat_apply(tcp_quaternion_wxyz_w.unsqueeze(0), front_offset_tcp.unsqueeze(0))[0]
+    angle_eye = tcp_position_w + quat_apply(tcp_quaternion_wxyz_w.unsqueeze(0), angle_offset_tcp.unsqueeze(0))[0]
     print("[TCP-DEBUG] rendering front view", flush=True)
     front = _render_view(camera, scene, sim, eye=front_eye, target=tcp_position_w)
     print("[TCP-DEBUG] rendering oblique view", flush=True)
