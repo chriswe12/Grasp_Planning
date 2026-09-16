@@ -72,10 +72,10 @@ def _write_index_html(*, output_dir: Path, result, summary_html: Path, step_html
             f"<td>{int(metadata['inserter_shortlist_count'])}</td>"
             f"<td>{int(metadata['compatible_pair_count'])}</td>"
             f"<td>{int(metadata['retained_pair_count'])}</td>"
-            f"<td><a href=\"{html.escape(pair_artifact_name(step).replace('.json', '.html'))}\">pairs</a> · "
-            f"<a href=\"inserter_population_{html.escape(step.step_id)}.html\">all unary grasps</a> · "
-            f"<a href=\"inserter_unary_debug_{html.escape(step.step_id)}.html\">constraint debugger</a> · "
-            f"<a href=\"inserter_failures_{html.escape(step.step_id)}.html\">unary failures</a></td>"
+            f'<td><a href="{html.escape(pair_artifact_name(step).replace(".json", ".html"))}">pairs</a> · '
+            f'<a href="inserter_population_{html.escape(step.step_id)}.html">all unary grasps</a> · '
+            f'<a href="inserter_unary_debug_{html.escape(step.step_id)}.html">constraint debugger</a> · '
+            f'<a href="inserter_failures_{html.escape(step.step_id)}.html">unary failures</a></td>'
             "</tr>"
         )
     page = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>PDZ offline grasp build</title>
@@ -84,7 +84,7 @@ def _write_index_html(*, output_dir: Path, result, summary_html: Path, step_html
 <p>Three-stage PDZ collision planning: Stage 1 grasps, Stage 2 holder-state feasibility, Stage 3 insertion and pair checks.</p>
 <p><a href=\"{summary_html.name}\">Stage 3 summary</a> · <a href=\"holder_base_candidates.html\">Stage 1 holder grasps</a> · <a href=\"holder_validity_matrix.html\">Stage 2 holder-state debugger</a></p>
 <p><small>\"holders\" is the Stage-2 holder-state pass count only. \"inserters\" is the Stage-3 unary insertion pass count; zero inserters means that assembly step cannot proceed.</small></p>
-<table><thead><tr><th>Assembly step</th><th>holders<br><small>Stage 2</small></th><th>inserters<br><small>Stage 3 unary</small></th><th>compatible</th><th>retained</th><th></th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+<table><thead><tr><th>Assembly step</th><th>holders<br><small>Stage 2</small></th><th>inserters<br><small>Stage 3 unary</small></th><th>compatible</th><th>retained</th><th></th></tr></thead><tbody>{"".join(rows)}</tbody></table>
 </body></html>"""
     path = output_dir / "index.html"
     path.write_text(page, encoding="utf-8")
@@ -116,11 +116,15 @@ def _diverse_failure_statuses(library, *, per_reason: int = 60):
             # single rounded or highly scored region must not hide valid flat
             # face grasp families in the failure debugger.
             cell = tuple(int(np.floor(float(value) / 0.025)) for value in candidate.grasp_position_obj)
+
             def normal_family(normal) -> tuple[int, int]:
                 value = np.asarray(normal, dtype=float)
                 axis = int(np.argmax(np.abs(value)))
                 return axis, 1 if value[axis] >= 0.0 else -1
-            contacts = tuple(sorted((normal_family(candidate.contact_normal_a_obj), normal_family(candidate.contact_normal_b_obj))))
+
+            contacts = tuple(
+                sorted((normal_family(candidate.contact_normal_a_obj), normal_family(candidate.contact_normal_b_obj)))
+            )
             key = (cell, int(np.floor(float(candidate.roll_angle_rad) / (np.pi / 6.0))), contacts)
             if key in used_bins:
                 continue
@@ -170,7 +174,8 @@ def _write_inserter_failure_debug(*, library, sequence, planning, output_dir: Pa
                 "failures": [_failure_candidate_payload(status, rank) for rank, status in enumerate(failures, start=1)],
             },
             indent=2,
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     # The existing grasp viewer provides a quick visual inspection of the
@@ -184,7 +189,9 @@ def _write_inserter_failure_debug(*, library, sequence, planning, output_dir: Pa
                 "unary_failure": {
                     "reason": status.reason,
                     "minimum_clearance_m": status.minimum_clearance_m,
-                    "penetration_m": None if status.minimum_clearance_m is None else max(0.0, -status.minimum_clearance_m),
+                    "penetration_m": None
+                    if status.minimum_clearance_m is None
+                    else max(0.0, -status.minimum_clearance_m),
                     "details": status.details,
                 },
             },
@@ -199,10 +206,17 @@ def _write_inserter_failure_debug(*, library, sequence, planning, output_dir: Pa
         source,
     )
     table_corners_world = np.asarray(
-        [[-0.5, -0.5, sequence.table_z_assembly_m], [-0.5, 0.5, sequence.table_z_assembly_m], [0.5, 0.5, sequence.table_z_assembly_m], [0.5, -0.5, sequence.table_z_assembly_m]],
+        [
+            [-0.5, -0.5, sequence.table_z_assembly_m],
+            [-0.5, 0.5, sequence.table_z_assembly_m],
+            [0.5, 0.5, sequence.table_z_assembly_m],
+            [0.5, -0.5, sequence.table_z_assembly_m],
+        ],
         dtype=float,
     )
-    table_corners_local = (source.rotation_world_from_object.T @ (table_corners_world - source.translation_world).T).T.tolist()
+    table_corners_local = (
+        source.rotation_world_from_object.T @ (table_corners_world - source.translation_world).T
+    ).T.tolist()
     html_path = output_dir / f"inserter_failures_{library.step_id}.html"
     write_holder_grasp_debug_html(
         title=f"Inserter unary failures: {library.step_id}",
@@ -307,15 +321,9 @@ def _pair_config(payload: dict[str, object]) -> DualGraspPairConfig:
         ),
         transition_symmetry_max_incoming_transforms=int(raw.get("transition_symmetry_max_incoming_transforms", 0)),
         adaptive_inserter_shortlist=bool(raw.get("adaptive_inserter_shortlist", True)),
-        prefer_aabb_clear_inserter_candidates=bool(
-            raw.get("prefer_aabb_clear_inserter_candidates", True)
-        ),
-        balance_inserter_approach_directions=bool(
-            raw.get("balance_inserter_approach_directions", True)
-        ),
-        balance_inserter_symmetry_transforms=bool(
-            raw.get("balance_inserter_symmetry_transforms", True)
-        ),
+        prefer_aabb_clear_inserter_candidates=bool(raw.get("prefer_aabb_clear_inserter_candidates", True)),
+        balance_inserter_approach_directions=bool(raw.get("balance_inserter_approach_directions", True)),
+        balance_inserter_symmetry_transforms=bool(raw.get("balance_inserter_symmetry_transforms", True)),
         exact_pair_clearance_ranking=bool(raw.get("exact_pair_clearance_ranking", True)),
         stage3_worker_count=int(raw.get("stage3_worker_count", 1)),
         inserter_contact_offset_pairs_m=contact_pairs,

@@ -173,10 +173,7 @@ if args_cli.critical_damping_ratio <= 0.0:
     parser.error("--critical-damping-ratio must be positive.")
 if args_cli.gripper_contact_preload_m < 0.0:
     parser.error("--gripper-contact-preload-m must be non-negative.")
-if (
-    args_cli.approach_clearance_per_finger_m is not None
-    and args_cli.approach_clearance_per_finger_m < 0.0
-):
+if args_cli.approach_clearance_per_finger_m is not None and args_cli.approach_clearance_per_finger_m < 0.0:
     parser.error("--approach-clearance-per-finger-m must be non-negative.")
 if args_cli.trajectory_waypoint_tolerance_rad <= 0.0:
     parser.error("--trajectory-waypoint-tolerance-rad must be positive.")
@@ -613,23 +610,13 @@ def _close_gripper(
     step_callback: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     command_joint_name = next(
-        (
-            str(name)
-            for name in context.robot.joint_names
-            if is_gripper_command_joint_name(str(name))
-        ),
+        (str(name) for name in context.robot.joint_names if is_gripper_command_joint_name(str(name))),
         "left_finger_joint",
     )
-    minimum_width_m = (
-        PDZ_GRIPPER_CLOSED_WIDTH_M
-        if command_joint_name == "pdz_gripper_left_finger_joint"
-        else 0.001
-    )
+    minimum_width_m = PDZ_GRIPPER_CLOSED_WIDTH_M if command_joint_name == "pdz_gripper_left_finger_joint" else 0.001
     requested_close_width_m = float(args_cli.close_width)
     commanded_width_m = (
-        requested_close_width_m
-        if requested_close_width_m > 0.0
-        else min(float(selected_jaw_width_m), minimum_width_m)
+        requested_close_width_m if requested_close_width_m > 0.0 else min(float(selected_jaw_width_m), minimum_width_m)
     )
     settle_steps = max(
         1,
@@ -672,11 +659,7 @@ def _close_gripper(
     final_positions = diagnostics.get("gripper_close_final_joint_positions")
     driver_joint_name = (
         next(
-            (
-                str(name)
-                for name in joint_names
-                if str(name) in {"left_finger_joint", "pdz_gripper_left_finger_joint"}
-            ),
+            (str(name) for name in joint_names if str(name) in {"left_finger_joint", "pdz_gripper_left_finger_joint"}),
             "",
         )
         if isinstance(joint_names, list)
@@ -1082,8 +1065,7 @@ def main() -> int:
     asset_is_pdz = "pdz_gripper" in str(robot_usd).lower()
     if (gripper_model == "pdz_gripper") != asset_is_pdz:
         raise ValueError(
-            "Dual plan and Isaac robot asset use different grippers: "
-            f"plan={gripper_model} robot_usd={robot_usd}."
+            f"Dual plan and Isaac robot asset use different grippers: plan={gripper_model} robot_usd={robot_usd}."
         )
     objects = dict(plan["objects"])
     base_payload = dict(objects["base"])
@@ -1250,12 +1232,8 @@ def main() -> int:
     resolved_robot_frames = {
         "holder_ee_body": holder_context.ee_body_name,
         "inserter_ee_body": inserter_context.ee_body_name,
-        "holder_pdz_bodies": [
-            name for name in holder_robot.body_names if "pdz_gripper" in str(name)
-        ],
-        "inserter_pdz_bodies": [
-            name for name in inserter_robot.body_names if "pdz_gripper" in str(name)
-        ],
+        "holder_pdz_bodies": [name for name in holder_robot.body_names if "pdz_gripper" in str(name)],
+        "inserter_pdz_bodies": [name for name in inserter_robot.body_names if "pdz_gripper" in str(name)],
     }
     print(f"[DUAL-SIM-ISAAC] Resolved robot frames: {resolved_robot_frames}", flush=True)
     holder_damping = holder_context.refresh_critical_joint_damping(required=True)

@@ -24,21 +24,18 @@ fabrica_manifest = _load_script("build_fabrica_manifest_from_benchmark.py")
 
 
 def test_global_ids_namespace_repeated_local_ids_across_assemblies() -> None:
+    assert assembly_manifest._part_key("beam", "0") == "beam__part_0"
     assert (
-        assembly_manifest._part_key("beam", "0")
-        == "beam__part_0"
+        assembly_manifest._prefixed_orientation("0", "orientation_003", assembly_name="beam")
+        == "beam__part_0__orientation_003"
     )
-    assert assembly_manifest._prefixed_orientation(
-        "0", "orientation_003", assembly_name="beam"
-    ) == "beam__part_0__orientation_003"
-    assert assembly_manifest._prefixed_target(
-        "0", "orientation_003", "g0147", assembly_name="beam"
-    ) == "beam__part_0__orientation_003__g0147"
+    assert (
+        assembly_manifest._prefixed_target("0", "orientation_003", "g0147", assembly_name="beam")
+        == "beam__part_0__orientation_003__g0147"
+    )
     assert assembly_manifest._prefixed_target(
         "0", "orientation_003", "g0147", assembly_name="car"
-    ) != assembly_manifest._prefixed_target(
-        "0", "orientation_003", "g0147", assembly_name="beam"
-    )
+    ) != assembly_manifest._prefixed_target("0", "orientation_003", "g0147", assembly_name="beam")
 
 
 def _write_manifest(path: Path, assembly: str) -> None:
@@ -122,13 +119,10 @@ def test_merge_is_deterministic_unique_and_isolates_holdouts(tmp_path: Path) -> 
     for target in first["targets"]:
         expected = "test" if target["assembly_name"] == "car" else "train"
         assert target["assembly_holdout_split"] == expected
-    held_out_parts = set(
-        first["split_scheme_metadata"]["part_holdout"]["held_out_part_keys"]
-    )
+    held_out_parts = set(first["split_scheme_metadata"]["part_holdout"]["held_out_part_keys"])
     assert len(held_out_parts) == 1
     assert all(
-        target["part_holdout_split"]
-        == ("test" if target["part_key"] in held_out_parts else "train")
+        target["part_holdout_split"] == ("test" if target["part_key"] in held_out_parts else "train")
         for target in first["targets"]
     )
 
@@ -151,13 +145,7 @@ def test_merge_rejects_non_namespaced_legacy_manifest(tmp_path: Path) -> None:
 def test_fabrica_config_respects_pdz_closed_gap() -> None:
     import yaml
 
-    config = yaml.safe_load(
-        (REPO_ROOT / "configs/fabrica_all_v1.yaml").read_text(encoding="utf-8")
-    )
+    config = yaml.safe_load((REPO_ROOT / "configs/fabrica_all_v1.yaml").read_text(encoding="utf-8"))
     selection = config["selection"]
-    assert selection["min_training_jaw_width_m"] >= (
-        fabrica_manifest.PDZ_GRIPPER_CLOSED_WIDTH_M
-    )
-    assert selection["min_training_jaw_width_m"] <= selection[
-        "max_training_jaw_width_m"
-    ]
+    assert selection["min_training_jaw_width_m"] >= (fabrica_manifest.PDZ_GRIPPER_CLOSED_WIDTH_M)
+    assert selection["min_training_jaw_width_m"] <= selection["max_training_jaw_width_m"]

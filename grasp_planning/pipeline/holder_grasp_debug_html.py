@@ -38,9 +38,10 @@ def _pdz_component_payload(name: str) -> dict[str, object]:
     """Express a PDZ URDF component in the planner TCP frame for the HTML."""
 
     vertices, faces = _load_pdz_gripper_collision_hull(name)
-    vertices_tcp = vertices @ _PDZ_GRIPPER_BODY_ROTATION_TCP.T - (
-        _PDZ_GRIPPER_BODY_ROTATION_TCP @ _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M
-    )[None, :]
+    vertices_tcp = (
+        vertices @ _PDZ_GRIPPER_BODY_ROTATION_TCP.T
+        - (_PDZ_GRIPPER_BODY_ROTATION_TCP @ _PDZ_GRIPPER_BASE_TO_GRASP_CENTER_M)[None, :]
+    )
     return {"vertices": _rounded(vertices_tcp), "faces": np.asarray(faces, dtype=np.int64).tolist()}
 
 

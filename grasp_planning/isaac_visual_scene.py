@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-VISUAL_SERVO_SCENE_PROFILE = (
-    "small_tslot_dome_directional_dlaa_4spp_dldenoise_v6"
-)
+VISUAL_SERVO_SCENE_PROFILE = "small_tslot_dome_directional_dlaa_4spp_dldenoise_v6"
 
 VISUAL_SERVO_DIRECT_LIGHT_SAMPLES = 4
 VISUAL_SERVO_DL_DENOISER_ENABLED = True

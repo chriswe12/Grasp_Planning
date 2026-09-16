@@ -117,9 +117,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    active_roles = tuple(
-        dict.fromkeys(role.strip() for role in str(args.active_roles).split(",") if role.strip())
-    )
+    active_roles = tuple(dict.fromkeys(role.strip() for role in str(args.active_roles).split(",") if role.strip()))
     if not active_roles or any(role not in {"holder", "inserter"} for role in active_roles):
         raise ValueError("--active-roles must be holder, inserter, or holder,inserter.")
     if not 0.0 < args.velocity_scale <= 0.20:

@@ -250,15 +250,11 @@ def _sample_active_layout(
     wall_palette = office_walls if style == "office" else factory_walls
     if style == "mixed":
         wall_materials = tuple(
-            rng.choice(office_walls if side_index % 2 else factory_walls)
-            for side_index in range(len(_SIDES))
+            rng.choice(office_walls if side_index % 2 else factory_walls) for side_index in range(len(_SIDES))
         )
     else:
         primary_wall = rng.choice(wall_palette)
-        wall_materials = tuple(
-            primary_wall if rng.random() < 0.70 else rng.choice(wall_palette)
-            for _ in _SIDES
-        )
+        wall_materials = tuple(primary_wall if rng.random() < 0.70 else rng.choice(wall_palette) for _ in _SIDES)
     wall_specs = {
         "rear": ((0.910, 0.050, 0.200), (0.020, 0.940, 0.520)),
         "back": ((-0.190, 0.050, 0.200), (0.020, 0.940, 0.520)),
@@ -480,9 +476,7 @@ def _sample_active_layout(
     for reach_index, side in enumerate(selected_sides):
         slot = _WORKER_REACH_SLOT_START + reach_index * _WORKER_REACH_SLOT_COUNT
         sleeve = rng.choice(shirt_materials)
-        hand = rng.choice(
-            skin_materials if style == "office" else ("bin_blue", "shirt_grey")
-        )
+        hand = rng.choice(skin_materials if style == "office" else ("bin_blue", "shirt_grey"))
         outer_x, outer_y = person_positions[side]
         inner_x, inner_y, inner_z = reach_endpoints[side]
         if side in {"rear", "back"}:
@@ -630,9 +624,7 @@ def spawn_visual_servo_busy_background(
                 imageable.MakeInvisible()
                 continue
             if spec.shape != expected_shape:
-                raise RuntimeError(
-                    f"Busy-background slot {slot} expects {expected_shape}, got {spec.shape}."
-                )
+                raise RuntimeError(f"Busy-background slot {slot} expects {expected_shape}, got {spec.shape}.")
             imageable.MakeVisible()
             standardize_xform_ops(prim, spec.position, spec.orientation_wxyz, spec.size)
             sim_utils.bind_visual_material(prim_path, material_paths[spec.material_index], stage=stage)

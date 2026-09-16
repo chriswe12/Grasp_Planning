@@ -52,9 +52,7 @@ def sample_visual_clutter_layouts(
     if not 0.0 <= environment_fraction <= 1.0:
         raise ValueError("environment_fraction must lie in [0, 1].")
     if min_objects < 0 or max_objects < min_objects or max_objects > len(_CLUTTER_ANCHORS):
-        raise ValueError(
-            f"Expected 0 <= min_objects <= max_objects <= {len(_CLUTTER_ANCHORS)}."
-        )
+        raise ValueError(f"Expected 0 <= min_objects <= max_objects <= {len(_CLUTTER_ANCHORS)}.")
     if not enabled or environment_fraction == 0.0 or max_objects == 0:
         return tuple(() for _ in range(count))
 

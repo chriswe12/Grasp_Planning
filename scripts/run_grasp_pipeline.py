@@ -533,14 +533,10 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         raise ValueError(f"Unsupported real_execution.stop_after value '{stop_after}'.")
     grasp_approach_controller = str(raw.get("grasp_approach_controller", "moveit_pose")).strip().lower()
     if grasp_approach_controller not in {"moveit_pose", "d405_policy"}:
-        raise ValueError(
-            "real_execution.grasp_approach_controller must be 'moveit_pose' or 'd405_policy'."
-        )
+        raise ValueError("real_execution.grasp_approach_controller must be 'moveit_pose' or 'd405_policy'.")
     visual_servo_config = str(raw.get("visual_servo_config", "")).strip()
     if grasp_approach_controller == "d405_policy" and not visual_servo_config:
-        raise ValueError(
-            "real_execution.visual_servo_config is required when grasp_approach_controller=d405_policy."
-        )
+        raise ValueError("real_execution.visual_servo_config is required when grasp_approach_controller=d405_policy.")
     grasp_id = str(raw.get("grasp_id", "")).strip()
     planning_scene_obstacles_raw = raw.get("planning_scene_obstacles", ())
     if planning_scene_obstacles_raw is None:
@@ -582,24 +578,16 @@ def _real_execution_config(payload: dict[str, object]) -> RealExecutionConfig:
         gripper_command_action=str(raw.get("gripper_command_action", "/gripper_controller/gripper_cmd")),
         gripper_command_position_mode=str(raw.get("gripper_command_position_mode", "width")),
         gripper_command_max_effort=float(raw.get("gripper_command_max_effort", raw.get("gripper_grasp_force", 30.0))),
-        gripper_trigger_open_service=str(
-            raw.get("gripper_trigger_open_service", "/left/gripper_controller/open")
-        ),
-        gripper_trigger_close_service=str(
-            raw.get("gripper_trigger_close_service", "/left/gripper_controller/close")
-        ),
-        gripper_trigger_stop_service=str(
-            raw.get("gripper_trigger_stop_service", "/left/gripper_controller/stop")
-        ),
+        gripper_trigger_open_service=str(raw.get("gripper_trigger_open_service", "/left/gripper_controller/open")),
+        gripper_trigger_close_service=str(raw.get("gripper_trigger_close_service", "/left/gripper_controller/close")),
+        gripper_trigger_stop_service=str(raw.get("gripper_trigger_stop_service", "/left/gripper_controller/stop")),
         gripper_position_command_topic=str(
             raw.get("gripper_position_command_topic", "/left/gripper_controller/position_command")
         ),
         gripper_position_feedback_topic=str(
             raw.get("gripper_position_feedback_topic", "/left/gripper_controller/position")
         ),
-        gripper_position_feedback_tolerance=float(
-            raw.get("gripper_position_feedback_tolerance", 0.02)
-        ),
+        gripper_position_feedback_tolerance=float(raw.get("gripper_position_feedback_tolerance", 0.02)),
         moveit_gripper_joint_name=str(raw.get("moveit_gripper_joint_name", "")),
         gripper_closed_width=float(raw.get("gripper_closed_width", 0.0)),
         gripper_open_width=float(raw.get("gripper_open_width", 0.08)),

@@ -60,9 +60,7 @@ def world_twist_to_camera(
             D405WristCameraConfig().rotation_camera_in_calibration_parent,
             dtype=np.float64,
         ).reshape(3, 3)
-    rotation_world_from_camera = rotation_world_from_tcp @ np.asarray(
-        rotation_camera_in_tcp, dtype=np.float64
-    )
+    rotation_world_from_camera = rotation_world_from_tcp @ np.asarray(rotation_camera_in_tcp, dtype=np.float64)
     rotation_camera_from_world = np.swapaxes(rotation_world_from_camera, -1, -2)
     linear = np.einsum("...ij,...j->...i", rotation_camera_from_world, twist_world[..., :3])
     angular = np.einsum("...ij,...j->...i", rotation_camera_from_world, twist_world[..., 3:])
@@ -78,23 +76,15 @@ def camera_twist_to_world(
     """Rotate camera-frame linear/angular velocity into the world frame."""
 
     twist_camera = np.asarray(twist_camera, dtype=np.float64)
-    rotation_world_from_tcp = quaternion_xyzw_to_rotation_matrix(
-        tcp_orientation_xyzw_world
-    )
+    rotation_world_from_tcp = quaternion_xyzw_to_rotation_matrix(tcp_orientation_xyzw_world)
     if rotation_camera_in_tcp is None:
         rotation_camera_in_tcp = np.asarray(
             D405WristCameraConfig().rotation_camera_in_calibration_parent,
             dtype=np.float64,
         ).reshape(3, 3)
-    rotation_world_from_camera = rotation_world_from_tcp @ np.asarray(
-        rotation_camera_in_tcp, dtype=np.float64
-    )
-    linear = np.einsum(
-        "...ij,...j->...i", rotation_world_from_camera, twist_camera[..., :3]
-    )
-    angular = np.einsum(
-        "...ij,...j->...i", rotation_world_from_camera, twist_camera[..., 3:]
-    )
+    rotation_world_from_camera = rotation_world_from_tcp @ np.asarray(rotation_camera_in_tcp, dtype=np.float64)
+    linear = np.einsum("...ij,...j->...i", rotation_world_from_camera, twist_camera[..., :3])
+    angular = np.einsum("...ij,...j->...i", rotation_world_from_camera, twist_camera[..., 3:])
     return np.concatenate((linear, angular), axis=-1)
 
 
@@ -182,13 +172,8 @@ class VisualServoFrameDataset(Dataset):
                 )
             )
             first_frame_index = len(self.frame_index)
-            self.frame_index.extend(
-                (episode_slot, step_index)
-                for step_index in range(frame_count)
-            )
-            self.episode_frame_indices.append(
-                range(first_frame_index, first_frame_index + frame_count)
-            )
+            self.frame_index.extend((episode_slot, step_index) for step_index in range(frame_count))
+            self.episode_frame_indices.append(range(first_frame_index, first_frame_index + frame_count))
         self.required_arrays = frozenset(required)
 
     def __len__(self) -> int:
@@ -201,9 +186,7 @@ class VisualServoFrameDataset(Dataset):
             return cached
         episode = self.episodes[episode_slot]
         with np.load(episode.npz_path) as archive:
-            arrays = {
-                name: archive[name].copy() for name in self.required_arrays
-            }
+            arrays = {name: archive[name].copy() for name in self.required_arrays}
         self._episode_cache[episode_slot] = arrays
         while len(self._episode_cache) > self.cache_episodes:
             self._episode_cache.popitem(last=False)
@@ -218,8 +201,7 @@ class VisualServoFrameDataset(Dataset):
     def _rgbd(rgb: np.ndarray, depth: np.ndarray) -> torch.Tensor:
         rgb_float = np.asarray(rgb, dtype=np.float32) / 255.0
         depth_float = np.clip(
-            (np.asarray(depth, dtype=np.float32) - DEPTH_MIN_M)
-            / (DEPTH_MAX_M - DEPTH_MIN_M),
+            (np.asarray(depth, dtype=np.float32) - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M),
             0.0,
             1.0,
         )
@@ -231,37 +213,21 @@ class VisualServoFrameDataset(Dataset):
         loaded = self.episodes[episode_slot]
         arrays = self._load_episode_arrays(episode_slot)
         tcp_orientation = arrays["tcp_orientation_xyzw_w"][step_index]
-        nominal_camera = world_twist_to_camera(
-            arrays["nominal_twist"][step_index], tcp_orientation
-        )
-        residual_camera = world_twist_to_camera(
-            arrays["expert_residual_twist"][step_index], tcp_orientation
-        )
+        nominal_camera = world_twist_to_camera(arrays["nominal_twist"][step_index], tcp_orientation)
+        residual_camera = world_twist_to_camera(arrays["expert_residual_twist"][step_index], tcp_orientation)
         sample = {
-            "joint_positions": torch.from_numpy(
-                arrays["joint_positions"][step_index].astype(np.float32)
-            ),
-            "progress": torch.tensor(
-                [arrays["trajectory_progress"][step_index]], dtype=torch.float32
-            ),
-            "nominal_twist_camera": torch.from_numpy(
-                normalize_twist(nominal_camera)
-            ),
-            "residual_twist_camera": torch.from_numpy(
-                normalize_twist(residual_camera)
-            ),
+            "joint_positions": torch.from_numpy(arrays["joint_positions"][step_index].astype(np.float32)),
+            "progress": torch.tensor([arrays["trajectory_progress"][step_index]], dtype=torch.float32),
+            "nominal_twist_camera": torch.from_numpy(normalize_twist(nominal_camera)),
+            "residual_twist_camera": torch.from_numpy(normalize_twist(residual_camera)),
             "episode_index": torch.tensor(loaded.episode_index, dtype=torch.int64),
             "step_index": torch.tensor(step_index, dtype=torch.int64),
         }
         if self.raw_images:
             sample.update(
                 {
-                    "live_rgb": torch.from_numpy(
-                        arrays["rgb_live"][step_index]
-                    ),
-                    "live_depth": torch.from_numpy(
-                        arrays["depth_live"][step_index]
-                    ),
+                    "live_rgb": torch.from_numpy(arrays["rgb_live"][step_index]),
+                    "live_depth": torch.from_numpy(arrays["depth_live"][step_index]),
                     "goal_rgb": torch.from_numpy(arrays["rgb_goal"]),
                     "goal_depth": torch.from_numpy(arrays["depth_goal"]),
                 }
@@ -289,9 +255,7 @@ class MmapVisualServoFrameDataset(Dataset):
         if split not in {"train", "validation"}:
             raise ValueError("split must be 'train' or 'validation'.")
         self.cache_dir = Path(cache_dir)
-        manifest = json.loads(
-            (self.cache_dir / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((self.cache_dir / "manifest.json").read_text(encoding="utf-8"))
         if int(manifest.get("version", -1)) != 2:
             raise ValueError(
                 "Visual-servo cache must use schema 2 area filtering; rebuild it "
@@ -299,10 +263,7 @@ class MmapVisualServoFrameDataset(Dataset):
             )
         if manifest.get("resampling") != "area":
             raise ValueError("Visual-servo cache resampling must be 'area'.")
-        if (
-            manifest.get("observation_profile")
-            != D405_VISUAL_SERVO_OBSERVATION_PROFILE
-        ):
+        if manifest.get("observation_profile") != D405_VISUAL_SERVO_OBSERVATION_PROFILE:
             raise ValueError(
                 "Visual-servo cache observation profile does not match the current "
                 f"pipeline ({D405_VISUAL_SERVO_OBSERVATION_PROFILE})."
@@ -358,23 +319,13 @@ class MmapVisualServoFrameDataset(Dataset):
         # torch cannot safely wrap read-only memmaps, so copy only the selected frame.
         return {
             "live_rgb": torch.from_numpy(np.array(self.live_rgb[index], copy=True)),
-            "live_depth": torch.from_numpy(
-                np.array(self.live_depth[index], dtype=np.float32, copy=True)
-            ),
+            "live_depth": torch.from_numpy(np.array(self.live_depth[index], dtype=np.float32, copy=True)),
             "goal_rgb": torch.from_numpy(np.array(self.goal_rgb, copy=True)),
-            "goal_depth": torch.from_numpy(
-                np.array(self.goal_depth, dtype=np.float32, copy=True)
-            ),
-            "joint_positions": torch.from_numpy(
-                np.array(self.joint_positions[index], copy=True)
-            ),
+            "goal_depth": torch.from_numpy(np.array(self.goal_depth, dtype=np.float32, copy=True)),
+            "joint_positions": torch.from_numpy(np.array(self.joint_positions[index], copy=True)),
             "progress": torch.from_numpy(np.array(self.progress[index], copy=True)),
-            "nominal_twist_camera": torch.from_numpy(
-                np.array(self.nominal_twist_camera[index], copy=True)
-            ),
-            "residual_twist_camera": torch.from_numpy(
-                np.array(self.residual_twist_camera[index], copy=True)
-            ),
+            "nominal_twist_camera": torch.from_numpy(np.array(self.nominal_twist_camera[index], copy=True)),
+            "residual_twist_camera": torch.from_numpy(np.array(self.residual_twist_camera[index], copy=True)),
         }
 
 

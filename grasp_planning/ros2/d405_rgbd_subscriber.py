@@ -46,8 +46,7 @@ def compressed_depth_message_to_z16(message) -> np.ndarray:
     image_format = str(message.format).strip().lower()
     if "16uc1" not in image_format or "compresseddepth" not in image_format:
         raise ValueError(
-            "D405 compressed depth must use the lossless 16UC1 compressedDepth transport; "
-            f"got '{message.format}'."
+            f"D405 compressed depth must use the lossless 16UC1 compressedDepth transport; got '{message.format}'."
         )
     payload = bytes(message.data)
     png_signature = b"\x89PNG\r\n\x1a\n"

@@ -60,10 +60,7 @@ def analyze_memory_logs(
         reasons: list[str] = []
         if device_slope > max_growth_mib_per_epoch:
             rank_status = "FAIL"
-            reasons.append(
-                f"device memory grows {device_slope:.3f} MiB/epoch "
-                f"(limit {max_growth_mib_per_epoch:.3f})"
-            )
+            reasons.append(f"device memory grows {device_slope:.3f} MiB/epoch (limit {max_growth_mib_per_epoch:.3f})")
         if min(free) < min_free_mib:
             rank_status = "FAIL"
             reasons.append(f"minimum free VRAM {min(free):.1f} MiB is below {min_free_mib:.1f} MiB")

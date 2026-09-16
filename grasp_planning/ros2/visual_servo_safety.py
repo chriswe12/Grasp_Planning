@@ -329,15 +329,17 @@ class VisualServoSafetySupervisor:
             return "RGB/depth timestamps exceed the synchronization tolerance"
         if (
             self.config.enforce_source_image_age
-            and sample.now_s - min(sample.color_stamp_s, sample.depth_stamp_s)
-            > self.config.max_image_age_s
+            and sample.now_s - min(sample.color_stamp_s, sample.depth_stamp_s) > self.config.max_image_age_s
         ):
             return "RGB-D observation is stale"
         if sample.now_s - sample.pose_stamp_s > self.config.max_pose_age_s:
             return "TCP pose is stale"
         if sample.now_s - sample.tf_stamp_s > self.config.max_tf_age_s:
             return "camera-to-command transform is stale"
-        if max(sample.color_stamp_s, sample.depth_stamp_s, sample.pose_stamp_s, sample.tf_stamp_s) - sample.now_s > 0.05:
+        if (
+            max(sample.color_stamp_s, sample.depth_stamp_s, sample.pose_stamp_s, sample.tf_stamp_s) - sample.now_s
+            > 0.05
+        ):
             return "sensor timestamp is implausibly in the future"
         if sample.valid_depth_fraction < self.config.minimum_valid_depth_fraction:
             return "valid depth fraction is below the configured minimum"

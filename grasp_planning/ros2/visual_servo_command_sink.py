@@ -200,9 +200,13 @@ class MoveItServoCommandSink:
     def health(self, *, now_s: float) -> CommandSinkHealth:
         consumer_exists = self._publisher.get_subscription_count() >= 1
         age = None if self._status_receipt_s is None else max(0.0, float(now_s) - self._status_receipt_s)
-        status_text = "unavailable" if self._status_code is None else MOVEIT_SERVO_STATUS.get(
-            self._status_code,
-            f"unknown_{self._status_code}",
+        status_text = (
+            "unavailable"
+            if self._status_code is None
+            else MOVEIT_SERVO_STATUS.get(
+                self._status_code,
+                f"unknown_{self._status_code}",
+            )
         )
         healthy = self.active and consumer_exists and self._status_code not in MOVEIT_SERVO_HALT_CODES
         return CommandSinkHealth(

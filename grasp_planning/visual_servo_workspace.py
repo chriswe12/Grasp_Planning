@@ -81,9 +81,7 @@ def validate_render_only_tslot_asset(path: Path = VISUAL_SERVO_TSLOT_ASSET) -> N
     forbidden = ("CollisionAPI", "PhysicsCollision", "RigidBodyAPI", "MeshCollisionAPI")
     found = [token for token in forbidden if token in source]
     if found:
-        raise ValueError(
-            f"T-slot asset must remain render-only; found collision/physics tokens {found} in {path}."
-        )
+        raise ValueError(f"T-slot asset must remain render-only; found collision/physics tokens {found} in {path}.")
 
 
 def sample_tslot_layout_variants(
@@ -360,9 +358,7 @@ class LiveWorkspaceAppearanceRandomizer:
             elif strengths.numel() != ids.numel():
                 raise ValueError("Per-environment appearance strength must match env_ids.")
         else:
-            strengths = torch.full(
-                (ids.numel(),), min(1.0, max(0.0, float(strength))), device=self.device
-            )
+            strengths = torch.full((ids.numel(),), min(1.0, max(0.0, float(strength))), device=self.device)
         strengths = strengths.clamp(0.0, 1.0)
         active = torch.rand(ids.numel(), device=self.device) < strengths
         palette_units = torch.rand(ids.numel(), device=self.device).cpu().tolist()
@@ -425,9 +421,7 @@ class LiveWorkspaceAppearanceRandomizer:
             )
             shader = self.stage.GetPrimAtPath(tslot_shader_path)
             if not shader.IsValid():
-                raise RuntimeError(
-                    f"T-slot aluminum shader does not exist: {tslot_shader_path}"
-                )
+                raise RuntimeError(f"T-slot aluminum shader does not exist: {tslot_shader_path}")
             color_attr = shader.GetAttribute("inputs:diffuseColor")
             roughness_attr = shader.GetAttribute("inputs:roughness")
             if not color_attr.Set(Gf.Vec3f(*varied_background.color)) or not roughness_attr.Set(

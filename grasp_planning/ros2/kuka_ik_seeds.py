@@ -34,9 +34,7 @@ def kuka_iiwa_ik_seed_candidates(
         if len(seeds) >= count:
             return
         seed = tuple(float(value) for value in raw_seed)
-        if len(seed) != len(start) or any(
-            value < low or value > high for value, low, high in zip(seed, lower, upper)
-        ):
+        if len(seed) != len(start) or any(value < low or value > high for value, low, high in zip(seed, lower, upper)):
             return
         if not any(max(abs(a - b) for a, b in zip(seed, old)) < 1.0e-9 for old in seeds):
             seeds.append(seed)
@@ -67,8 +65,7 @@ def kuka_iiwa_ik_seed_candidates(
         add_seed(
             tuple(
                 value
-                + float(perturbation_rad)
-                * ((((sample_index * (joint_index + 1)) / golden_ratio) % 1.0) * 2.0 - 1.0)
+                + float(perturbation_rad) * ((((sample_index * (joint_index + 1)) / golden_ratio) % 1.0) * 2.0 - 1.0)
                 for joint_index, value in enumerate(start)
             )
         )

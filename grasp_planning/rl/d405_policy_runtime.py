@@ -213,8 +213,7 @@ class D405RuntimeGoal:
             raise ValueError("Runtime goal identity fields must be non-empty.")
         if expected_grasp_id and grasp_id != str(expected_grasp_id):
             raise ValueError(
-                f"Runtime goal '{goal_id}' uses grasp '{grasp_id}', but MoveIt selected "
-                f"'{expected_grasp_id}'."
+                f"Runtime goal '{goal_id}' uses grasp '{grasp_id}', but MoveIt selected '{expected_grasp_id}'."
             )
         if expected_part_id and part_id != str(expected_part_id):
             raise ValueError(
@@ -313,9 +312,7 @@ class D405PolicyRuntime:
         raw = yaml.safe_load(self.checkpoint_metadata_path.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
             raise ValueError("Checkpoint metadata must be a JSON/YAML mapping.")
-        context_spec = resolve_policy_context(
-            str(raw.get("policy_context_mode", POLICY_CONTEXT_ACTION))
-        )
+        context_spec = resolve_policy_context(str(raw.get("policy_context_mode", POLICY_CONTEXT_ACTION)))
         self.policy_context_mode = context_spec.name
         self.policy_context_size = context_spec.size
         self.network_input_size = policy_observation_size(

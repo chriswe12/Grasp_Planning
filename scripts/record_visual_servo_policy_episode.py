@@ -54,9 +54,7 @@ def _prediction_panel(
             fill=(230, 230, 230),
         )
         center_x = 215
-        scale = 150.0 / (
-            LINEAR_ACTION_SCALE_M_S if axis < 3 else ANGULAR_ACTION_SCALE_RAD_S
-        )
+        scale = 150.0 / (LINEAR_ACTION_SCALE_M_S if axis < 3 else ANGULAR_ACTION_SCALE_RAD_S)
         draw.line((center_x, y + 15, center_x, y + 27), fill=(120, 120, 120), width=1)
         for value, color, offset in (
             (expert[axis], (50, 210, 100), 18),
@@ -66,9 +64,7 @@ def _prediction_panel(
             draw.line((center_x, y + offset, endpoint, y + offset), fill=color, width=4)
         y += 34
     linear_error = np.mean(np.abs(prediction[:3] - expert[:3])) * 1000.0
-    angular_error = (
-        np.mean(np.abs(prediction[3:] - expert[3:])) * 180.0 / np.pi
-    )
+    angular_error = np.mean(np.abs(prediction[3:] - expert[3:])) * 180.0 / np.pi
     draw.text((12, height - 42), f"linear MAE: {linear_error:.3f} mm/s", fill=(120, 210, 255))
     draw.text((12, height - 24), f"angular MAE: {angular_error:.3f} deg/s", fill=(120, 210, 255))
     return np.asarray(panel)
@@ -100,9 +96,7 @@ def main() -> None:
     required = {"tcp_orientation_xyzw_w", "joint_positions"}
     missing = sorted(required.difference(arrays))
     if missing:
-        raise ValueError(
-            f"{args.episode_npz} lacks {missing}; use an episode from the batched collector."
-        )
+        raise ValueError(f"{args.episode_npz} lacks {missing}; use an episode from the batched collector.")
     checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     model = ResidualVisualServoPolicy().to(args.device)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -111,35 +105,27 @@ def main() -> None:
         [LINEAR_ACTION_SCALE_M_S] * 3 + [ANGULAR_ACTION_SCALE_RAD_S] * 3,
         dtype=np.float32,
     )
-    output = args.output or args.episode_npz.with_name(
-        f"{args.episode_npz.stem}_{args.checkpoint.stem}_policy.mp4"
-    )
+    output = args.output or args.episode_npz.with_name(f"{args.episode_npz.stem}_{args.checkpoint.stem}_policy.mp4")
     frames = []
     linear_errors = []
     angular_errors = []
     with torch.inference_mode():
         for step_index in range(episode.step_count):
             tcp_orientation = arrays["tcp_orientation_xyzw_w"][step_index]
-            nominal_camera = world_twist_to_camera(
-                arrays["nominal_twist"][step_index], tcp_orientation
+            nominal_camera = world_twist_to_camera(arrays["nominal_twist"][step_index], tcp_orientation)
+            expert_camera = world_twist_to_camera(arrays["expert_residual_twist"][step_index], tcp_orientation).astype(
+                np.float32
             )
-            expert_camera = world_twist_to_camera(
-                arrays["expert_residual_twist"][step_index], tcp_orientation
-            ).astype(np.float32)
             inputs = {
                 "live_rgbd": VisualServoFrameDataset._rgbd(
                     arrays["rgb_live"][step_index], arrays["depth_live"][step_index]
                 )
                 .unsqueeze(0)
                 .to(args.device),
-                "goal_rgbd": VisualServoFrameDataset._rgbd(
-                    arrays["rgb_goal"], arrays["depth_goal"]
-                )
+                "goal_rgbd": VisualServoFrameDataset._rgbd(arrays["rgb_goal"], arrays["depth_goal"])
                 .unsqueeze(0)
                 .to(args.device),
-                "joint_positions": torch.from_numpy(
-                    arrays["joint_positions"][step_index].astype(np.float32)
-                )
+                "joint_positions": torch.from_numpy(arrays["joint_positions"][step_index].astype(np.float32))
                 .unsqueeze(0)
                 .to(args.device),
                 "progress": torch.tensor(
@@ -147,19 +133,11 @@ def main() -> None:
                     dtype=torch.float32,
                     device=args.device,
                 ),
-                "nominal_twist_camera": torch.from_numpy(
-                    normalize_twist(nominal_camera)
-                )
-                .unsqueeze(0)
-                .to(args.device),
+                "nominal_twist_camera": torch.from_numpy(normalize_twist(nominal_camera)).unsqueeze(0).to(args.device),
             }
             prediction_camera = model(**inputs)[0].cpu().numpy() * action_scale
-            linear_errors.append(
-                float(np.mean(np.abs(prediction_camera[:3] - expert_camera[:3])))
-            )
-            angular_errors.append(
-                float(np.mean(np.abs(prediction_camera[3:] - expert_camera[3:])))
-            )
+            linear_errors.append(float(np.mean(np.abs(prediction_camera[:3] - expert_camera[:3]))))
+            angular_errors.append(float(np.mean(np.abs(prediction_camera[3:] - expert_camera[3:]))))
             diagnostic = render_episode_frame(episode, step_index)
             if overview_frames is not None:
                 diagnostic = prepend_overview_frame(

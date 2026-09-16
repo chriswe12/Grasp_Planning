@@ -48,9 +48,7 @@ def _launch_setup(context: LaunchContext):
     )
     initial_joint_positions_path = _package_path("config/dual_lbr_initial_joint_positions.yaml")
     servo_suffix = "_hardware" if mode == "hardware" else ""
-    servo_config_path = _package_path(
-        f"config/dual_iiwa7_{gripper_model}_moveit_servo{servo_suffix}.yaml"
-    )
+    servo_config_path = _package_path(f"config/dual_iiwa7_{gripper_model}_moveit_servo{servo_suffix}.yaml")
 
     lbr_one_mode = mode if mode == "mock" or robots in {"left", "both"} else "mock"
     lbr_two_mode = mode if mode == "mock" or robots in {"right", "both"} else "mock"
@@ -113,9 +111,7 @@ def _launch_setup(context: LaunchContext):
         # names auxiliary_sensor and estimated_ft_sensor. Two hardware systems
         # therefore cannot safely share one ResourceManager. Keep one manager
         # per arm and merge their joint states for the shared MoveIt model.
-        controller_config_path = str(
-            Path(get_package_share_directory(controller_config_package)) / controller_config
-        )
+        controller_config_path = str(Path(get_package_share_directory(controller_config_package)) / controller_config)
         single_description_path = _package_path(f"urdf/iiwa7_{gripper_model}_moveit.urdf.xacro")
         source_topics = []
         for robot, control_mode, system_config_name in (

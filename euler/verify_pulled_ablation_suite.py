@@ -125,9 +125,7 @@ def _verify_tensorboard_events(paths: list[Path], *, max_iterations: int) -> lis
     if reward_events:
         final_reward_step = max(int(event.step) for event in reward_events)
         if final_reward_step != max_iterations:
-            errors.append(
-                f"TensorBoard final rewards/iter step {final_reward_step}, expected {max_iterations}"
-            )
+            errors.append(f"TensorBoard final rewards/iter step {final_reward_step}, expected {max_iterations}")
     return errors
 
 
@@ -163,8 +161,7 @@ def verify_run(
         last_epoch, total_epochs = (int(value) for value in progress[-1])
         if (last_epoch, total_epochs) != (max_iterations, max_iterations):
             errors.append(
-                f"last progress marker is {last_epoch}/{total_epochs}, expected "
-                f"{max_iterations}/{max_iterations}"
+                f"last progress marker is {last_epoch}/{total_epochs}, expected {max_iterations}/{max_iterations}"
             )
     fatal_matches = sorted({match.group(0).strip() for match in FATAL_PATTERN.finditer(stdout + "\n" + stderr)})
     if fatal_matches:
@@ -195,23 +192,17 @@ def verify_run(
     if len(memory_csvs) != gpu_count:
         errors.append(f"found {len(memory_csvs)} rank memory CSVs, expected {gpu_count}")
     for path in memory_csvs:
-        errors.extend(
-            _verify_memory_csv(path, max_iterations=max_iterations, min_free_mib=min_free_mib)
-        )
+        errors.extend(_verify_memory_csv(path, max_iterations=max_iterations, min_free_mib=min_free_mib))
 
     if all(path.is_file() for path in required_files):
         env_cfg = _load_yaml(params_dir / "env.yaml")
         profile_cfg = _load_yaml(params_dir / "sim2real_profile.yaml")
         if env_cfg.get("policy_context_mode") != run["policy_context"]:
             errors.append(
-                f"serialized context {env_cfg.get('policy_context_mode')!r}, "
-                f"expected {run['policy_context']!r}"
+                f"serialized context {env_cfg.get('policy_context_mode')!r}, expected {run['policy_context']!r}"
             )
         if profile_cfg.get("profile") != run["sim2real_profile"]:
-            errors.append(
-                f"serialized profile {profile_cfg.get('profile')!r}, "
-                f"expected {run['sim2real_profile']!r}"
-            )
+            errors.append(f"serialized profile {profile_cfg.get('profile')!r}, expected {run['sim2real_profile']!r}")
 
     memory_analysis_path = logs_root / "metrics" / f"gpu-{job_id}.training-memory.json"
     memory_analysis: dict[str, Any] | None = None
@@ -222,9 +213,7 @@ def verify_run(
         if memory_analysis.get("status") != "PASS":
             errors.append(f"memory analysis status is {memory_analysis.get('status')!r}")
         if len(memory_analysis.get("ranks", [])) != gpu_count:
-            errors.append(
-                f"memory analysis has {len(memory_analysis.get('ranks', []))} ranks, expected {gpu_count}"
-            )
+            errors.append(f"memory analysis has {len(memory_analysis.get('ranks', []))} ranks, expected {gpu_count}")
 
     gpu_summary_path = logs_root / "metrics" / f"gpu-{job_id}.summary.txt"
     if not gpu_summary_path.is_file():
@@ -247,10 +236,7 @@ def verify_run(
 
 
 def verify_suite(manifest: dict[str, Any], *, logs_root: Path, min_free_mib: float) -> dict[str, Any]:
-    runs = [
-        verify_run(manifest, run, logs_root=logs_root, min_free_mib=min_free_mib)
-        for run in manifest["runs"]
-    ]
+    runs = [verify_run(manifest, run, logs_root=logs_root, min_free_mib=min_free_mib) for run in manifest["runs"]]
     return {
         "suite_id": manifest["suite_id"],
         "status": "PASS" if all(run["status"] == "PASS" for run in runs) else "FAIL",

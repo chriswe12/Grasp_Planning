@@ -76,9 +76,7 @@ def _find_repo_root(explicit_root: Path | None = None) -> Path:
     for candidate in candidates:
         if (candidate / "run_pipeline.sh").is_file() and (candidate / "configs").is_dir():
             return candidate
-    raise FileNotFoundError(
-        "Could not locate the grasp-planning repo root containing run_pipeline.sh and configs/."
-    )
+    raise FileNotFoundError("Could not locate the grasp-planning repo root containing run_pipeline.sh and configs/.")
 
 
 def _resolve_config_path(repo_root: Path, config_path: Path) -> Path:
@@ -238,8 +236,7 @@ class DualPipelineRunner:
         if self.single_role not in {"holder", "inserter"}:
             raise ValueError("single_role must be holder or inserter.")
         self.stop_after = str(
-            stop_after
-            or _action_config(self.base_payload).get("stop_after", DEFAULT_DUAL_REAL_STOP_AFTER)
+            stop_after or _action_config(self.base_payload).get("stop_after", DEFAULT_DUAL_REAL_STOP_AFTER)
         )
         if self.stop_after not in DUAL_REAL_STOP_AFTER_CHOICES:
             raise ValueError(

@@ -108,8 +108,7 @@ def main() -> None:
     if not detect_grasps or not args.gpd_config:
         print("[INFO] GPD viewer not launched because detect_grasps or --gpd-config is missing.", flush=True)
         print(
-            "Run:\n"
-            f"  /path/to/gpd/build/detect_grasps /path/to/gpd/cfg/eigen_params.cfg {pcd_path}",
+            f"Run:\n  /path/to/gpd/build/detect_grasps /path/to/gpd/cfg/eigen_params.cfg {pcd_path}",
             flush=True,
         )
         return
