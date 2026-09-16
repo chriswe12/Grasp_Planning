@@ -1,0 +1,15 @@
+{
+  "status": "passed",
+  "fallback_files_verified": 31,
+  "fallback_unchanged": true,
+  "usd_changes": "Only the two tabletop texture paths",
+  "usd_dependencies_resolved": true,
+  "blender_dirt_strength_checked": [
+    0,
+    1,
+    0.35
+  ],
+  "packed_textures": true,
+  "existing_randomizer_compatible": true,
+  "isaac_simulation": "Not rerun; previous driver limitation still applies"
+}

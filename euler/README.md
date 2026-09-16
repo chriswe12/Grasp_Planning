@@ -26,10 +26,12 @@ cgroup before Apptainer or Vulkan starts.
 3. `submit.sh` synchronizes this repository to Euler home and calls `sbatch`.
    The resource request and job submission happen in this single `sbatch`
    command; Slurm queues the job until those resources are available.
-4. `job.sbatch` copies the large SIF and caches to node-local `$TMPDIR`, starts
-   a one-second GPU-memory sampler, then launches the requested test or train
-   command through Apptainer. Training also records allocator and whole-device
-   VRAM once per PPO epoch for long-run leak detection.
+4. `job.sbatch` copies the large SIF to node-local `$TMPDIR`, starts a one-second
+   GPU-memory sampler, then launches the requested test or train command through
+   Apptainer. Multi-GPU jobs seed only immutable Torch weights and keep writable
+   Kit/OV caches job-local; this prevents overlapping jobs from corrupting a
+   shared renderer cache. Training also records allocator and whole-device VRAM
+   once per PPO epoch for long-run leak detection.
 5. The source checkout is mounted read-only, but its `logs/` directory is
    replaced by a writable bind mount to persistent Euler scratch. Checkpoints,
    TensorBoard events, Slurm logs, and GPU measurements therefore survive the
@@ -91,6 +93,108 @@ A successful smoke log contains several `[SMOKE]` lines and a final line with
 run; a Python traceback, `CUDA out of memory`, or a non-zero Slurm exit status
 is not.
 
+The single-GPU `lift` mode runs the separate scripted physical-retention
+validator and records annotated external/wrist-camera videos. It does not train
+a policy. `job.sbatch` redirects reports and videos into persistent Euler
+scratch, and `watch_and_pull.sh` downloads them under
+`logs/euler/scripted_lift/job_JOB_ID/`:
+
+```bash
+./euler/submit.sh lift \
+    --dataset-shard 0 \
+    --catalog-split validation \
+    --target-id stool_circular__part_1__orientation_006__g3016 \
+    --disable-part-gravity-until-close \
+    --part-mass-kg 0.05 \
+    --close-duration-s 2 \
+    --lift-speed-m-s 0.050
+./euler/watch_and_pull.sh JOB_ID
+```
+
+Gravity support is a diagnostic fallback for a nominal resting pose that tips
+before closure. Collision response remains enabled, and gravity is restored
+before the measured lift; it must not be confused with a welded pickup.
+`--extra-approach-clearance-m` can diagnose initial finger/object overlap and
+the report records settle-phase hand and per-finger contact forces. For a
+marginal placement, `--fixture-part-pose-until-close` can hold the exact catalog
+pose only through closure; it is released before the dynamic lift and its
+results are explicitly labeled as fixture-assisted retention evidence.
+
+To screen the complete 1,488-target Fabrica catalog, submit bounded report-only
+jobs and then run the suite watcher. The watcher waits for every job, pulls once,
+verifies exact non-overlapping catalog coverage, merges the attempt table, and
+builds catalog-aligned liftability labels:
+
+```bash
+./euler/submit_full_lift_validation.sh
+./euler/watch_full_lift_validation.sh euler/full_lift_suite_SUITE_ID.json 60
+```
+
+The default batch size is 96 targets per GPU job. Override it with
+`LIFT_BATCH_SIZE`; use `LIFT_DRY_RUN=1` to inspect all generated commands
+without synchronizing or submitting anything. Bulk runs pass
+`--no-lift-videos` because video generation is deliberately limited to four
+inspection targets per job. Final artifacts are written below
+`artifacts/scripted_grasp_lift_validation/full_SUITE_ID/`.
+
+### Train with the physical lift reward
+
+The two lift profiles replace immediate pose-only termination with the same
+scripted close, gravity release, 60 mm lift, and retention measurement used by
+the validator. The declaration action remains policy-controlled; subsequent
+scripted transitions are excluded from actor and auxiliary losses while the
+terminal result is propagated back to the declaration without option-internal
+discounting.
+
+The terminal truth table is deliberate: an operational 7 mm / 5 degree pose
+without pickup is still rewarded, a retained pickup outside that region is
+also rewarded, both together receive the largest return, and only neither is
+penalized. The 4 mm / 3 degree criterion remains a strict reporting metric.
+`lift_conservative` retains the original dense pose shaping;
+`lift_primary` reduces that shaping to roughly one third and makes retained
+pickup the dominant outcome.
+
+Before a long run, exercise the complete physical option on one exact reset:
+
+```bash
+./euler/submit.sh smoke \
+    --task Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0 \
+    --dataset-shard 0 --num_envs 2 --steps 1 \
+    --training-profile lift_conservative \
+    --positive-completion-resets --declare-completion --headless
+```
+
+Six-GPU training uses 224 environments per GPU and the complete six-shard
+Fabrica layout:
+
+```bash
+./euler/submit.sh train \
+    --gpu-type rtx_4090 --gpu-count 6 --gpu-memory 20G \
+    --time-limit 3-00:00:00 --job-label lift-conservative-6gpu \
+    --task Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0 \
+    --num_envs 224 --global_minibatch_size 1536 \
+    --max_iterations 10000 --seed 42 \
+    --policy-context action --sim2real_profile combined_sim2real \
+    --training-profile lift_conservative \
+    --experiment-name fabrica_all_lift_conservative_6gpu_seed42 \
+    --headless --enable_cameras
+
+./euler/submit.sh train \
+    --gpu-type rtx_4090 --gpu-count 6 --gpu-memory 20G \
+    --time-limit 3-00:00:00 --job-label lift-primary-6gpu \
+    --task Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0 \
+    --num_envs 224 --global_minibatch_size 1536 \
+    --max_iterations 10000 --seed 42 \
+    --policy-context action --sim2real_profile combined_sim2real \
+    --training-profile lift_primary \
+    --experiment-name fabrica_all_lift_primary_6gpu_seed42 \
+    --headless --enable_cameras
+```
+
+Submitting both is safe: the second job remains queued if the shareholder's
+six GPUs are occupied. Run the printed `watch_and_pull.sh JOB_ID` command for
+each submitted job.
+
 Next run short, real training probes. These execute five complete PPO
 iterations, so their VRAM measurement is representative of training:
 
@@ -143,10 +247,12 @@ selector before the training arguments, for example:
 ```
 
 `--gpu-type`, `--gpu-count`, `--gpu-memory`, `--cpus-per-gpu`,
-`--memory-per-cpu`, and `--time-limit` configure Slurm; all remaining flags are
+`--memory-per-cpu`, `--time-limit`, and optional `--afterok JOB_ID` configure Slurm; all remaining flags are
 forwarded unchanged to the Isaac training script. The job log records the
 requested and assigned GPU. See [GPU_BENCHMARKS.md](GPU_BENCHMARKS.md) for the
 measured environment counts and active target-GPU probes.
+With `--afterok`, the submitted job starts only after the prerequisite succeeds
+and is cancelled automatically if that prerequisite fails.
 
 `--num_envs` is **per GPU** when `--gpu-count` is greater than one. For example,
 this two-GPU probe simulates 448 environments and collects a global
@@ -167,6 +273,13 @@ this two-GPU probe simulates 448 environments and collects a global
 
 Do not add `--distributed`; the wrapper adds it and creates the matching Slurm
 tasks automatically. Each rank gets a distinct seed and an isolated GPU.
+Each rank also gets private writable Kit, OV, shader, and user-data caches;
+sharing even a node-local writable cache between Isaac processes can cause a
+native allocator crash during startup. Only immutable pretrained Torch weights
+are copied into each rank cache.
+Isaac application and PhysX environment construction are additionally guarded
+by a cross-rank startup lock. The lock is released as soon as each environment
+is ready, so PPO rollout and optimization still run concurrently on every GPU.
 RL-Games aggregates gradients and reports global throughput from rank zero.
 The batch job verifies every rank's completion marker and records peak VRAM for
 every allocated GPU. Multi-GPU does not combine GPU memory into one pool.
@@ -223,6 +336,75 @@ CUDA-backed episode dictionaries on nonzero ranks, which never execute the
 rank-zero-only statistics callback. The training entrypoint uses a rank-safe
 observer that skips those unused statistics on worker ranks while preserving
 rank-zero TensorBoard output.
+
+## Fabrica-all weekend suite
+
+The large-dataset weekend launcher prepares three controlled runs over the
+default four-rank Fabrica shard layout. The same dataset index also contains a
+six-rank layout; both layouts are complete, part-disjoint partitions of the
+same 1,488 targets and are selected automatically from `WORLD_SIZE`:
+
+| Run | Sim-to-real profile | Training profile | Purpose |
+| --- | --- | --- | --- |
+| baseline | combined_sim2real | baseline | Exact current PPO, critic, and reset behavior |
+| improved | combined_sim2real | long_run_improved | Constant 3e-5 learning rates, a larger privileged critic, and modestly more completion-ready starts |
+| clutter-improved | combined_clutter | long_run_improved | The improved run plus peripheral RGB-D clutter in 60% of environments |
+
+All three use the same seed and policy context so the two intended changes are
+isolated. Defaults are four RTX 4090 GPUs, 224 environments per GPU, a target
+global PPO minibatch of 1,024, and 10,000 epochs:
+
+~~~bash
+# Inspect the exact commands without submitting.
+WEEKEND_DRY_RUN=1 ./euler/submit_fabrica_weekend_suite.sh
+
+# Submit all three jobs.
+./euler/submit_fabrica_weekend_suite.sh
+~~~
+
+A direct six-GPU run uses the six-shard layout and a 1,536-sample global
+minibatch. This keeps the local minibatch at 256 and preserves the four-GPU
+run's 112 synchronized PPO updates per epoch. The operational-completion
+reward keeps 4 mm / 3 degrees as a strict reporting metric, rewards a declared
+collision-free hold within 7 mm / 5 degrees, and grades the ambiguity band out
+to 12 mm / 10 degrees:
+
+~~~bash
+./euler/submit.sh train \
+    --gpu-type rtx_4090 --gpu-count 6 --gpu-memory 20G \
+    --time-limit 3-00:00:00 \
+    --job-label fabrica-operational-6gpu \
+    --task Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0 \
+    --num_envs 224 --global_minibatch_size 1536 \
+    --max_iterations 6667 --seed 42 \
+    --policy-context action \
+    --sim2real_profile combined_sim2real \
+    --training-profile robust_reward_change \
+    --experiment-name fabrica_all_operational_completion_6gpu \
+    --headless --enable_cameras
+~~~
+
+At equal environments per rank, 6,667 six-GPU epochs collect approximately the
+same transitions as 10,000 four-GPU epochs. At the observed 6-GPU rate this is
+slightly over 50 hours, so the command requests three days rather than relying
+on the launcher's two-day default.
+
+The launcher writes euler/weekend_suite_TIMESTAMP.json after submission.
+Use the exact manifest path it prints to monitor every job, pull results once
+they are terminal, and verify configurations, checkpoints, TensorBoard events,
+rank completion markers, and GPU-memory reports:
+
+~~~bash
+./euler/watch_ablation_suite.sh euler/weekend_suite_TIMESTAMP.json 60
+~~~
+
+One complete run contains 573.44 million transitions
+(4 * 224 * 64 * 10000). The prior Fabrica run's observed epoch rate implies
+that the 48-hour Euler limit may arrive before epoch 10,000, particularly after
+increasing the environments per rank. RL-Games saves every 100 epochs and
+Euler scratch persists after timeout, so the last saved checkpoint remains
+pullable. Override WEEKEND_NUM_ENVS, WEEKEND_MAX_ITERATIONS, or WEEKEND_SEED
+only when intentionally creating a different experiment.
 
 Two controlled full-training variants are selectable without changing the
 task or goal catalog:

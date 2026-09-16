@@ -329,10 +329,10 @@ Instead:
   the number of part files;
 - record shard membership and weights in checkpoint metadata.
 
-Recommended first deployment:
+Supported distributed deployments:
 
-- four GPUs;
-- four balanced shards, each containing approximately 10-13 parts;
+- four GPUs with four balanced shards containing 9-10 parts each;
+- six GPUs with six balanced shards containing 6-7 parts each;
 - use fewer parts on a shard containing unusually heavy meshes;
 - run a VRAM/throughput probe before the full training job;
 - if seven or eight GPUs are readily available, one assembly per rank is a
@@ -557,15 +557,18 @@ shards.
 
 ### Pilot C: distributed training proof
 
-Run four GPUs for enough updates to expose initialization OOM, growing VRAM,
-rank imbalance, broken checkpointing, or a dataset shard that never resets
-successfully. Inspect per-rank FPS and VRAM rather than only aggregate FPS.
+Run four or six GPUs for enough updates to expose initialization OOM, growing
+VRAM, rank imbalance, broken checkpointing, or a dataset shard that never
+resets successfully. Inspect per-rank FPS and VRAM rather than only aggregate
+FPS. Six ranks use a 1,536-sample global minibatch so every rank receives a
+256-sample local minibatch.
 
 ### Full run
 
 Increase the target cap only after inspecting diversity and validated yield.
-Train using all four shards, run periodic fixed-seed validation, retain best and
-last checkpoints, and automatically pull the final reports/checkpoints.
+Train using one complete rank-count layout, run periodic fixed-seed validation,
+retain best and last checkpoints, and automatically pull the final
+reports/checkpoints.
 
 ## Acceptance Criteria
 

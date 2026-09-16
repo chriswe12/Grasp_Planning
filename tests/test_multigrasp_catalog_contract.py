@@ -80,6 +80,22 @@ def test_pdz_catalog_requires_jaw_plus_ten_mm(tmp_path: Path) -> None:
         load_multigrasp_catalog(path)
 
 
+def test_color_conditioned_goal_variants_are_validated_as_a_complete_pair(tmp_path: Path) -> None:
+    path = tmp_path / "catalog.npz"
+    payload = _catalog_payload()
+    payload["goal_rgb_policy_variants"] = np.zeros((1, 3, 72, 128, 3), dtype=np.uint8)
+    payload["goal_variant_palette_indices"] = np.asarray([0, 9, 19], dtype=np.int16)
+    np.savez_compressed(path, **payload)
+
+    loaded = load_multigrasp_catalog(path)
+    assert loaded["goal_rgb_policy_variants"].shape == (1, 3, 72, 128, 3)
+
+    del payload["goal_variant_palette_indices"]
+    np.savez_compressed(path, **payload)
+    with pytest.raises(ValueError, match="require both"):
+        load_multigrasp_catalog(path)
+
+
 def _rotation_payload() -> dict[str, np.ndarray]:
     return {
         "schema_version": np.asarray(ROTATION_RESET_SCHEMA_VERSION, dtype=np.int64),

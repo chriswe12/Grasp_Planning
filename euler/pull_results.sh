@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=euler.env
-source "${SCRIPT_DIR}/euler.env"
+source "${EULER_CONFIG_PATH:-${SCRIPT_DIR}/euler.env}"
 
-local_results="${REPO_ROOT}/logs/euler"
+local_results="${EULER_LOCAL_RESULTS_DIR:-${REPO_ROOT}/logs/euler}"
 mkdir -p "${local_results}"
 
 retry_seconds="${EULER_PULL_RETRY_SECONDS:-60}"

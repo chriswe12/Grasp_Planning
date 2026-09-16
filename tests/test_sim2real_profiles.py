@@ -28,8 +28,8 @@ def test_combined_profile_uses_small_tslot_with_sensor_and_appearance_randomizat
     assert cfg.scene_appearance_randomization_enabled
     assert cfg.scene_tslot_surface_enabled
     assert cfg.scene_tslot_geometry_randomization_enabled
-    assert cfg.scene_tslot_nominal_fraction == pytest.approx(0.60)
-    assert cfg.scene_tslot_phase_fraction == pytest.approx(0.20)
+    assert cfg.scene_tslot_nominal_fraction == pytest.approx(0.0)
+    assert cfg.scene_tslot_phase_fraction == pytest.approx(0.0)
     assert cfg.live_observation_delay_max_steps == 1
     assert cfg.motion_action_delay_max_steps == 1
     assert cfg.motion_action_two_step_probability == 0.0
@@ -76,6 +76,8 @@ def test_depth_robust_profile_strengthens_depth_only_from_combined() -> None:
         "live_depth_dropout_probability",
         "live_depth_edge_dropout_probability",
         "live_depth_patch_dropout_probability",
+        "live_depth_structured_dropout_probability",
+        "live_depth_structured_dropout_seed_probability",
         "live_patch_area_fraction",
     }
     assert depth_cfg.live_depth_bias_m == pytest.approx((-0.0035, 0.0035))

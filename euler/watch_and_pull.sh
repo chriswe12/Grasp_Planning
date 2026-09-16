@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=euler.env
-source "${SCRIPT_DIR}/euler.env"
+source "${EULER_CONFIG_PATH:-${SCRIPT_DIR}/euler.env}"
 
 job_id="${1:-}"
 poll_seconds="${2:-60}"
@@ -173,28 +173,38 @@ if [[ "${state}" != COMPLETED* ]]; then
     exit 1
 fi
 
-local_stdout="${REPO_ROOT}/logs/euler/slurm-${job_id}.out"
+local_results="${EULER_LOCAL_RESULTS_DIR:-${REPO_ROOT}/logs/euler}"
+local_stdout="${local_results}/slurm-${job_id}.out"
 mode=""
 if [[ -f "${local_stdout}" ]]; then
     mode="$(sed -n 's/^\[INFO\] Running mode=\([^:]*\):.*/\1/p' "${local_stdout}" | head -n 1)"
 fi
 case "${mode}" in
+    franka-smoke)
+        completion_pattern='^\[FRANKA DRY RUN\] Model inference passed; no training:'
+        ;;
+    franka-train)
+        completion_pattern='^\[FRANKA TRAIN\] Completed bounded run:'
+        ;;
     smoke)
         completion_pattern='^\[SMOKE\] steps='
+        ;;
+    lift)
+        completion_pattern='^\[LIFT\] report='
         ;;
     probe|train)
         completion_pattern='^Training time: '
         ;;
     *)
         echo "[ERROR] Could not determine the mode or completion marker for job ${job_id}" >&2
-        echo "[ERROR] Inspect ${local_stdout} and ${REPO_ROOT}/logs/euler/slurm-${job_id}.err" >&2
+        echo "[ERROR] Inspect ${local_stdout} and ${local_results}/slurm-${job_id}.err" >&2
         exit 1
         ;;
 esac
 if ! grep -q "${completion_pattern}" "${local_stdout}"; then
     echo "[ERROR] Slurm reported COMPLETED, but the ${mode} completion marker is absent" >&2
-    echo "[ERROR] Inspect ${local_stdout} and ${REPO_ROOT}/logs/euler/slurm-${job_id}.err" >&2
+    echo "[ERROR] Inspect ${local_stdout} and ${local_results}/slurm-${job_id}.err" >&2
     exit 1
 fi
 
-echo "[INFO] Job ${job_id} completed and results are available under logs/euler/"
+echo "[INFO] Job ${job_id} completed and results are available under ${local_results}"

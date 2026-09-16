@@ -18,7 +18,7 @@ source "${EULER_CONFIG_PATH}"
 
 mode="${1:-}"
 if [[ -z "${mode}" ]]; then
-    echo "usage: job.sbatch {smoke|probe|train} [arguments...]" >&2
+    echo "usage: job.sbatch {smoke|lift|probe|train} [arguments...]" >&2
     exit 2
 fi
 shift
@@ -28,8 +28,8 @@ if [[ ! "${requested_gpu_count}" =~ ^[1-6]$ ]]; then
     echo "[ERROR] Invalid EULER_REQUESTED_GPU_COUNT=${requested_gpu_count}" >&2
     exit 2
 fi
-if [[ "${mode}" == "smoke" && "${requested_gpu_count}" != "1" ]]; then
-    echo "[ERROR] Smoke mode does not use distributed training and requires one GPU." >&2
+if [[ "${mode}" =~ ^(smoke|lift)$ && "${requested_gpu_count}" != "1" ]]; then
+    echo "[ERROR] ${mode^} mode does not use distributed training and requires one GPU." >&2
     exit 2
 fi
 
@@ -54,8 +54,9 @@ mkdir -p "${runtime_logs_dir}" "${runtime_outputs_dir}"
 
 local_image="${TMPDIR}/$(basename "${EULER_IMAGE_PATH}")"
 local_cache="${TMPDIR}/docker-isaac-sim"
+node_name="$(hostname)"
 
-echo "[INFO] Node: $(hostname)"
+echo "[INFO] Node: ${node_name}"
 echo "[INFO] CUDA allocation: ${CUDA_VISIBLE_DEVICES:-unset}"
 echo "[INFO] Requested GPU: ${EULER_REQUESTED_GPU_TYPE:-script-default}:${EULER_REQUESTED_GPU_COUNT:-1}, gpumem=${EULER_REQUESTED_GPUMEM:-20G}"
 visible_gpu_selector="${CUDA_VISIBLE_DEVICES:-}"
@@ -84,8 +85,19 @@ mkdir -p \
     "${local_cache}/data" \
     "${local_cache}/documents"
 
+cache_lock="${EULER_CACHE_DIR}.lock"
 if [[ -d "${EULER_CACHE_DIR}" ]]; then
-    rsync -a "${EULER_CACHE_DIR}/" "${local_cache}/"
+    if (( requested_gpu_count > 1 )); then
+        # Seed only immutable Torch weights into the job-local cache root.
+        # slurm_rank_launcher.sh copies these into a distinct writable cache
+        # for every rank. Sharing Kit/OV/shader caches between Isaac processes
+        # can corrupt native allocator state during simulator startup.
+        if [[ -d "${EULER_CACHE_DIR}/cache/torch" ]]; then
+            rsync -a "${EULER_CACHE_DIR}/cache/torch/" "${local_cache}/cache/torch/"
+        fi
+    else
+        flock -s "${cache_lock}" rsync -a "${EULER_CACHE_DIR}/" "${local_cache}/"
+    fi
 fi
 
 gpu_metrics="${EULER_RUNS_DIR}/metrics/gpu-${SLURM_JOB_ID}.csv"
@@ -134,7 +146,11 @@ finish_job() {
             }
         ' "${gpu_metrics}" | tee "${gpu_summary}"
     fi
-    rsync -a "${local_cache}/" "${EULER_CACHE_DIR}/" || true
+    if (( requested_gpu_count == 1 )); then
+        flock "${cache_lock}" rsync -a "${local_cache}/" "${EULER_CACHE_DIR}/" || true
+    else
+        echo "[INFO] Keeping distributed writable Kit caches job-local"
+    fi
 }
 trap finish_job EXIT
 
@@ -148,6 +164,12 @@ experiment_name="$(date '+%Y-%m-%d_%H-%M-%S')_job_${SLURM_JOB_ID}_${requested_gp
 export APPTAINERENV_ISAAC_RL_EXPERIMENT_NAME="${experiment_name}"
 export APPTAINERENV_TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export APPTAINERENV_PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+if (( requested_gpu_count > 1 )); then
+    # Key by node rather than job so two of this user's distributed jobs that
+    # share an eight-GPU node cannot overlap their native Isaac/PhysX startup.
+    export APPTAINERENV_ISAAC_RL_STARTUP_LOCK="/workspace/grasping_rl/logs/.isaac-startup-${node_name}.lock"
+    export APPTAINERENV_ISAAC_RL_DISTRIBUTED_READY_DIR="/workspace/grasping_rl/logs/.distributed-ready-${SLURM_JOB_ID}"
+fi
 
 export MASTER_ADDR="$(hostname)"
 export MASTER_PORT="$((20000 + SLURM_JOB_ID % 20000))"
@@ -174,7 +196,28 @@ apptainer_args=(
     /isaac-sim/python.sh
 )
 
+if [[ "${mode}" == franka-* ]]; then
+    # The helper selects PyTorch's bundled CUDA libraries after Isaac setup.
+    unset 'apptainer_args[${#apptainer_args[@]}-1]'
+    apptainer_args+=(bash scripts/franka_isaac_python.sh)
+    export APPTAINERENV_FRANKA_CUDNN_MODE=compatible
+    export APPTAINERENV_OMP_NUM_THREADS=4
+fi
+
 case "${mode}" in
+    franka-smoke|franka-train)
+        command_path=isaac_rl/scripts/train_franka_zed.py
+        set -- --num-envs 32 \
+            --catalog isaac_rl/data/franka_fabrica_pencil_randomized/catalog.npz \
+            --robot-asset-manifest assets/usd/franka_panda_offline/manifest.json \
+            --run-dir /workspace/grasping_rl/logs/franka \
+            --experiment-name "${experiment_name}" \
+            --global-minibatch-size 1536 \
+            --headless '--kit_args=--/plugins/carb.tasking.plugin/threadCount=8' "$@"
+        if [[ "${mode}" == franka-smoke ]]; then
+            set -- "$@" --dry-run
+        fi
+        ;;
     smoke)
         if (( $# == 0 )); then
             set -- \
@@ -182,6 +225,24 @@ case "${mode}" in
                 --steps 10 --num_envs 2 --headless
         fi
         command_path=isaac_rl/scripts/smoke_env.py
+        ;;
+    lift)
+        lift_run_dir="/workspace/grasping_rl/logs/scripted_lift/job_${SLURM_JOB_ID}"
+        lift_record_videos=1
+        lift_runtime_args=()
+        for lift_arg in "$@"; do
+            if [[ "${lift_arg}" == "--no-lift-videos" ]]; then
+                lift_record_videos=0
+            else
+                lift_runtime_args+=("${lift_arg}")
+            fi
+        done
+        set -- "${lift_runtime_args[@]}" --output-dir "${lift_run_dir}"
+        if (( lift_record_videos )); then
+            set -- "$@" --video-dir "${lift_run_dir}/videos"
+        fi
+        set -- "$@" --headless
+        command_path=isaac_rl/scripts/validate_scripted_grasp_lifts.py
         ;;
     probe)
         if (( $# > 0 )) && [[ "${1}" == --* ]]; then
@@ -231,6 +292,9 @@ if (( requested_gpu_count > 1 )); then
 fi
 
 runtime_exec=(apptainer "${apptainer_args[@]}" "${runtime_command[@]}")
+if [[ "${mode}" == franka-* ]]; then
+    runtime_exec=(bash euler/franka_apptainer.sh "${apptainer_args[@]}" "${runtime_command[@]}")
+fi
 if (( requested_gpu_count > 1 )); then
     runtime_exec=(
         srun
@@ -241,6 +305,7 @@ if (( requested_gpu_count > 1 )); then
         --gpus-per-task=1
         --gpu-bind=single:1
         euler/slurm_rank_launcher.sh
+        "${local_cache}"
         "${runtime_exec[@]}"
     )
 fi
@@ -263,7 +328,81 @@ if (( preflight_status != 0 )) || ! grep -q '^\[PREFLIGHT\] project imports OK$'
 fi
 
 runtime_status=0
-if [[ "${mode}" == "smoke" ]]; then
+if [[ "${mode}" == franka-* ]]; then
+    training_output="${TMPDIR}/isaaclab-${mode}.stdout"
+    set +e
+    "${runtime_exec[@]}" | tee "${training_output}"
+    runtime_status=${PIPESTATUS[0]}
+    set -e
+    marker='[FRANKA TRAIN] Completed bounded run:'
+    if [[ "${mode}" == franka-smoke ]]; then
+        marker='[FRANKA DRY RUN] Model inference passed; no training:'
+    fi
+    completion_count="$(grep -Fc "${marker}" "${training_output}" || true)"
+    if (( completion_count != requested_gpu_count )); then
+        echo "[ERROR] Franka completed ${completion_count}/${requested_gpu_count} ranks" >&2
+        runtime_status=1
+    fi
+    if (( runtime_status == 0 )) && [[ "${mode}" == franka-train ]]; then
+        apptainer "${apptainer_args[@]}" scripts/verify_franka_training_run.py \
+            --run "/workspace/grasping_rl/logs/franka/${experiment_name}" \
+            --output "/workspace/grasping_rl/logs/franka/${experiment_name}/verification.json"
+        verified_run="${runtime_logs_dir}/franka/${experiment_name}"
+        python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"]' "${verified_run}/verification.json"
+        # Short PPO gates establish execution; continuation segments must also
+        # pass the bounded memory-growth check before their dependents can run.
+        memory_samples="$(python3 -c 'import csv,pathlib,sys; paths=list(pathlib.Path(sys.argv[1]).glob("gpu_memory_rank_*.csv")); print(min((sum(1 for _ in csv.DictReader(p.open())) for p in paths), default=0))' "${verified_run}")"
+        if (( memory_samples >= 100 )); then
+            python3 euler/analyze_training_memory.py "${verified_run}" \
+                --warmup-epochs 25 --min-samples 75 --min-free-mib 2048 \
+                --output "${verified_run}/memory_verification.json"
+            python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["status"] == "PASS"' \
+                "${verified_run}/memory_verification.json"
+        fi
+        evaluate_validation=0
+        evaluate_test=0
+        evaluation_catalog=""
+        for ((i=0; i<${#runtime_command[@]}; i++)); do
+            case "${runtime_command[i]}" in
+                --evaluate-after) evaluate_validation=1 ;;
+                --evaluate-test-after) evaluate_test=1 ;;
+                --catalog) evaluation_catalog="${runtime_command[i+1]}" ;;
+                --catalog=*) evaluation_catalog="${runtime_command[i]#--catalog=}" ;;
+            esac
+        done
+        checkpoint_name="$(python3 -c 'import json,pathlib,sys; print(pathlib.Path(json.load(open(sys.argv[1]))["checkpoint"]).name)' "${verified_run}/verification.json")"
+        evaluation_splits=()
+        if (( evaluate_validation )); then evaluation_splits+=(validation); fi
+        if (( evaluate_test )); then evaluation_splits+=(test); fi
+        for split in "${evaluation_splits[@]}"; do
+            evaluation_name="${experiment_name}_${split}"
+            evaluation_output="${TMPDIR}/${evaluation_name}.stdout"
+            echo "[INFO] Evaluating ${split} targets after verified checkpoint ${checkpoint_name}"
+            set +e
+            srun --exact --kill-on-bad-exit=1 --ntasks=1 \
+                --cpus-per-task="${SLURM_CPUS_PER_TASK}" --gpus-per-task=1 --gpu-bind=single:1 \
+                euler/slurm_rank_launcher.sh "${local_cache}" \
+                bash euler/franka_apptainer.sh "${apptainer_args[@]}" \
+                isaac_rl/scripts/train_franka_zed.py --evaluate \
+                --checkpoint "/workspace/grasping_rl/logs/franka/${experiment_name}/nn/${checkpoint_name}" \
+                --catalog "${evaluation_catalog}" --catalog-split "${split}" \
+                --evaluation-steps 15000 --num-envs 32 \
+                --robot-asset-manifest assets/usd/franka_panda_offline/manifest.json \
+                --run-dir /workspace/grasping_rl/logs/franka/evaluations \
+                --experiment-name "${evaluation_name}" \
+                --headless '--kit_args=--/plugins/carb.tasking.plugin/threadCount=8' \
+                | tee "${evaluation_output}"
+            evaluation_status=${PIPESTATUS[0]}
+            set -e
+            if (( evaluation_status != 0 )) || ! grep -Fq '[FRANKA EVALUATION]' "${evaluation_output}"; then
+                echo "[ERROR] ${split} evaluation failed; dependent training will not start" >&2
+                exit 1
+            fi
+            python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["coverage_complete"]' \
+                "${runtime_logs_dir}/franka/evaluations/${evaluation_name}/evaluation.json"
+        done
+    fi
+elif [[ "${mode}" == "smoke" ]]; then
     smoke_output="${TMPDIR}/isaaclab-smoke.stdout"
     set +e
     "${runtime_exec[@]}" | tee "${smoke_output}"
@@ -271,6 +410,16 @@ if [[ "${mode}" == "smoke" ]]; then
     set -e
     if ! grep -q '^\[SMOKE\] steps=' "${smoke_output}"; then
         echo "[ERROR] Smoke process exited without its completion marker" >&2
+        runtime_status=1
+    fi
+elif [[ "${mode}" == "lift" ]]; then
+    lift_output="${TMPDIR}/isaaclab-lift.stdout"
+    set +e
+    "${runtime_exec[@]}" | tee "${lift_output}"
+    runtime_status=${PIPESTATUS[0]}
+    set -e
+    if ! grep -q '^\[LIFT\] report=' "${lift_output}"; then
+        echo "[ERROR] Lift validator exited without its completion marker" >&2
         runtime_status=1
     fi
 else
