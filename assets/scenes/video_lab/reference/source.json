@@ -1,0 +1,20 @@
+{
+  "source": "/home/pdz/Downloads/Video.mov",
+  "sha256": "3c59e8dfaa55215964dcc763f6b815a1c77ff73e903741e3e454d6673e15a1fc",
+  "bytes": 1236083,
+  "frames": 332,
+  "fps": 29.972916039723142,
+  "frame_indices": [
+    0,
+    66,
+    132,
+    199,
+    265,
+    331
+  ],
+  "decoded_resolution": [
+    320,
+    568
+  ],
+  "notes": "Six OpenCV-decoded frames; no source pixels used as fixed scene backdrop or tabletop texture."
+}

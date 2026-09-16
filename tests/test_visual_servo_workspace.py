@@ -35,16 +35,19 @@ def test_tracked_tslot_asset_is_render_only_and_not_cache_local() -> None:
     assert VISUAL_SERVO_TSLOT_SCALE == pytest.approx((1.0, 1.0, 1.0))
 
 
-def test_layout_sampler_keeps_nominal_layout_dominant_and_bounded() -> None:
+def test_layout_sampler_samples_all_tslot_directions_uniformly_and_bounded() -> None:
     variants = sample_tslot_layout_variants(256, enabled=True, seed=17)
     counts = Counter(variant.name for variant in variants)
 
-    assert counts == {"nominal": 154, "phase_shifted": 51, "rotated": 51}
+    assert counts == {"rotated": 256}
     for variant in variants:
         assert abs(variant.phase_m) <= 0.5 * VISUAL_SERVO_TSLOT_PITCH_M
         assert -90.0 <= variant.rotation_deg <= 90.0
-        if variant.name in {"nominal", "phase_shifted"}:
-            assert variant.rotation_deg == 0.0
+    histogram = [0] * 6
+    for variant in variants:
+        bin_index = min(5, int((variant.rotation_deg + 90.0) / 30.0))
+        histogram[bin_index] += 1
+    assert all(25 <= bin_count <= 60 for bin_count in histogram)
 
 
 def test_disabled_layout_randomization_is_fully_nominal() -> None:
@@ -54,14 +57,11 @@ def test_disabled_layout_randomization_is_fully_nominal() -> None:
     assert all(variant.phase_m == 0.0 and variant.rotation_deg == 0.0 for variant in variants)
 
 
-def test_part_palette_is_muted_weighted_and_canonical_brown_is_dominant() -> None:
+def test_part_palette_is_muted_and_all_colors_are_equally_likely() -> None:
     assert len(VISUAL_SERVO_PART_PALETTE) == 24
     assert VISUAL_SERVO_CANONICAL_PART_INDEX == 0
     assert VISUAL_SERVO_PART_PALETTE[0].name == "soft_brown"
-    assert VISUAL_SERVO_PART_PALETTE[0].weight == max(
-        entry.weight for entry in VISUAL_SERVO_PART_PALETTE
-    )
-    assert all(entry.weight > 0.0 for entry in VISUAL_SERVO_PART_PALETTE)
+    assert {entry.weight for entry in VISUAL_SERVO_PART_PALETTE} == {1.0}
     assert all(0.0 <= channel <= 0.5 for entry in VISUAL_SERVO_PART_PALETTE for channel in entry.color)
     assert sample_weighted_part_palette_index(0.0) == VISUAL_SERVO_CANONICAL_PART_INDEX
     assert sample_weighted_part_palette_index(1.0) == len(VISUAL_SERVO_PART_PALETTE) - 1
@@ -100,6 +100,7 @@ def test_continuous_surface_variation_preserves_clean_sample_and_stays_bounded()
 
     assert clean.color == pytest.approx(background.color)
     assert clean.roughness == pytest.approx(background.roughness)
+    assert clean.metallic == pytest.approx(0.0)
     assert varied.color != pytest.approx(background.color)
     assert varied.roughness == pytest.approx(0.33)
     assert all(0.0 <= channel <= 1.0 for channel in varied.color)

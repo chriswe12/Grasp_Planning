@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "reference_video": "/home/pdz/Downloads/Video.mov",
+  "reference_resolution": [
+    320,
+    568
+  ],
+  "units": "meters",
+  "dimension_status": "Estimated from monocular video; not surveyed",
+  "table": {
+    "width": 1.6,
+    "depth": 0.8,
+    "height": 0.74,
+    "thickness": 0.025,
+    "seam_width": 0.0012,
+    "color_srgb": [
+      0.68,
+      0.65,
+      0.59
+    ],
+    "roughness": 0.38
+  },
+  "wall": {
+    "rear_y": 0.54,
+    "height": 2.55,
+    "color_srgb": [
+      0.86,
+      0.86,
+      0.845
+    ]
+  },
+  "randomization": {
+    "table_color_gain": [
+      0.9,
+      1.1
+    ],
+    "table_roughness": [
+      0.28,
+      0.55
+    ],
+    "wall_color_gain": [
+      0.93,
+      1.05
+    ],
+    "light_power_gain": [
+      0.7,
+      1.3
+    ],
+    "light_temperature_kelvin": [
+      4200,
+      6500
+    ],
+    "exposure_ev": [
+      -0.3,
+      0.3
+    ],
+    "camera_position_delta_m": [
+      -0.045,
+      0.045
+    ],
+    "camera_focal_length_mm": [
+      32,
+      39
+    ],
+    "wear_visibility_probability": 0.8,
+    "prop_count": [
+      0,
+      5
+    ],
+    "prop_hue_delta": [
+      -0.025,
+      0.025
+    ],
+    "prop_color_gain": [
+      0.8,
+      1.15
+    ],
+    "prop_roughness": [
+      0.38,
+      0.68
+    ],
+    "reserved_robot_mounts_xy_radius": [
+      [
+        -0.6,
+        0.23,
+        0.16
+      ],
+      [
+        0.6,
+        0.23,
+        0.16
+      ]
+    ],
+    "reserved_task_center_xy_radius": [
+      0.0,
+      -0.1,
+      0.13
+    ]
+  }
+}

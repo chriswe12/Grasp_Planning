@@ -32,6 +32,7 @@ def _manifest() -> dict[str, object]:
                 "job_id": 123,
                 "experiment": "test_experiment",
                 "sim2real_profile": "combined_sim2real",
+                "training_profile": "baseline",
                 "policy_context": "action",
             }
         ],
@@ -47,6 +48,7 @@ def _write_complete_fixture(logs_root: Path) -> None:
     command = (
         "--task Test-Task-v0 --num_envs 224 --max_iterations 3 --seed 42 "
         "--sim2real_profile combined_sim2real --policy-context action "
+        "--training-profile baseline "
         "--experiment-name test_experiment"
     )
     stdout = f"[INFO] Running mode=train: {command}\nfps total: 1 epoch: 3/3\n" + "Training time: 1\n" * 3
@@ -58,6 +60,8 @@ def _write_complete_fixture(logs_root: Path) -> None:
     )
     (params_dir / "sim2real_profile.yaml").write_text(
         "profile: combined_sim2real\n"
+        "training_profile:\n"
+        "  name: baseline\n"
         "overrides:\n"
         "  live_rgb_gamma: !!python/tuple\n"
         "  - 0.9\n"

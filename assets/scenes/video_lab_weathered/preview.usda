@@ -1,0 +1,76 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def "Lab" (
+        prepend references = @environment.usdc@
+    )
+    {
+    }
+
+    def "Lighting" (
+        prepend references = @lighting.usdc@
+    )
+    {
+    }
+
+    def "Cameras" (
+        prepend references = @cameras.usdc@
+    )
+    {
+    }
+
+    def "Props"
+    {
+        def Xform "Blue_FDM_Flange" (
+            prepend references = @props/Blue_FDM_Flange.usdc@
+        )
+        {
+            float xformOp:rotateZ = 5.729578
+            double3 xformOp:translate = (-0.3199999928474426, -0.1599999964237213, 0.00039999998989515007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+        }
+
+        def Xform "Brown_FDM_Bracket" (
+            prepend references = @props/Brown_FDM_Bracket.usdc@
+        )
+        {
+            float xformOp:rotateZ = -11.459156
+            double3 xformOp:translate = (-0.6000000238418579, -0.07999999821186066, 0.00039999998989515007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+        }
+
+        def Xform "Green_Plastic_Cap" (
+            prepend references = @props/Green_Plastic_Cap.usdc@
+        )
+        {
+            float xformOp:rotateZ = 0
+            double3 xformOp:translate = (-0.699999988079071, -0.18000000715255737, 0.00039999998989515007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+        }
+
+        def Xform "Yellow_Tape_Roll" (
+            prepend references = @props/Yellow_Tape_Roll.usdc@
+        )
+        {
+            float xformOp:rotateZ = 0
+            double3 xformOp:translate = (0.5199999809265137, -0.15000000596046448, 0.00039999998989515007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+        }
+
+        def Xform "Red_Pencil" (
+            prepend references = @props/Red_Pencil.usdc@
+        )
+        {
+            float xformOp:rotateZ = 34.37747
+            double3 xformOp:translate = (0.3199999928474426, -0.23999999463558197, 0.00039999998989515007)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+        }
+    }
+}
+
