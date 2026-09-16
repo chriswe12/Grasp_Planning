@@ -157,7 +157,14 @@ def _geometry_config(payload: dict[str, object]) -> GeometryConfig:
 
 def _planning_config(payload: dict[str, object]) -> PlanningConfig:
     raw = dict(payload.get("planning", {}))
+    gpd_raw = dict(raw.get("gpd", {})) if isinstance(raw.get("gpd"), dict) else {}
+
+    def _gpd_value(key: str, flat_key: str, default: object) -> object:
+        value = gpd_raw.get(key, raw.get(flat_key, default))
+        return default if value in ("", None) else value
+
     return PlanningConfig(
+        grasp_generator=str(raw.get("grasp_generator", "antipodal")),
         stage1_cache_enabled=bool(raw.get("stage1_cache_enabled", True)),
         stage1_cache_dir=str(raw.get("stage1_cache_dir", "artifacts/stage1_cache")),
         num_surface_samples=int(raw.get("num_surface_samples", 1024)),
@@ -186,6 +193,15 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         contact_approach_offsets_m=_tuple_floats(raw.get("contact_approach_offsets_m", []))
         or DEFAULT_CONTACT_APPROACH_OFFSETS_M,
         rng_seed=int(raw.get("rng_seed", 0)),
+        gpd_executable=str(_gpd_value("executable", "gpd_executable", "")),
+        gpd_config_path=str(_gpd_value("config_path", "gpd_config_path", "")),
+        gpd_command_template=str(_gpd_value("command_template", "gpd_command_template", "")),
+        gpd_working_dir=str(_gpd_value("working_dir", "gpd_working_dir", "")),
+        gpd_output_json=str(_gpd_value("output_json", "gpd_output_json", "")),
+        gpd_artifact_dir=str(_gpd_value("artifact_dir", "gpd_artifact_dir", "artifacts/gpd")),
+        gpd_keep_artifacts=bool(_gpd_value("keep_artifacts", "gpd_keep_artifacts", False)),
+        gpd_timeout_s=float(_gpd_value("timeout_s", "gpd_timeout_s", 120.0)),
+        gpd_num_pointcloud_samples=int(_gpd_value("num_pointcloud_samples", "gpd_num_pointcloud_samples", 0)),
     )
 
 
