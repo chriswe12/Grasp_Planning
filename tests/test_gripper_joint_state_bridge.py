@@ -1,14 +1,36 @@
 from __future__ import annotations
 
-import importlib
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 
 @pytest.fixture()
 def bridge(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.syspath_prepend("ros2_ws/src/robot_integration_ros")
-    return importlib.import_module("robot_integration_ros.gripper_joint_state_bridge")
+    # These tests exercise conversion and feedback latching, not ROS transport.
+    # Import in isolation so the fake ROS types cannot leak into other tests.
+    modules = {
+        name: ModuleType(name)
+        for name in ("rclpy", "rclpy.node", "sensor_msgs", "sensor_msgs.msg", "std_msgs", "std_msgs.msg")
+    }
+    modules["rclpy.node"].Node = object
+    modules["sensor_msgs.msg"].JointState = object
+    modules["std_msgs.msg"].Float64 = object
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "ros2_ws/src/robot_integration_ros/robot_integration_ros/gripper_joint_state_bridge.py"
+    )
+    spec = importlib.util.spec_from_file_location("gripper_bridge_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as isolated:
+        for name, fake in modules.items():
+            isolated.setitem(sys.modules, name, fake)
+        spec.loader.exec_module(module)
+    return module
 
 
 def test_pdz_physical_feedback_maps_to_prefixed_dual_driver(bridge) -> None:
