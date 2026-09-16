@@ -536,7 +536,7 @@ def test_armed_policy_loop_uses_four_thread_executor(monkeypatch, tmp_path: Path
 
     monkeypatch.setattr(d405_visual_servo, "D405VisualServoNode", mock.Mock(return_value=node))
     monkeypatch.setattr(d405_visual_servo, "MultiThreadedExecutor", FakeExecutor)
-    monkeypatch.setattr(d405_visual_servo.rclpy, "ok", mock.Mock(return_value=True))
+    monkeypatch.setattr(d405_visual_servo, "rclpy", SimpleNamespace(ok=mock.Mock(return_value=True)))
 
     result = d405_visual_servo.run_d405_policy_visual_servo(
         config_path=tmp_path / "unused.yaml",
