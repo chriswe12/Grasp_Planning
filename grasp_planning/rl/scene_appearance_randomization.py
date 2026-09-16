@@ -347,13 +347,9 @@ class SceneAppearanceRandomizer:
         delta = _quat_from_euler_xyz(0.0, math.radians(pitch), math.radians(yaw))
         orientation = _normalize_quaternion(_quat_mul(delta, VISUAL_SERVO_KEY_ROTATION_WXYZ))
         requested_finger_color = lerp_color(VISUAL_SERVO_FINGER_COLOR, sample.finger_color)
-        requested_finger_roughness = lerp_scalar(
-            VISUAL_SERVO_FINGER_ROUGHNESS, sample.finger_roughness
-        )
+        requested_finger_roughness = lerp_scalar(VISUAL_SERVO_FINGER_ROUGHNESS, sample.finger_roughness)
         requested_pad_color = lerp_color(VISUAL_SERVO_CONTACT_PAD_COLOR, sample.pad_color)
-        requested_pad_roughness = lerp_scalar(
-            VISUAL_SERVO_CONTACT_PAD_ROUGHNESS, sample.pad_roughness
-        )
+        requested_pad_roughness = lerp_scalar(VISUAL_SERVO_CONTACT_PAD_ROUGHNESS, sample.pad_roughness)
         gripper_variant = (
             get_gripper_appearance_variant("canonical")
             if value <= 0.0 or sample.gripper_canonical
@@ -396,13 +392,9 @@ class SceneAppearanceRandomizer:
         pad = None
         if self.gripper_variant_paths:
             for path in self.gripper_variant_paths:
-                variant_set = self._prim(path).GetVariantSets().GetVariantSet(
-                    PDZ_GRIPPER_APPEARANCE_VARIANT_SET
-                )
+                variant_set = self._prim(path).GetVariantSets().GetVariantSet(PDZ_GRIPPER_APPEARANCE_VARIANT_SET)
                 if not variant_set.SetVariantSelection(sample.gripper_variant):
-                    raise RuntimeError(
-                        f"Could not select gripper material variant {sample.gripper_variant} on {path}"
-                    )
+                    raise RuntimeError(f"Could not select gripper material variant {sample.gripper_variant} on {path}")
         else:
             finger = self._prim(f"{self.material_paths['black_pla']}/Shader")
             pad = self._prim(f"{self.material_paths['white_contact_pad']}/Shader")

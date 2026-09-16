@@ -1017,7 +1017,12 @@ def generate_stage1_result(
 
 
 def write_stage1_artifacts(
-    result: Stage1Result, *, geometry: GeometryConfig, planning: PlanningConfig, output_json: Path, output_html: Path | None
+    result: Stage1Result,
+    *,
+    geometry: GeometryConfig,
+    planning: PlanningConfig,
+    output_json: Path,
+    output_html: Path | None,
 ) -> None:
     save_grasp_bundle(result.bundle, output_json)
     if output_html is None:

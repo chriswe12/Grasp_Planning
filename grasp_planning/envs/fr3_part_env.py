@@ -466,18 +466,13 @@ def make_fr3_part_scene_cfg(
     )
     if wrist_camera is not None and wrist_camera.enabled:
         scene_cfg.wrist_camera = make_d405_wrist_camera_cfg(
-            parent_prim_path=(
-                "{ENV_REGEX_NS}/Robot/"
-                f"{wrist_camera.parent_prim_path.strip('/')}"
-            ),
+            parent_prim_path=(f"{{ENV_REGEX_NS}}/Robot/{wrist_camera.parent_prim_path.strip('/')}"),
             wrist_camera=wrist_camera,
         )
     return scene_cfg
 
 
-def make_d405_wrist_camera_cfg(
-    *, parent_prim_path: str, wrist_camera: D405WristCameraConfig
-) -> CameraCfg:
+def make_d405_wrist_camera_cfg(*, parent_prim_path: str, wrist_camera: D405WristCameraConfig) -> CameraCfg:
     """Build a D405 sensor after the referenced robot USD has loaded."""
 
     camera_position, camera_orientation_wxyz = camera_pose_in_link7(wrist_camera)
@@ -580,18 +575,10 @@ def make_dual_kuka_assembly_scene_cfg(
         if _is_pdz_gripper_asset(resolved_robot_path)
         else ("left_finger_link", "right_finger_link")
     )
-    scene_cfg.holder_left_finger_contact.prim_path = (
-        f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[0]}"
-    )
-    scene_cfg.holder_right_finger_contact.prim_path = (
-        f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[1]}"
-    )
-    scene_cfg.inserter_left_finger_contact.prim_path = (
-        f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[0]}"
-    )
-    scene_cfg.inserter_right_finger_contact.prim_path = (
-        f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[1]}"
-    )
+    scene_cfg.holder_left_finger_contact.prim_path = f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[0]}"
+    scene_cfg.holder_right_finger_contact.prim_path = f"{{ENV_REGEX_NS}}/HolderRobot/{finger_link_names[1]}"
+    scene_cfg.inserter_left_finger_contact.prim_path = f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[0]}"
+    scene_cfg.inserter_right_finger_contact.prim_path = f"{{ENV_REGEX_NS}}/InserterRobot/{finger_link_names[1]}"
     for robot_cfg, base_position in (
         (scene_cfg.holder_robot, holder_robot_base_position),
         (scene_cfg.inserter_robot, inserter_robot_base_position),

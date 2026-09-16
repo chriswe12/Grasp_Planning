@@ -16,9 +16,7 @@ def _sha256(path: Path) -> str:
 
 
 def test_checked_in_registry_names_policies_without_stored_targets() -> None:
-    registry, _asset_root = pickup.load_policy_registry(
-        REPO_ROOT / "configs/d405_policy_registry.yaml"
-    )
+    registry, _asset_root = pickup.load_policy_registry(REPO_ROOT / "configs/d405_policy_registry.yaml")
 
     assert set(registry["policies"]) == {
         "combined-v4",
@@ -55,9 +53,7 @@ def test_policy_assets_validate_checkpoint_without_goal_catalogue(tmp_path: Path
                 "schema_version": 1,
                 "asset_root": "assets",
                 "agent_config": "agent.yaml",
-                "policies": {
-                    "test": {"checkpoint": "policy.pth", "metadata": "policy.json"}
-                },
+                "policies": {"test": {"checkpoint": "policy.pth", "metadata": "policy.json"}},
             }
         ),
         encoding="utf-8",
@@ -139,9 +135,7 @@ def test_resolved_config_uses_any_live_grasp_and_runtime_goal_renderer(tmp_path:
     assert visual["depth_topic"].endswith("/image_rect/compressedDepth")
     assert visual["color_topic"].startswith("/realsense_1/camera/")
     assert visual["color_camera_info_topic"] == "/realsense_1/camera/color/camera_info"
-    assert visual["depth_camera_info_topic"] == (
-        "/realsense_1/camera/aligned_depth_to_color/camera_info"
-    )
+    assert visual["depth_camera_info_topic"] == ("/realsense_1/camera/aligned_depth_to_color/camera_info")
     assert "camera_parameter_node" not in visual
     assert "expected_camera_serial" not in visual
     assert visual["allow_pdz_camera_rotation_fallback"] is False
@@ -200,12 +194,8 @@ def test_resolved_config_can_route_complete_rgbd_source_to_any_camera_namespace(
 
     visual = yaml.safe_load(visual_path.read_text(encoding="utf-8"))["visual_servo"]
     assert visual["color_topic"] == "/cell/wrist_rgbd/camera/color/image_rect/compressed"
-    assert visual["depth_topic"] == (
-        "/cell/wrist_rgbd/camera/aligned_depth_to_color/image_rect/compressedDepth"
-    )
+    assert visual["depth_topic"] == ("/cell/wrist_rgbd/camera/aligned_depth_to_color/image_rect/compressedDepth")
     assert visual["color_camera_info_topic"] == "/cell/wrist_rgbd/camera/color/camera_info"
-    assert visual["depth_camera_info_topic"] == (
-        "/cell/wrist_rgbd/camera/aligned_depth_to_color/camera_info"
-    )
+    assert visual["depth_camera_info_topic"] == ("/cell/wrist_rgbd/camera/aligned_depth_to_color/camera_info")
     assert "camera_parameter_node" not in visual
     assert "expected_camera_serial" not in visual

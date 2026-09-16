@@ -29,20 +29,13 @@ def _area_resize(image: np.ndarray, *, height: int, width: int) -> np.ndarray:
     source = np.asarray(image)
     source_height, source_width = source.shape[:2]
     if source_height % height or source_width % width:
-        raise ValueError(
-            f"Area resize requires integer factors, got {source.shape[:2]} -> "
-            f"{(height, width)}."
-        )
+        raise ValueError(f"Area resize requires integer factors, got {source.shape[:2]} -> {(height, width)}.")
     factor_y = source_height // height
     factor_x = source_width // width
     if source.ndim == 2:
-        resized = source.reshape(height, factor_y, width, factor_x).mean(
-            axis=(1, 3)
-        )
+        resized = source.reshape(height, factor_y, width, factor_x).mean(axis=(1, 3))
     elif source.ndim == 3:
-        resized = source.reshape(
-            height, factor_y, width, factor_x, source.shape[2]
-        ).mean(axis=(1, 3))
+        resized = source.reshape(height, factor_y, width, factor_x, source.shape[2]).mean(axis=(1, 3))
     else:
         raise ValueError(f"Expected a 2-D or 3-D image, got shape {source.shape}.")
     if np.issubdtype(source.dtype, np.integer):
@@ -50,9 +43,7 @@ def _area_resize(image: np.ndarray, *, height: int, width: int) -> np.ndarray:
     return resized.astype(source.dtype, copy=False)
 
 
-def _area_resize_batch(
-    images: np.ndarray, *, height: int, width: int
-) -> np.ndarray:
+def _area_resize_batch(images: np.ndarray, *, height: int, width: int) -> np.ndarray:
     return np.stack(
         [_area_resize(image, height=height, width=width) for image in images],
         axis=0,
@@ -95,8 +86,7 @@ def main() -> None:
         if (
             int(existing_manifest.get("version", -1)) != 2
             or existing_manifest.get("resampling") != "area"
-            or existing_manifest.get("observation_profile")
-            != D405_VISUAL_SERVO_OBSERVATION_PROFILE
+            or existing_manifest.get("observation_profile") != D405_VISUAL_SERVO_OBSERVATION_PROFILE
         ):
             raise ValueError(
                 f"Existing cache at {args.output_dir} uses an obsolete visual "
@@ -105,10 +95,7 @@ def main() -> None:
         print(f"[CACHE] Already complete: {manifest_path}", flush=True)
         return
 
-    selections = {
-        split: _selected_episodes(args.dataset_dir, split)
-        for split in ("train", "validation")
-    }
+    selections = {split: _selected_episodes(args.dataset_dir, split) for split in ("train", "validation")}
     first_path = selections["train"][0]
     with np.load(first_path) as first:
         source_height, source_width = first["rgb_live"].shape[1:3]
@@ -165,10 +152,7 @@ def main() -> None:
                 (capacity, 6),
             ),
         }
-        outputs = {
-            name: _open_memmap(path, dtype, shape)
-            for name, (path, dtype, shape) in output_specs.items()
-        }
+        outputs = {name: _open_memmap(path, dtype, shape) for name, (path, dtype, shape) in output_specs.items()}
         cursor = 0
         for episode_index, npz_path in enumerate(episodes, start=1):
             with np.load(npz_path) as archive:
@@ -180,21 +164,15 @@ def main() -> None:
                     )
                 destination = slice(cursor, cursor + count)
                 orientations = archive["tcp_orientation_xyzw_w"]
-                outputs["rgb"][destination] = _area_resize_batch(
-                    archive["rgb_live"], height=height, width=width
-                )
-                outputs["depth"][destination] = _area_resize_batch(
-                    archive["depth_live"], height=height, width=width
-                )
+                outputs["rgb"][destination] = _area_resize_batch(archive["rgb_live"], height=height, width=width)
+                outputs["depth"][destination] = _area_resize_batch(archive["depth_live"], height=height, width=width)
                 outputs["joint"][destination] = archive["joint_positions"]
                 outputs["progress"][destination, 0] = archive["trajectory_progress"]
                 outputs["nominal"][destination] = normalize_twist(
                     world_twist_to_camera(archive["nominal_twist"], orientations)
                 )
                 outputs["residual"][destination] = normalize_twist(
-                    world_twist_to_camera(
-                        archive["expert_residual_twist"], orientations
-                    )
+                    world_twist_to_camera(archive["expert_residual_twist"], orientations)
                 )
             cursor += count
             processed_frames += count
@@ -228,9 +206,7 @@ def main() -> None:
         "splits": split_manifests,
     }
     temporary_manifest = manifest_path.with_suffix(".json.tmp")
-    temporary_manifest.write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
+    temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary_manifest, manifest_path)
     print(f"[CACHE] Complete: {manifest_path}", flush=True)
 

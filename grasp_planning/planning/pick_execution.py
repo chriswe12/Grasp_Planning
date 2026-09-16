@@ -361,11 +361,7 @@ def _kuka_contact_stall_matches_grasp_width(
     if not isinstance(joint_names, list):
         return None
     driver_joint_name = next(
-        (
-            name
-            for name in ("left_finger_joint", "pdz_gripper_left_finger_joint")
-            if name in joint_names
-        ),
+        (name for name in ("left_finger_joint", "pdz_gripper_left_finger_joint") if name in joint_names),
         None,
     )
     if driver_joint_name is None:

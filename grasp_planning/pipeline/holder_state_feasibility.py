@@ -438,11 +438,7 @@ def _prepare_holder_candidate(
         raise RuntimeError("Holder candidate produced no gripper collision geometry.")
     contact_meshes = opening_meshes[0]
     approach_meshes = opening_meshes[-1]
-    gripper_meshes = tuple(
-        [*contact_meshes, *approach_meshes[1:]]
-        if len(opening_meshes) > 1
-        else contact_meshes
-    )
+    gripper_meshes = tuple([*contact_meshes, *approach_meshes[1:]] if len(opening_meshes) > 1 else contact_meshes)
     rotation_assembly_from_source = source_pose_assembly.rotation_world_from_object
     approach_axis_source = quat_to_rotmat_xyzw(candidate.grasp_orientation_xyzw_obj)[:, 2]
     approach_axis_assembly = rotation_assembly_from_source @ approach_axis_source

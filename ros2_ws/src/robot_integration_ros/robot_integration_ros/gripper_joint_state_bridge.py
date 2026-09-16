@@ -39,11 +39,7 @@ def gripper_driver_state_from_width(
     if not math.isfinite(float(width_m)):
         raise ValueError("width_m must be finite.")
 
-    source_joint = (
-        "pdz_gripper_left_finger_joint"
-        if gripper_model == "pdz_gripper"
-        else "left_finger_joint"
-    )
+    source_joint = "pdz_gripper_left_finger_joint" if gripper_model == "pdz_gripper" else "left_finger_joint"
     prefix = f"{_DUAL_ROBOTS[side]}_" if layout == "dual" else ""
     if gripper_model == "pdz_gripper":
         position = max(
@@ -76,9 +72,7 @@ def gripper_driver_state_from_closure_fraction(
     if not math.isfinite(float(closure_fraction)):
         raise ValueError("closure_fraction must be finite.")
     normalized = max(0.0, min(1.0, float(closure_fraction)))
-    width_m = _PHYSICAL_OPEN_WIDTH_M - normalized * (
-        _PHYSICAL_OPEN_WIDTH_M - _PHYSICAL_CLOSED_WIDTH_M
-    )
+    width_m = _PHYSICAL_OPEN_WIDTH_M - normalized * (_PHYSICAL_OPEN_WIDTH_M - _PHYSICAL_CLOSED_WIDTH_M)
     return gripper_driver_state_from_width(
         layout=layout,
         side=side,
@@ -95,11 +89,7 @@ def modeled_open_driver_state(
 ) -> tuple[str, float]:
     """Return the fully-open model state used as a conservative feedback fallback."""
 
-    open_width_m = (
-        _PDZ_GRIPPER_OPEN_WIDTH_M
-        if gripper_model == "pdz_gripper"
-        else _Y_GRIPPER_OPEN_WIDTH_M
-    )
+    open_width_m = _PDZ_GRIPPER_OPEN_WIDTH_M if gripper_model == "pdz_gripper" else _Y_GRIPPER_OPEN_WIDTH_M
     return gripper_driver_state_from_width(
         layout=layout,
         side=side,
@@ -126,14 +116,10 @@ class GripperJointStateBridge(Node):
         self._gripper_model = str(self.get_parameter("gripper_model").value).strip()
         self._single_side = str(self.get_parameter("single_side").value).strip()
         physical_sides = {
-            value.strip()
-            for value in str(self.get_parameter("physical_sides").value).split(",")
-            if value.strip()
+            value.strip() for value in str(self.get_parameter("physical_sides").value).split(",") if value.strip()
         }
         publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
-        self._feedback_stale_warning_s = float(
-            self.get_parameter("feedback_stale_warning_s").value
-        )
+        self._feedback_stale_warning_s = float(self.get_parameter("feedback_stale_warning_s").value)
 
         if self._layout not in {"single", "dual"}:
             raise ValueError("layout must be 'single' or 'dual'.")
@@ -147,10 +133,7 @@ class GripperJointStateBridge(Node):
             raise ValueError("single layout may only read feedback for single_side.")
         if not math.isfinite(publish_rate_hz) or publish_rate_hz <= 0.0:
             raise ValueError("publish_rate_hz must be positive and finite.")
-        if (
-            not math.isfinite(self._feedback_stale_warning_s)
-            or self._feedback_stale_warning_s <= 0.0
-        ):
+        if not math.isfinite(self._feedback_stale_warning_s) or self._feedback_stale_warning_s <= 0.0:
             raise ValueError("feedback_stale_warning_s must be positive and finite.")
 
         self._output_sides = _SIDES if self._layout == "dual" else (self._single_side,)
@@ -179,9 +162,7 @@ class GripperJointStateBridge(Node):
             )
         self._timer = self.create_timer(1.0 / publish_rate_hz, self._publish)
         active = ",".join(sorted(self._physical_sides)) or "none (mock)"
-        self.get_logger().info(
-            f"publishing {self._layout} {self._gripper_model} state from physical sides: {active}"
-        )
+        self.get_logger().info(f"publishing {self._layout} {self._gripper_model} state from physical sides: {active}")
 
     def _feedback_callback(self, side: str, message: Float64) -> None:
         position = float(message.data)
@@ -216,8 +197,7 @@ class GripperJointStateBridge(Node):
         elif side in self._physical_sides:
             self._warn_throttled(
                 side,
-                f"waiting for {side} gripper position feedback; "
-                "publishing the fully-open collision envelope",
+                f"waiting for {side} gripper position feedback; publishing the fully-open collision envelope",
             )
         return modeled_open_driver_state(
             layout=self._layout,

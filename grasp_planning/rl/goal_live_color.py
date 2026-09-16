@@ -54,9 +54,7 @@ def sample_goal_live_color_pairs(
     )
     variant_slots = torch.randint(available.numel(), (sample_count,), device=target_device)
     goal_indices = available[variant_slots]
-    distances = torch.linalg.norm(
-        palette_rgb[goal_indices, None, :] - palette_rgb[None, :, :], dim=-1
-    )
+    distances = torch.linalg.norm(palette_rgb[goal_indices, None, :] - palette_rgb[None, :, :], dim=-1)
     ordering = torch.argsort(distances, dim=1)
     similar_candidates = ordering[:, 1:5]
     different_candidates = ordering[:, palette_size // 2 :]
@@ -69,13 +67,9 @@ def sample_goal_live_color_pairs(
         torch.randint(different_candidates.shape[1], (sample_count,), device=target_device),
     ]
     draws = torch.rand(sample_count, device=target_device)
-    relationship = torch.full(
-        (sample_count,), COLOR_RELATIONSHIP_DIFFERENT, dtype=torch.long, device=target_device
-    )
+    relationship = torch.full((sample_count,), COLOR_RELATIONSHIP_DIFFERENT, dtype=torch.long, device=target_device)
     relationship[draws < match_fraction] = COLOR_RELATIONSHIP_MATCH
-    relationship[(draws >= match_fraction) & (draws < match_fraction + similar_fraction)] = (
-        COLOR_RELATIONSHIP_SIMILAR
-    )
+    relationship[(draws >= match_fraction) & (draws < match_fraction + similar_fraction)] = COLOR_RELATIONSHIP_SIMILAR
     live_indices = torch.where(
         relationship == COLOR_RELATIONSHIP_MATCH,
         goal_indices,

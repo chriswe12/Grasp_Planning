@@ -40,9 +40,7 @@ def _scalar_string(arrays: Any, name: str) -> str:
         raise RuntimeError(f"Captured catalog is missing required profile '{name}'.")
     value = np.asarray(arrays[name])
     if value.ndim != 0:
-        raise RuntimeError(
-            f"Captured catalog profile '{name}' must be scalar, got {value.shape}."
-        )
+        raise RuntimeError(f"Captured catalog profile '{name}' must be scalar, got {value.shape}.")
     return str(value.item())
 
 
@@ -58,9 +56,7 @@ def validate_fresh_goal_catalog_capture(
     paths_asset = Path(paths_asset_path).expanduser().resolve()
     current_signature = catalog_file_signature(catalog)
     if current_signature is None:
-        raise RuntimeError(
-            f"Goal rendering returned without creating the catalog: {catalog}."
-        )
+        raise RuntimeError(f"Goal rendering returned without creating the catalog: {catalog}.")
     if previous_signature is not None and current_signature == previous_signature:
         raise RuntimeError(
             "Goal rendering returned without replacing the existing goal catalog. "
@@ -74,15 +70,9 @@ def validate_fresh_goal_catalog_capture(
     with np.load(paths_asset, allow_pickle=False) as source:
         expected_target_ids = np.asarray(source["target_ids"]).astype(str)
     with np.load(catalog, allow_pickle=False) as source:
-        target_ids = (
-            np.asarray(source["target_ids"]).astype(str)
-            if "target_ids" in source
-            else np.asarray([])
-        )
+        target_ids = np.asarray(source["target_ids"]).astype(str) if "target_ids" in source else np.asarray([])
         if not np.array_equal(target_ids, expected_target_ids):
-            raise RuntimeError(
-                "Captured catalog target_ids do not exactly match the validated path asset."
-            )
+            raise RuntimeError("Captured catalog target_ids do not exactly match the validated path asset.")
         target_count = int(target_ids.size)
         if target_count < 1:
             raise RuntimeError("Captured catalog contains no targets.")
@@ -107,15 +97,12 @@ def validate_fresh_goal_catalog_capture(
             if value is None or value.shape != expected_shape:
                 actual_shape = None if value is None else value.shape
                 raise RuntimeError(
-                    f"Captured catalog array '{name}' must have shape {expected_shape}, "
-                    f"got {actual_shape}."
+                    f"Captured catalog array '{name}' must have shape {expected_shape}, got {actual_shape}."
                 )
         for name in ("moveit_plan_validated", "isaac_goal_rgbd_captured"):
             value = source[name]
             if value.dtype != np.bool_ or not bool(value.all()):
-                raise RuntimeError(
-                    f"Captured catalog array '{name}' must be complete and boolean."
-                )
+                raise RuntimeError(f"Captured catalog array '{name}' must be complete and boolean.")
 
         expected_profiles = {
             "robot_profile": VISUAL_SERVO_GRIPPER_PROFILE,
@@ -130,10 +117,7 @@ def validate_fresh_goal_catalog_capture(
         for name, expected in expected_profiles.items():
             actual = _scalar_string(source, name)
             if actual != expected:
-                raise RuntimeError(
-                    f"Captured catalog profile '{name}' is '{actual}', "
-                    f"expected '{expected}'."
-                )
+                raise RuntimeError(f"Captured catalog profile '{name}' is '{actual}', expected '{expected}'.")
     return target_count
 
 

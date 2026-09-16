@@ -22,9 +22,7 @@ ISAAC_USD = REPO_ROOT / "assets/usd/kuka_iiwa7_y_gripper/kuka_iiwa7_y_gripper.us
 CHECKED_MOVEIT_XACRO = (
     REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_y_gripper_moveit.urdf.xacro"
 )
-PDZ_SOURCE_URDF = (
-    REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "urdf" / "kuka_iiwa7_pdz_gripper.urdf"
-)
+PDZ_SOURCE_URDF = REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper" / "urdf" / "kuka_iiwa7_pdz_gripper.urdf"
 CHECKED_PDZ_MOVEIT_XACRO = (
     REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "urdf" / "iiwa7_pdz_gripper_moveit.urdf.xacro"
 )
@@ -286,16 +284,10 @@ def test_aligned_launch_and_description_are_installed_by_ros_package() -> None:
 
 def test_pdz_srdf_allows_passive_finger_siblings_to_touch() -> None:
     srdf = ET.parse(
-        REPO_ROOT
-        / "ros2_ws"
-        / "src"
-        / "robot_integration_ros"
-        / "config"
-        / "iiwa7_pdz_gripper.srdf.xacro"
+        REPO_ROOT / "ros2_ws" / "src" / "robot_integration_ros" / "config" / "iiwa7_pdz_gripper.srdf.xacro"
     ).getroot()
     disabled_pairs = {
-        frozenset((str(entry.get("link1")), str(entry.get("link2"))))
-        for entry in srdf.findall("disable_collisions")
+        frozenset((str(entry.get("link1")), str(entry.get("link2")))) for entry in srdf.findall("disable_collisions")
     }
     assert frozenset(("pdz_gripper_left_finger_link", "pdz_gripper_right_finger_link")) in disabled_pairs
 

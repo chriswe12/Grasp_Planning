@@ -3559,7 +3559,11 @@ def _benchmark_one_target(
         stage1_json = stage1_dir / "grasps.json"
         stage1_html = stage1_dir / "grasps.html"
         write_stage1_artifacts(
-            stage1, geometry=geometry, planning=planning, output_json=stage1_json, output_html=stage1_html if write_full_grasp_html else None
+            stage1,
+            geometry=geometry,
+            planning=planning,
+            output_json=stage1_json,
+            output_html=stage1_html if write_full_grasp_html else None,
         )
         _write_json(stage1_dir / "raw_grasps.json", _raw_stage1_payload(stage1, target))
         part_frame_html = part_dir / "part_frame.html"
@@ -3606,7 +3610,12 @@ def _benchmark_one_target(
                 planning=planning,
                 object_pose_world=orientation.object_pose_world,
             )
-            write_stage2_artifacts(stage2, planning=planning, output_json=stage2_json, output_html=stage2_html if write_full_grasp_html else None)
+            write_stage2_artifacts(
+                stage2,
+                planning=planning,
+                output_json=stage2_json,
+                output_html=stage2_html if write_full_grasp_html else None,
+            )
             plan = None
             handover_result = None
             if fallback_config.enabled and len(stage1.bundle.candidates) > 0 and not stage2.accepted:

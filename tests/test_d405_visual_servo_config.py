@@ -423,10 +423,7 @@ def test_camera_contract_warns_for_trained_intrinsics_difference_but_continues()
     node.validate_camera_contract()
 
     assert logger.warning.call_count == 2
-    assert all(
-        "continuing with the live CameraInfo" in call.args[0]
-        for call in logger.warning.call_args_list
-    )
+    assert all("continuing with the live CameraInfo" in call.args[0] for call in logger.warning.call_args_list)
 
 
 def test_policy_preparation_strict_loads_runtime_before_ros_node_creation(tmp_path: Path) -> None:

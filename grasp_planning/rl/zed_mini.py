@@ -48,8 +48,7 @@ def profile_id(profile: dict) -> str:
 
 def scaled_intrinsics(profile: dict, width: int, height: int) -> list[float]:
     sx, sy = width / profile["source_width"], height / profile["source_height"]
-    return [profile["fx"] * sx, 0., profile["cx"] * sx,
-            0., profile["fy"] * sy, profile["cy"] * sy, 0., 0., 1.]
+    return [profile["fx"] * sx, 0.0, profile["cx"] * sx, 0.0, profile["fy"] * sy, profile["cy"] * sy, 0.0, 0.0, 1.0]
 
 
 def pack_zed_rgbd(rgb: torch.Tensor, depth: torch.Tensor, profile: dict):
@@ -64,16 +63,18 @@ def pack_zed_rgbd(rgb: torch.Tensor, depth: torch.Tensor, profile: dict):
         depth = depth.unsqueeze(-1)
     if depth.shape[:3] != rgb.shape[:3] or depth.shape[-1] != 1:
         raise ValueError("Depth must be aligned with the LEFT RGB image")
-    color = rgb[..., :3].float() / (255. if rgb.dtype == torch.uint8 else 1.)
+    color = rgb[..., :3].float() / (255.0 if rgb.dtype == torch.uint8 else 1.0)
     lo, hi = profile["depth_min_m"], profile["depth_max_m"]
     valid = torch.isfinite(depth) & (depth >= lo) & (depth < hi)
     size = (profile["observation_height"], profile["observation_width"])
+
     def resize(x):
         return F.interpolate(x.permute(0, 3, 1, 2), size=size, mode="area").permute(0, 2, 3, 1)
+
     coverage = resize(valid.float())
-    metric = resize(torch.where(valid, depth, 0.)) / coverage.clamp_min(1e-6)
-    metric = torch.where(coverage >= .25, metric, hi)
-    return torch.cat((resize(color).clamp(0, 1), ((metric-lo)/(hi-lo)).clamp(0, 1)), -1), coverage >= .25
+    metric = resize(torch.where(valid, depth, 0.0)) / coverage.clamp_min(1e-6)
+    metric = torch.where(coverage >= 0.25, metric, hi)
+    return torch.cat((resize(color).clamp(0, 1), ((metric - lo) / (hi - lo)).clamp(0, 1)), -1), coverage >= 0.25
 
 
 def reproject_intrinsics(rgb, depth, source_matrix, target_matrix):
@@ -93,8 +94,8 @@ def reproject_intrinsics(rgb, depth, source_matrix, target_matrix):
     v = (y[None] - dst[:, 1, 2, None, None]) / dst[:, 1, 1, None, None]
     u = u * src[:, 0, 0, None, None] + src[:, 0, 2, None, None]
     v = v * src[:, 1, 1, None, None] + src[:, 1, 2, None, None]
-    grid = torch.stack((2*(u+.5)/w-1, 2*(v+.5)/h-1), -1).expand(n, -1, -1, -1)
-    color = rgb[..., :3].float() / (255. if rgb.dtype == torch.uint8 else 1.)
+    grid = torch.stack((2 * (u + 0.5) / w - 1, 2 * (v + 0.5) / h - 1), -1).expand(n, -1, -1, -1)
+    color = rgb[..., :3].float() / (255.0 if rgb.dtype == torch.uint8 else 1.0)
     color = F.grid_sample(color.permute(0, 3, 1, 2), grid, align_corners=False).permute(0, 2, 3, 1)
     metric = F.grid_sample(depth.permute(0, 3, 1, 2), grid, mode="nearest", align_corners=False).permute(0, 2, 3, 1)
     return color, metric
@@ -108,8 +109,9 @@ def offset_jacobian(jacobian: torch.Tensor, offset_w: torch.Tensor) -> torch.Ten
     return result
 
 
-def damped_joint_velocity(jacobian: torch.Tensor, twist: torch.Tensor, damping=.05):
+def damped_joint_velocity(jacobian: torch.Tensor, twist: torch.Tensor, damping=0.05):
     identity = torch.eye(6, dtype=jacobian.dtype, device=jacobian.device).expand(jacobian.shape[0], -1, -1)
-    return (jacobian.transpose(1, 2) @ torch.linalg.solve(
-        jacobian @ jacobian.transpose(1, 2) + damping**2 * identity, twist[..., None]
-    )).squeeze(-1)
+    return (
+        jacobian.transpose(1, 2)
+        @ torch.linalg.solve(jacobian @ jacobian.transpose(1, 2) + damping**2 * identity, twist[..., None])
+    ).squeeze(-1)

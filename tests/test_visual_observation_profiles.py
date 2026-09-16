@@ -101,21 +101,14 @@ def test_finger_material_classifier_binds_leaf_pad_geometry_white() -> None:
     root = "/World/envs/env_0/Robot/pdz_gripper_left_finger_link"
     assert classify_robot_finger_geometry_material(root, "Xform") is None
     assert (
-        classify_robot_finger_geometry_material(
-            f"{root}/visuals/left_finger/node_STL_BINARY_0", "Mesh"
-        )
-        == "black_pla"
+        classify_robot_finger_geometry_material(f"{root}/visuals/left_finger/node_STL_BINARY_0", "Mesh") == "black_pla"
     )
     assert (
-        classify_robot_finger_geometry_material(
-            f"{root}/visuals/left_tpu_pad/node_STL_BINARY_0", "Mesh"
-        )
+        classify_robot_finger_geometry_material(f"{root}/visuals/left_tpu_pad/node_STL_BINARY_0", "Mesh")
         == "white_contact_pad"
     )
     assert (
-        classify_robot_finger_geometry_material(
-            "/World/envs/env_0/Robot/link7/visuals/node_STL_BINARY_0", "Mesh"
-        )
+        classify_robot_finger_geometry_material("/World/envs/env_0/Robot/link7/visuals/node_STL_BINARY_0", "Mesh")
         is None
     )
 
@@ -146,10 +139,7 @@ def test_continuous_gripper_sample_quantizes_to_authored_variant() -> None:
 
 
 def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:
-    urdf = (
-        Path(__file__).resolve().parents[1]
-        / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
-    )
+    urdf = Path(__file__).resolve().parents[1] / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
     root = ET.parse(urdf).getroot()
     observed: dict[str, tuple[float, float, float]] = {}
     for link_name in (
@@ -162,8 +152,6 @@ def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:
             material = visual.find("material")
             color = visual.find("material/color")
             assert material is not None and color is not None
-            observed[str(material.get("name"))] = tuple(
-                float(value) for value in str(color.get("rgba")).split()[:3]
-            )
+            observed[str(material.get("name"))] = tuple(float(value) for value in str(color.get("rgba")).split()[:3])
     assert observed["pdz_finger_black"] == VISUAL_SERVO_FINGER_COLOR
     assert observed["pdz_contact_white"] == VISUAL_SERVO_CONTACT_PAD_COLOR

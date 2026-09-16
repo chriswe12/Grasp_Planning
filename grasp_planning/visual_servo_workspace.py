@@ -82,9 +82,7 @@ def validate_render_only_tslot_asset(path: Path = VISUAL_SERVO_TSLOT_ASSET) -> N
     forbidden = ("CollisionAPI", "PhysicsCollision", "RigidBodyAPI", "MeshCollisionAPI")
     found = [token for token in forbidden if token in source]
     if found:
-        raise ValueError(
-            f"T-slot asset must remain render-only; found collision/physics tokens {found} in {path}."
-        )
+        raise ValueError(f"T-slot asset must remain render-only; found collision/physics tokens {found} in {path}.")
 
 
 def sample_tslot_layout_variants(
@@ -372,9 +370,7 @@ class LiveWorkspaceAppearanceRandomizer:
         forced_palette_indices: list[int] | None = None
         if palette_indices is not None:
             forced = palette_indices.to(device=self.device, dtype=torch.long).flatten()
-            if forced.numel() != ids.numel() or torch.any(
-                (forced < 0) | (forced >= len(VISUAL_SERVO_PART_PALETTE))
-            ):
+            if forced.numel() != ids.numel() or torch.any((forced < 0) | (forced >= len(VISUAL_SERVO_PART_PALETTE))):
                 raise ValueError("palette_indices must contain one valid part-palette index per environment.")
             forced_palette_indices = forced.cpu().tolist()
         if isinstance(strength, torch.Tensor):
@@ -384,9 +380,7 @@ class LiveWorkspaceAppearanceRandomizer:
             elif strengths.numel() != ids.numel():
                 raise ValueError("Per-environment appearance strength must match env_ids.")
         else:
-            strengths = torch.full(
-                (ids.numel(),), min(1.0, max(0.0, float(strength))), device=self.device
-            )
+            strengths = torch.full((ids.numel(),), min(1.0, max(0.0, float(strength))), device=self.device)
         strengths = strengths.clamp(0.0, 1.0)
         active = torch.rand(ids.numel(), device=self.device) < strengths
         palette_units = torch.rand(ids.numel(), device=self.device).cpu().tolist()
@@ -430,9 +424,11 @@ class LiveWorkspaceAppearanceRandomizer:
             part_color_attr = part_shader.GetAttribute("inputs:diffuseColor")
             part_roughness_attr = part_shader.GetAttribute("inputs:roughness")
             part_metallic_attr = part_shader.GetAttribute("inputs:metallic")
-            if not part_color_attr.Set(Gf.Vec3f(*varied_part.color)) or not part_roughness_attr.Set(
-                varied_part.roughness
-            ) or not part_metallic_attr.Set(varied_part.metallic):
+            if (
+                not part_color_attr.Set(Gf.Vec3f(*varied_part.color))
+                or not part_roughness_attr.Set(varied_part.roughness)
+                or not part_metallic_attr.Set(varied_part.metallic)
+            ):
                 raise RuntimeError(f"Failed to author part appearance for env {env_index}.")
 
             tslot_shader_path = self.tslot_aluminum_shader_paths.get(env_index)
@@ -457,9 +453,7 @@ class LiveWorkspaceAppearanceRandomizer:
             )
             shader = self.stage.GetPrimAtPath(tslot_shader_path)
             if not shader.IsValid():
-                raise RuntimeError(
-                    f"T-slot aluminum shader does not exist: {tslot_shader_path}"
-                )
+                raise RuntimeError(f"T-slot aluminum shader does not exist: {tslot_shader_path}")
             color_attr = shader.GetAttribute("inputs:diffuseColor")
             roughness_attr = shader.GetAttribute("inputs:roughness")
             if not color_attr.Set(Gf.Vec3f(*varied_background.color)) or not roughness_attr.Set(

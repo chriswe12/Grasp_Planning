@@ -50,8 +50,7 @@ def _author_pdz_finger_materials(stage: Usd.Stage) -> None:
 
     metadata = author_pdz_gripper_material_variants(stage)
     print(
-        "Authored PDZ visual material variants: "
-        f"roots={metadata['visual_roots']} variants={metadata['variants']}",
+        f"Authored PDZ visual material variants: roots={metadata['visual_roots']} variants={metadata['variants']}",
         flush=True,
     )
 
@@ -101,11 +100,7 @@ def _resolve_camera_frame(stage: Usd.Stage) -> str:
 
     if stage.GetPrimAtPath(CAMERA_FRAME).IsValid():
         return CAMERA_FRAME
-    matches = [
-        str(prim.GetPath())
-        for prim in stage.Traverse()
-        if prim.GetName() == CAMERA_OPTICAL_FRAME_NAME
-    ]
+    matches = [str(prim.GetPath()) for prim in stage.Traverse() if prim.GetName() == CAMERA_OPTICAL_FRAME_NAME]
     if len(matches) == 1:
         return matches[0]
     if not matches:
@@ -143,9 +138,7 @@ def _author_camera_and_drive(output_path: Path) -> None:
     camera.GetVerticalApertureAttr().Set(2.0 * 1.93 * math.tan(math.radians(58.0 / 2.0)))
     camera.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 10.0))
     camera.GetPrim().CreateAttribute("pdz:nominalResolution", Sdf.ValueTypeNames.Int2).Set(Gf.Vec2i(848, 480))
-    camera.GetPrim().CreateAttribute("pdz:rosOpticalFrame", Sdf.ValueTypeNames.String).Set(
-        "camera_depth_optical_frame"
-    )
+    camera.GetPrim().CreateAttribute("pdz:rosOpticalFrame", Sdf.ValueTypeNames.String).Set("camera_depth_optical_frame")
 
     # The established KUKA Isaac backend represents A4 as a +Y USD joint and
     # converts the physical MoveIt coordinate at the backend boundary.  The

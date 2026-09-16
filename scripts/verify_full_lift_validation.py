@@ -77,9 +77,7 @@ def verify_and_merge_suite(
         for name, expected_value in expected_metadata.items():
             actual_value = metadata.get(name)
             if actual_value != expected_value:
-                raise ValueError(
-                    f"Job {job_id} metadata {name}={actual_value!r}; expected {expected_value!r}."
-                )
+                raise ValueError(f"Job {job_id} metadata {name}={actual_value!r}; expected {expected_value!r}.")
         for row in attempts:
             target_id = str(row["target_id"])
             expected_split = str(run["catalog_split"])
@@ -87,8 +85,7 @@ def verify_and_merge_suite(
                 raise ValueError(f"Job {job_id} returned unknown target {target_id!r}.")
             if split_by_target[target_id] != expected_split:
                 raise ValueError(
-                    f"Target {target_id!r} belongs to {split_by_target[target_id]!r}, "
-                    f"not {expected_split!r}."
+                    f"Target {target_id!r} belongs to {split_by_target[target_id]!r}, not {expected_split!r}."
                 )
             row["source_job_id"] = job_id
             row["dataset_shard"] = int(run["dataset_shard"])
@@ -115,15 +112,12 @@ def verify_and_merge_suite(
     expected_total = int(manifest["expected_target_count"])
     if len(merged_rows) != expected_total or expected_total != len(catalog_target_ids):
         raise ValueError(
-            f"Coverage mismatch: rows={len(merged_rows)}, manifest={expected_total}, "
-            f"catalog={len(catalog_target_ids)}."
+            f"Coverage mismatch: rows={len(merged_rows)}, manifest={expected_total}, catalog={len(catalog_target_ids)}."
         )
 
     overall = summarize_scripted_lifts(merged_rows)
     by_split = {
-        split: summarize_scripted_lifts(
-            row for row in merged_rows if str(row["catalog_split"]) == split
-        )
+        split: summarize_scripted_lifts(row for row in merged_rows if str(row["catalog_split"]) == split)
         for split in ("train", "validation", "test")
     }
     verification = {

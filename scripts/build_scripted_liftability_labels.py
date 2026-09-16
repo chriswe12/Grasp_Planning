@@ -97,12 +97,8 @@ def main() -> None:
         label_codes=np.asarray([record["label_code"] for record in records], dtype=np.int8),
         attempt_counts=np.asarray([record["attempt_count"] for record in records], dtype=np.int32),
         success_counts=np.asarray([record["success_count"] for record in records], dtype=np.int32),
-        physical_failure_counts=np.asarray(
-            [record["physical_failure_count"] for record in records], dtype=np.int32
-        ),
-        simulator_invalid_counts=np.asarray(
-            [record["simulator_invalid_count"] for record in records], dtype=np.int32
-        ),
+        physical_failure_counts=np.asarray([record["physical_failure_count"] for record in records], dtype=np.int32),
+        simulator_invalid_counts=np.asarray([record["simulator_invalid_count"] for record in records], dtype=np.int32),
     )
     with (output_dir / "liftability_labels.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(records[0]))

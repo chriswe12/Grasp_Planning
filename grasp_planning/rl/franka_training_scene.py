@@ -13,8 +13,10 @@ from isaaclab.utils import configclass
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 
 from grasp_planning.isaac_visual_scene import (
-    make_visual_servo_dome_light_cfg, make_visual_servo_key_light_cfg, make_visual_servo_render_cfg,
     VISUAL_SERVO_KEY_ROTATION_WXYZ,
+    make_visual_servo_dome_light_cfg,
+    make_visual_servo_key_light_cfg,
+    make_visual_servo_render_cfg,
 )
 
 FRANKA_SCENE_PROFILE = "panda_hand_wrist_rgbd_white_table_blue_part_keylight_v2"
@@ -62,10 +64,14 @@ class FrankaTrainingSceneCfg(InteractiveSceneCfg):
             size=(1.2, 0.9, 0.05),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.92, 0.92, 0.92), roughness=0.7, metallic=0.0,
+                diffuse_color=(0.92, 0.92, 0.92),
+                roughness=0.7,
+                metallic=0.0,
             ),
             physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=0.8, dynamic_friction=0.6, restitution=0.0,
+                static_friction=0.8,
+                dynamic_friction=0.6,
+                restitution=0.0,
             ),
         ),
     )
@@ -100,20 +106,24 @@ class FrankaTrainingSceneCfg(InteractiveSceneCfg):
         ),
     )
     hand_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/panda_hand", history_length=3,
+        prim_path="{ENV_REGEX_NS}/Robot/panda_hand",
+        history_length=3,
     )
     left_finger_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger", history_length=3,
+        prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger",
+        history_length=3,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Part"],
     )
     right_finger_contact = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger", history_length=3,
+        prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger",
+        history_length=3,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Part"],
     )
     light = AssetBaseCfg(prim_path="/World/DomeLight", spawn=make_visual_servo_dome_light_cfg())
     light.spawn.intensity = 250.0
     key_light = AssetBaseCfg(
-        prim_path="/World/KeyLight", spawn=make_visual_servo_key_light_cfg(),
+        prim_path="/World/KeyLight",
+        spawn=make_visual_servo_key_light_cfg(),
         init_state=AssetBaseCfg.InitialStateCfg(rot=VISUAL_SERVO_KEY_ROTATION_WXYZ),
     )
     key_light.spawn.intensity = 900.0

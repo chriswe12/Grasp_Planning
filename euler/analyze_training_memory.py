@@ -53,8 +53,8 @@ def analyze_memory_logs(
         epochs = [float(row["epoch"]) for row in analyzed]
         device_used = [float(row["device_used_mib"]) for row in analyzed]
         reserved = [float(row["reserved_mib"]) for row in analyzed]
-        allocated = [float(row['allocated_mib']) for row in analyzed] if 'allocated_mib' in analyzed[0] else None
-        cpu_rss = [float(row['cpu_rss_mib']) for row in analyzed] if 'cpu_rss_mib' in analyzed[0] else None
+        allocated = [float(row["allocated_mib"]) for row in analyzed] if "allocated_mib" in analyzed[0] else None
+        cpu_rss = [float(row["cpu_rss_mib"]) for row in analyzed] if "cpu_rss_mib" in analyzed[0] else None
         free = [float(row["device_free_mib"]) for row in analyzed]
         device_slope = _linear_slope(epochs, device_used)
         reserved_slope = _linear_slope(epochs, reserved)
@@ -63,13 +63,10 @@ def analyze_memory_logs(
         reasons: list[str] = []
         if device_slope > max_growth_mib_per_epoch:
             rank_status = "FAIL"
-            reasons.append(
-                f"device memory grows {device_slope:.3f} MiB/epoch "
-                f"(limit {max_growth_mib_per_epoch:.3f})"
-            )
+            reasons.append(f"device memory grows {device_slope:.3f} MiB/epoch (limit {max_growth_mib_per_epoch:.3f})")
         if allocated_slope is not None and allocated_slope > max_growth_mib_per_epoch:
-            rank_status = 'FAIL'
-            reasons.append(f'live Torch tensors grow {allocated_slope:.3f} MiB/epoch')
+            rank_status = "FAIL"
+            reasons.append(f"live Torch tensors grow {allocated_slope:.3f} MiB/epoch")
         if min(free) < min_free_mib:
             rank_status = "FAIL"
             reasons.append(f"minimum free VRAM {min(free):.1f} MiB is below {min_free_mib:.1f} MiB")

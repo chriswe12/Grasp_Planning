@@ -22,9 +22,7 @@ assert SPEC is not None and SPEC.loader is not None
 multigrasp_catalog = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(multigrasp_catalog)
 CATALOG_SCHEMA_VERSION = multigrasp_catalog.CATALOG_SCHEMA_VERSION
-ROTATION_COLLISION_VALIDATION_PROFILE = (
-    multigrasp_catalog.ROTATION_COLLISION_VALIDATION_PROFILE
-)
+ROTATION_COLLISION_VALIDATION_PROFILE = multigrasp_catalog.ROTATION_COLLISION_VALIDATION_PROFILE
 ROTATION_RESET_SCHEMA_VERSION = multigrasp_catalog.ROTATION_RESET_SCHEMA_VERSION
 load_multigrasp_catalog = multigrasp_catalog.load_multigrasp_catalog
 load_multigrasp_rotation_resets = multigrasp_catalog.load_multigrasp_rotation_resets
@@ -41,17 +39,11 @@ def _catalog_payload() -> dict[str, np.ndarray]:
         "goal_rgb": np.zeros((1, 2, 3, 3), dtype=np.uint8),
         "goal_depth": np.ones((1, 2, 3), dtype=np.float32),
         "object_positions_w": np.zeros((1, 3), dtype=np.float32),
-        "object_orientations_xyzw_w": np.asarray(
-            [[0.0, 0.0, 0.0, 1.0]], dtype=np.float32
-        ),
+        "object_orientations_xyzw_w": np.asarray([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
         "goal_grasp_positions_w": np.zeros((1, 3), dtype=np.float32),
-        "goal_grasp_orientations_xyzw_w": np.asarray(
-            [[0.0, 0.0, 0.0, 1.0]], dtype=np.float32
-        ),
+        "goal_grasp_orientations_xyzw_w": np.asarray([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
         "goal_tcp_positions_w": np.zeros((1, 3), dtype=np.float32),
-        "goal_tcp_orientations_xyzw_w": np.asarray(
-            [[0.0, 0.0, 0.0, 1.0]], dtype=np.float32
-        ),
+        "goal_tcp_orientations_xyzw_w": np.asarray([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
         "reset_joint_trajectories": np.zeros((1, 2, 7), dtype=np.float32),
         "reset_path_progress": np.asarray([0.0, 1.0], dtype=np.float32),
         "moveit_plan_validated": np.ones(1, dtype=np.bool_),
@@ -59,9 +51,7 @@ def _catalog_payload() -> dict[str, np.ndarray]:
         "robot_profile": np.asarray(VISUAL_SERVO_GRIPPER_PROFILE),
         "goal_renderer_profile": np.asarray(MUJOCO_GOAL_RENDERER_PROFILE),
         "approach_gripper_profile": np.asarray(PDZ_GRIPPER_APPROACH_PROFILE),
-        "approach_clearance_per_finger_m": np.asarray(
-            PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M, dtype=np.float32
-        ),
+        "approach_clearance_per_finger_m": np.asarray(PDZ_GRIPPER_APPROACH_CLEARANCE_PER_FINGER_M, dtype=np.float32),
         "grasp_jaw_widths_m": np.asarray([0.042], dtype=np.float32),
         "approach_gripper_widths_m": np.asarray([0.052], dtype=np.float32),
         "assembly_name": np.asarray("assembly"),
@@ -111,16 +101,12 @@ def _rotation_payload() -> dict[str, np.ndarray]:
         "schema_version": np.asarray(ROTATION_RESET_SCHEMA_VERSION, dtype=np.int64),
         "axis_selection_method": np.asarray("fibonacci_farthest_point_v1"),
         "target_ids": np.asarray(["target_a"]),
-        "rotation_axes_w": np.asarray(
-            [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]], dtype=np.float32
-        ),
+        "rotation_axes_w": np.asarray([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]], dtype=np.float32),
         "rotation_joint_trajectories": np.zeros((1, 2, 2, 7), dtype=np.float32),
         "rotation_angle_profile_rad": np.asarray([0.2, 0.1], dtype=np.float32),
         "ik_position_residual_m": np.zeros((1, 2, 2), dtype=np.float32),
         "ik_rotation_residual_rad": np.zeros((1, 2, 2), dtype=np.float32),
-        "collision_validation_profile": np.asarray(
-            ROTATION_COLLISION_VALIDATION_PROFILE
-        ),
+        "collision_validation_profile": np.asarray(ROTATION_COLLISION_VALIDATION_PROFILE),
         "robot_profile": np.asarray(VISUAL_SERVO_GRIPPER_PROFILE),
         "approach_gripper_profile": np.asarray(PDZ_GRIPPER_APPROACH_PROFILE),
         "minimum_collision_clearance_m": np.asarray(0.001, dtype=np.float32),

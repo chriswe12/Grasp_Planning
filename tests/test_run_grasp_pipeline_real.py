@@ -100,9 +100,7 @@ class RunGraspPipelineRealTests(unittest.TestCase):
 
     def test_real_execution_config_requires_policy_config_for_d405_approach(self) -> None:
         with self.assertRaises(ValueError):
-            run_grasp_pipeline._real_execution_config(
-                {"real_execution": {"grasp_approach_controller": "d405_policy"}}
-            )
+            run_grasp_pipeline._real_execution_config({"real_execution": {"grasp_approach_controller": "d405_policy"}})
 
     def test_real_execution_config_parses_lbr_moveit_settings(self) -> None:
         config = run_grasp_pipeline._real_execution_config(

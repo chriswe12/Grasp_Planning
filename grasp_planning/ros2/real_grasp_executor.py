@@ -118,9 +118,7 @@ def _write_attempt_artifact(
             "gripper_trigger_stop_service": str(config.gripper_trigger_stop_service),
             "gripper_position_command_topic": str(config.gripper_position_command_topic),
             "gripper_position_feedback_topic": str(config.gripper_position_feedback_topic),
-            "gripper_position_feedback_tolerance": float(
-                config.gripper_position_feedback_tolerance
-            ),
+            "gripper_position_feedback_tolerance": float(config.gripper_position_feedback_tolerance),
             "moveit_gripper_joint_name": str(config.moveit_gripper_joint_name),
             "gripper_closed_width": float(config.gripper_closed_width),
             "gripper_open_width": float(config.gripper_open_width),
@@ -575,17 +573,12 @@ def _real_execution_candidate_queue(bundle, *, config) -> tuple[object, ...]:
         or not math.isfinite(maximum_open_width)
         or maximum_open_width <= minimum_closed_width
     ):
-        raise ValueError(
-            "real_execution gripper widths must satisfy "
-            "0 <= gripper_closed_width < gripper_open_width."
-        )
+        raise ValueError("real_execution gripper widths must satisfy 0 <= gripper_closed_width < gripper_open_width.")
     if str(config.grasp_approach_controller) != "d405_policy":
         selected = _select_bundle_grasp(bundle, grasp_id=str(config.grasp_id))
         jaw_width = float(selected.jaw_width)
         if not math.isfinite(jaw_width) or not (
-            minimum_closed_width - 1.0e-9
-            <= jaw_width
-            <= maximum_open_width + 1.0e-9
+            minimum_closed_width - 1.0e-9 <= jaw_width <= maximum_open_width + 1.0e-9
         ):
             raise RuntimeError(
                 f"Selected grasp '{selected.grasp_id}' does not fit the physical gripper: "
@@ -886,9 +879,7 @@ def execute_real_grasp_from_bundle(
 
             if goal_joint_positions is None:
                 raise RuntimeError("MoveIt did not provide grasp IK joints for runtime goal rendering.")
-            goal_observation_path = attempt_artifact_path.with_name(
-                f"policy_goal_{world_grasp.grasp_id}.npz"
-            )
+            goal_observation_path = attempt_artifact_path.with_name(f"policy_goal_{world_grasp.grasp_id}.npz")
             rendered_goal = render_d405_goal_for_grasp(
                 config_path=Path(str(config.visual_servo_config)),
                 stage2_bundle_path=input_json,

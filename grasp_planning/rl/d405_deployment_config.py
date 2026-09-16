@@ -51,9 +51,7 @@ def write_visual_servo_config(
         "goal_renderer_script",
         "goal_renderer_robot_urdf",
     ):
-        visual_block[path_key] = str(
-            resolve_from(visual_block.get(path_key, ""), base=template_path.parent)
-        )
+        visual_block[path_key] = str(resolve_from(visual_block.get(path_key, ""), base=template_path.parent))
     camera_root = camera_driver_root(camera_name)
     if robot_name not in {None, "lbr_one", "lbr_two"}:
         raise ValueError("robot_name must be omitted, lbr_one, or lbr_two.")
@@ -62,14 +60,12 @@ def write_visual_servo_config(
     if gripper_model == "pdz_gripper":
         tcp_suffix = "pdz_gripper_tcp"
         renderer_urdf = (
-            Path(__file__).resolve().parents[2]
-            / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
+            Path(__file__).resolve().parents[2] / "assets/urdf/kuka_iiwa7_pdz_gripper/urdf/kuka_iiwa7_pdz_gripper.urdf"
         )
     elif gripper_model == "y_gripper":
         tcp_suffix = "gripper_tcp"
         renderer_urdf = (
-            Path(__file__).resolve().parents[2]
-            / "assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf"
+            Path(__file__).resolve().parents[2] / "assets/urdf/kuka_iiwa7_y_gripper/urdf/kuka_iiwa7_y_gripper.urdf"
         )
     else:
         raise ValueError(f"Unsupported policy gripper_model '{gripper_model}'.")
@@ -134,10 +130,7 @@ def write_visual_servo_config(
                 "command_frame": "base_link",
                 "tcp_frame": f"{robot_name}_{tcp_suffix}",
                 "joint_state_topic": "/lbr_dual_arm/joint_states",
-                "force_topic": (
-                    f"/lbr_dual_arm/{robot_name}_control/"
-                    f"{robot_name}_force_torque_broadcaster/wrench"
-                ),
+                "force_topic": (f"/lbr_dual_arm/{robot_name}_control/{robot_name}_force_torque_broadcaster/wrench"),
                 "moveit_servo_twist_topic": f"{servo_root}/delta_twist_cmds",
                 "moveit_servo_status_topic": f"{servo_root}/status",
                 "moveit_servo_start_service": f"{servo_root}/start_servo",

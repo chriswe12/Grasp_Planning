@@ -21,14 +21,7 @@ from grasp_planning.isaac_visual_materials import (  # noqa: E402
     VISUAL_SERVO_FINGER_COLOR,
 )
 
-KUKA_SOURCE = (
-    REPO_ROOT
-    / "assets"
-    / "urdf"
-    / "kuka_iiwa7_y_gripper"
-    / "urdf"
-    / "kuka_iiwa7_y_gripper.urdf"
-)
+KUKA_SOURCE = REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_y_gripper" / "urdf" / "kuka_iiwa7_y_gripper.urdf"
 PDZ_SOURCE_ROOT = REPO_ROOT / "assets" / "urdf" / "pdz_gripper_description"
 PDZ_SOURCE = PDZ_SOURCE_ROOT / "urdf" / "pdz_gripper.urdf"
 OUTPUT_ROOT = REPO_ROOT / "assets" / "urdf" / "kuka_iiwa7_pdz_gripper"
