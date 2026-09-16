@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-SIM2REAL_PROFILE_VERSION = "d405_documented_provisional_v6_15hz"
+SIM2REAL_PROFILE_VERSION = "d405_documented_provisional_v10_15hz"
 SIM2REAL_PROFILE_NAMES = (
     "nominal",
     "sensor_only",
@@ -61,6 +61,8 @@ _SENSOR_IDENTITY: dict[str, Any] = {
     "live_depth_edge_dropout_probability": (0.0, 0.0),
     "live_rgb_patch_occlusion_probability": 0.0,
     "live_depth_patch_dropout_probability": 0.0,
+    "live_depth_structured_dropout_probability": 0.0,
+    "live_depth_structured_dropout_seed_probability": (0.0, 0.0),
     "live_calibration_warp_enabled": False,
     "live_clean_episode_fraction": 0.0,
 }
@@ -100,6 +102,8 @@ _DOCUMENTED_SENSOR: dict[str, Any] = {
     "live_depth_edge_dropout_probability": (0.0, 0.035),
     "live_rgb_patch_occlusion_probability": 0.06,
     "live_depth_patch_dropout_probability": 0.04,
+    "live_depth_structured_dropout_probability": 0.08,
+    "live_depth_structured_dropout_seed_probability": (0.001, 0.006),
     "live_clean_episode_fraction": 0.15,
 }
 
@@ -124,16 +128,32 @@ _DOCUMENTED_TIMING: dict[str, Any] = {
 }
 
 _DOCUMENTED_APPEARANCE: dict[str, Any] = {
-    "scene_tslot_nominal_fraction": 0.60,
-    "scene_tslot_phase_fraction": 0.20,
+    # Slot orientation has 180-degree symmetry.  With no nominal/phase-only
+    # mass, every environment samples uniformly across the full unique range.
+    "scene_tslot_nominal_fraction": 0.0,
+    "scene_tslot_phase_fraction": 0.0,
     "scene_part_color_scale": (0.90, 1.10),
     "scene_part_saturation_scale": (0.90, 1.10),
     "scene_part_hue_shift_deg": (-5.0, 5.0),
     "scene_part_roughness": (0.65, 0.90),
+    "scene_part_metallic": (0.0, 0.18),
     "scene_tslot_color_scale": (0.88, 1.12),
     "scene_tslot_saturation_scale": (0.90, 1.10),
     "scene_tslot_hue_shift_deg": (-5.0, 5.0),
     "scene_tslot_roughness_delta": (-0.08, 0.08),
+    "scene_gripper_canonical_fraction": 0.20,
+    "scene_finger_color_scale": (0.50, 2.00),
+    "scene_finger_hue_shift_deg": (-6.0, 6.0),
+    "scene_finger_roughness": (0.30, 0.70),
+    "scene_pad_color_scale": (0.88, 1.06),
+    "scene_pad_temperature_shift": (-0.03, 0.03),
+    "scene_pad_roughness": (0.55, 0.88),
+    "scene_surface_markings_enabled": True,
+    "scene_surface_markings_environment_fraction": 0.75,
+    "scene_surface_markings_clean_fraction": 0.20,
+    "goal_live_color_relationship_enabled": True,
+    "goal_live_color_match_fraction": 0.25,
+    "goal_live_color_similar_fraction": 0.20,
 }
 
 _CLUTTER_DISABLED: dict[str, Any] = {
@@ -194,6 +214,8 @@ _DEPTH_ROBUST_SENSOR: dict[str, Any] = _merged(
         "live_depth_dropout_probability": (0.0, 0.008),
         "live_depth_edge_dropout_probability": (0.0, 0.07),
         "live_depth_patch_dropout_probability": 0.08,
+        "live_depth_structured_dropout_probability": 0.14,
+        "live_depth_structured_dropout_seed_probability": (0.002, 0.010),
         "live_patch_area_fraction": (0.005, 0.04),
     },
 )
@@ -210,6 +232,7 @@ _PROFILES: dict[str, Sim2RealProfile] = {
                 "scene_appearance_randomization_enabled": False,
                 "scene_tslot_surface_enabled": True,
                 "scene_tslot_geometry_randomization_enabled": False,
+                "scene_surface_markings_enabled": False,
             },
             _CLUTTER_DISABLED,
         ),
@@ -226,6 +249,7 @@ _PROFILES: dict[str, Sim2RealProfile] = {
                 "scene_appearance_randomization_enabled": False,
                 "scene_tslot_surface_enabled": True,
                 "scene_tslot_geometry_randomization_enabled": False,
+                "scene_surface_markings_enabled": False,
             },
             _CLUTTER_DISABLED,
         ),
@@ -242,6 +266,7 @@ _PROFILES: dict[str, Sim2RealProfile] = {
                 "scene_appearance_randomization_enabled": False,
                 "scene_tslot_surface_enabled": True,
                 "scene_tslot_geometry_randomization_enabled": False,
+                "scene_surface_markings_enabled": False,
             },
             _CLUTTER_DISABLED,
         ),
@@ -257,6 +282,7 @@ _PROFILES: dict[str, Sim2RealProfile] = {
                 "scene_appearance_randomization_enabled": False,
                 "scene_tslot_surface_enabled": True,
                 "scene_tslot_geometry_randomization_enabled": False,
+                "scene_surface_markings_enabled": False,
             },
             _CLUTTER_DISABLED,
         ),
@@ -362,8 +388,8 @@ _PROFILES: dict[str, Sim2RealProfile] = {
                 "scene_appearance_randomization_enabled": True,
                 "scene_tslot_surface_enabled": True,
                 "scene_tslot_geometry_randomization_enabled": True,
-                "scene_tslot_nominal_fraction": 0.40,
-                "scene_tslot_phase_fraction": 0.25,
+                "scene_tslot_nominal_fraction": 0.0,
+                "scene_tslot_phase_fraction": 0.0,
                 "live_disparity_bias_px": (-0.08, 0.08),
                 "live_disparity_spatial_noise_std_px": (0.04, 0.12),
                 "live_disparity_temporal_noise_std_px": (0.02, 0.07),

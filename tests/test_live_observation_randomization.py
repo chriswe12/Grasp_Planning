@@ -96,6 +96,48 @@ def test_resampling_one_environment_preserves_other_episode_parameters() -> None
     assert torch.equal(randomizer.depth_scale[1], preserved_depth_scale)
 
 
+def test_structured_depth_dropout_is_connected_and_persistent_within_episode() -> None:
+    torch.manual_seed(19)
+    cfg = LiveObservationRandomizationCfg(
+        exposure_stops=(0.0, 0.0),
+        contrast=(1.0, 1.0),
+        gamma=(1.0, 1.0),
+        white_balance_gain=(1.0, 1.0),
+        vignette_strength=(0.0, 0.0),
+        rgb_noise_std=(0.0, 0.0),
+        blur_probability=0.0,
+        depth_scale=(1.0, 1.0),
+        depth_bias_m=(0.0, 0.0),
+        depth_noise_std_m=(0.0, 0.0),
+        correlated_depth_enabled=False,
+        stereo_edge_mismatch_probability=0.0,
+        depth_quantization_m=0.0,
+        depth_dropout_probability=(0.0, 0.0),
+        depth_edge_dropout_probability=(0.0, 0.0),
+        rgb_patch_occlusion_probability=0.0,
+        depth_patch_dropout_probability=0.0,
+        depth_structured_dropout_probability=1.0,
+        depth_structured_dropout_seed_probability=(0.08, 0.08),
+        structured_dropout_field_shape=(9, 16),
+        structured_dropout_dilation=3,
+        calibration_warp_enabled=False,
+    )
+    randomizer = LiveObservationRandomizer(cfg, num_envs=1, device="cpu")
+    rgb = torch.full((1, 36, 64, 3), 0.5)
+    depth = torch.full((1, 36, 64, 1), 0.20)
+
+    _, first = randomizer.apply(rgb, depth)
+    _, second = randomizer.apply(rgb, depth)
+    first_mask = first == cfg.depth_max_m
+    second_mask = second == cfg.depth_max_m
+
+    assert first_mask.any()
+    assert not first_mask.all()
+    assert torch.equal(first_mask, second_mask)
+    # Coarse connected regions expand to multiple adjacent output pixels.
+    assert (first_mask[:, :, 1:] & first_mask[:, :, :-1]).any()
+
+
 def test_zero_curriculum_strength_is_an_exact_noop() -> None:
     randomizer = LiveObservationRandomizer(
         LiveObservationRandomizationCfg(

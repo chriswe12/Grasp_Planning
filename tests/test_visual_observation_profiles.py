@@ -15,10 +15,13 @@ from grasp_planning.isaac_visual_materials import (
     VISUAL_SERVO_CONTACT_PAD_ROUGHNESS,
     VISUAL_SERVO_FINGER_COLOR,
     VISUAL_SERVO_FINGER_ROUGHNESS,
+    VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS,
     VISUAL_SERVO_MATERIAL_PROFILE,
     VISUAL_SERVO_PART_COLOR,
     VISUAL_SERVO_PART_ROUGHNESS,
     classify_robot_finger_geometry_material,
+    get_gripper_appearance_variant,
+    nearest_gripper_appearance_variant,
 )
 from grasp_planning.isaac_visual_scene import (
     VISUAL_SERVO_DIRECT_LIGHT_SAMPLES,
@@ -108,6 +111,31 @@ def test_finger_material_classifier_binds_leaf_pad_geometry_white() -> None:
         classify_robot_finger_geometry_material("/World/envs/env_0/Robot/link7/visuals/node_STL_BINARY_0", "Mesh")
         is None
     )
+
+
+def test_instanced_pdz_gripper_variants_preserve_black_white_identity() -> None:
+    variants = VISUAL_SERVO_GRIPPER_APPEARANCE_VARIANTS
+    assert len(variants) == 9
+    assert len({variant.name for variant in variants}) == len(variants)
+    canonical = get_gripper_appearance_variant("canonical")
+    assert canonical.finger_color == VISUAL_SERVO_FINGER_COLOR
+    assert canonical.pad_color == VISUAL_SERVO_CONTACT_PAD_COLOR
+    for variant in variants:
+        assert max(variant.finger_color) <= 0.07
+        assert min(variant.pad_color) > 0.80
+        assert 0.0 <= variant.finger_roughness <= 1.0
+        assert 0.0 <= variant.pad_roughness <= 1.0
+
+
+def test_continuous_gripper_sample_quantizes_to_authored_variant() -> None:
+    expected = get_gripper_appearance_variant("bright_matte_warm")
+    selected = nearest_gripper_appearance_variant(
+        finger_color=expected.finger_color,
+        finger_roughness=expected.finger_roughness,
+        pad_color=expected.pad_color,
+        pad_roughness=expected.pad_roughness,
+    )
+    assert selected == expected
 
 
 def test_generated_pdz_urdf_defaults_to_black_fingers_and_white_pads() -> None:

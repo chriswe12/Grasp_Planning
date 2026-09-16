@@ -7,7 +7,13 @@ import re
 
 import torch
 
-from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripper_command_joint_name
+from grasp_planning.start_poses import (
+    KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M,
+    KUKA_Y_GRIPPER_TRAVEL_M,
+    PDZ_GRIPPER_CLOSED_WIDTH_M,
+    PDZ_GRIPPER_TRAVEL_M,
+    is_gripper_command_joint_name,
+)
 
 from .types import PoseCommand
 
@@ -215,6 +221,7 @@ class FR3MotionContext:
         self.scene = scene
         self.sim = sim
         self.fixed_gripper_width = float(fixed_gripper_width)
+        self._fixed_gripper_widths: torch.Tensor | None = None
         if critical_damping_ratio is not None and float(critical_damping_ratio) <= 0.0:
             raise ValueError("critical_damping_ratio must be positive when provided.")
         self.critical_damping_ratio = None if critical_damping_ratio is None else float(critical_damping_ratio)
@@ -342,10 +349,12 @@ class FR3MotionContext:
 
         tcp_pos_w = ee_pos_w
         if self.ee_to_tcp_offset is not None:
-            tcp_pos_w = tcp_pos_w + quat_apply(ee_quat_w, self._ee_to_tcp_offset_tensor())
+            tcp_offset = self._ee_to_tcp_offset_tensor().expand(ee_quat_w.shape[0], -1)
+            tcp_pos_w = tcp_pos_w + quat_apply(ee_quat_w, tcp_offset)
         tcp_quat_w = ee_quat_w
         if self.ee_to_tcp_quat_wxyz is not None:
-            tcp_quat_w = quat_mul(ee_quat_w, self._ee_to_tcp_quat_tensor())
+            ee_to_tcp_quat = self._ee_to_tcp_quat_tensor().expand(ee_quat_w.shape[0], -1)
+            tcp_quat_w = quat_mul(ee_quat_w, ee_to_tcp_quat)
         return tcp_pos_w.clone(), tcp_quat_w.clone()
 
     def get_body_positions_w(self, body_names: tuple[str, ...]) -> dict[str, torch.Tensor]:
@@ -416,17 +425,114 @@ class FR3MotionContext:
             self.sim.step()
             self.scene.update(self.physics_dt)
 
-    def command_fixed_gripper(self) -> None:
-        if self.hand_command_joint_ids.numel() == 0:
-            return
-        targets = torch.full(
-            (1, int(self.hand_command_joint_ids.numel())),
-            0.0,
+    def set_fixed_gripper_widths(
+        self,
+        widths: torch.Tensor,
+        *,
+        env_ids: torch.Tensor | None = None,
+    ) -> None:
+        """Set independent gripper apertures for vectorized RL environments."""
+
+        environment_count = int(self.robot.data.joint_pos.shape[0])
+        if self._fixed_gripper_widths is None or self._fixed_gripper_widths.shape != (environment_count,):
+            self._fixed_gripper_widths = torch.full(
+                (environment_count,),
+                self.fixed_gripper_width,
+                dtype=torch.float32,
+                device=self.device,
+            )
+        selected_ids = (
+            torch.arange(environment_count, dtype=torch.long, device=self.device)
+            if env_ids is None
+            else env_ids.to(dtype=torch.long, device=self.device).reshape(-1)
+        )
+        selected_widths = widths.to(dtype=torch.float32, device=self.device).reshape(-1)
+        if selected_widths.numel() == 1 and selected_ids.numel() != 1:
+            selected_widths = selected_widths.expand(selected_ids.numel())
+        if selected_widths.numel() != selected_ids.numel():
+            raise ValueError(
+                "Gripper width count must match env_ids: "
+                f"widths={selected_widths.numel()} env_ids={selected_ids.numel()}"
+            )
+        if torch.any(selected_widths < 0.0):
+            raise ValueError("Gripper widths must be non-negative.")
+        self._fixed_gripper_widths[selected_ids] = selected_widths
+
+    def _current_gripper_widths(self, environment_count: int) -> torch.Tensor:
+        widths = self._fixed_gripper_widths
+        if widths is None:
+            widths = torch.full(
+                (environment_count,),
+                self.fixed_gripper_width,
+                dtype=torch.float32,
+                device=self.device,
+            )
+        return widths
+
+    def _gripper_targets(self, widths: torch.Tensor, joint_names: tuple[str, ...]) -> torch.Tensor:
+        targets = torch.zeros(
+            (int(widths.numel()), len(joint_names)),
             dtype=torch.float32,
             device=self.device,
         )
-        for index, name in enumerate(self.hand_command_joint_names):
-            targets[0, index] = gripper_joint_target_from_width(name, self.fixed_gripper_width)
+        for index, name in enumerate(joint_names):
+            if name == "left_finger_joint":
+                targets[:, index] = torch.clamp(
+                    0.5 * (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - widths),
+                    min=0.0,
+                    max=KUKA_Y_GRIPPER_TRAVEL_M,
+                )
+            elif name == "right_finger_joint":
+                targets[:, index] = -torch.clamp(
+                    0.5 * (KUKA_Y_GRIPPER_SOURCE_OPEN_WIDTH_M - widths),
+                    min=0.0,
+                    max=KUKA_Y_GRIPPER_TRAVEL_M,
+                )
+            elif name in {
+                "pdz_gripper_left_finger_joint",
+                "pdz_gripper_right_finger_joint",
+            }:
+                targets[:, index] = torch.clamp(
+                    0.5 * (widths - PDZ_GRIPPER_CLOSED_WIDTH_M),
+                    min=0.0,
+                    max=PDZ_GRIPPER_TRAVEL_M,
+                )
+            else:
+                targets[:, index] = widths
+        return targets
+
+    def write_fixed_gripper_state(self, *, env_ids: torch.Tensor | None = None) -> None:
+        """Hard-write the selected apertures when resetting vectorized environments."""
+
+        if self.hand_joint_ids.numel() == 0:
+            return
+        environment_count = int(self.robot.data.joint_pos.shape[0])
+        selected_ids = (
+            torch.arange(environment_count, dtype=torch.long, device=self.device)
+            if env_ids is None
+            else env_ids.to(dtype=torch.long, device=self.device).reshape(-1)
+        )
+        widths = self._current_gripper_widths(environment_count)[selected_ids]
+        targets = self._gripper_targets(widths, self.hand_joint_names)
+        self.robot.write_joint_state_to_sim(
+            targets,
+            torch.zeros_like(targets),
+            joint_ids=self.hand_joint_ids,
+            env_ids=selected_ids,
+        )
+        command_targets = self._gripper_targets(widths, self.hand_command_joint_names)
+        self.robot.set_joint_position_target(
+            command_targets,
+            joint_ids=self.hand_command_joint_ids,
+            env_ids=selected_ids,
+        )
+
+    def command_fixed_gripper(self) -> None:
+        if self.hand_command_joint_ids.numel() == 0:
+            return
+        environment_count = int(self.robot.data.joint_pos.shape[0])
+        widths = self._current_gripper_widths(environment_count)
+        targets = self._gripper_targets(widths, self.hand_command_joint_names)
         self.robot.set_joint_position_target(targets, joint_ids=self.hand_command_joint_ids)
 
     def step_sim(self, steps: int = 1) -> None:
@@ -459,9 +565,11 @@ class FR3MotionContext:
         tcp_to_grasp_center_b = torch.tensor(
             [self._TCP_TO_GRASP_CENTER_OFFSET], dtype=torch.float32, device=self.device
         )
+        grasp_to_tcp_quat_w = grasp_to_tcp_quat_w.expand(desired_grasp_quat_w.shape[0], -1)
         target_quat_w = quat_mul(desired_grasp_quat_w, grasp_to_tcp_quat_w)
         from isaaclab.utils.math import quat_apply
 
+        tcp_to_grasp_center_b = tcp_to_grasp_center_b.expand(target_quat_w.shape[0], -1)
         target_tcp_position_w = target_position_w - quat_apply(target_quat_w, tcp_to_grasp_center_b)
         position_error = target_tcp_position_w - current_pos_w
         quat_error = quat_mul(target_quat_w, quat_conjugate(current_quat_w))
@@ -574,14 +682,16 @@ class FR3MotionContext:
             return tcp_quat_w
         from isaaclab.utils.math import quat_inv, quat_mul
 
-        return quat_mul(tcp_quat_w, quat_inv(self._ee_to_tcp_quat_tensor()))
+        ee_to_tcp_quat = self._ee_to_tcp_quat_tensor().expand(tcp_quat_w.shape[0], -1)
+        return quat_mul(tcp_quat_w, quat_inv(ee_to_tcp_quat))
 
     def _tcp_position_to_ee_position_w(self, tcp_position_w: torch.Tensor, ee_quat_w: torch.Tensor) -> torch.Tensor:
         if self.ee_to_tcp_offset is None:
             return tcp_position_w
         from isaaclab.utils.math import quat_apply
 
-        return tcp_position_w - quat_apply(ee_quat_w, self._ee_to_tcp_offset_tensor())
+        tcp_offset = self._ee_to_tcp_offset_tensor().expand(ee_quat_w.shape[0], -1)
+        return tcp_position_w - quat_apply(ee_quat_w, tcp_offset)
 
     def _resolve_jacobi_body_idx(self, body_idx: int) -> int:
         if getattr(self.robot, "is_fixed_base", False):

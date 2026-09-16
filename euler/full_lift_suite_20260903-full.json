@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "suite_id": "20260903-full",
+  "task": "Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0",
+  "dataset_index": "/media/pdz/Elements1/Grasp_Planning_grasping_rl/isaac_rl/data/fabrica_all_v1/dataset_index.json",
+  "dataset_sha256": "e4fba2a7272244695b6a54b537fccf3c3f82d2817710bbb611ddbda0f7106bb8",
+  "expected_target_count": 1488,
+  "dataset_shard_count": 4,
+  "batch_size": 96,
+  "gpu_type": "rtx_4090",
+  "gpu_memory": "20G",
+  "time_limit": "01:00:00",
+  "protocol": {
+    "dynamic_part": true,
+    "videos": false,
+    "lift_height_m": 0.06,
+    "lift_speed_m_s": 0.05,
+    "postlift_hold_s": 0.2,
+    "minimum_final_lift_m": 0.04,
+    "fixture_part_pose_until_close": false,
+    "disable_part_gravity_until_close": false
+  },
+  "runs": [
+    {
+      "label": "lift-20260903-full-s0t0",
+      "job_id": 12681359,
+      "dataset_shard": 0,
+      "catalog_split": "train",
+      "target_offset": 0,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s0t96",
+      "job_id": 12681469,
+      "dataset_shard": 0,
+      "catalog_split": "train",
+      "target_offset": 96,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s0t192",
+      "job_id": 12681507,
+      "dataset_shard": 0,
+      "catalog_split": "train",
+      "target_offset": 192,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s0t288",
+      "job_id": 12681512,
+      "dataset_shard": 0,
+      "catalog_split": "train",
+      "target_offset": 288,
+      "expected_targets": 19
+    },
+    {
+      "label": "lift-20260903-full-s0v0",
+      "job_id": 12681515,
+      "dataset_shard": 0,
+      "catalog_split": "validation",
+      "target_offset": 0,
+      "expected_targets": 35
+    },
+    {
+      "label": "lift-20260903-full-s0t0",
+      "job_id": 12681549,
+      "dataset_shard": 0,
+      "catalog_split": "test",
+      "target_offset": 0,
+      "expected_targets": 39
+    },
+    {
+      "label": "lift-20260903-full-s1t0",
+      "job_id": 12681655,
+      "dataset_shard": 1,
+      "catalog_split": "train",
+      "target_offset": 0,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s1t96",
+      "job_id": 12681658,
+      "dataset_shard": 1,
+      "catalog_split": "train",
+      "target_offset": 96,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s1t192",
+      "job_id": 12681661,
+      "dataset_shard": 1,
+      "catalog_split": "train",
+      "target_offset": 192,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s1t288",
+      "job_id": 12681667,
+      "dataset_shard": 1,
+      "catalog_split": "train",
+      "target_offset": 288,
+      "expected_targets": 19
+    },
+    {
+      "label": "lift-20260903-full-s1v0",
+      "job_id": 12681672,
+      "dataset_shard": 1,
+      "catalog_split": "validation",
+      "target_offset": 0,
+      "expected_targets": 33
+    },
+    {
+      "label": "lift-20260903-full-s1t0",
+      "job_id": 12681674,
+      "dataset_shard": 1,
+      "catalog_split": "test",
+      "target_offset": 0,
+      "expected_targets": 33
+    },
+    {
+      "label": "lift-20260903-full-s2t0",
+      "job_id": 12681675,
+      "dataset_shard": 2,
+      "catalog_split": "train",
+      "target_offset": 0,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s2t96",
+      "job_id": 12681678,
+      "dataset_shard": 2,
+      "catalog_split": "train",
+      "target_offset": 96,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s2t192",
+      "job_id": 12681681,
+      "dataset_shard": 2,
+      "catalog_split": "train",
+      "target_offset": 192,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s2t288",
+      "job_id": 12681683,
+      "dataset_shard": 2,
+      "catalog_split": "train",
+      "target_offset": 288,
+      "expected_targets": 8
+    },
+    {
+      "label": "lift-20260903-full-s2v0",
+      "job_id": 12681686,
+      "dataset_shard": 2,
+      "catalog_split": "validation",
+      "target_offset": 0,
+      "expected_targets": 34
+    },
+    {
+      "label": "lift-20260903-full-s2t0",
+      "job_id": 12681688,
+      "dataset_shard": 2,
+      "catalog_split": "test",
+      "target_offset": 0,
+      "expected_targets": 35
+    },
+    {
+      "label": "lift-20260903-full-s3t0",
+      "job_id": 12681691,
+      "dataset_shard": 3,
+      "catalog_split": "train",
+      "target_offset": 0,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s3t96",
+      "job_id": 12681693,
+      "dataset_shard": 3,
+      "catalog_split": "train",
+      "target_offset": 96,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s3t192",
+      "job_id": 12681696,
+      "dataset_shard": 3,
+      "catalog_split": "train",
+      "target_offset": 192,
+      "expected_targets": 96
+    },
+    {
+      "label": "lift-20260903-full-s3t288",
+      "job_id": 12681700,
+      "dataset_shard": 3,
+      "catalog_split": "train",
+      "target_offset": 288,
+      "expected_targets": 12
+    },
+    {
+      "label": "lift-20260903-full-s3v0",
+      "job_id": 12681708,
+      "dataset_shard": 3,
+      "catalog_split": "validation",
+      "target_offset": 0,
+      "expected_targets": 35
+    },
+    {
+      "label": "lift-20260903-full-s3t0",
+      "job_id": 12681726,
+      "dataset_shard": 3,
+      "catalog_split": "test",
+      "target_offset": 0,
+      "expected_targets": 34
+    }
+  ]
+}
