@@ -28,22 +28,24 @@ class _Pose:
         self.orientation = _Quaternion(*orientation)
 
 
+class _PoseStamped:
+    def __init__(self, pose: tuple[tuple[float, float, float], tuple[float, float, float, float]]) -> None:
+        self.pose = _Pose(*pose)
+
+
 class _PoseItem:
     def __init__(
         self,
         *,
-        object_id: str,
+        assembly_name: str,
+        part_id: int,
         score: float,
         pose_base: tuple[tuple[float, float, float], tuple[float, float, float, float]],
     ) -> None:
-        self.object_id = object_id
+        self.assembly_name = assembly_name
+        self.part_id = part_id
         self.score = score
-        self.pose_base = _Pose(*pose_base)
-
-
-class _DebugFrame:
-    def __init__(self, pose_items) -> None:
-        self.pose_items = tuple(pose_items)
+        self.pose_base = _PoseStamped(pose_base)
 
 
 class _FakeNode:
@@ -64,25 +66,18 @@ class _DebugNode(_FakeNode):
 
 
 class Ros2WaitLoopTests(unittest.TestCase):
-    def test_debug_frame_listener_callback_updates_latest_pose_for_matching_object(self) -> None:
-        listener = pose_listener._DebugFramePoseListener.__new__(pose_listener._DebugFramePoseListener)
-        listener._object_id = "cooling_screw"
+    def test_debug_pose_item_listener_callback_updates_latest_pose_for_matching_part(self) -> None:
+        listener = pose_listener._DebugPoseItemListener.__new__(pose_listener._DebugPoseItemListener)
+        listener._assembly_name = "cooling_manifold"
+        listener._part_id = 2
         listener._latest_pose = None
 
-        listener._on_debug_frame(
-            _DebugFrame(
-                [
-                    _PoseItem(
-                        object_id="pb_top",
-                        score=1.0,
-                        pose_base=((9.0, 9.0, 9.0), (0.0, 0.0, 0.0, 1.0)),
-                    ),
-                    _PoseItem(
-                        object_id="cooling_screw",
-                        score=0.8,
-                        pose_base=((0.4, 0.1, 0.2), (0.0, 0.0, 0.0, 1.0)),
-                    ),
-                ]
+        listener._on_debug_pose_item(
+            _PoseItem(
+                assembly_name="cooling_manifold",
+                part_id=2,
+                score=0.8,
+                pose_base=((0.4, 0.1, 0.2), (0.0, 0.0, 0.0, 1.0)),
             )
         )
 
@@ -94,7 +89,7 @@ class Ros2WaitLoopTests(unittest.TestCase):
             ),
         )
 
-    def test_wait_for_debug_frame_pose_message_returns_after_spin_updates_pose(self) -> None:
+    def test_wait_for_debug_pose_item_message_returns_after_spin_updates_pose(self) -> None:
         fake_rclpy = mock.Mock()
         fake_rclpy.ok.return_value = False
         node = _DebugNode()
@@ -109,13 +104,14 @@ class Ros2WaitLoopTests(unittest.TestCase):
 
         with (
             mock.patch.object(pose_listener, "rclpy", fake_rclpy),
-            mock.patch.object(pose_listener, "DebugFrame", object()),
-            mock.patch.object(pose_listener, "_DebugFramePoseListener", return_value=node),
+            mock.patch.object(pose_listener, "DebugPoseItem", object()),
+            mock.patch.object(pose_listener, "_DebugPoseItemListener", return_value=node),
         ):
-            pose = pose_listener.wait_for_debug_frame_pose_message(
-                topic_name="/perception/fp/debug_frame/zed2i_2",
-                message_type="fp_debug_msgs/msg/DebugFrame",
-                object_id="cooling_screw",
+            pose = pose_listener.wait_for_debug_pose_item_message(
+                topic_name="/perception/fp/pose_base/fused/assembly",
+                message_type="fp_debug_msgs/msg/DebugPoseItem",
+                assembly_name="cooling_manifold",
+                part_id=2,
                 timeout_s=0.5,
             )
 
@@ -124,18 +120,27 @@ class Ros2WaitLoopTests(unittest.TestCase):
         fake_rclpy.init.assert_called_once()
         fake_rclpy.shutdown.assert_called_once()
 
-    def test_wait_for_debug_frame_pose_message_requires_object_id(self) -> None:
+    def test_wait_for_debug_pose_item_message_requires_assembly_and_part(self) -> None:
         fake_rclpy = mock.Mock()
 
         with (
             mock.patch.object(pose_listener, "rclpy", fake_rclpy),
-            mock.patch.object(pose_listener, "DebugFrame", object()),
+            mock.patch.object(pose_listener, "DebugPoseItem", object()),
         ):
             with self.assertRaises(ValueError):
-                pose_listener.wait_for_debug_frame_pose_message(
-                    topic_name="/perception/fp/debug_frame/zed2i_2",
-                    message_type="fp_debug_msgs/msg/DebugFrame",
-                    object_id="",
+                pose_listener.wait_for_debug_pose_item_message(
+                    topic_name="/perception/fp/pose_base/fused/assembly",
+                    message_type="fp_debug_msgs/msg/DebugPoseItem",
+                    assembly_name="",
+                    part_id=2,
+                    timeout_s=0.5,
+                )
+            with self.assertRaises(ValueError):
+                pose_listener.wait_for_debug_pose_item_message(
+                    topic_name="/perception/fp/pose_base/fused/assembly",
+                    message_type="fp_debug_msgs/msg/DebugPoseItem",
+                    assembly_name="cooling_manifold",
+                    part_id=-1,
                     timeout_s=0.5,
                 )
 

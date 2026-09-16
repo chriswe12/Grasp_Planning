@@ -76,6 +76,8 @@ def _transfer_statuses(
         mesh_local=mesh_local,
         object_pose_world=object_pose_world,
         top_grasp_score_weight=top_grasp_score_weight,
+        reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+        reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
     )
     return _rescore_statuses(statuses, scored)
 
@@ -100,6 +102,8 @@ def _final_statuses(
         mesh_local=mesh_local,
         object_pose_world=object_pose_world,
         top_grasp_score_weight=planning.top_grasp_score_weight,
+        reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+        reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
     )
     return _rescore_statuses(statuses, scored)
 
@@ -320,6 +324,7 @@ def write_mujoco_regrasp_debug_html(
         object_pose_world=plan.staging_object_pose_world,
         planning=planning,
     )
+    obstacle_metadata = dict(stage1.bundle.metadata.get("assembly_obstacle_metadata", {}) or {})
 
     data = {
         "title": "Fabrica MuJoCo Regrasp Debug",
@@ -328,6 +333,11 @@ def write_mujoco_regrasp_debug_html(
         "metadata_lines": [
             f"target_mesh:      {plan.target_mesh_path}",
             f"mesh_scale:       {plan.mesh_scale}",
+            f"precedence_plan:  {obstacle_metadata.get('precedence_plan_path', 'none')}",
+            f"assembled_before: {obstacle_metadata.get('already_assembled_part_ids', [])}",
+            f"obstacle_paths:   {stage1.bundle.metadata.get('assembly_obstacle_paths', [])}",
+            f"sweep_vector_m:   {stage1.bundle.metadata.get('assembly_obstacle_sweep_vector_m')}",
+            f"sweep_distance_m: {float(stage1.bundle.metadata.get('assembly_obstacle_sweep_distance_m', 0.0)):.6f}",
             f"raw_transfer:     {len(raw_candidates)}",
             f"assembly_grasps:  {len(stage1.bundle.candidates)}",
             f"transfer_grasp:   {plan.transfer_grasp.grasp_id}",

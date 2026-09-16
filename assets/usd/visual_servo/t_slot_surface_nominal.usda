@@ -1,0 +1,257 @@
+#usda 1.0
+(
+    defaultPrim = "TSlotSurface"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+# Render/depth geometry only. The task's invisible /World/GroundPlane remains
+# the sole workspace collision surface at z=0.
+def Xform "TSlotSurface"
+{
+    def Scope "Looks"
+    {
+        def Material "Aluminum"
+        {
+            token outputs:surface.connect = </TSlotSurface/Looks/Aluminum/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.58, 0.61, 0.64)
+                float inputs:metallic = 1
+                float inputs:roughness = 0.25
+                token outputs:surface
+            }
+        }
+
+        def Material "Slot"
+        {
+            token outputs:surface.connect = </TSlotSurface/Looks/Slot/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.055, 0.065, 0.075)
+                float inputs:metallic = 0.55
+                float inputs:roughness = 0.42
+                token outputs:surface
+            }
+        }
+    }
+
+    def Cube "SlotBacking" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double size = 1
+        rel material:binding = </TSlotSurface/Looks/Slot>
+        double3 xformOp:scale = (0.65, 0.60, 0.004)
+        double3 xformOp:translate = (0, 0, -0.009)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Xform "Lands"
+    {
+        def Cube "Land_00" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.306, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_01" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.2805, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_02" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.255, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_03" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.2295, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_04" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.204, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_05" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.1785, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_06" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.153, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_07" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.1275, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_08" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.102, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_09" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.0765, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_10" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.051, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_11" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (-0.0255, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_12" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_13" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.0255, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_14" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.051, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_15" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.0765, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_16" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.102, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_17" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.1275, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_18" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.153, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_19" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.1785, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_20" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.204, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_21" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.2295, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_22" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.255, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_23" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.2805, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+        def Cube "Land_24" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 1
+            rel material:binding = </TSlotSurface/Looks/Aluminum>
+            double3 xformOp:scale = (0.0205, 0.60, 0.003)
+            double3 xformOp:translate = (0.306, 0, -0.003)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+}

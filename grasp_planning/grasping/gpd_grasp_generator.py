@@ -20,7 +20,7 @@ from typing import Iterable
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .collision import FrankaHandFingerCollisionModel, GraspCollisionEvaluator
+from .collision import GRIPPER_COLLISION_MODEL_FRANKA, GraspCollisionEvaluator, make_gripper_collision_model
 from .fabrica_grasp_debug import rotmat_to_quat_xyzw
 from .mesh_antipodal_grasp_generator import ObjectFrameGraspCandidate, SurfaceSample, TriangleMesh
 
@@ -136,6 +136,7 @@ class GpdGraspGeneratorConfig:
     detailed_finger_contact_gap_m: float = 0.002
     rng_seed: int = 0
     check_target_collision: bool = True
+    gripper_collision_model: str = GRIPPER_COLLISION_MODEL_FRANKA
 
 
 class ExternalGpdGraspGenerator:
@@ -146,7 +147,9 @@ class ExternalGpdGraspGenerator:
         self._last_surface_samples: tuple[SurfaceSample, ...] = ()
         self._collision_evaluator = (
             GraspCollisionEvaluator(
-                FrankaHandFingerCollisionModel(contact_gap_m=self._config.detailed_finger_contact_gap_m)
+                make_gripper_collision_model(
+                    self._config.gripper_collision_model, contact_gap_m=self._config.detailed_finger_contact_gap_m
+                )
             )
             if self._config.check_target_collision
             else None
@@ -191,7 +194,9 @@ class ExternalGpdGraspGenerator:
             artifact_dir.mkdir(parents=True, exist_ok=True)
             pcd_path = artifact_dir / "gpd_stage1_pointcloud.pcd"
             normals_path = artifact_dir / "gpd_stage1_normals.csv"
-            output_path = Path(self._config.output_json) if self._config.output_json else artifact_dir / "gpd_grasps.json"
+            output_path = (
+                Path(self._config.output_json) if self._config.output_json else artifact_dir / "gpd_grasps.json"
+            )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             return pcd_path, normals_path, output_path
         return temp_dir / "gpd_stage1_pointcloud.pcd", temp_dir / "gpd_stage1_normals.csv", temp_dir / "gpd_grasps.json"
@@ -207,9 +212,7 @@ class ExternalGpdGraspGenerator:
         if self._config.command_template:
             return shlex.split(self._config.command_template.format(**values))
         if not self._config.executable:
-            raise ValueError(
-                "planning.grasp_generator='gpd' requires either gpd.command_template or gpd.executable."
-            )
+            raise ValueError("planning.grasp_generator='gpd' requires either gpd.command_template or gpd.executable.")
         command = [self._config.executable]
         if self._config.config_path:
             command.append(self._config.config_path)

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import re
 
-def expose_franka_mesh_collisions(robot_prim_path: str = "/World/envs/env_0/Robot") -> tuple[int, tuple[str, ...]]:
-    """Expose existing Franka meshes as PhysX collision geometry in the current stage."""
+
+def expose_franka_mesh_collisions(
+    robot_prim_path: str = "/World/envs/env_0/Robot",
+    *,
+    mesh_path_patterns: tuple[str, ...] = (),
+) -> tuple[int, tuple[str, ...]]:
+    """Expose selected Franka meshes as PhysX collision geometry in the current stage."""
 
     import omni.usd
     from pxr import PhysxSchema, Usd, UsdGeom, UsdPhysics
@@ -27,6 +33,8 @@ def expose_franka_mesh_collisions(robot_prim_path: str = "/World/envs/env_0/Robo
         if not prim_path.startswith(robot_prim_path):
             continue
         if not prim.IsA(UsdGeom.Mesh):
+            continue
+        if mesh_path_patterns and not any(re.search(pattern, prim_path) for pattern in mesh_path_patterns):
             continue
 
         if not prim.HasAPI(UsdPhysics.CollisionAPI):

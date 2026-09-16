@@ -1,0 +1,48 @@
+Assembly: plumbers_block
+Source: logs/precedence_only/plumbers_block/precedence.pkl
+
+Direction semantics:
+  edge A -> B means A is a prerequisite/support for B in forward assembly.
+  A valid disassembly order is the reverse of a forward topological order.
+
+Parts (5): 0, 1, 2, 3, 4
+Forward assembly order: 2 -> 0 -> 3 -> 1 -> 4
+Valid disassembly order: 4 -> 1 -> 3 -> 0 -> 2
+
+Immediate precedence edges:
+  2 -> 0 (contact points: 2520)
+  2 -> 3 (contact points: 2553)
+  3 -> 1 (contact points: 820)
+  3 -> 4 (contact points: 839)
+
+Per-part summary:
+  Part 0:
+    all assembly prerequisites: 2
+    all assembly dependents: none
+    center of mass: [5e-06, -15.0, 5.190836]
+    removal action: [-0.0, -1.0, 0.0]
+    disassembly path waypoints: 1313
+  Part 1:
+    all assembly prerequisites: 2, 3
+    all assembly dependents: none
+    center of mass: [-3.999996, -14.873423, 8.086565]
+    removal action: [0.0, -0.0, 1.0]
+    disassembly path waypoints: 1010
+  Part 2:
+    all assembly prerequisites: none
+    all assembly dependents: 0, 1, 3, 4
+    center of mass: [0.0, -14.87342, 2.640347]
+    removal action: [1.0, -0.0, 0.0]
+    disassembly path waypoints: 707
+  Part 3:
+    all assembly prerequisites: 2
+    all assembly dependents: 1, 4
+    center of mass: [1e-06, -14.87342, 7.574611]
+    removal action: [0.0, 0.0, 1.0]
+    disassembly path waypoints: 101
+  Part 4:
+    all assembly prerequisites: 2, 3
+    all assembly dependents: none
+    center of mass: [4.000004, -14.873423, 8.086565]
+    removal action: [0.0, 0.0, 1.0]
+    disassembly path waypoints: 1010

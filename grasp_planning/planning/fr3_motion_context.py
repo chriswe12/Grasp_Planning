@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import torch
 
+from grasp_planning.start_poses import gripper_joint_target_from_width, is_gripper_command_joint_name
+
 from .types import PoseCommand
+
+
+def critical_damping_from_stiffness_inertia(
+    stiffness: torch.Tensor,
+    inertia: torch.Tensor,
+    *,
+    damping_ratio: float = 1.0,
+) -> torch.Tensor:
+    """Return diagonal PD damping for the requested damping ratio.
+
+    Isaac's implicit joint drives are diagonal.  Using the current diagonal of
+    the generalized mass matrix makes ``D = 2 zeta sqrt(K I)`` configuration
+    adaptive while preserving the collision-checked position trajectory.
+    """
+
+    ratio = float(damping_ratio)
+    if ratio <= 0.0:
+        raise ValueError("Critical damping ratio must be positive.")
+    safe_stiffness = torch.clamp(stiffness.to(dtype=torch.float32), min=0.0)
+    safe_inertia = torch.clamp(inertia.to(dtype=torch.float32), min=1.0e-8)
+    return 2.0 * ratio * torch.sqrt(safe_stiffness * safe_inertia)
 
 
 def quat_xyzw_to_wxyz(quat_xyzw: torch.Tensor) -> torch.Tensor:
@@ -89,7 +113,7 @@ def tcp_pose_to_grasp_pose(
     grasp_to_tcp_quat_wxyz: tuple[float, float, float, float],
     tcp_to_grasp_center_offset: tuple[float, float, float],
 ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    """Convert a TCP-frame pose into the grasp-frame pose consumed by the planner."""
+    """Convert a TCP-frame pose into the grasp-frame pose consumed by execution."""
 
     tcp_quat_wxyz = (
         float(orientation_xyzw[3]),
@@ -140,9 +164,12 @@ class FR3MotionContext:
     """Isaac-specific articulation accessors shared by motion components."""
 
     _EE_PATTERNS = (
+        r"gripper_tcp",
+        r"pdz_gripper_tcp",
         r"panda_hand_tcp",
         r"panda_tcp",
         r"fr3_hand_tcp",
+        r"panda_fingertip_centered",
         r".*tcp.*",
         r"panda_hand",
         r".*hand.*",
@@ -151,25 +178,107 @@ class FR3MotionContext:
     )
     _EE_TO_TCP_OFFSETS = {
         "panda_hand": (0.0, 0.0, 0.107),
+        # Isaac's URDF importer collapses the fixed PDZ TCP link into the
+        # articulation's gripper-base body. Preserve the URDF transform when
+        # reporting or commanding the planner TCP.
+        "pdz_gripper_base_link": (0.0, 0.0, 0.1355),
     }
-    _ARM_JOINT_PATTERN = r"(?:panda|fr3)_joint[1-7]"
-    _HAND_JOINT_PATTERN = r"(?:panda|fr3)_finger_joint[12]"
-    _GRASP_TO_TCP_QUAT_WXYZ = (0.70710678, 0.0, 0.70710678, 0.0)
+    _EE_TO_TCP_QUAT_WXYZ = {
+        "pdz_gripper_base_link": (
+            math.sqrt(0.5),
+            0.0,
+            0.0,
+            -math.sqrt(0.5),
+        ),
+    }
+    _ARM_JOINT_PATTERN = r"(?:(?:panda|fr3)_joint[1-7]|joint[1-7])"
+    _HAND_JOINT_PATTERN = (
+        r"(?:(?:panda|fr3)_finger_joint[12]|(?:left|right)_finger_joint|"
+        r"pdz_gripper_(?:left|right)_finger_joint)"
+    )
+    _GRASP_TO_TCP_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
     _TCP_TO_GRASP_CENTER_OFFSET = (0.0, 0.0, 0.0)
     _EE_POSITION_CORRECTION_GAIN = 2.0
     _EE_POSITION_CORRECTION_DAMPING = 0.05
     _EE_POSITION_CORRECTION_MAX_RAD = 0.10
 
-    def __init__(self, *, robot, scene, sim, fixed_gripper_width: float = 0.04) -> None:
+    def __init__(
+        self,
+        *,
+        robot,
+        scene,
+        sim,
+        fixed_gripper_width: float = 0.04,
+        critical_damping_ratio: float | None = None,
+    ) -> None:
         self.robot = robot
         self.scene = scene
         self.sim = sim
         self.fixed_gripper_width = float(fixed_gripper_width)
+        if critical_damping_ratio is not None and float(critical_damping_ratio) <= 0.0:
+            raise ValueError("critical_damping_ratio must be positive when provided.")
+        self.critical_damping_ratio = None if critical_damping_ratio is None else float(critical_damping_ratio)
+        self._critical_damping_diagnostics: dict[str, object] = {
+            "enabled": self.critical_damping_ratio is not None,
+            "damping_ratio": self.critical_damping_ratio,
+        }
         self.ee_body_name, self.ee_body_idx = self._resolve_ee_body()
         self.ee_to_tcp_offset = self._resolve_ee_to_tcp_offset(self.ee_body_name)
+        self.ee_to_tcp_quat_wxyz = self._resolve_ee_to_tcp_quat(self.ee_body_name)
         self.ee_jacobi_body_idx = self._resolve_jacobi_body_idx(self.ee_body_idx)
         self.arm_joint_names, self.arm_joint_ids = self._resolve_joint_ids(self._ARM_JOINT_PATTERN)
         self.hand_joint_names, self.hand_joint_ids = self._resolve_joint_ids(self._HAND_JOINT_PATTERN)
+        self.hand_command_joint_names, self.hand_command_joint_ids = self._command_joint_subset(
+            self.hand_joint_names,
+            self.hand_joint_ids,
+        )
+
+    def refresh_critical_joint_damping(self, *, required: bool = False) -> dict[str, object]:
+        """Apply configuration-adaptive diagonal critical damping to driven joints."""
+
+        if self.critical_damping_ratio is None:
+            return dict(self._critical_damping_diagnostics)
+        controlled_ids = torch.cat((self.arm_joint_ids, self.hand_command_joint_ids)).to(dtype=torch.long)
+        controlled_names = (*self.arm_joint_names, *self.hand_command_joint_names)
+        try:
+            mass_matrix = self.robot.root_physx_view.get_generalized_mass_matrices().to(
+                dtype=torch.float32,
+                device=self.device,
+            )
+            selected_mass = mass_matrix[:, controlled_ids, :][:, :, controlled_ids]
+            diagonal_inertia = torch.diagonal(selected_mass, dim1=-2, dim2=-1)
+            stiffness = self.robot.data.joint_stiffness[:, controlled_ids].to(dtype=torch.float32)
+            damping = critical_damping_from_stiffness_inertia(
+                stiffness,
+                diagonal_inertia,
+                damping_ratio=self.critical_damping_ratio,
+            )
+            self.robot.write_joint_damping_to_sim(damping, joint_ids=controlled_ids)
+        except (AttributeError, IndexError, RuntimeError, TypeError) as exc:
+            self._critical_damping_diagnostics = {
+                "enabled": True,
+                "applied": False,
+                "damping_ratio": self.critical_damping_ratio,
+                "error": str(exc),
+            }
+            if required:
+                raise RuntimeError(f"Could not configure critical joint damping: {exc}") from exc
+            return dict(self._critical_damping_diagnostics)
+        self._critical_damping_diagnostics = {
+            "enabled": True,
+            "applied": True,
+            "method": "configuration_adaptive_diagonal_generalized_inertia",
+            "formula": "D=2*zeta*sqrt(K*I)",
+            "damping_ratio": self.critical_damping_ratio,
+            "joint_names": list(controlled_names),
+            "stiffness": [float(value) for value in stiffness[0].tolist()],
+            "generalized_inertia_diagonal": [float(value) for value in diagonal_inertia[0].tolist()],
+            "damping": [float(value) for value in damping[0].tolist()],
+        }
+        return dict(self._critical_damping_diagnostics)
+
+    def critical_damping_diagnostics(self) -> dict[str, object]:
+        return dict(self._critical_damping_diagnostics)
 
     @property
     def device(self) -> str:
@@ -181,6 +290,9 @@ class FR3MotionContext:
 
     def get_arm_q(self) -> torch.Tensor:
         return self.robot.data.joint_pos[:, self.arm_joint_ids].clone()
+
+    def get_arm_qd(self) -> torch.Tensor:
+        return self.robot.data.joint_vel[:, self.arm_joint_ids].clone()
 
     def get_hand_q(self) -> torch.Tensor:
         if self.hand_joint_ids.numel() == 0:
@@ -223,14 +335,18 @@ class FR3MotionContext:
         ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
         ee_pos_w = ee_pose_w[:, :3]
         ee_quat_w = ee_pose_w[:, 3:7]
-        if self.ee_to_tcp_offset is None:
+        if self.ee_to_tcp_offset is None and self.ee_to_tcp_quat_wxyz is None:
             return ee_pos_w.clone(), ee_quat_w.clone()
 
-        from isaaclab.utils.math import quat_apply
+        from isaaclab.utils.math import quat_apply, quat_mul
 
-        offset_b = self._ee_to_tcp_offset_tensor()
-        tcp_pos_w = ee_pos_w + quat_apply(ee_quat_w, offset_b)
-        return tcp_pos_w.clone(), ee_quat_w.clone()
+        tcp_pos_w = ee_pos_w
+        if self.ee_to_tcp_offset is not None:
+            tcp_pos_w = tcp_pos_w + quat_apply(ee_quat_w, self._ee_to_tcp_offset_tensor())
+        tcp_quat_w = ee_quat_w
+        if self.ee_to_tcp_quat_wxyz is not None:
+            tcp_quat_w = quat_mul(ee_quat_w, self._ee_to_tcp_quat_tensor())
+        return tcp_pos_w.clone(), tcp_quat_w.clone()
 
     def get_body_positions_w(self, body_names: tuple[str, ...]) -> dict[str, torch.Tensor]:
         positions: dict[str, torch.Tensor] = {}
@@ -270,18 +386,48 @@ class FR3MotionContext:
         )
 
     def command_arm(self, q: torch.Tensor) -> None:
+        self.refresh_critical_joint_damping()
         self.robot.set_joint_position_target(q, joint_ids=self.arm_joint_ids)
 
+    def command_arm_velocity(self, qd: torch.Tensor) -> None:
+        self.robot.set_joint_velocity_target(qd, joint_ids=self.arm_joint_ids)
+
+    def reset_joint_state(
+        self,
+        q_arm: torch.Tensor,
+        *,
+        q_hand: torch.Tensor | None = None,
+        steps: int = 2,
+    ) -> None:
+        """Hard-reset simulated joint state and controller targets after internal IK search."""
+
+        q_arm = q_arm.clone().to(dtype=torch.float32, device=self.device)
+        arm_vel = torch.zeros_like(q_arm)
+        self.robot.write_joint_state_to_sim(q_arm, arm_vel, joint_ids=self.arm_joint_ids)
+        self.robot.set_joint_position_target(q_arm, joint_ids=self.arm_joint_ids)
+        self.command_arm_velocity(arm_vel)
+        if q_hand is not None and self.hand_joint_ids.numel() > 0 and q_hand.numel() > 0:
+            q_hand = q_hand.clone().to(dtype=torch.float32, device=self.device)
+            hand_vel = torch.zeros_like(q_hand)
+            self.robot.write_joint_state_to_sim(q_hand, hand_vel, joint_ids=self.hand_joint_ids)
+            self.robot.set_joint_position_target(q_hand, joint_ids=self.hand_joint_ids)
+        self.scene.write_data_to_sim()
+        for _ in range(max(1, int(steps))):
+            self.sim.step()
+            self.scene.update(self.physics_dt)
+
     def command_fixed_gripper(self) -> None:
-        if self.hand_joint_ids.numel() == 0:
+        if self.hand_command_joint_ids.numel() == 0:
             return
         targets = torch.full(
-            (1, int(self.hand_joint_ids.numel())),
-            self.fixed_gripper_width,
+            (1, int(self.hand_command_joint_ids.numel())),
+            0.0,
             dtype=torch.float32,
             device=self.device,
         )
-        self.robot.set_joint_position_target(targets, joint_ids=self.hand_joint_ids)
+        for index, name in enumerate(self.hand_command_joint_names):
+            targets[0, index] = gripper_joint_target_from_width(name, self.fixed_gripper_width)
+        self.robot.set_joint_position_target(targets, joint_ids=self.hand_command_joint_ids)
 
     def step_sim(self, steps: int = 1) -> None:
         for _ in range(max(1, int(steps))):
@@ -291,8 +437,10 @@ class FR3MotionContext:
             self.scene.update(self.physics_dt)
 
     def hold_position(self, q: torch.Tensor, steps: int = 1) -> None:
+        zero_velocity = torch.zeros_like(q)
         for _ in range(max(1, int(steps))):
             self.command_arm(q)
+            self.command_arm_velocity(zero_velocity)
             self.command_fixed_gripper()
             self.scene.write_data_to_sim()
             self.sim.step()
@@ -333,7 +481,11 @@ class FR3MotionContext:
         )
         desired_tcp_quat_w = quat_mul(desired_grasp_quat_w, grasp_to_tcp_quat_w)
         desired_tcp_position_w = desired_grasp_position_w - quat_apply(desired_tcp_quat_w, tcp_to_grasp_center_b)
-        desired_ee_position_w = self._tcp_position_to_ee_position_w(desired_tcp_position_w, desired_tcp_quat_w)
+        desired_ee_quat_w = self._tcp_orientation_to_ee_orientation_w(desired_tcp_quat_w)
+        desired_ee_position_w = self._tcp_position_to_ee_position_w(
+            desired_tcp_position_w,
+            desired_ee_quat_w,
+        )
 
         ee_pose_w = self.robot.data.body_pose_w[:, self.ee_body_idx]
         ee_pos_w = ee_pose_w[:, :3]
@@ -344,7 +496,7 @@ class FR3MotionContext:
 
         ee_pos_b, ee_quat_b = subtract_frame_transforms(root_pos_w, root_quat_w, ee_pos_w, ee_quat_w)
         desired_pos_b, desired_quat_b = subtract_frame_transforms(
-            root_pos_w, root_quat_w, desired_ee_position_w, desired_tcp_quat_w
+            root_pos_w, root_quat_w, desired_ee_position_w, desired_ee_quat_w
         )
         desired_pose_b = torch.cat((desired_pos_b, desired_quat_b), dim=1)
         ik_controller.set_command(desired_pose_b)
@@ -362,6 +514,7 @@ class FR3MotionContext:
             target_tcp_position_b=desired_pos_b,
         )
         self.command_arm(joint_pos_cmd)
+        self.command_arm_velocity(torch.zeros_like(joint_pos_cmd))
         return joint_pos_cmd
 
     def compute_ee_position_corrected_arm_command(
@@ -401,18 +554,34 @@ class FR3MotionContext:
     def _resolve_ee_to_tcp_offset(self, body_name: str) -> tuple[float, float, float] | None:
         return self._EE_TO_TCP_OFFSETS.get(body_name)
 
+    def _resolve_ee_to_tcp_quat(self, body_name: str) -> tuple[float, float, float, float] | None:
+        return self._EE_TO_TCP_QUAT_WXYZ.get(body_name)
+
     def _ee_to_tcp_offset_tensor(self) -> torch.Tensor:
         offset = self.ee_to_tcp_offset
         if offset is None:
             return torch.zeros((1, 3), dtype=torch.float32, device=self.device)
         return torch.tensor([offset], dtype=torch.float32, device=self.device)
 
-    def _tcp_position_to_ee_position_w(self, tcp_position_w: torch.Tensor, tcp_quat_w: torch.Tensor) -> torch.Tensor:
+    def _ee_to_tcp_quat_tensor(self) -> torch.Tensor:
+        quat = self.ee_to_tcp_quat_wxyz
+        if quat is None:
+            return torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float32, device=self.device)
+        return torch.tensor([quat], dtype=torch.float32, device=self.device)
+
+    def _tcp_orientation_to_ee_orientation_w(self, tcp_quat_w: torch.Tensor) -> torch.Tensor:
+        if self.ee_to_tcp_quat_wxyz is None:
+            return tcp_quat_w
+        from isaaclab.utils.math import quat_inv, quat_mul
+
+        return quat_mul(tcp_quat_w, quat_inv(self._ee_to_tcp_quat_tensor()))
+
+    def _tcp_position_to_ee_position_w(self, tcp_position_w: torch.Tensor, ee_quat_w: torch.Tensor) -> torch.Tensor:
         if self.ee_to_tcp_offset is None:
             return tcp_position_w
         from isaaclab.utils.math import quat_apply
 
-        return tcp_position_w - quat_apply(tcp_quat_w, self._ee_to_tcp_offset_tensor())
+        return tcp_position_w - quat_apply(ee_quat_w, self._ee_to_tcp_offset_tensor())
 
     def _resolve_jacobi_body_idx(self, body_idx: int) -> int:
         if getattr(self.robot, "is_fixed_base", False):
@@ -426,3 +595,14 @@ class FR3MotionContext:
         if not ids:
             raise RuntimeError(f"Could not resolve joints matching '{joint_pattern}' on the articulation.")
         return matched_names, torch.tensor(ids, dtype=torch.long, device=self.device)
+
+    def _command_joint_subset(
+        self,
+        joint_names: tuple[str, ...],
+        joint_ids: torch.Tensor,
+    ) -> tuple[tuple[str, ...], torch.Tensor]:
+        command_indices = [index for index, name in enumerate(joint_names) if is_gripper_command_joint_name(name)]
+        if not command_indices:
+            return (), torch.empty(0, dtype=torch.long, device=self.device)
+        indices = torch.tensor(command_indices, dtype=torch.long, device=self.device)
+        return tuple(joint_names[index] for index in command_indices), joint_ids[indices]

@@ -1,0 +1,69 @@
+Assembly: duct
+Source: logs/precedence_only/duct/precedence.pkl
+
+Direction semantics:
+  edge A -> B means A is a prerequisite/support for B in forward assembly.
+  A valid disassembly order is the reverse of a forward topological order.
+
+Parts (8): 0, 1, 2, 3, 4, 5, 6, 7
+Forward assembly order: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+Valid disassembly order: 7 -> 6 -> 5 -> 4 -> 3 -> 2 -> 1 -> 0
+
+Immediate precedence edges:
+  0 -> 1 (contact points: 11004)
+  1 -> 2 (contact points: 361)
+  1 -> 3 (contact points: 355)
+  1 -> 4 (contact points: 314)
+  1 -> 5 (contact points: 343)
+  1 -> 6 (contact points: 367)
+  1 -> 7 (contact points: 366)
+
+Per-part summary:
+  Part 0:
+    all assembly prerequisites: none
+    all assembly dependents: 1, 2, 3, 4, 5, 6, 7
+    center of mass: [-0.574679, -15.000163, 5.088488]
+    removal action: [0.0, 1.0, 0.0]
+    disassembly path waypoints: 2727
+  Part 1:
+    all assembly prerequisites: 0
+    all assembly dependents: 2, 3, 4, 5, 6, 7
+    center of mass: [0.463828, -15.0, 12.184453]
+    removal action: [0.258739, 0.0, 0.965947]
+    disassembly path waypoints: 404
+  Part 2:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [-2.997532, -12.627453, 14.419272]
+    removal action: [0.396564, 0.0, 0.918007]
+    disassembly path waypoints: 404
+  Part 3:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [4.129919, -17.372547, 10.304236]
+    removal action: [0.51888, 0.0, 0.854847]
+    disassembly path waypoints: 404
+  Part 4:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [0.563741, -10.250001, 12.36317]
+    removal action: [0.418891, 0.0, 0.908036]
+    disassembly path waypoints: 505
+  Part 5:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [0.568646, -19.749999, 12.360338]
+    removal action: [0.407961, 0.0, 0.912999]
+    disassembly path waypoints: 505
+  Part 6:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [4.127467, -12.622548, 10.305652]
+    removal action: [0.524583, 0.0, 0.851359]
+    disassembly path waypoints: 404
+  Part 7:
+    all assembly prerequisites: 0, 1
+    all assembly dependents: none
+    center of mass: [-2.99508, -17.377452, 14.417856]
+    removal action: [0.405155, 0.0, 0.914248]
+    disassembly path waypoints: 404

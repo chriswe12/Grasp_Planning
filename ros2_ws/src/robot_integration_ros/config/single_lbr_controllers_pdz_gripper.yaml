@@ -1,0 +1,118 @@
+# Standalone iiwa7 controller stack for the current PDZ gripper embodiment.
+# The physical gripper uses its external ROS services/topic. The
+# gripper_joint_state_bridge publishes its measured passive MoveIt driver joint.
+/**/controller_manager:
+  ros__parameters:
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    force_torque_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+    lbr_state_broadcaster:
+      type: lbr_ros2_control/LBRStateBroadcaster
+
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    forward_position_controller:
+      type: position_controllers/JointGroupPositionController
+
+    admittance_controller:
+      type: lbr_ros2_control/AdmittanceController
+
+    lbr_joint_position_command_controller:
+      type: lbr_ros2_control/LBRJointPositionCommandController
+
+    lbr_torque_command_controller:
+      type: lbr_ros2_control/LBRTorqueCommandController
+
+    lbr_wrench_command_controller:
+      type: lbr_ros2_control/LBRWrenchCommandController
+
+    twist_controller:
+      type: lbr_ros2_control/TwistController
+
+/**/force_torque_broadcaster:
+  ros__parameters:
+    frame_id: lbr_link_ee
+    sensor_name: estimated_ft_sensor
+
+/**/lbr_state_broadcaster:
+  ros__parameters:
+    robot_name: lbr
+
+/**/joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - lbr_A1
+      - lbr_A2
+      - lbr_A3
+      - lbr_A4
+      - lbr_A5
+      - lbr_A6
+      - lbr_A7
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 50.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+
+/**/forward_position_controller:
+  ros__parameters:
+    joints:
+      - lbr_A1
+      - lbr_A2
+      - lbr_A3
+      - lbr_A4
+      - lbr_A5
+      - lbr_A6
+      - lbr_A7
+    interface_name: position
+
+/**/lbr_joint_position_command_controller:
+  ros__parameters:
+    robot_name: lbr
+
+/**/lbr_torque_command_controller:
+  ros__parameters:
+    robot_name: lbr
+
+/**/lbr_wrench_command_controller:
+  ros__parameters:
+    robot_name: lbr
+
+/**/admittance_controller:
+  ros__parameters:
+    robot_name: lbr
+    admittance:
+      mass: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+      damping: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      stiffness: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    inv_jac_ctrl:
+      chain_root: lbr_link_0
+      chain_tip: lbr_link_ee
+      damping: 0.2
+      max_linear_velocity: 2.0
+      max_angular_velocity: 2.0
+      joint_gains: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      cartesian_gains: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+/**/twist_controller:
+  ros__parameters:
+    robot_name: lbr
+    inv_jac_ctrl:
+      chain_root: lbr_link_0
+      chain_tip: lbr_link_ee
+      twist_in_tip_frame: true
+      damping: 0.02
+      max_linear_velocity: 0.1
+      max_angular_velocity: 0.1
+      joint_gains: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      cartesian_gains: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    timeout: 0.2

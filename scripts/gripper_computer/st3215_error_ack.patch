@@ -1,0 +1,39 @@
+diff --git a/servo_gripper/st3215.py b/servo_gripper/st3215.py
+--- a/servo_gripper/st3215.py
++++ b/servo_gripper/st3215.py
+@@ -208,11 +208,12 @@ class STServo:
+             packet = self._read_status(expected_id=servo_id)
+             if packet is None:
+                 return None
++            if len(packet.params) != length:
++                continue
+             self.last_error = packet.error
+             if packet.error != 0:
+                 return None
+-            if len(packet.params) == length:
+-                return packet.params
++            return packet.params
+         return None
+ 
+     def read_u16(self, servo_id: int, address: int) -> int | None:
+diff --git a/test/test_st3215.py b/test/test_st3215.py
+--- a/test/test_st3215.py
++++ b/test/test_st3215.py
+@@ -37,6 +37,17 @@ class TestReadData(unittest.TestCase):
+         self.assertEqual(bus.read_position(1), 2381)
+         self.assertEqual(len(bus.writes), 1)
+ 
++    def test_ignores_error_write_ack_before_position_response(self) -> None:
++        bus = FakeServo(
++            [
++                StatusPacket(servo_id=1, error=32, params=b""),
++                StatusPacket(servo_id=1, error=0, params=b"\x4d\x09"),
++            ]
++        )
++
++        self.assertEqual(bus.read_position(1), 2381)
++        self.assertEqual(bus.last_error, 0)
++
+     def test_returns_none_if_requested_payload_never_arrives(self) -> None:
+         bus = FakeServo(
+             [

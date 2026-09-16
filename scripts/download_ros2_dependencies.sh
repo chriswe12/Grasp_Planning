@@ -11,7 +11,23 @@ ROS2_REPOS_FILE="${ROS2_WS_ROOT}/dependencies.repos"
 FP_DEBUG_MSGS_ROOT="${ROS2_WS_SRC}/fp_debug_msgs"
 DEFAULT_FP_DEBUG_MSGS_REMOTE="https://github.com/Moreno-Nautilus/fp_debug_msgs.git"
 FP_DEBUG_MSGS_REMOTE="${FP_DEBUG_MSGS_REMOTE:-${DEFAULT_FP_DEBUG_MSGS_REMOTE}}"
-FP_DEBUG_MSGS_REF="${FP_DEBUG_MSGS_REF:-7cab8c96effad8f3489fa509dfe5cd2795242c37}"
+DEFAULT_FP_DEBUG_MSGS_REF="$(
+  awk '
+    $1 == "fp_debug_msgs:" {
+      in_fp_debug_msgs = 1
+      next
+    }
+    in_fp_debug_msgs && $1 == "version:" {
+      print $2
+      exit
+    }
+  ' "${ROS2_REPOS_FILE}"
+)"
+if [[ -z "${DEFAULT_FP_DEBUG_MSGS_REF}" ]]; then
+  echo "Could not read the fp_debug_msgs version from ${ROS2_REPOS_FILE}" >&2
+  exit 1
+fi
+FP_DEBUG_MSGS_REF="${FP_DEBUG_MSGS_REF:-${DEFAULT_FP_DEBUG_MSGS_REF}}"
 FORCE_CLONE=0
 TEMP_FILES=()
 
@@ -119,7 +135,8 @@ verify_outputs() {
   local required_paths=(
     "${ROS2_REPOS_FILE}"
     "${FP_DEBUG_MSGS_ROOT}/package.xml"
-    "${FP_DEBUG_MSGS_ROOT}/msg/DebugFrame.msg"
+    "${FP_DEBUG_MSGS_ROOT}/msg/DebugPoseItem.msg"
+    "${FP_DEBUG_MSGS_ROOT}/action/GraspAssembly.action"
   )
 
   local missing=0

@@ -12,6 +12,7 @@ import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
 from grasp_planning.grasping.fabrica_grasp_debug import (
+    CandidateStatus,
     SavedGraspCandidate,
     accepted_grasps,
     evaluate_saved_grasps_against_pickup_pose,
@@ -170,9 +171,8 @@ def _convex_hull_facets(mesh_local: object, *, coplanar_tolerance_m: float) -> l
         for group in groups:
             group_normal = np.asarray(group["normal"], dtype=float)
             group_offset = float(group["offset"])
-            if (
-                float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6
-                and abs(offset - group_offset) <= float(coplanar_tolerance_m)
+            if float(np.dot(normal, group_normal)) >= 1.0 - 1.0e-6 and abs(offset - group_offset) <= float(
+                coplanar_tolerance_m
             ):
                 matched = group
                 break
@@ -402,6 +402,7 @@ def _candidate_payload(candidate: SavedGraspCandidate) -> dict[str, object]:
         ],
         "score": candidate.score,
         "score_components": candidate.score_components,
+        "metadata": candidate.metadata or {},
     }
 
 
@@ -412,7 +413,8 @@ def _candidate_from_payload(payload: dict[str, object]) -> SavedGraspCandidate:
         grasp_id=str(payload["grasp_id"]),
         grasp_position_obj=tuple(float(v) for v in payload["grasp_pose_obj"]["position"]),  # type: ignore[index]
         grasp_orientation_xyzw_obj=tuple(
-            float(v) for v in payload["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
+            float(v)
+            for v in payload["grasp_pose_obj"]["orientation_xyzw"]  # type: ignore[index]
         ),
         contact_point_a_obj=tuple(float(v) for v in payload["contact_points_obj"][0]),  # type: ignore[index]
         contact_point_b_obj=tuple(float(v) for v in payload["contact_points_obj"][1]),  # type: ignore[index]
@@ -426,6 +428,7 @@ def _candidate_from_payload(payload: dict[str, object]) -> SavedGraspCandidate:
         score_components=None
         if score_components is None
         else {str(key): float(value) for key, value in dict(score_components).items()},
+        metadata=dict(payload.get("metadata", {})) or None,
     )
 
 
@@ -528,6 +531,36 @@ def plan_mujoco_regrasp_fallback(
         base_xy_world=staging_xy,
         offsets_m=staging_xy_offsets_m,
     )
+    pickup_status_cache: dict[tuple[object, ...], list[CandidateStatus]] = {}
+
+    def _pickup_statuses(
+        pool_name: str,
+        grasps: tuple[SavedGraspCandidate, ...],
+        *,
+        object_pose_world: ObjectWorldPose,
+    ) -> list[CandidateStatus]:
+        key = (
+            pool_name,
+            tuple(float(value) for value in object_pose_world.position_world),
+            tuple(float(value) for value in object_pose_world.orientation_xyzw_world),
+            float(planning.detailed_finger_contact_gap_m),
+            float(planning.floor_clearance_margin_m),
+            tuple(float(value) for value in planning.contact_lateral_offsets_m),
+            tuple(float(value) for value in planning.contact_approach_offsets_m),
+        )
+        cached = pickup_status_cache.get(key)
+        if cached is None:
+            cached = evaluate_saved_grasps_against_pickup_pose(
+                grasps,
+                object_pose_world=object_pose_world,
+                contact_gap_m=planning.detailed_finger_contact_gap_m,
+                floor_clearance_margin_m=planning.floor_clearance_margin_m,
+                contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
+                contact_approach_offsets_m=planning.contact_approach_offsets_m,
+            )
+            pickup_status_cache[key] = cached
+        return cached
+
     facets = sorted(
         (
             facet
@@ -543,13 +576,10 @@ def plan_mujoco_regrasp_fallback(
         initial_pose=initial_pose,
         tolerance_m=coplanar_tolerance_m,
     )
-    transfer_initial_statuses = evaluate_saved_grasps_against_pickup_pose(
+    transfer_initial_statuses = _pickup_statuses(
+        "raw_transfer",
         raw_candidates,
         object_pose_world=initial_pose,
-        contact_gap_m=planning.detailed_finger_contact_gap_m,
-        floor_clearance_margin_m=planning.floor_clearance_margin_m,
-        contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
-        contact_approach_offsets_m=planning.contact_approach_offsets_m,
     )
     initial_by_key = _accepted_by_grasp_and_contact_offset(transfer_initial_statuses)
     if not initial_by_key:
@@ -579,49 +609,6 @@ def plan_mujoco_regrasp_fallback(
             if support.stability_margin_m < float(stability_margin_m):
                 continue
             stable_orientations += 1
-            filter_pose = _pose_for_support_facet(
-                mesh_local=stage1.target_mesh_local,
-                normal_obj=support.normal_obj,
-                xy_world=staging_xy,
-                yaw_deg=float(yaw_deg),
-            )
-            final_statuses = evaluate_saved_grasps_against_pickup_pose(
-                stage1.bundle.candidates,
-                object_pose_world=filter_pose,
-                contact_gap_m=planning.detailed_finger_contact_gap_m,
-                floor_clearance_margin_m=planning.floor_clearance_margin_m,
-                contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
-                contact_approach_offsets_m=planning.contact_approach_offsets_m,
-            )
-            final_candidates = _score_grasps_for_world_top_approach(
-                accepted_grasps(final_statuses),
-                mesh_local=stage1.target_mesh_local,
-                object_pose_world=filter_pose,
-                top_grasp_score_weight=planning.top_grasp_score_weight,
-            )
-            if not final_candidates:
-                continue
-
-            transfer_staging_statuses = evaluate_saved_grasps_against_pickup_pose(
-                raw_candidates,
-                object_pose_world=filter_pose,
-                contact_gap_m=planning.detailed_finger_contact_gap_m,
-                floor_clearance_margin_m=planning.floor_clearance_margin_m,
-                contact_lateral_offsets_m=planning.contact_lateral_offsets_m,
-                contact_approach_offsets_m=planning.contact_approach_offsets_m,
-            )
-            staging_by_key = _accepted_by_grasp_and_contact_offset(transfer_staging_statuses)
-            common_keys = sorted(set(initial_by_key).intersection(staging_by_key))
-            if not common_keys:
-                continue
-            transfer_candidates = _score_grasps_for_world_top_approach(
-                [initial_by_key[key] for key in common_keys],
-                mesh_local=stage1.target_mesh_local,
-                object_pose_world=initial_pose,
-                top_grasp_score_weight=planning.regrasp_transfer_top_grasp_score_weight,
-            )
-            if not transfer_candidates:
-                continue
             for staging_xy_candidate in staging_xy_candidates:
                 checked_placements += 1
                 staging_pose = _pose_for_support_facet(
@@ -630,6 +617,42 @@ def plan_mujoco_regrasp_fallback(
                     xy_world=staging_xy_candidate,
                     yaw_deg=float(yaw_deg),
                 )
+                final_statuses = _pickup_statuses(
+                    "stage1_final",
+                    stage1.bundle.candidates,
+                    object_pose_world=staging_pose,
+                )
+                final_candidates = _score_grasps_for_world_top_approach(
+                    accepted_grasps(final_statuses),
+                    mesh_local=stage1.target_mesh_local,
+                    object_pose_world=staging_pose,
+                    top_grasp_score_weight=planning.top_grasp_score_weight,
+                    reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+                    reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
+                )
+                if not final_candidates:
+                    continue
+
+                transfer_staging_statuses = _pickup_statuses(
+                    "raw_transfer",
+                    raw_candidates,
+                    object_pose_world=staging_pose,
+                )
+                staging_by_key = _accepted_by_grasp_and_contact_offset(transfer_staging_statuses)
+                common_keys = sorted(set(initial_by_key).intersection(staging_by_key))
+                if not common_keys:
+                    continue
+                transfer_candidates = _score_grasps_for_world_top_approach(
+                    [initial_by_key[key] for key in common_keys],
+                    mesh_local=stage1.target_mesh_local,
+                    object_pose_world=initial_pose,
+                    top_grasp_score_weight=planning.regrasp_transfer_top_grasp_score_weight,
+                    reachability_proxy_score_weight=planning.reachability_proxy_score_weight,
+                    reachability_proxy_hand_offset_m=planning.reachability_proxy_hand_offset_m,
+                )
+                if not transfer_candidates:
+                    continue
+
                 placement_score = _placement_option_score(
                     initial_xy_world=(float(initial_pose.position_world[0]), float(initial_pose.position_world[1])),
                     staging_xy_world=staging_xy_candidate,
@@ -699,6 +722,8 @@ def plan_mujoco_regrasp_fallback(
             "transfer_feasible_count_for_staging_pose": len(selected.transfer_grasp_candidates),
             "transfer_top_grasp_score_weight": planning.regrasp_transfer_top_grasp_score_weight,
             "final_top_grasp_score_weight": planning.top_grasp_score_weight,
+            "reachability_proxy_score_weight": planning.reachability_proxy_score_weight,
+            "reachability_proxy_hand_offset_m": planning.reachability_proxy_hand_offset_m,
         },
         transfer_grasp_candidates=selected.transfer_grasp_candidates,
         final_grasp_candidates=selected.final_grasp_candidates,
@@ -728,12 +753,10 @@ def write_mujoco_regrasp_plan(
         "transfer_grasp": _candidate_payload(plan.transfer_grasp),
         "final_grasp": _candidate_payload(plan.final_grasp),
         "transfer_grasp_candidates": [
-            _candidate_payload(candidate)
-            for candidate in (plan.transfer_grasp_candidates or (plan.transfer_grasp,))
+            _candidate_payload(candidate) for candidate in (plan.transfer_grasp_candidates or (plan.transfer_grasp,))
         ],
         "final_grasp_candidates": [
-            _candidate_payload(candidate)
-            for candidate in (plan.final_grasp_candidates or (plan.final_grasp,))
+            _candidate_payload(candidate) for candidate in (plan.final_grasp_candidates or (plan.final_grasp,))
         ],
         "placement_options": [
             _placement_option_payload(option)
