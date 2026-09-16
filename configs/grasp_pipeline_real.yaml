@@ -4,6 +4,7 @@ geometry:
   assembly_glob: "obj/fabrica/beam/*.obj"
 
 planning:
+  grasp_generator: "antipodal"
   stage1_cache_enabled: true
   stage1_cache_dir: "artifacts/stage1_cache"
   num_surface_samples: 256

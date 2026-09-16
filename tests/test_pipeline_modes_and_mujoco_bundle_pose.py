@@ -272,6 +272,43 @@ class RunGraspPipelineModeTests(unittest.TestCase):
         self.assertFalse(config.stage1_cache_enabled)
         self.assertEqual(config.stage1_cache_dir, "artifacts/custom_cache")
 
+    def test_planning_config_parses_gpd_generator_settings(self) -> None:
+        config = run_grasp_pipeline._planning_config(
+            {
+                "planning": {
+                    "grasp_generator": "gpd",
+                    "num_surface_samples": 32,
+                    "gpd": {
+                        "executable": "/opt/gpd/build/detect_grasps_json",
+                        "config_path": "/opt/gpd/cfg/eigen_params.cfg",
+                        "command_template": "{executable} {config} {pcd} {normals} --out {output_json}",
+                        "working_dir": "/opt/gpd/build",
+                        "artifact_dir": "artifacts/gpd_test",
+                        "keep_artifacts": True,
+                        "timeout_s": 9.5,
+                        "num_pointcloud_samples": 64,
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(config.grasp_generator, "gpd")
+        self.assertEqual(config.gpd_executable, "/opt/gpd/build/detect_grasps_json")
+        self.assertEqual(config.gpd_config_path, "/opt/gpd/cfg/eigen_params.cfg")
+        self.assertEqual(config.gpd_working_dir, "/opt/gpd/build")
+        self.assertEqual(config.gpd_artifact_dir, "artifacts/gpd_test")
+        self.assertTrue(config.gpd_keep_artifacts)
+        self.assertAlmostEqual(config.gpd_timeout_s, 9.5)
+        self.assertEqual(config.gpd_num_pointcloud_samples, 64)
+        self.assertEqual(config.to_gpd_generator_config().num_pointcloud_samples, 64)
+
+    def test_gpd_generator_config_falls_back_to_surface_sample_count(self) -> None:
+        config = run_grasp_pipeline._planning_config(
+            {"planning": {"grasp_generator": "gpd", "num_surface_samples": 37}}
+        )
+
+        self.assertEqual(config.to_gpd_generator_config().num_pointcloud_samples, 37)
+
     def test_planning_config_parses_top_grasp_score_weight(self) -> None:
         config = run_grasp_pipeline._planning_config({"planning": {"top_grasp_score_weight": 0.8}})
 
@@ -385,6 +422,73 @@ class Stage1CollisionSkipTests(unittest.TestCase):
         self.assertEqual(len(result.raw_candidates), 1)
         self.assertEqual(len(result.bundle.candidates), 1)
         self.assertTrue(result.bundle.metadata["stage1_collision_checks_skipped"])
+
+    def test_gpd_stage1_candidates_still_use_assembly_collision_filter(self) -> None:
+        mesh = TriangleMesh(
+            vertices_obj=np.array(
+                [[0.0, 0.0, 0.0], [0.04, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]],
+                dtype=float,
+            ),
+            faces=np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]], dtype=np.int64),
+        )
+        raw_candidate = ObjectFrameGraspCandidate(
+            grasp_position_obj=(0.01, 0.01, 0.0),
+            grasp_orientation_xyzw_obj=(0.0, 0.0, 0.0, 1.0),
+            contact_point_a_obj=(0.0, 0.01, 0.0),
+            contact_point_b_obj=(0.02, 0.01, 0.0),
+            contact_normal_a_obj=(1.0, 0.0, 0.0),
+            contact_normal_b_obj=(-1.0, 0.0, 0.0),
+            jaw_width=0.02,
+            roll_angle_rad=0.0,
+        )
+        surface_sample = SurfaceSample(
+            point_obj=(0.01, 0.02, 0.0),
+            normal_obj=(0.0, 0.0, 1.0),
+            face_index=0,
+        )
+
+        class FakeGpdGenerator:
+            collision_backend_name = "unit-test-gpd"
+
+            def __init__(self, config: object) -> None:
+                self.config = config
+                self.last_surface_samples = (surface_sample,)
+
+            def generate(self, mesh_local: object) -> list[ObjectFrameGraspCandidate]:
+                return [raw_candidate]
+
+        def passthrough_score(grasps: list[SavedGraspCandidate], *, mesh_local: object) -> list[SavedGraspCandidate]:
+            return list(grasps)
+
+        with (
+            mock.patch("grasp_planning.pipeline.fabrica_pipeline.load_asset_mesh", return_value=mesh),
+            mock.patch("grasp_planning.pipeline.fabrica_pipeline.ExternalGpdGraspGenerator", FakeGpdGenerator),
+            mock.patch(
+                "grasp_planning.pipeline.fabrica_pipeline.load_assembly_obstacle_mesh",
+                return_value=(None, ("obj/fabrica/beam/0.obj",)),
+            ) as load_obstacles,
+            mock.patch(
+                "grasp_planning.pipeline.fabrica_pipeline.filter_grasps_against_assembly",
+                side_effect=lambda candidates, **kwargs: list(candidates),
+            ) as filter_assembly,
+            mock.patch("grasp_planning.pipeline.fabrica_pipeline.score_grasps", side_effect=passthrough_score),
+        ):
+            result = generate_stage1_result(
+                geometry=GeometryConfig(
+                    target_mesh_path="obj/fabrica/beam/2.obj",
+                    mesh_scale=0.01,
+                    assembly_glob="obj/fabrica/beam/*.obj",
+                ),
+                planning=PlanningConfig(grasp_generator="gpd", stage1_cache_enabled=False),
+            )
+
+        load_obstacles.assert_called_once()
+        filter_assembly.assert_called_once()
+        self.assertEqual(result.bundle.metadata["grasp_generator"], "gpd")
+        self.assertFalse(result.bundle.metadata["stage1_collision_checks_skipped"])
+        self.assertEqual(result.raw_candidate_count, 1)
+        self.assertEqual(len(result.bundle.candidates), 1)
+        self.assertEqual(result.surface_samples, (surface_sample,))
 
     def test_stage1_cache_key_records_asset_relative_assembly_files(self) -> None:
         records = fabrica_pipeline._assembly_cache_records(
