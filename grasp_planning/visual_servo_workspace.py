@@ -57,6 +57,7 @@ class SurfaceAppearance:
 
     color: tuple[float, float, float]
     roughness: float
+    metallic: float
 
 
 VISUAL_SERVO_TSLOT_BACKGROUNDS: tuple[TSlotBackgroundAppearance, ...] = (
@@ -91,8 +92,8 @@ def sample_tslot_layout_variants(
     *,
     enabled: bool,
     seed: int,
-    nominal_fraction: float = 0.60,
-    phase_fraction: float = 0.20,
+    nominal_fraction: float = 0.0,
+    phase_fraction: float = 0.0,
 ) -> tuple[TSlotLayoutVariant, ...]:
     """Return deterministic, weighted geometry layouts for cloned environments."""
 
@@ -142,19 +143,22 @@ def sample_tslot_layout_variants(
 def sample_surface_appearance(
     base_color: tuple[float, float, float],
     base_roughness: float,
-    unit_values: tuple[float, float, float, float],
+    unit_values: tuple[float, ...],
     *,
     strength: float,
     color_scale: tuple[float, float],
     saturation_scale: tuple[float, float],
     hue_shift_deg: tuple[float, float],
     roughness: tuple[float, float],
+    metallic: tuple[float, float] = (0.0, 0.0),
 ) -> SurfaceAppearance:
-    """Sample reset-stable HSV/value and roughness jitter around one preset."""
+    """Sample reset-stable HSV/value, roughness, and mild metallic response."""
 
     values = tuple(float(value) for value in unit_values)
-    if len(values) != 4 or any(not 0.0 <= value <= 1.0 for value in values):
-        raise ValueError("unit_values must contain four values in [0, 1].")
+    if len(values) not in (4, 5) or any(not 0.0 <= value <= 1.0 for value in values):
+        raise ValueError("unit_values must contain four or five values in [0, 1].")
+    if len(values) == 4:
+        values = (*values, values[-1])
     amount = float(strength)
     if not 0.0 <= amount <= 1.0:
         raise ValueError("strength must lie in [0, 1].")
@@ -163,6 +167,7 @@ def sample_surface_appearance(
         ("saturation_scale", saturation_scale),
         ("hue_shift_deg", hue_shift_deg),
         ("roughness", roughness),
+        ("metallic", metallic),
     ):
         if len(value_range) != 2 or value_range[0] > value_range[1]:
             raise ValueError(f"{name} must be an ordered pair.")
@@ -170,6 +175,8 @@ def sample_surface_appearance(
         raise ValueError("color and saturation scales must stay positive.")
     if roughness[0] < 0.0 or roughness[1] > 1.0:
         raise ValueError("roughness must stay within [0, 1].")
+    if metallic[0] < 0.0 or metallic[1] > 1.0:
+        raise ValueError("metallic must stay within [0, 1].")
 
     def resolve(value: float, value_range: tuple[float, float]) -> float:
         return value_range[0] + value * (value_range[1] - value_range[0])
@@ -187,6 +194,7 @@ def sample_surface_appearance(
     return SurfaceAppearance(
         color=tuple(min(1.0, max(0.0, channel)) for channel in varied_color),
         roughness=base_roughness + amount * (sampled_roughness - base_roughness),
+        metallic=amount * resolve(values[4], metallic),
     )
 
 
@@ -210,8 +218,8 @@ def spawn_visual_servo_tslot_surfaces(
     enabled: bool = True,
     geometry_randomization_enabled: bool = False,
     seed: int = 0,
-    nominal_fraction: float = 0.60,
-    phase_fraction: float = 0.20,
+    nominal_fraction: float = 0.0,
+    phase_fraction: float = 0.0,
 ) -> dict[str, Any]:
     """Spawn the canonical small-pitch visual grooves over one flat collision plane."""
 
@@ -308,6 +316,7 @@ class LiveWorkspaceAppearanceRandomizer:
         part_saturation_scale: tuple[float, float] = (0.90, 1.10),
         part_hue_shift_deg: tuple[float, float] = (-5.0, 5.0),
         part_roughness: tuple[float, float] = (0.65, 0.90),
+        part_metallic: tuple[float, float] = (0.0, 0.18),
         tslot_color_scale: tuple[float, float] = (0.88, 1.12),
         tslot_saturation_scale: tuple[float, float] = (0.90, 1.10),
         tslot_hue_shift_deg: tuple[float, float] = (-5.0, 5.0),
@@ -321,6 +330,7 @@ class LiveWorkspaceAppearanceRandomizer:
         self.part_saturation_scale = tuple(part_saturation_scale)
         self.part_hue_shift_deg = tuple(part_hue_shift_deg)
         self.part_roughness = tuple(part_roughness)
+        self.part_metallic = tuple(part_metallic)
         self.tslot_color_scale = tuple(tslot_color_scale)
         self.tslot_saturation_scale = tuple(tslot_saturation_scale)
         self.tslot_hue_shift_deg = tuple(tslot_hue_shift_deg)
@@ -345,7 +355,13 @@ class LiveWorkspaceAppearanceRandomizer:
         # values are indices into the canonical aluminum appearance palette.
         self.background_index = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
 
-    def sample(self, env_ids: torch.Tensor, *, strength: float | torch.Tensor) -> None:
+    def sample(
+        self,
+        env_ids: torch.Tensor,
+        *,
+        strength: float | torch.Tensor,
+        palette_indices: torch.Tensor | None = None,
+    ) -> None:
         """Sample reset-stable live appearances with curriculum/clean masking."""
 
         from pxr import Gf
@@ -353,6 +369,14 @@ class LiveWorkspaceAppearanceRandomizer:
         ids = env_ids.to(device=self.device, dtype=torch.long).flatten()
         if ids.numel() == 0:
             return
+        forced_palette_indices: list[int] | None = None
+        if palette_indices is not None:
+            forced = palette_indices.to(device=self.device, dtype=torch.long).flatten()
+            if forced.numel() != ids.numel() or torch.any(
+                (forced < 0) | (forced >= len(VISUAL_SERVO_PART_PALETTE))
+            ):
+                raise ValueError("palette_indices must contain one valid part-palette index per environment.")
+            forced_palette_indices = forced.cpu().tolist()
         if isinstance(strength, torch.Tensor):
             strengths = strength.to(device=self.device, dtype=torch.float32).flatten()
             if strengths.numel() == 1:
@@ -367,29 +391,36 @@ class LiveWorkspaceAppearanceRandomizer:
         active = torch.rand(ids.numel(), device=self.device) < strengths
         palette_units = torch.rand(ids.numel(), device=self.device).cpu().tolist()
         background_units = torch.rand(ids.numel(), device=self.device).cpu().tolist()
-        material_units = torch.rand((ids.numel(), 8), device=self.device).cpu().tolist()
+        material_units = torch.rand((ids.numel(), 10), device=self.device).cpu().tolist()
         active_cpu = active.cpu().tolist()
         strengths_cpu = strengths.cpu().tolist()
 
         for row, env_index_tensor in enumerate(ids.cpu()):
             env_index = int(env_index_tensor)
+            # Base part color is categorical domain randomization, independent
+            # of continuous appearance strength.  A clean episode therefore
+            # does not silently become the old brown fallback.
+            palette_index = (
+                forced_palette_indices[row]
+                if forced_palette_indices is not None
+                else sample_weighted_part_palette_index(palette_units[row])
+            )
             if active_cpu[row]:
-                palette_index = sample_weighted_part_palette_index(palette_units[row])
                 background_index = sample_weighted_tslot_background_index(background_units[row])
             else:
-                palette_index = VISUAL_SERVO_CANONICAL_PART_INDEX
                 background_index = VISUAL_SERVO_CANONICAL_TSLOT_BACKGROUND_INDEX
 
             part_appearance = VISUAL_SERVO_PART_PALETTE[palette_index]
             varied_part = sample_surface_appearance(
                 part_appearance.color,
                 VISUAL_SERVO_PART_ROUGHNESS,
-                tuple(material_units[row][:4]),
+                tuple(material_units[row][:5]),
                 strength=strengths_cpu[row] if active_cpu[row] else 0.0,
                 color_scale=self.part_color_scale,
                 saturation_scale=self.part_saturation_scale,
                 hue_shift_deg=self.part_hue_shift_deg,
                 roughness=self.part_roughness,
+                metallic=self.part_metallic,
             )
             part_shader = self.stage.GetPrimAtPath(self.part_shader_paths_by_env[env_index])
             if not part_shader.IsValid():
@@ -398,9 +429,10 @@ class LiveWorkspaceAppearanceRandomizer:
                 )
             part_color_attr = part_shader.GetAttribute("inputs:diffuseColor")
             part_roughness_attr = part_shader.GetAttribute("inputs:roughness")
+            part_metallic_attr = part_shader.GetAttribute("inputs:metallic")
             if not part_color_attr.Set(Gf.Vec3f(*varied_part.color)) or not part_roughness_attr.Set(
                 varied_part.roughness
-            ):
+            ) or not part_metallic_attr.Set(varied_part.metallic):
                 raise RuntimeError(f"Failed to author part appearance for env {env_index}.")
 
             tslot_shader_path = self.tslot_aluminum_shader_paths.get(env_index)
@@ -413,7 +445,7 @@ class LiveWorkspaceAppearanceRandomizer:
             varied_background = sample_surface_appearance(
                 background.color,
                 background.roughness,
-                tuple(material_units[row][4:]),
+                tuple(material_units[row][5:]),
                 strength=strengths_cpu[row] if active_cpu[row] else 0.0,
                 color_scale=self.tslot_color_scale,
                 saturation_scale=self.tslot_saturation_scale,

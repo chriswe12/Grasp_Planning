@@ -52,6 +52,13 @@ class LiveObservationRandomizationCfg:
     rgb_patch_occlusion_probability: float = 0.06
     depth_patch_dropout_probability: float = 0.04
     patch_area_fraction: tuple[float, float] = (0.005, 0.03)
+    # Episode-persistent connected invalid-depth regions. Sparse seeds are
+    # dilated on a coarse grid and upsampled, producing irregular clusters
+    # rather than independent missing pixels.
+    depth_structured_dropout_probability: float = 0.08
+    depth_structured_dropout_seed_probability: tuple[float, float] = (0.001, 0.006)
+    structured_dropout_field_shape: tuple[int, int] = (18, 32)
+    structured_dropout_dilation: int = 3
     depth_min_m: float = 0.07
     depth_max_m: float = 0.50
 
@@ -78,6 +85,7 @@ class LiveObservationRandomizationCfg:
             "calibration_shift_y_px",
             "calibration_scale",
             "calibration_roll_deg",
+            "depth_structured_dropout_seed_probability",
         ):
             lower, upper = getattr(self, name)
             if lower > upper:
@@ -87,11 +95,18 @@ class LiveObservationRandomizationCfg:
         for name in (
             "rgb_patch_occlusion_probability",
             "depth_patch_dropout_probability",
+            "depth_structured_dropout_probability",
         ):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1].")
         if not 0.0 <= self.patch_area_fraction[0] <= self.patch_area_fraction[1] <= 0.25:
             raise ValueError("patch_area_fraction must be ordered inside [0, 0.25].")
+        if not 0.0 <= self.depth_structured_dropout_seed_probability[0] <= self.depth_structured_dropout_seed_probability[1] <= 0.25:
+            raise ValueError("depth_structured_dropout_seed_probability must be ordered inside [0, 0.25].")
+        if len(self.structured_dropout_field_shape) != 2 or min(self.structured_dropout_field_shape) < 3:
+            raise ValueError("structured_dropout_field_shape must contain two dimensions >= 3.")
+        if self.structured_dropout_dilation < 1 or self.structured_dropout_dilation % 2 == 0:
+            raise ValueError("structured_dropout_dilation must be a positive odd integer.")
         if self.depth_quantization_m < 0.0:
             raise ValueError("depth_quantization_m cannot be negative.")
         if self.stereo_focal_length_px <= 0.0 or self.stereo_baseline_m <= 0.0:
@@ -115,9 +130,9 @@ class LiveObservationRandomizationCfg:
 class LiveObservationRandomizer:
     """Apply per-environment live RGB-D variation while leaving goals untouched.
 
-    Exposure, color response, vignetting, blur, and depth calibration are
-    sampled once per episode. Pixel noise and missing depth are sampled on each
-    observation to approximate frame-to-frame sensor variation.
+    Exposure, color response, vignetting, blur, depth calibration, and
+    structured invalid regions are sampled once per episode. Fine pixel noise
+    and sparse missing depth are sampled on each observation.
     """
 
     def __init__(
@@ -161,6 +176,13 @@ class LiveObservationRandomizer:
         self.randomization_strength = torch.ones_like(self.exposure_gain)
         self.rgb_patch_enabled = torch.zeros((self.num_envs,), dtype=torch.bool, device=self.device)
         self.depth_patch_enabled = torch.zeros_like(self.rgb_patch_enabled)
+        self.depth_structured_dropout_enabled = torch.zeros_like(self.rgb_patch_enabled)
+        structured_height, structured_width = cfg.structured_dropout_field_shape
+        self.depth_structured_dropout_field = torch.zeros(
+            (self.num_envs, 1, structured_height, structured_width),
+            dtype=torch.bool,
+            device=self.device,
+        )
         self.patch_center_x = torch.zeros((self.num_envs,), device=self.device)
         self.patch_center_y = torch.zeros_like(self.patch_center_x)
         self.patch_area_fraction = torch.zeros_like(self.patch_center_x)
@@ -224,6 +246,8 @@ class LiveObservationRandomizer:
             self.randomization_strength[env_ids] = 0.0
             self.rgb_patch_enabled[env_ids] = False
             self.depth_patch_enabled[env_ids] = False
+            self.depth_structured_dropout_enabled[env_ids] = False
+            self.depth_structured_dropout_field[env_ids] = False
             return
 
         exposure_stops = self._uniform(env_ids, self.cfg.exposure_stops)
@@ -268,6 +292,21 @@ class LiveObservationRandomizer:
         self.depth_patch_enabled[env_ids] = torch.rand(len(env_ids), device=self.device) < (
             self.cfg.depth_patch_dropout_probability * strength_flat
         )
+        self.depth_structured_dropout_enabled[env_ids] = torch.rand(len(env_ids), device=self.device) < (
+            self.cfg.depth_structured_dropout_probability * strength_flat
+        )
+        seed_probability = self._uniform(
+            env_ids, self.cfg.depth_structured_dropout_seed_probability
+        ).reshape(-1, 1, 1, 1)
+        seeds = torch.rand_like(self.depth_structured_dropout_field[env_ids], dtype=torch.float32) < seed_probability
+        dilation = int(self.cfg.structured_dropout_dilation)
+        connected = F.max_pool2d(
+            seeds.float(),
+            kernel_size=dilation,
+            stride=1,
+            padding=dilation // 2,
+        ).bool()
+        self.depth_structured_dropout_field[env_ids] = connected
         self.patch_center_x[env_ids] = torch.rand(len(env_ids), device=self.device)
         self.patch_center_y[env_ids] = torch.rand(len(env_ids), device=self.device)
         lower, upper = self.cfg.patch_area_fraction
@@ -487,6 +526,16 @@ class LiveObservationRandomizer:
         )
         randomized_depth = torch.where(
             patch_mask & self.depth_patch_enabled.view(-1, 1, 1, 1),
+            randomized_depth.new_full((), self.cfg.depth_max_m),
+            randomized_depth,
+        )
+        structured_mask = F.interpolate(
+            self.depth_structured_dropout_field.float(),
+            size=(height, width),
+            mode="nearest",
+        ).permute(0, 2, 3, 1).bool()
+        randomized_depth = torch.where(
+            structured_mask & self.depth_structured_dropout_enabled.view(-1, 1, 1, 1),
             randomized_depth.new_full((), self.cfg.depth_max_m),
             randomized_depth,
         )

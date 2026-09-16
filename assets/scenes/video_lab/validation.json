@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "blender_layout_seeds_checked": 200,
+  "usd_dependencies_resolved": true,
+  "static_colliders": 2,
+  "props_checked": 5,
+  "layout_seeds_checked": 200,
+  "observed_prop_counts": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "table_support_z_m": 0.0,
+  "randomization_repeatable": true,
+  "per_environment_materials_independent": true,
+  "source_asset_unchanged": true,
+  "blender_version": "5.2.1 LTS",
+  "isaac_simulation": "Not run: NVIDIA driver unavailable in this session"
+}

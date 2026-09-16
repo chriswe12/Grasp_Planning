@@ -1,0 +1,36 @@
+{
+  "suite_id": "20260828-175458",
+  "task": "Grasp-Visual-Servo-RGBD-FabricaAll-Direct-v0",
+  "experiment_family": "grasp_visual_servo_rgbd_multipart",
+  "gpu_type": "rtx_4090",
+  "gpu_count": 4,
+  "num_envs_per_rank": 224,
+  "max_iterations": 10000,
+  "seed": 42,
+  "runs": [
+    {
+      "label": "baseline",
+      "job_id": 12082356,
+      "experiment": "fabrica_all_weekend_20260828-175458_baseline_seed42",
+      "sim2real_profile": "combined_sim2real",
+      "training_profile": "baseline",
+      "policy_context": "action"
+    },
+    {
+      "label": "improved",
+      "job_id": 12082358,
+      "experiment": "fabrica_all_weekend_20260828-175458_improved_seed42",
+      "sim2real_profile": "combined_sim2real",
+      "training_profile": "long_run_improved",
+      "policy_context": "action"
+    },
+    {
+      "label": "clutter-improved",
+      "job_id": 12082370,
+      "experiment": "fabrica_all_weekend_20260828-175458_clutter-improved_seed42",
+      "sim2real_profile": "combined_clutter",
+      "training_profile": "long_run_improved",
+      "policy_context": "action"
+    }
+  ]
+}

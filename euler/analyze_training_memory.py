@@ -53,9 +53,12 @@ def analyze_memory_logs(
         epochs = [float(row["epoch"]) for row in analyzed]
         device_used = [float(row["device_used_mib"]) for row in analyzed]
         reserved = [float(row["reserved_mib"]) for row in analyzed]
+        allocated = [float(row['allocated_mib']) for row in analyzed] if 'allocated_mib' in analyzed[0] else None
+        cpu_rss = [float(row['cpu_rss_mib']) for row in analyzed] if 'cpu_rss_mib' in analyzed[0] else None
         free = [float(row["device_free_mib"]) for row in analyzed]
         device_slope = _linear_slope(epochs, device_used)
         reserved_slope = _linear_slope(epochs, reserved)
+        allocated_slope = _linear_slope(epochs, allocated) if allocated else None
         rank_status = "PASS"
         reasons: list[str] = []
         if device_slope > max_growth_mib_per_epoch:
@@ -64,6 +67,9 @@ def analyze_memory_logs(
                 f"device memory grows {device_slope:.3f} MiB/epoch "
                 f"(limit {max_growth_mib_per_epoch:.3f})"
             )
+        if allocated_slope is not None and allocated_slope > max_growth_mib_per_epoch:
+            rank_status = 'FAIL'
+            reasons.append(f'live Torch tensors grow {allocated_slope:.3f} MiB/epoch')
         if min(free) < min_free_mib:
             rank_status = "FAIL"
             reasons.append(f"minimum free VRAM {min(free):.1f} MiB is below {min_free_mib:.1f} MiB")
@@ -78,6 +84,10 @@ def analyze_memory_logs(
                 "epoch_end": int(epochs[-1]),
                 "device_used_slope_mib_per_epoch": device_slope,
                 "reserved_slope_mib_per_epoch": reserved_slope,
+                "allocated_slope_mib_per_epoch": allocated_slope,
+                "cpu_rss_slope_mib_per_epoch": _linear_slope(epochs, cpu_rss) if cpu_rss else None,
+                "cpu_rss_first_mib": cpu_rss[0] if cpu_rss else None,
+                "cpu_rss_last_mib": cpu_rss[-1] if cpu_rss else None,
                 "projected_device_growth_over_3000_epochs_mib": max(0.0, device_slope) * 3000.0,
                 "minimum_free_mib": min(free),
                 "final_free_mib": free[-1],

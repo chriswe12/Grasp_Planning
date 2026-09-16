@@ -54,7 +54,7 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 
 def _required_command_fragments(manifest: dict[str, Any], run: dict[str, Any]) -> tuple[str, ...]:
-    return (
+    fragments = [
         f"--task {manifest['task']}",
         f"--num_envs {manifest['num_envs_per_rank']}",
         f"--max_iterations {manifest['max_iterations']}",
@@ -62,7 +62,10 @@ def _required_command_fragments(manifest: dict[str, Any], run: dict[str, Any]) -
         f"--sim2real_profile {run['sim2real_profile']}",
         f"--policy-context {run['policy_context']}",
         f"--experiment-name {run['experiment']}",
-    )
+    ]
+    if training_profile := run.get("training_profile"):
+        fragments.append(f"--training-profile {training_profile}")
+    return tuple(fragments)
 
 
 def _verify_memory_csv(path: Path, *, max_iterations: int, min_free_mib: float) -> list[str]:
@@ -212,6 +215,17 @@ def verify_run(
                 f"serialized profile {profile_cfg.get('profile')!r}, "
                 f"expected {run['sim2real_profile']!r}"
             )
+        if expected_training_profile := run.get("training_profile"):
+            serialized_training_profile = profile_cfg.get("training_profile", {})
+            if not isinstance(serialized_training_profile, dict):
+                errors.append(
+                    f"serialized training profile is not a mapping: {serialized_training_profile!r}"
+                )
+            elif serialized_training_profile.get("name") != expected_training_profile:
+                errors.append(
+                    f"serialized training profile {serialized_training_profile.get('name')!r}, "
+                    f"expected {expected_training_profile!r}"
+                )
 
     memory_analysis_path = logs_root / "metrics" / f"gpu-{job_id}.training-memory.json"
     memory_analysis: dict[str, Any] | None = None
