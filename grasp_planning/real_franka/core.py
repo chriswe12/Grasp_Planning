@@ -9,8 +9,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from grasp_planning.rl.deployment_model.completion_model import GraspCompletionModel
-from grasp_planning.rl.deployment_model.resnet_rgbd_network import GraspRgbdResNetBuilder
 from grasp_planning.rl.zed_mini import pack_zed_rgbd, resolve_zed_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -182,6 +180,9 @@ def live_to_training(rgb, depth, calibration, profile, device="cpu"):
 
 class Actor:
     def __init__(self, catalog, checkpoint=DEFAULT_CHECKPOINT, device="cuda:0"):
+        from grasp_planning.rl.deployment_model.completion_model import GraspCompletionModel
+        from grasp_planning.rl.deployment_model.resnet_rgbd_network import GraspRgbdResNetBuilder
+
         self.device = torch.device(device)
         self.catalog = catalog
         checkpoint = Path(checkpoint)
