@@ -24,6 +24,13 @@ from .fabrica_grasp_debug import (
     select_first_feasible_grasp,
 )
 from .finger_geometry import finger_box_corners, finger_boxes_from_grasp
+from .gpd_grasp_generator import (
+    ExternalGpdGraspGenerator,
+    GpdGraspGeneratorConfig,
+    sample_mesh_surface,
+    write_ascii_pcd,
+    write_normals_csv,
+)
 from .grasp_transforms import WorldFrameGraspCandidate, grasp_approach_axis_world, saved_grasp_to_world_grasp
 from .mesh_antipodal_grasp_generator import (
     AntipodalGraspGeneratorConfig,
@@ -45,7 +52,9 @@ __all__ = [
     "FingerBoxGripperCollisionModel",
     "FingerBoxWithHandMeshCollisionModel",
     "FrankaHandFingerCollisionModel",
+    "ExternalGpdGraspGenerator",
     "GraspCollisionEvaluator",
+    "GpdGraspGeneratorConfig",
     "HalfSpaceWorldConstraint",
     "KukaYGripperCollisionModel",
     "ObjectFrameGraspCandidate",
@@ -70,7 +79,10 @@ __all__ = [
     "make_gripper_collision_models",
     "normalize_gripper_collision_model_name",
     "sample_pickup_placement_spec",
+    "sample_mesh_surface",
     "score_grasps",
     "saved_grasp_to_world_grasp",
     "select_first_feasible_grasp",
+    "write_ascii_pcd",
+    "write_normals_csv",
 ]
