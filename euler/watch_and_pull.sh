@@ -6,6 +6,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=euler.env
 source "${EULER_CONFIG_PATH:-${SCRIPT_DIR}/euler.env}"
 
+# A responsive SSH connection can still leave a remote command stuck. Bound
+# each read-only poll so the existing retry loop can keep making progress.
+watch_ssh() {
+    timeout --kill-after=5s 45s ssh \
+        -o BatchMode=yes -o ConnectTimeout=15 \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=2 "$@"
+}
+
 job_id="${1:-}"
 poll_seconds="${2:-60}"
 
@@ -48,7 +56,7 @@ max_iterations_pattern='--max_iterations[[:space:]]+([0-9]+)'
 
 while true; do
     job_record="$(
-        ssh "${EULER_LOGIN}" \
+        watch_ssh "${EULER_LOGIN}" \
             "sacct -X -j '${job_id}' --noheader --parsable2 --format=State,ExitCode,ElapsedRaw | head -n 1" \
             2>/dev/null || true
     )"
@@ -58,7 +66,7 @@ while true; do
     case "${state}" in
         PENDING*|RUNNING*|CONFIGURING*|COMPLETING*|SUSPENDED*|RESIZING*|REQUEUED*|REQUEUE_*|SIGNALING*|STAGE_OUT*)
             progress_line="$(
-                ssh "${EULER_LOGIN}" \
+                watch_ssh "${EULER_LOGIN}" \
                     "grep -E 'fps step:.*epoch: [0-9]+/[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | tail -n 1" \
                     2>/dev/null || true
             )"
@@ -73,7 +81,7 @@ while true; do
                 fi
             else
                 command_line="$(
-                    ssh "${EULER_LOGIN}" \
+                    watch_ssh "${EULER_LOGIN}" \
                         "grep -m1 'Running mode=train:' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null" \
                         2>/dev/null || true
                 )"
@@ -82,7 +90,7 @@ while true; do
                 fi
 
                 container_run_dir="$(
-                    ssh "${EULER_LOGIN}" \
+                    watch_ssh "${EULER_LOGIN}" \
                         "grep -m1 '^Exact experiment name requested from command line: /' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/^Exact experiment name requested from command line: //'" \
                         2>/dev/null || true
                 )"
@@ -91,7 +99,7 @@ while true; do
                 if [[ "${container_run_dir}" == "${container_logs_prefix}"/* ]]; then
                     remote_run_dir="${EULER_RUNS_DIR}${container_run_dir#"${container_logs_prefix}"}"
                     event_record="$(
-                        ssh "${EULER_LOGIN}" \
+                        watch_ssh "${EULER_LOGIN}" \
                             "find '${remote_run_dir}' -type f -name 'events.out.tfevents.*' -printf '%T@|%p\\n' 2>/dev/null | sort -nr | head -n 1" \
                             2>/dev/null || true
                     )"
@@ -99,7 +107,8 @@ while true; do
                 event_file="${event_record#*|}"
                 if [[ -n "${event_record}" && "${event_file}" != "${event_record}" ]]; then
                     local_event="${watch_cache}/$(basename "${event_file}")"
-                    if rsync -az --partial \
+                    if rsync -az --partial --timeout=120 \
+                        -e 'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2' \
                         "${EULER_LOGIN}:${event_file}" "${local_event}" \
                         >/dev/null 2>&1; then
                         tensorboard_progress="$(
@@ -116,13 +125,13 @@ while true; do
 
                 eta_seconds=0
                 rollout_batch="$(
-                    ssh "${EULER_LOGIN}" \
+                    watch_ssh "${EULER_LOGIN}" \
                         "grep -m1 -oE 'global rollout batch=[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/.*=//'" \
                         2>/dev/null || true
                 )"
                 if [[ ! "${rollout_batch}" =~ ^[1-9][0-9]*$ ]]; then
                     rollout_batch="$(
-                        ssh "${EULER_LOGIN}" \
+                        watch_ssh "${EULER_LOGIN}" \
                             "grep -m1 -oE 'RL-Games rollout batch=[0-9]+' '${EULER_RUNS_DIR}/slurm-${job_id}.out' 2>/dev/null | sed 's/.*=//'" \
                             2>/dev/null || true
                     )"
@@ -136,9 +145,6 @@ while true; do
                         (total_epochs - current_epoch) * (elapsed_raw - previous_elapsed) /
                         (current_epoch - previous_epoch)
                     ))
-                    eta="$(format_duration "${eta_seconds}")"
-                elif (( current_epoch >= 10 && elapsed_raw > 0 )); then
-                    eta_seconds=$((elapsed_raw * (total_epochs - current_epoch) / current_epoch))
                     eta="$(format_duration "${eta_seconds}")"
                 fi
                 printf \

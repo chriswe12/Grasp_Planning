@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "model": "ZED Mini",
+  "calibration_status": "measured_rectified_intrinsics_mount_and_tcp_user_supplied",
+  "serial_number": 13829658,
+  "image_stream": "left_rectified",
+  "source_width": 672,
+  "source_height": 376,
+  "fx": 338.60015869140625,
+  "fy": 338.60015869140625,
+  "cx": 332.0467834472656,
+  "cy": 184.43112182617188,
+  "render_width": 384,
+  "render_height": 216,
+  "observation_width": 384,
+  "observation_height": 216,
+  "depth_min_m": 0.1,
+  "depth_max_m": 1.0,
+  "stereo_baseline_m": 0.0628676488995552,
+  "parent_link": "panda_hand",
+  "position_m": [
+    -0.1115,
+    0.0481,
+    0.0151
+  ],
+  "quaternion_wxyz": [
+    0.6435702,
+    -0.2768679,
+    0.2724621,
+    -0.6594891
+  ],
+  "convention": "ros",
+  "tcp_offset_in_hand_m": [
+    0.0,
+    0.0,
+    0.1034
+  ],
+  "notes": "Rectified LEFT intrinsics from ZED SDK 5.4.0, SN13829658, 672x376, recorded in artifacts/franka_real_runs/20260921_170825.json. NEURAL optical-Z metric depth. Camera mount and hand-to-TCP offset retained from user settings; this does not constitute extrinsic or depth-bias calibration."
+}

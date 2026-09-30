@@ -32,3 +32,72 @@ def test_cached_sdf_overrides_batch_without_editing_source():
     assert source.ExportToString() == before
     assert randomizer._spec(color) is color_spec
     registration.Revoke()
+
+
+def test_fixed_wear_keeps_visibility_but_randomizes_materials():
+    import json
+    from pathlib import Path
+
+    from pxr import UsdGeom, UsdLux, UsdShade
+
+    root = Path(__file__).resolve().parents[1]
+    stage = Usd.Stage.CreateInMemory()
+    env = "/World/env_0"
+    stage.DefinePrim(env + "/Lab", "Xform").GetReferences().AddReference(
+        str(root / "assets/scenes/video_lab_pencil/environment.usdc")
+    )
+    shader = UsdShade.Shader.Define(stage, env + "/Part/material/Shader")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.1, 0.2, 0.4))
+    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
+    light = UsdLux.SphereLight.Define(stage, env + "/RandomKey")
+    UsdGeom.Xformable(light).AddTranslateOp().Set(Gf.Vec3d(0, 0, 1))
+    profile = json.loads((root / "configs/franka_pencil_randomization.json").read_text())
+    randomizer = FrankaAppearanceRandomizer(stage, [env], [[0, 0, 0]], [], profile, fixed_wear=True)
+    first = randomizer.apply(0, 43)
+    visibility = [attr.Get() for attr in randomizer.handles[0]["wear"]]
+    changed = []
+    registration = Tf.Notice.Register(
+        Usd.Notice.ObjectsChanged,
+        lambda notice, sender: changed.extend(map(str, notice.GetChangedInfoOnlyPaths())),
+        stage,
+    )
+    second = randomizer.apply(0, 1234)
+    assert first["wear_visible"] == second["wear_visible"]
+    assert visibility == [attr.Get() for attr in randomizer.handles[0]["wear"]]
+    assert first["part_color"] != second["part_color"]
+    assert not any(path.endswith(".visibility") for path in changed)
+    assert any(path.endswith("inputs:diffuseColor") for path in changed)
+    registration.Revoke()
+
+
+def test_background_simplification_preserves_table_floor_and_materials():
+    from pathlib import Path
+
+    from pxr import UsdGeom
+
+    from grasp_planning.rl.franka_performance import simplify_background
+
+    root = Path(__file__).resolve().parents[1]
+    stage = Usd.Stage.CreateInMemory()
+    env = "/World/env_0"
+    stage.DefinePrim(env + "/Lab", "Xform").GetReferences().AddReference(
+        str(root / "assets/scenes/video_lab_pencil/environment.usdc")
+    )
+
+    def snapshot(prefix):
+        return {
+            str(attr.GetPath()): str(attr.Get())
+            for prim in Usd.PrimRange(stage.GetPrimAtPath(prefix))
+            for attr in prim.GetAttributes()
+        }
+
+    protected = [
+        env + "/Lab/" + suffix
+        for suffix in ("Table", "Room/Room_floor", "_materials", "Table_Support_Collision", "Floor_Collision")
+    ]
+    before = [snapshot(path) for path in protected]
+    hidden = simplify_background(stage, [env])
+    assert len(hidden) > 60
+    assert before == [snapshot(path) for path in protected]
+    assert all(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility() == "invisible" for path in hidden)

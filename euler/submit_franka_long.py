@@ -36,8 +36,21 @@ def main():
         help="Successful production-catalog PPO gate; never a diagnostic dataset",
     )
     parser.add_argument("--segments", type=int, default=6)
+    parser.add_argument("--num-envs", type=int, default=32, help="Environments per GPU")
+    parser.add_argument("--gpu-count", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--job-prefix", default="franka-all-long")
     parser.add_argument("--epochs-per-segment", type=int, default=1024)
     parser.add_argument("--time-limit", default="24:00:00")
+    parser.add_argument(
+        "--start-after-epoch", type=int, default=0, help="Skip milestones already passed by the verified gate"
+    )
+    parser.add_argument(
+        "--evaluation-mode",
+        choices=("each", "final", "none"),
+        default="each",
+        help="Final-only avoids repeated evaluation overhead in continuation allocations",
+    )
     parser.add_argument(
         "--startup-epochs",
         type=int,
@@ -46,6 +59,9 @@ def main():
     )
     parser.add_argument("--startup-time-limit", default="04:00:00")
     args = parser.parse_args()
+    if args.num_envs < 1 or args.gpu_count < 1:
+        parser.error("Positive environment/GPU counts required")
+    rollout_frames = args.num_envs * args.gpu_count * 64
     audit = json.loads(args.catalog_audit.read_text())
     assert audit["passed"] and audit["splits"]["train"]["targets"] > 0
     assert hashlib.sha256((ROOT / args.catalog).read_bytes()).hexdigest() == audit["catalog_sha256"], (
@@ -54,6 +70,9 @@ def main():
     plan = segment_plan(
         args.segments, args.epochs_per_segment, args.time_limit, args.startup_epochs, args.startup_time_limit
     )
+    plan = [item for item in plan if item[1] > args.start_after_epoch]
+    if not plan:
+        parser.error("No training milestones remain after the supplied epoch")
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     assert not args.output.exists(), "Refusing to duplicate an existing submission chain"
@@ -92,12 +111,14 @@ def main():
         jobs=[],
         initial_gate_state=gate_state,
         initial_gate_exit_code=gate_exit,
-        gpu_count=4,
-        environments_per_gpu=32,
-        global_rollout_frames=8192,
+        gpu_count=args.gpu_count,
+        environments_per_gpu=args.num_envs,
+        global_rollout_frames=rollout_frames,
         final_epoch=args.segments * args.epochs_per_segment,
-        target_transitions=args.segments * args.epochs_per_segment * 8192,
+        target_transitions=args.segments * args.epochs_per_segment * rollout_frames,
         planned_milestones=[dict(segment=i, final_epoch=epoch, time_limit=limit) for i, epoch, limit in plan],
+        evaluation_mode=args.evaluation_mode,
+        start_after_epoch=args.start_after_epoch,
         budget_note="A substantial learning budget, not a convergence guarantee; inspect held-out evaluation between segments.",
     )
 
@@ -114,11 +135,13 @@ def main():
             str(ROOT / "euler/submit.sh"),
             "franka-train",
             "--gpu-count",
-            "4",
+            str(args.gpu_count),
             "--global-minibatch-size",
             "1024",
             "--num-envs",
-            "32",
+            str(args.num_envs),
+            "--seed",
+            str(args.seed),
             "--catalog",
             args.catalog,
             "--iterations",
@@ -127,9 +150,8 @@ def main():
             "100",
             "--resume-job",
             str(previous),
-            "--evaluate-after",
             "--job-label",
-            f"franka-all-long-s{segment}",
+            f"{args.job_prefix}-s{segment}",
             "--time-limit",
             time_limit,
         ]
@@ -138,7 +160,9 @@ def main():
         # pending/running predecessors still require an afterok dependency.
         if not (previous == args.initial_job and initial_completed):
             command.extend(["--afterok", str(previous)])
-        if segment == args.segments:
+        if args.evaluation_mode == "each" or (args.evaluation_mode == "final" and segment == args.segments):
+            command.append("--evaluate-after")
+        if segment == args.segments and args.evaluation_mode != "none":
             command.append("--evaluate-test-after")
         result = subprocess.run(command, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         print(result.stdout, flush=True)
