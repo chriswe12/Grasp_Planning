@@ -19,6 +19,37 @@ def audit(catalog, root=ROOT):
     assert count >= 3 and len(set(data["target_ids"])) == count, "Missing or duplicate targets"
     contract = json.loads(str(data["contract_json"].item()))
     assets = contract["object_assets"]
+    if contract.get("pose_reset_profile"):
+        valid = data["pose_reset_valid"]
+        progress = data["pose_reset_progress"]
+        assert contract["pose_reset_profile"]["version"] >= 3, "Require corrected boundary and validated nominal pools"
+        kinds = data["pose_reset_kind"]
+        assert valid.shape == data["pose_reset_joints"].shape[:2]
+        assert valid.dtype == np.bool_ and valid.shape[0] == count
+        for condition in (0.0, 0.25, 0.5, 0.75, 0.94):
+            mask = np.isclose(progress, condition) & (kinds == 0)
+            assert (valid & mask[None, :]).any(axis=1).all(), f"Missing safe pose condition {condition}"
+        assert np.isfinite(data["pose_reset_joints"]).all()
+        assert (data["pose_reset_contact_n"][valid] < 0.5).all()
+        perturbed = valid & (kinds[None, :] == 0)
+        assert (data["pose_reset_rotation_error_rad"][perturbed] > np.deg2rad(4.0)).all(), "Pose rotations collapsed"
+        assert (data["pose_reset_lateral_m"][perturbed] > 0.001).all(), "Lateral offsets collapsed"
+        assert contract["training_recipe"]["policy_hz"] == 15
+        position = valid & (kinds[None, :] == 2)
+        rotation = valid & (kinds[None, :] == 3)
+        assert position.any(1).mean() > 0.99, "Position boundary coverage collapsed"
+        pe, re = data["pose_reset_position_error_m"], data["pose_reset_rotation_error_rad"]
+        assert (re[position] < np.deg2rad(0.5)).all()
+        for lo, hi in ((0.0, 0.004), (0.004, 0.006), (0.006, float("inf"))):
+            assert (position & (pe > lo) & (pe < hi)).any(), "Position boundary label class collapsed"
+        assert rotation.any(), "Missing orientation-only hard negatives"
+        assert (pe[rotation] < 0.001).all() and (re[rotation] > np.deg2rad(4.5)).all()
+        ready = valid & np.isin(kinds, [1, 4])[None, :]
+        assert ready.any(1).all(), "Target has no validated positive start"
+        assert (pe[ready] < 0.004).all() and (re[ready] < np.deg2rad(3)).all()
+        nominal = valid & (kinds[None, :] == 5) & (progress[None, :] <= 0.94)
+        assert nominal.any(1).all(), "Missing safe nominal approach"
+
     for key in (
         "joint_paths",
         "goal_rgbd",

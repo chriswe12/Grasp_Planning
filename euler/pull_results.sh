@@ -27,7 +27,8 @@ flock 9
 attempt=1
 while true; do
     echo "[INFO] Downloading Euler results to ${local_results} (attempt ${attempt})"
-    if rsync -azh --info=progress2 --partial \
+    if rsync -azh --info=progress2 --partial --timeout=120 \
+        -e 'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2' \
         "${EULER_LOGIN}:${EULER_RUNS_DIR}/" "${local_results}/"; then
         break
     fi

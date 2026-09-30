@@ -13,6 +13,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from grasp_planning.rl.franka_offline_asset import verified_robot_asset
 from grasp_planning.rl.video_lab_scene import training_asset_digest
+from grasp_planning.rl.zed_mini import resolve_zed_profile
 
 
 def main():
@@ -32,6 +33,7 @@ def main():
     catalog = root / args.catalog
     with np.load(catalog, allow_pickle=False) as source:
         contract = json.loads(str(source["contract_json"].item()))
+        resolve_zed_profile(contract)
         split_counts = {split: int((source["split"] == split).sum()) for split in ("train", "validation", "test")}
         sources = list(
             zip(source["source_bundle_paths"].tolist(), source["source_bundle_sha256"].tolist(), strict=True)

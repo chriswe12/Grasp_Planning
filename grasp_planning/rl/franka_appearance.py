@@ -69,10 +69,11 @@ class FrankaAppearanceRandomizer:
     not relight another. Background geometry and collision state are untouched.
     """
 
-    def __init__(self, stage, roots, origins, prop_names, profile):
+    def __init__(self, stage, roots, origins, prop_names, profile, *, fixed_wear=False):
         from pxr import Sdf, Usd, UsdGeom, UsdLux, UsdShade
 
         self.profile = validate_profile(profile)
+        self.fixed_wear = fixed_wear
         self.stage = stage
         self._specs = {}
         self.origins = origins
@@ -171,8 +172,9 @@ class FrankaAppearanceRandomizer:
         put(h["table"].GetInput("roughness").GetAttr(), sample["table_roughness"])
         for attr, original in h["walls"]:
             put(attr.GetAttr(), Gf.Vec3f(*[min(0.98, c * sample["wall_gain"]) for c in original]))
-        for attr in h["wear"]:
-            put(attr, UsdGeom.Tokens.inherited if sample["wear_visible"] else UsdGeom.Tokens.invisible)
+        if not self.fixed_wear or self.samples[index] is None:
+            for attr in h["wear"]:
+                put(attr, UsdGeom.Tokens.inherited if sample["wear_visible"] else UsdGeom.Tokens.invisible)
         for shaders, color in zip(h["props"], sample["prop_colors"]):
             for shader in shaders:
                 put(shader.GetInput("diffuseColor").GetAttr(), Gf.Vec3f(*color))
@@ -188,6 +190,10 @@ class FrankaAppearanceRandomizer:
         from pxr import Sdf
 
         samples = [sample_appearance(self.profile, seed) for seed in seeds]
+        if self.fixed_wear:
+            for index, sample in zip(indices, samples):
+                if self.samples[index] is not None:
+                    sample["wear_visible"] = self.samples[index]["wear_visible"]
         edits = [edit for index, sample in zip(indices, samples) for edit in self._edits(index, sample)]
         # Only cached Sdf specs are touched here: no Usd queries/mutations while
         # notices are deferred. Commit all resetting rooms in one notification.

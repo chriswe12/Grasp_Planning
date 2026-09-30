@@ -74,6 +74,18 @@ nvidia-smi "${gpu_filter_args[@]}" --query-gpu=index,name,uuid,memory.total,driv
 echo "[INFO] Copying the Apptainer image to node-local storage"
 cp "${EULER_IMAGE_PATH}" "${local_image}"
 
+# Isolated Franka snapshots contain the complete portable catalog and assets.
+# Read them once from shared storage instead of separately in every Isaac rank.
+# Logs and continuation checkpoints keep their durable scratch bind mounts below.
+runtime_project_dir="${EULER_PROJECT_DIR}"
+if [[ "${mode}" == franka-* && "${EULER_STAGE_PROJECT_LOCAL:-0}" == 1 ]]; then
+    runtime_project_dir="${TMPDIR}/franka-project"
+    mkdir -p "${runtime_project_dir}"
+    rsync -a --exclude=/logs/ --exclude=/outputs/ "${EULER_PROJECT_DIR}/" "${runtime_project_dir}/"
+    mkdir -p "${runtime_project_dir}/logs" "${runtime_project_dir}/outputs"
+    echo "[INFO] Franka source/catalog/assets staged on node-local storage: ${runtime_project_dir}"
+fi
+
 mkdir -p \
     "${local_cache}/cache/kit" \
     "${local_cache}/cache/ov" \
@@ -179,7 +191,7 @@ apptainer_args=(
     --nv
     --containall
     --writable-tmpfs
-    --bind "${EULER_PROJECT_DIR}:/workspace/grasping_rl:ro"
+    --bind "${runtime_project_dir}:/workspace/grasping_rl:ro"
     --bind "${runtime_logs_dir}:/workspace/grasping_rl/logs:rw"
     --bind "${runtime_outputs_dir}:/workspace/grasping_rl/outputs:rw"
     --bind "${local_cache}/cache/kit:/isaac-sim/kit/cache:rw"
@@ -362,8 +374,10 @@ if [[ "${mode}" == franka-* ]]; then
         evaluate_validation=0
         evaluate_test=0
         evaluation_catalog=""
+        symmetry_args=()
         for ((i=0; i<${#runtime_command[@]}; i++)); do
             case "${runtime_command[i]}" in
+                --symmetry-training) symmetry_args=(--symmetry-training) ;;
                 --evaluate-after) evaluate_validation=1 ;;
                 --evaluate-test-after) evaluate_test=1 ;;
                 --catalog) evaluation_catalog="${runtime_command[i+1]}" ;;
@@ -374,8 +388,18 @@ if [[ "${mode}" == franka-* ]]; then
         evaluation_splits=()
         if (( evaluate_validation )); then evaluation_splits+=(validation); fi
         if (( evaluate_test )); then evaluation_splits+=(test); fi
+        pose_progresses=(legacy)
+        if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("pose_reset_profile") else 1)' "${verified_run}/contract.json"; then
+            pose_progresses=(0.0 0.5 0.94)
+        fi
         for split in "${evaluation_splits[@]}"; do
+          for pose_progress in "${pose_progresses[@]}"; do
+            pose_args=()
             evaluation_name="${experiment_name}_${split}"
+            if [[ "${pose_progress}" != legacy ]]; then
+                pose_args=(--pose-evaluation-progress "${pose_progress}")
+                evaluation_name+="_pose_${pose_progress}"
+            fi
             evaluation_output="${TMPDIR}/${evaluation_name}.stdout"
             echo "[INFO] Evaluating ${split} targets after verified checkpoint ${checkpoint_name}"
             set +e
@@ -386,7 +410,7 @@ if [[ "${mode}" == franka-* ]]; then
                 isaac_rl/scripts/train_franka_zed.py --evaluate \
                 --checkpoint "/workspace/grasping_rl/logs/franka/${experiment_name}/nn/${checkpoint_name}" \
                 --catalog "${evaluation_catalog}" --catalog-split "${split}" \
-                --evaluation-steps 15000 --num-envs 32 \
+                --evaluation-steps 50000 --num-envs 32 "${pose_args[@]}" "${symmetry_args[@]}" \
                 --robot-asset-manifest assets/usd/franka_panda_offline/manifest.json \
                 --run-dir /workspace/grasping_rl/logs/franka/evaluations \
                 --experiment-name "${evaluation_name}" \
@@ -400,6 +424,7 @@ if [[ "${mode}" == franka-* ]]; then
             fi
             python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["coverage_complete"]' \
                 "${runtime_logs_dir}/franka/evaluations/${evaluation_name}/evaluation.json"
+          done
         done
     fi
 elif [[ "${mode}" == "smoke" ]]; then

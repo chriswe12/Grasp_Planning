@@ -27,6 +27,7 @@ training = [
     "torchvision>=0.22",
 ]
 deployment = [
+    "Flask>=3.0",
     "Pillow>=10.0",
     "torch>=2.7",
     "torchvision>=0.22",
@@ -36,6 +37,7 @@ dev = [
     "ruff>=0.11",
 ]
 test = [
+    "Flask>=3.0",
     "Pillow>=10.0",
     "pytest>=8.0",
     "tensorboard>=2.16",
