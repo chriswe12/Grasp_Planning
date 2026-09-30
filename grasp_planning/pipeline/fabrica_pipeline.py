@@ -11,7 +11,12 @@ from pathlib import Path
 
 import numpy as np
 
-from grasp_planning.grasping import AntipodalGraspGeneratorConfig, AntipodalMeshGraspGenerator
+from grasp_planning.grasping import (
+    AntipodalGraspGeneratorConfig,
+    AntipodalMeshGraspGenerator,
+    ExternalGpdGraspGenerator,
+    GpdGraspGeneratorConfig,
+)
 from grasp_planning.grasping.collision import (
     GRIPPER_COLLISION_MODEL_FRANKA,
     GRIPPER_COLLISION_MODEL_KUKA_Y,
@@ -71,6 +76,7 @@ class GeometryConfig:
 
 @dataclass(frozen=True)
 class PlanningConfig:
+    grasp_generator: str = "antipodal"
     stage1_cache_enabled: bool = True
     stage1_cache_dir: str = "artifacts/stage1_cache"
     num_surface_samples: int = 1024
@@ -95,8 +101,21 @@ class PlanningConfig:
     contact_lateral_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_LATERAL_OFFSETS_M
     contact_approach_offsets_m: tuple[float, ...] = DEFAULT_CONTACT_APPROACH_OFFSETS_M
     rng_seed: int = 0
+    gpd_executable: str = ""
+    gpd_config_path: str = ""
+    gpd_command_template: str = ""
+    gpd_working_dir: str = ""
+    gpd_output_json: str = ""
+    gpd_artifact_dir: str = "artifacts/gpd"
+    gpd_keep_artifacts: bool = False
+    gpd_timeout_s: float = 120.0
+    gpd_num_pointcloud_samples: int = 0
 
     def __post_init__(self) -> None:
+        generator = str(self.grasp_generator).strip().lower()
+        if generator not in {"antipodal", "gpd"}:
+            raise ValueError(f"Unsupported planning.grasp_generator value '{self.grasp_generator}'.")
+        object.__setattr__(self, "grasp_generator", generator)
         object.__setattr__(
             self,
             "gripper_collision_model",
@@ -119,6 +138,29 @@ class PlanningConfig:
             detailed_finger_contact_gap_m=self.detailed_finger_contact_gap_m,
             gripper_collision_model=self.gripper_collision_model,
             rng_seed=self.rng_seed,
+        )
+
+    def to_gpd_generator_config(self) -> GpdGraspGeneratorConfig:
+        return GpdGraspGeneratorConfig(
+            executable=self.gpd_executable,
+            config_path=self.gpd_config_path,
+            command_template=self.gpd_command_template,
+            working_dir=self.gpd_working_dir,
+            output_json=self.gpd_output_json,
+            artifact_dir=self.gpd_artifact_dir,
+            keep_artifacts=self.gpd_keep_artifacts,
+            timeout_s=self.gpd_timeout_s,
+            num_pointcloud_samples=(
+                int(self.gpd_num_pointcloud_samples)
+                if int(self.gpd_num_pointcloud_samples) > 0
+                else int(self.num_surface_samples)
+            ),
+            min_jaw_width=self.min_jaw_width,
+            max_jaw_width=self.max_jaw_width,
+            detailed_finger_contact_gap_m=self.detailed_finger_contact_gap_m,
+            rng_seed=self.rng_seed,
+            check_target_collision=True,
+            gripper_collision_model=self.gripper_collision_model,
         )
 
 
@@ -563,7 +605,7 @@ def _stage1_cache_key_payload(
         }
     payload = {
         "schema_version": _STAGE1_CACHE_SCHEMA_VERSION,
-        "algorithm": "fabrica_stage1_antipodal_v1",
+        "algorithm": f"fabrica_stage1_{planning.grasp_generator}_v1",
         "grasp_scoring_algorithm": GRASP_SCORING_ALGORITHM_VERSION,
         "gripper_collision_geometry_version": (
             KUKA_Y_GRIPPER_COLLISION_GEOMETRY_VERSION
@@ -596,6 +638,7 @@ def _stage1_cache_key_payload(
             "source_frame_pose_obj_world": source_frame_payload,
         },
         "planning": {
+            "grasp_generator": planning.grasp_generator,
             "num_surface_samples": int(planning.num_surface_samples),
             "min_jaw_width": float(planning.min_jaw_width),
             "max_jaw_width": float(planning.max_jaw_width),
@@ -608,6 +651,17 @@ def _stage1_cache_key_payload(
             "contact_lateral_offsets_m": [float(v) for v in planning.contact_lateral_offsets_m],
             "contact_approach_offsets_m": [float(v) for v in planning.contact_approach_offsets_m],
             "rng_seed": int(planning.rng_seed),
+            "gpd": {
+                "executable": planning.gpd_executable,
+                "config_path": planning.gpd_config_path,
+                "command_template": planning.gpd_command_template,
+                "working_dir": planning.gpd_working_dir,
+                "output_json": planning.gpd_output_json,
+                "artifact_dir": planning.gpd_artifact_dir,
+                "keep_artifacts": bool(planning.gpd_keep_artifacts),
+                "timeout_s": float(planning.gpd_timeout_s),
+                "num_pointcloud_samples": int(planning.gpd_num_pointcloud_samples),
+            },
         },
     }
     if upright_approach_axes_obj:
@@ -786,6 +840,16 @@ def _write_stage1_cache(
     cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _stage1_generator_for_planning(planning: PlanningConfig, *, upright_approach_axes_obj=()):
+    if planning.grasp_generator == "antipodal":
+        return AntipodalMeshGraspGenerator(
+            planning.to_generator_config(upright_approach_axes_obj=upright_approach_axes_obj)
+        )
+    if planning.grasp_generator == "gpd":
+        return ExternalGpdGraspGenerator(planning.to_gpd_generator_config())
+    raise ValueError(f"Unsupported planning.grasp_generator value '{planning.grasp_generator}'.")
+
+
 def _augment_stage1_result_with_extra_upright_axes(
     result: Stage1Result,
     *,
@@ -794,7 +858,7 @@ def _augment_stage1_result_with_extra_upright_axes(
     base_upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
     extra_upright_approach_axes_obj: tuple[tuple[float, float, float], ...],
 ) -> Stage1Result:
-    if not extra_upright_approach_axes_obj:
+    if planning.grasp_generator != "antipodal" or not extra_upright_approach_axes_obj:
         return result
 
     extra_object_candidates = AntipodalMeshGraspGenerator(
@@ -916,9 +980,7 @@ def generate_stage1_result(
                     extra_upright_approach_axes_obj=extra_upright_approach_axes_obj,
                 )
 
-    generator = AntipodalMeshGraspGenerator(
-        planning.to_generator_config(upright_approach_axes_obj=base_upright_approach_axes_obj)
-    )
+    generator = _stage1_generator_for_planning(planning, upright_approach_axes_obj=base_upright_approach_axes_obj)
     raw_candidates = generator.generate(target_mesh_local)
     surface_samples = tuple(getattr(generator, "last_surface_samples", ()))
     serialized_raw = [
@@ -956,6 +1018,7 @@ def generate_stage1_result(
         source_frame_orientation_xyzw_obj_world=target_pose_in_obj_world.orientation_xyzw_world,
         candidates=tuple(kept_candidates),
         metadata={
+            "grasp_generator": planning.grasp_generator,
             **_robot_metadata_for_planning(planning),
             "assembly_glob": geometry.assembly_glob,
             "assembly_obstacle_mode": _assembly_obstacle_mode(geometry),
