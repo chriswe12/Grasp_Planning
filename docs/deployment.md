@@ -1,5 +1,7 @@
 # Real-Robot Deployment Requirements
 
+Run commands from the repository root. See [README](../README.md) for orientation.
+
 This guide describes what must be installed or copied to a new computer to run
 the consolidated pipeline on the KUKA iiwa7 cell. It covers deterministic
 MoveIt grasping and optional D405 policy-assisted approach. Training is out of

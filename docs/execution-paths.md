@@ -1,5 +1,7 @@
 # Unified Execution And Benchmark Paths
 
+Run commands from the repository root. See [README](../README.md) for setup.
+
 The repository has one public command and one public environment setup:
 
 ```bash

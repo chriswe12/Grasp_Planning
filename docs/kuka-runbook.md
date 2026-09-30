@@ -1,6 +1,7 @@
-# KUKA Dual-Arm — Quick Startup Cheatsheet
+# KUKA Dual-Arm Runbook
 
-(Full details: `KUKA_dual_arm_bringup_README.md`)
+Run commands from the repository root. See [deployment requirements](deployment.md)
+and the [ROS2 workspace](../ros2_ws/README.md) for dependencies and bringup details.
 
 ## Persistent-stack simulation
 

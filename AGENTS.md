@@ -1,110 +1,82 @@
-# AGENTS.md
+# Agent Guidance
 
-## Purpose
+## Orientation
 
-This repository contains YAML-driven Fabrica grasp planning and execution for Franka Research 3 and KUKA iiwa7, plus Isaac Lab visual-servo RL and Euler deployment.
+YAML-driven Fabrica grasp planning for FR3 and KUKA iiwa7. Start with
+`README.md`; detailed operations and contracts live in `docs/`.
 
-Current scope:
-- unified planning/execution entrypoint: `run_pipeline.sh` (see `EXECUTION_PATHS.md`)
-- repo-specific Isaac container helper: `docker_env.sh`
-- three pipeline modes: `sim`, `pitl`, `real`
-- shared stage-1 and stage-2 Fabrica planning in `grasp_planning/pipeline/`
-- MuJoCo execution from the stage-2 bundle in `scripts/run_fabrica_grasp_in_mujoco.py`
-- Isaac execution from the stage-2 bundle in `scripts/run_fabrica_grasp_in_isaac.py`
-- ROS2 pose intake in `grasp_planning/ros2/`
-- optional real-robot execution from the stage-2 bundle in `grasp_planning/ros2/real_grasp_executor.py`
-- internal ROS2 workspace for hardware-facing nodes in `ros2_ws/src/robot_integration_ros/`
-- MuJoCo robot model generation from Menagerie assets in `scripts/build_mujoco_fr3_hand_models.py`
-- standalone grasp-generation benchmark over Fabrica OBJ parts in `scripts/run_grasp_generation_benchmark.py`
-- dual-KUKA holder/inserter planning and execution through `run_pipeline.sh --workflow dual`
-- resumable all-step dual-arm benchmark in `scripts/run_dual_assembly_benchmark.py`
-- visual-servo RL tasks, training, and evaluation in `isaac_rl/`; shared helpers in `grasp_planning/rl/`
-- repo-specific Euler deployment and job submission in `euler/`
+- `run_pipeline.sh` is the public entrypoint. Dual-arm is the default;
+  select `--workflow single-object` explicitly. Modes are `sim`, `pitl`, `real`.
+- Planning: `grasp_planning/pipeline/`; execution: `scripts/run_fabrica_grasp_in_{mujoco,isaac}.py`
+  and `grasp_planning/ros2/real_grasp_executor.py`; hardware nodes: `ros2_ws/src/robot_integration_ros/`.
+- Standalone RL is the pinned `isaac_rl/` submodule, with shared helpers in
+  `grasp_planning/rl/` and cluster deployment in `euler/`. It is not bundle execution.
+- See `docs/execution-paths.md`, `docs/dual-arm-symmetry.md`, and
+  `docs/training.md` instead of restoring retired plans or experiment diaries.
 
-## Task Scope And Verification
+## Scope And Safety
 
-- Complete requested implementation and relevant verification using reasonable assumptions within the authorized scope. Audits and proposals do not authorize applying their suggested changes.
-- Ask for clarification only when a missing decision materially changes scope or outcome; complete independent authorized work first. Do not ask again for approval already provided in the session.
-- Preserve hardware execution gates and safe defaults. Preparing deployment or smoke readiness does not authorize starting training or submitting cluster jobs.
-- Run checks appropriate to the changed behavior. Broaden or repeat testing when failures, further changes, or unresolved concerns justify it.
-- Treat memory and the companion wiki as context; verify current paths, configuration, and behavior against this checkout. Treat benchmark results and cluster details as dated observations.
-- Apply skills only to the requested workflow. Explicit user instructions take precedence over skill guidelines; if an instruction blocks progress, cite its source and explain the concrete conflict.
-- Report what changed, what was verified, and any remaining limitation concisely.
+- Audits/proposals do not authorize fixes. Deployment/smoke preparation does
+  not authorize training, cluster submission, or hardware motion.
+- Verify current paths/configs against this checkout; wiki, memory, benchmark
+  results, and cluster observations can be dated. Report verification limits.
+- Preserve `configs/grasp_pipeline_real.yaml` defaults: execution disabled,
+  confirmation required, stop at pregrasp, gripper disabled. Software, fake
+  hardware, networking, and FCI checks do not establish physical readiness.
+- Generation benchmark success is planning-only, not execution or lift success.
+- Keep standalone benchmarks separate from mode behavior; do not restore the
+  retired simulator stack. Do not commit caches, logs, or `__pycache__`.
 
 ## Companion Wiki
 
-A companion LLM knowledge base lives at `../mt_wiki`.
+For broad architecture, pipeline, frame, backend, ROS2, config, asset, or safety
+changes, read `../mt_wiki/index.md` first. Code is the source of truth.
+Do not edit durable wiki pages or its `log.md` from this repository.
+When follow-up is needed, maintain one session note under
+`../mt_wiki/agent-changelogs/`, following its `README.md` and `TEMPLATE.md`.
+Before committing, check the note's paths, behavior, verification, risks, and
+commit/status accuracy. Trivial formatting, generated outputs, and scratch
+experiments do not need a note. Agents operating from the wiki may read this
+code but must not modify, commit, or push it.
 
-For broad architecture, pipeline, frame, backend, ROS2, config, asset, or safety changes:
-- read `../mt_wiki/index.md` before changing durable behavior;
-- keep code as the source of truth;
-- do not directly edit durable wiki pages or `../mt_wiki/log.md` from this code repository during coding work;
-- when wiki follow-up is needed, create a Markdown changelog entry under `../mt_wiki/agent-changelogs/`;
-- follow `../mt_wiki/agent-changelogs/README.md` and `../mt_wiki/agent-changelogs/TEMPLATE.md` for naming and content.
+## Contracts That Must Not Regress
 
-Maintain one session changelog when wiki follow-up is needed. Update it as durable behavior, architecture, configuration, safety, or debugging facts change; before a commit or when prompted, review it for accuracy. Include the source repo, branch, commit or PR when available, changed paths, behavior changes, verification, risks or open questions, and suggested wiki pages.
+- Single-object backends consume the same saved stage-2 bundle; do not add
+  a second grasp serialization path. Rebuild MuJoCo meshes and generated
+  collision-enabled Isaac USD in the saved bundle-local frame. A supplied USD
+  is valid only if authored in that frame.
+- Saved-bundle Isaac execution uses MoveIt joint waypoints, not local direct
+  controllers. MuJoCo's optional MoveIt controller plans only; MuJoCo owns physics.
+- Bump `GRASP_SCORING_ALGORITHM_VERSION` when `score_grasps()` changes so
+  stage-1 caches cannot reuse stale pad-footprint `contact_support` scores.
+- `--skip-stage1-collision-checks` skips only assembly filtering, not
+  object/gripper/floor checks. `roll_angle_step_deg` covers a full 360-degree sweep.
+- Regrasp candidates are geometry-filtered then MoveIt-ranked at execution.
+  Score reachability per actual staging XY offset, not just the base pose.
+  Keep candidate-plan artifacts separate from execution-attempt diagnostics.
+- Dual runtime queues preserve producer safety/corridor tiers and explicit
+  `candidate_rank`; execute the exact collision-aware IK joints accepted in preflight.
+- Propagate `--inserter-arm` into real task construction and consume declared
+  roles; `auto` swaps roles across assembly Y, so hard-coded roles break symmetric cases.
+- Ground rotated dual pickup meshes on the configured floor before filtering.
+  Start real-mode live diagnostics before filtering so empty queues remain explainable.
+- Dual Isaac streams the MoveIt polyline with critically damped drives;
+  release the pickup fixture after bilateral intended-object contact, not during transport.
 
-Do not create a changelog for trivial formatting, small local fixes with no durable conceptual impact, generated artifacts, or purely experimental scratch work unless explicitly requested.
+## Environment And Verification
 
-Agents operating from `../mt_wiki` are documentation agents: they may read this repository as source material, but they must not create, edit, format, delete, commit, or push files in this code repository.
-
-## Main Files
-
-- `run_pipeline.sh`
-- `docker_env.sh`
-- `Dockerfile`
-- `scripts/run_grasp_pipeline.py`
-- `scripts/run_fabrica_grasp_in_mujoco.py`
-- `scripts/run_fabrica_grasp_in_isaac.py`
-- `scripts/convert_stl_to_usd.py`
-- `scripts/build_mujoco_fr3_hand_models.py`
-- `scripts/run_grasp_generation_benchmark.py`
-- `scripts/download_required_assets.sh`
-- `configs/grasp_generation_benchmark.yaml`
-- `grasp_planning/pipeline/fabrica_pipeline.py`
-- `grasp_planning/pipeline/stable_orientations.py`
-- `grasp_planning/mujoco/runner.py`
-- `grasp_planning/mujoco/scene_builder.py`
-- `grasp_planning/ros2/pose_listener.py`
-- `grasp_planning/ros2/real_grasp_executor.py`
-- `grasp_planning/ros2/franka_gripper_client.py`
-- `grasp_planning/ros2/moveit_pose_commander.py`
-- `ros2_ws/src/robot_integration_ros/robot_integration_ros/move_real_robot_ee.py`
-
-## Environment Notes
-
-- `run_pipeline.sh` should resolve `PIPELINE_PYTHON`, then `python3`, then `python`.
-- `sim` uses `execution_world_pose` from YAML and can execute in MuJoCo and/or Isaac.
-- `pitl` waits on ROS2 topics, writes stage artifacts, then can execute in MuJoCo and/or Isaac.
-- `run_pipeline.sh --backend {config,mujoco,isaac,both,none}` overrides sim/pitl execution backend for one run.
-- `configs/grasp_pipeline_sim_isaac.yaml` and `configs/grasp_pipeline_pitl_isaac.yaml` are Isaac-only convenience configs with MuJoCo disabled.
-- `real` uses the same ROS2 intake path, writes the same stage artifacts, and can optionally execute on hardware when `real_execution.enabled: true`.
-- The generation benchmark is planning-only: `direct_success` and `fallback_success` do not imply MuJoCo, Isaac, MoveIt, or hardware execution success.
-- Planning knobs: `roll_angle_step_deg` expands a full 360 degree roll sweep; `floor_clearance_margin_m` and `top_grasp_score_weight` are stage-2 world-pose filters/scorers; `--skip-stage1-collision-checks` bypasses only stage-1 assembly collision filtering.
-- Object-local `contact_support` is pad-footprint based. If `score_grasps()` behavior changes, bump `GRASP_SCORING_ALGORITHM_VERSION` so stage-1 caches cannot reuse stale scores.
-- For single-object execution, MuJoCo, Isaac, and the real-robot executor consume the stage-2 bundle as the source of truth; do not create a second grasp serialization path.
-- The MuJoCo object mesh must be rebuilt in the saved bundle-local frame before execution.
-- MuJoCo can optionally use MoveIt for planning only via `mujoco_execution.controller: "moveit"`; MuJoCo still executes the planned joint waypoints and owns physics/viewer/contact evaluation.
-- MuJoCo regrasp fallback is geometry-filtered first, then MoveIt-ranked at execution time: do not choose staging poses only by static placement score when MoveIt trajectories are available.
-- Regrasp reachability scoring depends on world XY; final candidates must be scored per actual staging offset pose, not once at the base staging XY.
-- Regrasp fallback artifacts are split: `*_regrasp_plan.json/html` explain candidate resting poses and grasps; the MuJoCo attempt artifact records ranked `planned_candidates`, execution `attempts`, and trajectory diagnostics.
-- Isaac execution of saved stage-2 bundles uses MoveIt-planned joint waypoints; do not reintroduce local direct controllers in that execution path without an explicit request. Standalone Isaac Lab RL training and evaluation are separate workflows; see `isaac_rl/README.md` and `euler/README.md`.
-- Dual-arm runtime queues are producer-ranked by safety/corridor tiers, not globally by raw score. Preserve explicit `candidate_rank`, and execute the exact collision-aware IK joints accepted during preflight.
-- Propagate `--inserter-arm` into real task construction and consume task-declared roles in the executor; `auto` swaps holder/inserter across the assembly-Y line, so hard-coded logical roles invalidate half of a symmetric benchmark.
-- Dual-arm pickup filtering grounds the rotated incoming mesh on the configured world floor (default `z=-0.030 m`) before testing the gripper. Real-mode live debugging must start before this filter so an empty queue still reports its diagnostics.
-- Dual-arm Isaac streams the MoveIt polyline with critically damped drives and releases the pickup fixture after bilateral intended-object contact; do not pin the incoming part during loaded transport.
-- Isaac execution generates a collision-enabled bundle-local USD from the stage-2 bundle by default; only use a provided USD if it is already authored in the saved bundle-local frame.
-- The vendored Franka hand collision mesh lives at `assets/urdf/franka_description/meshes/robot_ee/franka_hand_black/collision/hand.stl`.
-- MuJoCo Menagerie `franka_fr3` is arm-only; use `scripts/build_mujoco_fr3_hand_models.py` to generate the local FR3+Panda-hand XML under `.cache/generated_mujoco_models/`.
-- Hardware-facing ROS2 code depends on an external FR3 / MoveIt workspace being sourced before running repo-local ROS2 nodes.
-- `run_pipeline.sh` resets ROS discovery to `ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}` and clears localhost-only/static discovery unless `GRASP_KEEP_ROS_DISCOVERY_ENV=1`.
-- Keep `configs/grasp_pipeline_real.yaml` safe by default: `real_execution.enabled: false`, `require_confirmation: true`, `stop_after: "pregrasp"`, `gripper_enabled: false`.
-
-## General Guidance
-
-- Keep execution changes aligned with the three pipeline modes; keep standalone benchmarks separate from mode behavior.
-- Do not reintroduce the retired simulator stack, its configs, or its container setup.
-- Prefer updating `configs/mujoco_simulation.yaml` when exposing new MuJoCo tuning knobs.
-- Prefer updating the `isaac_execution` block in the sim/pitl configs when exposing Isaac tuning knobs.
-- Prefer updating the `real_execution` block in `configs/grasp_pipeline_real.yaml` when exposing hardware execution knobs.
-- Avoid committing `__pycache__` files.
+- Interpreter precedence: `PIPELINE_PYTHON`, `python3`, `python`.
+- `sim` uses YAML `execution_world_pose`; `pitl`/`real` use shared ROS2 intake.
+  `--backend {config,mujoco,isaac,both,none}` overrides sim/pitl execution.
+- ROS2 hardware nodes need an external FR3/MoveIt underlay. Pipeline discovery
+  defaults to domain 0 and clears localhost/static discovery unless
+  `GRASP_KEEP_ROS_DISCOVERY_ENV=1`.
+- Menagerie `franka_fr3` is arm-only; use `scripts/build_mujoco_fr3_hand_models.py`
+  for FR3+Panda hand XML under `.cache/generated_mujoco_models/`.
+- Expose tuning in `configs/mujoco_simulation.yaml`, sim/pitl `isaac_execution`,
+  or real `real_execution`, matching the affected backend.
+- Initialize pinned submodules before testing. CPU regressions:
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`.
+  Broaden checks for changed contracts; CPU results do not replace Isaac/ROS/hardware validation.
+- Documentation moves must update local links and script error hints. Keep
+  newcomer guidance in README and deeper reference in `docs/`.

@@ -16,7 +16,7 @@ if [[ "$fake" != true && "$inspect_only" != true ]]; then
     echo "Robot $robot_ip did not answer the network preflight; ROS was not started." >&2
     ip route get "$robot_ip" >&2 || true
     echo "Check the control-box Ethernet cable and give that interface an address on the robot subnet." >&2
-    echo "See FRANKA_REAL_POLICY.md (Connection troubleshooting). No network settings were changed." >&2
+    echo "See docs/franka-policy.md (Connection troubleshooting). No network settings were changed." >&2
     exit 1
   fi
 fi

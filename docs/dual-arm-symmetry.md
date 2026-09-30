@@ -1,4 +1,4 @@
-# Dual-Robot Grasp And Transition Symmetry Plan
+# Dual-Arm Grasp And Transition Symmetry
 
 Status: implemented for the current Stage-3 and pre-insertion vertical slice
 
