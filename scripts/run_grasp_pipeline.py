@@ -177,6 +177,7 @@ def _planning_config(payload: dict[str, object]) -> PlanningConfig:
         gripper_collision_model=str(raw.get("gripper_collision_model", "franka_hand")),
         floor_clearance_margin_m=float(raw.get("floor_clearance_margin_m", 0.0)),
         skip_stage1_collision_checks=bool(raw.get("skip_stage1_collision_checks", False)),
+        stage1_upright_axes_enabled=bool(raw.get("stage1_upright_axes_enabled", True)),
         stage1_pose_upright_axis_enabled=bool(
             raw.get("stage1_pose_upright_axis_enabled", _stage1_pose_upright_axis_default(raw))
         ),

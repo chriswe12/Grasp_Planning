@@ -19,6 +19,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+experiments = [
+    "matplotlib>=3.6",
+    "psutil>=5.9",
+]
 training = [
     "Pillow>=10.0",
     "rl-games==1.6.1",

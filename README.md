@@ -15,9 +15,13 @@ Both workflows are YAML-driven and write JSON/HTML artifacts that explain what
 was selected and why alternatives were rejected. Generated artifacts under
 `artifacts/` are local outputs and are not the source code.
 
+Standalone visual-servo training and the FR3/ZED policy workbench are separate
+from these bundle-driven pipelines. See the Franka workflow below for their
+entrypoints and local asset requirements.
+
 ## Start Here
 
-Use one environment and one entrypoint:
+For the single-object and dual-arm pipelines, use:
 
 ```bash
 source ./setup_robot_env.sh
@@ -38,6 +42,7 @@ source ./setup_robot_env.sh
 | Benchmark every dual assembly step | `./run_pipeline.sh --benchmark dual-assembly` | `configs/dual_assembly_benchmark.yaml` |
 | Evaluate grasp generation without execution | `./run_pipeline.sh --benchmark grasp-generation` | `configs/grasp_generation_benchmark.yaml` |
 | Execute saved benchmark grasps | `./run_pipeline.sh --benchmark grasp-execution` | `configs/grasp_execution_benchmark.yaml` |
+| Configure the standalone FR3/ZED policy workbench | `./franka_policy.sh configure` | local selection, catalog, and checkpoint |
 
 See [EXECUTION_PATHS.md](EXECUTION_PATHS.md) for the complete single-object,
 policy, dual-arm, ROS action, and benchmark execution map.
@@ -146,11 +151,18 @@ incoming parts `0`, `3`, `1`, and `4`.
 
 ## Installation
 
-Install the Python package and test dependencies:
+Initialize the pinned Isaac RL submodule after cloning or pulling, then install
+the Python package and test dependencies:
 
 ```bash
+git submodule update --init --recursive
 python3 -m pip install -e ".[test]"
 ```
+
+The submodule must match the commit recorded by this repository. A leading
+`+` in `git submodule status` means its checkout differs from that pin. Catalogs,
+checkpoints, generated models, and ROS workspace installations are additional
+local assets; initializing the submodule does not download them.
 
 Simulation and real-robot planning additionally require ROS2 and a compatible
 MoveIt workspace. The current KUKA launchers default to ROS Humble and
@@ -218,6 +230,34 @@ For `pitl` and `real`, the planning local frame is the OBJ frame translated by
 the arithmetic mean of all OBJ vertices. A matching
 `fp_debug_msgs/msg/DebugPoseItem.pose_base` is treated as the world pose of
 that centroid-centered frame.
+
+## Franka Visual Policies
+
+The standalone FR3/ZED workbench selects a saved training goal and runs a visual
+policy from a manually positioned arm. It has its own entrypoint:
+
+```bash
+python3 -m pip install -e '.[deployment]'
+./franka_policy.sh configure
+./franka_policy.sh run
+```
+
+Open <http://127.0.0.1:8765>. `run` defaults to observe-only inference. The
+workbench requires the local compatible Franka stack, ZED SDK, matching catalog
+and checkpoint contract, and a reviewed saved selection. Follow
+[FRANKA_REAL_POLICY.md](FRANKA_REAL_POLICY.md) for setup, explicit physical
+controls, recording, and the close/lift handoff. Software and simulator checks
+do not establish reliable physical policy performance.
+
+Training and data preparation are documented in [isaac_rl/README.md](isaac_rl/README.md)
+and [euler/README.md](euler/README.md). Additional Franka contracts are described
+in [FRANKA_MIXED_GOALS.md](FRANKA_MIXED_GOALS.md),
+[FRANKA_NATIVE_RESOLUTION.md](FRANKA_NATIVE_RESOLUTION.md),
+[FRANKA_PLACEMENT_RANDOMIZATION.md](FRANKA_PLACEMENT_RANDOMIZATION.md),
+[FRANKA_POSE_REPLICATION.md](FRANKA_POSE_REPLICATION.md), and
+[FRANKA_SYMMETRY_EVALUATION.md](FRANKA_SYMMETRY_EVALUATION.md). Their job IDs,
+checkpoints, and verification results are dated experiment records. Training
+and Euler submission are explicit separate actions.
 
 ## Dual-Arm Quick Start
 
@@ -390,7 +430,8 @@ overwriting the part root state. Final validation checks both position and
 orientation for the held base and incoming part. Incoming orientation is
 accepted against the selected target and finite symmetry-equivalent targets for
 the same held-base pose. The default angular tolerance is `0.20 rad` for each
-object. The wrapper stops the MoveIt stack when finished. Add `--headless` for a non-GUI run or
+object. An explicitly wrapper-owned temporary MoveIt stack is stopped when
+finished; the default persistent stack remains running. Add `--headless` for a non-GUI run or
 `--record-video /tmp/dual_part_0.mp4` to save a video. Use
 `--joint-rank-candidates N` to change the pre-plan bound or
 `--skip-joint-space-ranking` only for a comparison run.
@@ -857,6 +898,36 @@ Run the standalone benchmark to evaluate grasp generation over Fabrica OBJ parts
 
 The default config is `configs/grasp_generation_benchmark.yaml`; outputs go to `artifacts/grasp_generation_benchmark/` with `results.json`, `summary.csv`, `summary.md`, `index.html`, per-part stage artifacts, stable-orientation metadata, and optional generation-only fallback plans. The benchmark requires the same collision backend as normal stage-1 filtering.
 
+### Resumable Thesis Ablations
+
+`scripts/run_grasp_ablation_suite.py` provides `prepare`, `run`, `worker`, and
+`report` commands for the fixed thesis corpus. Install its optional dependencies:
+
+```bash
+python3 -m pip install -e '.[experiments]'
+python3 scripts/run_grasp_ablation_suite.py --help
+```
+
+Preparation requires the two saved baseline directories listed in the script's
+`REFERENCE_DIRS`; they are ignored local artifacts, not included in a clean
+clone. It freezes the 264 orientation identities and copies worker source into
+the selected output root. Assets remain linked to the checkout and are hashed
+for provenance. Keep those assets unchanged during a run.
+
+For an existing prepared suite, regenerate the report without running jobs:
+
+```bash
+python3 scripts/run_grasp_ablation_suite.py report \
+  --root artifacts/thesis_grasp_overnight_20260923
+```
+
+The dated local suite completed 2,059 jobs with no error markers on September
+24, 2026. Its `REPORT.md`, comparison tables, plots, and `OPERATIONS.md` remain
+under that ignored artifact root and need separate preservation. Generation
+coverage is geometric feasibility; native-MuJoCo ranking experiments are
+separate from MoveIt, Isaac, and hardware validation. `run` resumes pending jobs
+but skips error markers; diagnose and preserve those records before a retry.
+
 ## Grasp Execution Benchmark
 
 After running the generation benchmark, execute selected stage-2 feasible grasps in MuJoCo and/or Isaac with per-attempt artifacts and videos:
@@ -947,7 +1018,7 @@ Terminal 2: source the robot integration overlay and run the script
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/pdz/franka_ros2_ws/install/setup.bash
-source /media/pdz/Elements1/perception_bag_test/ros2_ws/install/setup.bash
+source /media/pdz/Elements1/Grasp_Planning/ros2_ws/install/setup.bash
 ```
 
 Optional check:
@@ -1128,7 +1199,7 @@ trained D405 PPO policy:
 ```text
 stage-2 bundle target
 -> MoveIt plan/execute to pregrasp
--> synchronized D405 RGB-D + explicit catalogue target
+-> synchronized D405 RGB-D + runtime-rendered goal for the selected grasp
 -> deterministic policy twists
 -> live optical-frame TF into lbr_link_0
 -> safety supervisor
@@ -1147,11 +1218,13 @@ real_execution:
   stop_after: "grasp"
 ```
 
-Then fill the checkpoint, checkpoint-metadata sidecar, and exact `target_id` in
-`configs/visual_servo_real_d405.yaml`. Startup fails if the target's part or
-grasp ID differs from the selected stage-2 bundle, if the D405 serial/profile
-does not match, or if the checkpoint/catalogue hashes and observation/action
-contracts do not match the sidecar.
+The policy wrapper fills the checkpoint and metadata sidecar and renders
+`goal_observation_path` after MoveIt selects the exact live grasp. Standalone
+use requires those fields in `configs/visual_servo_real_d405.yaml`. Startup
+checks the rendered goal's part/grasp identity and the checkpoint/render
+observation and action contracts. Live camera routing follows the configured
+topics; serial and calibration differences are diagnostics rather than a
+camera allow-list. RGB and depth still require matching pixel grids.
 
 After reviewing and selecting a checkpoint, create its sidecar with:
 
@@ -1182,22 +1255,15 @@ python3 scripts/run_d405_ppo_visual_servo.py \
   --expected-grasp-id g1973
 ```
 
-The dry-run preflight also requires fresh deadman and E-stop heartbeats. For a
-stationary, non-moving dry-run only, these can be synthetic publishers in two
-additional terminals:
-
-```bash
-ros2 topic pub -r 10 /d405_visual_servo/deadman std_msgs/msg/Bool '{data: true}'
-ros2 topic pub -r 10 /d405_visual_servo/emergency_stop std_msgs/msg/Bool '{data: false}'
-```
-
-Do not use synthetic operator signals for real motion. Connect those topics to
-the reviewed physical operator controls, set a real `WrenchStamped`
-`force_topic`, and keep all three streams publishing as heartbeats; stale
-joint, force, deadman, or E-stop data latches a zero-motion hold.
+The checked-in profile requires fresh estimated-wrench feedback at
+`/lbr/force_torque_broadcaster/wrench`. Application deadman/E-stop topics are
+blank and `require_deadman` is false for the reviewed cell's hardware safety
+chain. If application operator inputs are enabled, connect them to physical
+controls and keep them fresh; synthetic publishers are not substitutes during
+real motion. Stale required feedback latches a zero-motion hold.
 
 MoveIt Servo consumes speed-unit `TwistStamped` commands on
-`/lbr/servo_node/delta_twist_cmds`, commands `gripper_tcp` in `lbr_link_0`, and
+`/lbr/servo_node/delta_twist_cmds`, commands `pdz_gripper_tcp` in `lbr_link_0`, and
 monitors the same planning scene published by MoveGroup. It therefore applies
 joint/singularity and self/scene-collision slowdown or halt behavior during the
 learned approach. A full motion planner is still used for pregrasp and lift;
@@ -1205,7 +1271,7 @@ calling a global planner for every 15 Hz policy step is not supported.
 
 Real Servo output additionally requires `command_sink: moveit_servo`,
 `real_motion_approved: true`, the CLI/caller real-motion confirmation, live
-deadman and emergency-stop topics, reviewed workspace/joint/force limits, and
+operator inputs when configured, reviewed workspace/joint/force limits, and
 a healthy Servo status/command subscriber. Gripper closing occurs only after
 the learned completion probability is at least `0.95` for four consecutive
 low-speed frames and both `gripper_enabled` and
@@ -1218,13 +1284,14 @@ approach, closes only after the completion gate, deactivates Servo, and then
 uses MoveIt for the configured lift:
 
 ```bash
-./run_pipeline.sh --mode real --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
+./run_pipeline.sh --workflow single-object --mode real --config configs/grasp_pipeline_real_lbr_iiwa7.yaml
 ```
 
 Use the `planning` block in `configs/grasp_pipeline_*.yaml` to tune grasp generation and filtering:
 - `stage1_cache_enabled` and `stage1_cache_dir` cache the generated stage-1 grasps plus surface samples per object mesh and stage-1 planning settings. Cache hits still write the normal stage artifacts.
 - `roll_angle_step_deg` expands roll samples over a full 360 degrees. For example, `15.0` generates 24 roll angles from 0 through 345 degrees.
 - `stage1_pose_upright_axis_enabled` adds a live-pose-derived world-upright roll sample during stage 1. Stage-1 caching stores the pose-independent base grasps and augments cache hits with only the missing per-run upright roll variants, so real/PITL pose jitter does not force a full regeneration.
+- `stage1_upright_axes_enabled` defaults to true. Set it to false for an all-upright-off ablation; it removes both base and extra upright axes. Disabling only the pose flag retains the base axes.
 - `detailed_finger_contact_gap_m` changes the gripper contact geometry used during detailed checks.
 - `floor_clearance_margin_m` is a stage-2 filtering margin: the full hand/finger collision geometry must stay at least this far above the world `z=0` floor. This does not change MuJoCo execution settings.
 - `top_grasp_score_weight` is applied during stage-2 scoring after the real/execution pose is known. It boosts grasps whose pregrasp-to-grasp approach is top-down in world coordinates, with movement mostly along `-Z`.
@@ -1251,7 +1318,7 @@ The fallback computes convex-hull support facets, checks homogeneous-COM stabili
 For a planning-only regrasp visualization that uses a known different-surface case, run:
 
 ```bash
-./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_plumbers_regrasp.yaml --backend none --headless
+./run_pipeline.sh --workflow single-object --mode sim --config configs/grasp_pipeline_sim_plumbers_regrasp.yaml --backend none --headless
 ```
 
 This writes `artifacts/plumbers_mujoco_regrasp_plan.html` without launching MuJoCo execution.
@@ -1276,12 +1343,17 @@ Leave that script running, then run the MuJoCo sim from another terminal.
 Run MuJoCo sim with cuMotion-backed MoveIt planning:
 
 ```bash
-./run_pipeline.sh --mode sim --config configs/grasp_pipeline_sim_cumotion.yaml --backend mujoco --headless
+./run_pipeline.sh --workflow single-object --mode sim --config configs/grasp_pipeline_sim_cumotion.yaml --backend mujoco --headless
 ```
 
 The default sim config uses Isaac execution; other configs can opt in with `isaac_execution.enabled: true`. The runner generates a collision-enabled bundle-local USD from the stage-2 bundle by default, so the spawned Isaac asset uses the same frame as the ground recheck. With no `isaac_execution.fr3_usd` override it uses Isaac Lab's Factory Franka mimic USD because that asset has manipulation-ready finger contact geometry. It also exposes the spawned gripper mesh prims as PhysX collision geometry before simulation reset, then validates success from the part lift height using `isaac_execution.success_height_margin_m`. Disable `mujoco_execution.enabled` if you want Isaac only. Isaac direct pickups use `isaac_execution.controller: "moveit"`: MoveIt plans the same `pregrasp`, `grasp`, and `lift` pose targets used by real execution, then Isaac streams the returned joint waypoints in simulation.
 
-The real, single-arm policy, dual-arm, and PDZ benchmark configs now use `gripper_collision_model: pdz_gripper`, `pdz_gripper_tcp`, and the trained 62 mm contact-width limit. Legacy Y-gripper configs and `--gripper-model y_gripper` remain available for old artifacts; do not mix those with a PDZ checkpoint.
+The KUKA real, single-arm policy, dual-arm, and PDZ benchmark configs use
+`gripper_collision_model: pdz_gripper`, `pdz_gripper_tcp`, and the trained 62 mm
+contact-width limit. `configs/grasp_pipeline_sim.yaml` still uses the Y-gripper
+asset, while `configs/grasp_pipeline_real.yaml` retains the safe Franka
+defaults. Select matching configs and `--gripper-model y_gripper` for Y-gripper
+artifacts; do not mix those with a PDZ checkpoint.
 
 ### KUKA iiwa7 Real Hardware Runbook
 
@@ -1682,6 +1754,11 @@ pre-commit run --all-files
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
 ```
 
+Initialize submodules before testing. Recording tests also need an available
+FFmpeg binary; CI installs the system `ffmpeg` package. Tests requiring Pixar
+USD or ROS2 may skip when those runtimes are unavailable. CPU tests do not
+replace Isaac, MoveIt, camera, or physical-robot verification.
+
 The FCL-backed collision tests require the native `libccd`/`libfcl` packages
 and `python-fcl`. ROS2-independent tests use mocks where possible; the dual
 MoveIt smoke test is separate because it requires a live shared MoveIt stack:
@@ -1697,6 +1774,9 @@ python3 scripts/smoke_test_dual_lbr_moveit.py
 The main source areas are:
 
 - `run_pipeline.sh` - the one public dual/single, bringup, action, policy, and benchmark entrypoint;
+- `franka_policy.sh` and `grasp_planning/real_franka/` - standalone FR3/ZED policy workbench and guarded control;
+- `isaac_rl/` - pinned submodule containing Isaac Lab training tasks and catalog tools;
+- `grasp_planning/rl/` and `euler/` - shared visual-servo helpers and cluster deployment;
 - `setup_robot_env.sh` - the one public sourced ROS environment;
 - `run_simple_dual_robot.sh` - compatibility shim to the unified dual workflow;
 - `start_lbr_moveit.sh` and `start_dual_lbr_moveit.sh` - single/shared MoveIt

@@ -90,6 +90,8 @@ class PlanningConfig:
     floor_clearance_margin_m: float = 0.0
     skip_stage1_collision_checks: bool = False
     stage1_pose_upright_axis_enabled: bool = True
+    # Explicit all-upright ablation; the pose flag alone retains base axes.
+    stage1_upright_axes_enabled: bool = True
     top_grasp_score_weight: float = 0.35
     regrasp_transfer_top_grasp_score_weight: float = 0.85
     reachability_proxy_score_weight: float = DEFAULT_REACHABILITY_PROXY_SCORE_WEIGHT
@@ -936,6 +938,9 @@ def generate_stage1_result(
         source_frame_pose_obj_world=target_pose_in_obj_world,
         extra_axes_obj=upright_approach_axes_obj,
     )
+    if not planning.stage1_upright_axes_enabled:
+        base_upright_approach_axes_obj = ()
+        all_upright_approach_axes_obj = ()
     extra_upright_approach_axes_obj = _axes_difference(
         all_upright_approach_axes_obj,
         base_upright_approach_axes_obj,
