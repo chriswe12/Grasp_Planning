@@ -14,7 +14,10 @@ DEFAULT_ZED_PROFILE = Path(__file__).resolve().parents[2] / "configs/franka_zed_
 
 
 def load_zed_profile(path=DEFAULT_ZED_PROFILE) -> dict:
-    profile = json.loads(Path(path).read_text())
+    return validate_zed_profile(json.loads(Path(path).read_text()))
+
+
+def validate_zed_profile(profile: dict) -> dict:
     if profile.get("model") != "ZED Mini" or profile.get("schema_version") != 1:
         raise ValueError("Expected ZED Mini profile schema 1")
     if profile.get("image_stream") != "left_rectified" or profile.get("convention") != "ros":
@@ -26,8 +29,13 @@ def load_zed_profile(path=DEFAULT_ZED_PROFILE) -> dict:
     for key in ("source_width", "source_height", "render_width", "render_height", "fx", "fy"):
         if not np.isfinite(profile[key]) or profile[key] <= 0:
             raise ValueError(f"Invalid camera value {key}")
-    if (profile["observation_width"], profile["observation_height"]) != (128, 72):
-        raise ValueError("The shared visual policy expects 128x72 observations")
+    if (profile["observation_width"], profile["observation_height"]) not in ((128, 72), (256, 144), (384, 216)):
+        raise ValueError("Unsupported native policy resolution; use 128x72, 256x144 or 384x216")
+    if (
+        profile["render_width"] < profile["observation_width"]
+        or profile["render_height"] < profile["observation_height"]
+    ):
+        raise ValueError("Render resolution must cover native observation detail")
     quat = np.asarray(profile["quaternion_wxyz"])
     if quat.shape != (4,) or not np.isclose(np.linalg.norm(quat), 1, atol=1e-5):
         raise ValueError("Camera quaternion must be unit WXYZ")
@@ -46,12 +54,31 @@ def profile_id(profile: dict) -> str:
     return "zed_mini_" + hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def resolve_zed_profile(contract: dict, path=None) -> dict:
+    """Resolve self-contained new catalogs while retaining the legacy profile.
+
+    Explicit overrides must match the catalog hash; camera changes require
+    regenerating reference images rather than relabeling old observations.
+    """
+    embedded = contract.get("camera_profile_data")
+    profile = (
+        load_zed_profile(path)
+        if path
+        else (validate_zed_profile(embedded) if embedded is not None else load_zed_profile())
+    )
+    if contract.get("camera_profile", profile_id(profile)) != profile_id(profile):
+        raise ValueError("Camera profile differs from training catalog")
+    if embedded is not None and profile_id(embedded) != profile_id(profile):
+        raise ValueError("Embedded camera profile differs from explicit override")
+    return profile
+
+
 def scaled_intrinsics(profile: dict, width: int, height: int) -> list[float]:
     sx, sy = width / profile["source_width"], height / profile["source_height"]
     return [profile["fx"] * sx, 0.0, profile["cx"] * sx, 0.0, profile["fy"] * sy, profile["cy"] * sy, 0.0, 0.0, 1.0]
 
 
-def pack_zed_rgbd(rgb: torch.Tensor, depth: torch.Tensor, profile: dict):
+def pack_zed_rgbd(rgb: torch.Tensor, depth: torch.Tensor, profile: dict, *, legacy_batch_layout=False):
     """Area resize with invalid-depth exclusion; invalid/far is normalized 1.
 
     Input is rectified LEFT RGB (uint8 or float [0,1]) and aligned optical-Z
@@ -63,6 +90,11 @@ def pack_zed_rgbd(rgb: torch.Tensor, depth: torch.Tensor, profile: dict):
         depth = depth.unsqueeze(-1)
     if depth.shape[:3] != rgb.shape[:3] or depth.shape[-1] != 1:
         raise ValueError("Depth must be aligned with the LEFT RGB image")
+    # grid_sample -> NHWC can carry a singleton-channel stride of H*W.
+    # CUDA adaptive-area pooling then misreads later batch elements. Reset that
+    # arbitrary singleton stride explicitly; contiguous() alone is a no-op here.
+    if not legacy_batch_layout:
+        depth = depth.squeeze(-1).unsqueeze(-1)
     color = rgb[..., :3].float() / (255.0 if rgb.dtype == torch.uint8 else 1.0)
     lo, hi = profile["depth_min_m"], profile["depth_max_m"]
     valid = torch.isfinite(depth) & (depth >= lo) & (depth < hi)
@@ -99,6 +131,23 @@ def reproject_intrinsics(rgb, depth, source_matrix, target_matrix):
     color = F.grid_sample(color.permute(0, 3, 1, 2), grid, align_corners=False).permute(0, 2, 3, 1)
     metric = F.grid_sample(depth.permute(0, 3, 1, 2), grid, mode="nearest", align_corners=False).permute(0, 2, 3, 1)
     return color, metric
+
+
+def optical_depth_from_radial(radial: torch.Tensor, intrinsics: torch.Tensor):
+    """Convert per-ray distance to optical Z using each tile's actual intrinsics.
+
+    This explicit optical-Z conversion is independently checked against MuJoCo.
+    """
+    if radial.ndim != 4 or radial.shape[-1] != 1:
+        raise ValueError("Expected NHW1 radial depth")
+    n, h, w, _ = radial.shape
+    k = torch.as_tensor(intrinsics, device=radial.device, dtype=radial.dtype).reshape(-1, 3, 3)
+    if k.shape[0] not in (1, n) or not torch.all(k[:, [0, 1], [0, 1]] > 0):
+        raise ValueError("Invalid per-camera intrinsics")
+    y, x = torch.meshgrid(torch.arange(h, device=radial.device), torch.arange(w, device=radial.device), indexing="ij")
+    u = (x[None] - k[:, 0, 2, None, None]) / k[:, 0, 0, None, None]
+    v = (y[None] - k[:, 1, 2, None, None]) / k[:, 1, 1, None, None]
+    return radial / torch.sqrt(1 + u * u + v * v)[..., None]
 
 
 def offset_jacobian(jacobian: torch.Tensor, offset_w: torch.Tensor) -> torch.Tensor:

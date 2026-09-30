@@ -1,0 +1,24 @@
+diff --git a/franka_semantic_components/CMakeLists.txt b/franka_semantic_components/CMakeLists.txt
+index c3340fc..a3ff0c9 100644
+--- a/franka_semantic_components/CMakeLists.txt
++++ b/franka_semantic_components/CMakeLists.txt
+@@ -14,6 +14,7 @@ endif()
+ option(CHECK_TIDY "Adds clang-tidy tests" OFF)
+ 
+ set(THIS_PACKAGE_INCLUDE_DEPENDS
++    controller_interface
+     Franka
+     franka_hardware
+     franka_msgs
+diff --git a/franka_semantic_components/package.xml b/franka_semantic_components/package.xml
+index 1f2a3f0..dd88897 100644
+--- a/franka_semantic_components/package.xml
++++ b/franka_semantic_components/package.xml
+@@ -8,6 +8,7 @@
+   <license>Apache 2.0</license>
+ 
+   <buildtool_depend>ament_cmake</buildtool_depend>
++  <depend>controller_interface</depend>
+ 
+   <depend>rclcpp</depend>
+   <depend>franka_msgs</depend>

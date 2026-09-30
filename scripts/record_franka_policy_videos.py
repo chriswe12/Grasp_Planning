@@ -14,6 +14,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "isaac_rl/source/isaac_rl"))
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument("--cases", type=Path, required=True)
+p.add_argument(
+    "--symmetry-evaluation",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Score validated finite and continuous axial object symmetries; --no-symmetry-evaluation retains nominal scoring",
+)
 p.add_argument("--font", type=Path, help="Optional TrueType font for readable video labels")
 p.add_argument("--output", type=Path, required=True)
 p.add_argument("--catalog", type=Path, default=ROOT / "isaac_rl/data/franka_fabrica_all_complete/catalog.npz")
@@ -51,6 +57,8 @@ def main():
     cfg.reset_ready_fraction = 0.0
     cfg.fixed_waypoint_index = 0
     cfg.sequential_target_assignment = True
+    cfg.pose_evaluation = True
+    cfg.symmetry_evaluation = args.symmetry_evaluation
     cfg.scene.inspection_camera = CameraCfg(
         prim_path="/World/InspectionCamera",
         width=960,
@@ -59,6 +67,9 @@ def main():
         spawn=sim_utils.PinholeCameraCfg(focal_length=18.0, clipping_range=(0.01, 15.0)),
     )
     env = FrankaZedEnv(cfg)
+    if env.symmetry_report is not None:
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "symmetry_evaluation.json").write_text(json.dumps(env.symmetry_report, indent=2) + "\n")
     # This single overview camera has one instance, not one per environment.
     # Manage its updates explicitly so batched environment resets cannot index it.
     camera = env.scene.sensors.pop("inspection_camera")
@@ -90,6 +101,7 @@ def main():
     }
     try:
         for case in cases:
+            env.cfg.pose_evaluation_progress = case.get("pose_progress", 0.0)
             checkpoint = Path(case["checkpoint"])
             assert json.loads(checkpoint.with_suffix(".contract.json").read_text()) == env.contract(), (
                 "Checkpoint scene/camera mismatch"
@@ -160,9 +172,9 @@ def main():
                 for y, label, rgb in ((96, "Live wrist RGB", wrist), (342, "Goal reference RGB", goal)):
                     draw.text((968, y - 26), label, font=font, fill="white")
                     canvas.paste(Image.fromarray(rgb).resize((312, 176)), (968, y))
-                p, r = env.pose_errors()
-                pos = float(p[slot].norm() * 1000)
-                rot = float(r[slot].norm() * 180 / np.pi)
+                p, r = env.evaluation_error_norms()
+                pos = float(p[slot] * 1000)
+                rot = float(r[slot] * 180 / np.pi)
                 draw.text((968, 542), f"t = {step / 15:.2f} s", font=font, fill="white")
                 draw.text((968, 570), f"Error: {pos:.2f} mm", font=font, fill="white")
                 draw.text((968, 597), f"Rotation: {rot:.2f} deg", font=font, fill="white")

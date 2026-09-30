@@ -1,0 +1,342 @@
+{
+  "version": "franka_clutter_v5_pose_v3",
+  "source_job": 11419483,
+  "source_env_sha256": "b72bcf710d103fe6166df74610aa8fe4db19f38eed0ab57eca2a58b09415e46d",
+  "source_agent_sha256": "aa9a9ffaa139c798bfbde7b93c8310912cccef74aa855f8d3b360166fba19926",
+  "source_settings": {
+    "rotation_reset_data_path": "/workspace/grasping_rl/isaac_rl/data/plumbers_block/rotation_resets.npz",
+    "reset_progress_min": 0.0,
+    "reset_progress_max": 0.94,
+    "reset_joint_noise_far_rad": 0.0,
+    "reset_joint_noise_near_rad": 0.0,
+    "reset_joint_noise_exponent": 1.5,
+    "reset_rotation_randomization_enabled": true,
+    "reset_rotation_fraction_min": 1.0,
+    "reset_rotation_fraction_max": 1.0,
+    "reset_rotation_far_rad": 0.2617993877991494,
+    "reset_position_randomization_enabled": true,
+    "reset_position_far_offset_m": 0.01,
+    "reset_position_near_offset_m": 0.003,
+    "reset_position_offset_exponent": 1.5,
+    "reset_position_fraction_min": 0.0,
+    "reset_position_fraction_max": 1.0,
+    "reset_position_clearance_guard_m": 0.0001,
+    "training_reset_mixture_enabled": true,
+    "reset_no_noise_fraction": 0.15,
+    "reset_ready_fraction": 0.15,
+    "reset_boundary_fraction": 0.15,
+    "reset_ready_exact_fraction": 0.25,
+    "reset_ready_position_max_m": 0.0035,
+    "reset_boundary_waypoint_count": 3,
+    "reset_boundary_rotation_fraction": 0.5,
+    "training_curriculum_enabled": true,
+    "curriculum_warmup_steps": 16000,
+    "curriculum_full_steps": 192000,
+    "curriculum_initial_progress_min": 0.7,
+    "curriculum_final_progress_min": 0.0,
+    "reset_timeout_far_s": 12.0,
+    "reset_timeout_close_s": 4.0,
+    "reset_timeout_ready_s": 1.5,
+    "reset_timeout_boundary_s": 2.5,
+    "reset_timeout_exponent": 1.0,
+    "variable_reset_timeouts_enabled": true,
+    "failure_replay_fraction": 0.25,
+    "failure_replay_score_floor": 0.1,
+    "failure_replay_score_power": 1.5,
+    "failure_score_decay": 0.9,
+    "live_observation_randomization_enabled": true,
+    "live_rgb_exposure_stops": [
+      -0.3,
+      0.3
+    ],
+    "live_rgb_contrast": [
+      0.85,
+      1.15
+    ],
+    "live_rgb_gamma": [
+      0.9,
+      1.1
+    ],
+    "live_rgb_white_balance_gain": [
+      0.93,
+      1.07
+    ],
+    "live_rgb_vignette_strength": [
+      0.0,
+      0.14
+    ],
+    "live_rgb_noise_std": [
+      0.0,
+      0.015
+    ],
+    "live_rgb_blur_probability": 0.12,
+    "live_rgb_blur_mix": [
+      0.25,
+      0.6
+    ],
+    "live_depth_scale": [
+      0.99,
+      1.01
+    ],
+    "live_depth_bias_m": [
+      -0.002,
+      0.002
+    ],
+    "live_depth_noise_std_m": [
+      0.0,
+      0.0002
+    ],
+    "live_correlated_depth_enabled": true,
+    "live_stereo_focal_length_px": 436.3104248046875,
+    "live_stereo_baseline_m": 0.018,
+    "live_disparity_bias_px": [
+      -0.04,
+      0.04
+    ],
+    "live_disparity_independent_noise_std_px": [
+      0.01,
+      0.03
+    ],
+    "live_disparity_spatial_noise_std_px": [
+      0.02,
+      0.07
+    ],
+    "live_disparity_temporal_noise_std_px": [
+      0.01,
+      0.04
+    ],
+    "live_disparity_temporal_correlation": [
+      0.6,
+      0.92
+    ],
+    "live_stereo_edge_mismatch_probability": 0.12,
+    "live_stereo_edge_horizontal_radius_px": 2,
+    "live_depth_quantization_m": 0.0001,
+    "live_depth_dropout_probability": [
+      0.0,
+      0.004
+    ],
+    "live_depth_edge_dropout_probability": [
+      0.0,
+      0.035
+    ],
+    "live_depth_edge_threshold_m": 0.008,
+    "live_rgb_patch_occlusion_probability": 0.06,
+    "live_depth_patch_dropout_probability": 0.04,
+    "live_patch_area_fraction": [
+      0.005,
+      0.03
+    ],
+    "live_calibration_warp_enabled": true,
+    "live_calibration_shift_x_px": [
+      -1.5,
+      1.5
+    ],
+    "live_calibration_shift_y_px": [
+      -1.0,
+      1.0
+    ],
+    "live_calibration_scale": [
+      0.99,
+      1.01
+    ],
+    "live_calibration_roll_deg": [
+      -1.0,
+      1.0
+    ],
+    "live_clean_episode_fraction": 0.15,
+    "live_observation_delay_max_steps": 2,
+    "live_observation_repeat_probability": 0.02,
+    "motion_action_delay_max_steps": 2,
+    "motion_action_two_step_probability": 0.08,
+    "motion_response_scale": [
+      0.88,
+      1.12
+    ],
+    "motion_response_alpha": [
+      0.7,
+      1.0
+    ],
+    "motion_bias": [
+      -0.015,
+      0.015
+    ],
+    "physics_joint_stiffness_scale": [
+      0.9,
+      1.1
+    ],
+    "physics_joint_damping_scale": [
+      0.9,
+      1.1
+    ],
+    "linear_action_scale_m_s": 0.04,
+    "angular_action_scale_rad_s": 0.24,
+    "action_delta_limit": 0.25,
+    "dls_damping": 0.08,
+    "completion_ready_position_m": 0.004,
+    "completion_ready_rotation_rad": 0.05235987755982988,
+    "completion_negative_position_m": 0.006,
+    "completion_negative_rotation_rad": 0.06981317007977318,
+    "completion_probability_threshold": 0.95,
+    "completion_required_consecutive_steps": 4,
+    "completion_max_linear_speed_m_s": 0.005,
+    "completion_max_angular_speed_rad_s": 0.03,
+    "completion_positive_reset_fraction": 0.15,
+    "unsafe_contact_force_threshold_n": 1.0,
+    "collision_risk_force_threshold_n": 0.05,
+    "collision_risk_penalty_weight": 2.0,
+    "divergence_position_m": 0.18,
+    "position_progress_weight": 300.0,
+    "rotation_progress_weight": 30.0,
+    "position_precision_weight": 4.0,
+    "position_precision_scale_m": 0.02,
+    "rotation_precision_weight": 2.0,
+    "rotation_precision_scale_rad": 0.12,
+    "completion_correct_reward": 50.0,
+    "completion_positive_terminal_reward_scale": 0.2,
+    "completion_premature_penalty": 50.0,
+    "unsafe_collision_penalty": 50.0,
+    "timeout_penalty": 15.0,
+    "divergence_penalty": 25.0,
+    "step_penalty": 0.02,
+    "action_penalty_weight": 0.002,
+    "auxiliary_position_scale_m": 0.1,
+    "auxiliary_rotation_scale_rad": 0.35,
+    "reset_collision_safe_sampling_enabled": true
+  },
+  "agent": {
+    "params": {
+      "seed": 43,
+      "env": {
+        "clip_observations": 5.0,
+        "clip_actions": 1.0
+      },
+      "algo": {
+        "name": "grasp_completion_ppo"
+      },
+      "model": {
+        "name": "grasp_completion_hybrid"
+      },
+      "network": {
+        "name": "grasp_rgbd_resnet18",
+        "pretrained": true,
+        "image_height": 72,
+        "image_width": 128,
+        "image_channels": 8,
+        "policy_context_size": 6,
+        "pose_target_size": 6,
+        "pose_loss_weight": 0.2,
+        "completion_target_size": 2,
+        "motion_action_size": 6,
+        "geometry_feature_size": 128,
+        "completion_loss_weight": 0.2,
+        "completion_positive_weight": 3.0,
+        "completion_motion_slowdown_start": 0.7,
+        "completion_motion_speed_floor": 0.25,
+        "space": {
+          "continuous": {
+            "mu_activation": "None",
+            "sigma_activation": "None",
+            "mu_init": {
+              "name": "default"
+            },
+            "sigma_init": {
+              "name": "const_initializer",
+              "val": -1.5
+            },
+            "fixed_sigma": true
+          }
+        }
+      },
+      "load_checkpoint": false,
+      "load_path": "",
+      "config": {
+        "name": "grasp_visual_servo_rgbd_multipart",
+        "env_name": "rlgpu",
+        "device": "cuda:0",
+        "device_name": "cuda:0",
+        "multi_gpu": true,
+        "ppo": true,
+        "mixed_precision": true,
+        "normalize_input": false,
+        "normalize_value": true,
+        "num_actors": 256,
+        "reward_shaper": {
+          "scale_value": 1.0
+        },
+        "normalize_advantage": true,
+        "gamma": 0.9801,
+        "tau": 0.9025,
+        "learning_rate": 5e-05,
+        "lr_schedule": "linear",
+        "kl_threshold": 0.012,
+        "score_to_win": 1000000000.0,
+        "max_epochs": 5000,
+        "save_best_after": 50,
+        "save_frequency": 100,
+        "print_stats": true,
+        "grad_norm": 0.5,
+        "entropy_coef": 0.0,
+        "truncate_grads": true,
+        "e_clip": 0.1,
+        "horizon_length": 64,
+        "minibatch_size": 512,
+        "mini_epochs": 2,
+        "critic_coef": 2,
+        "clip_value": true,
+        "seq_length": 4,
+        "bounds_loss_coef": 0.001,
+        "central_value_config": {
+          "minibatch_size": 512,
+          "mini_epochs": 2,
+          "learning_rate": 5e-05,
+          "lr_schedule": "linear",
+          "kl_threshold": 0.012,
+          "clip_value": true,
+          "normalize_input": true,
+          "truncate_grads": true,
+          "network": {
+            "name": "actor_critic",
+            "central_value": true,
+            "mlp": {
+              "units": [
+                256,
+                128,
+                64
+              ],
+              "activation": "elu",
+              "initializer": {
+                "name": "default"
+              },
+              "regularizer": {
+                "name": "None"
+              }
+            }
+          }
+        },
+        "player": {
+          "deterministic": true,
+          "games_num": 20,
+          "print_stats": true
+        },
+        "train_dir": "/workspace/grasping_rl/logs/rl_games/grasp_visual_servo_rgbd_multipart",
+        "full_experiment_name": "2026-08-21_17-04-11_job_11419483_2gpu"
+      }
+    }
+  },
+  "adaptations": [
+    "Franka Panda and ZED Mini with user camera mount; retain pencil lab appearance.",
+    "New robot-specific collision-tested discrete pose bank, eight balanced rotation axes and independent horizontal offsets.",
+    "100 mm approach as the selected source run; original nominal 65 mm paths retained only for explicit easy/ready mixture.",
+    "Generic RGB/depth/calibration perturbations retained; D405-specific disparity noise disabled pending ZED measurement.",
+    "No object yaw perturbation: not enabled in winning source run.",
+    "No KUKA weights or previous straight-approach optimizer state reused.",
+    "User explicitly requires15Hz policy/120Hz physics. Discount factors squared; source four-frame hold becomes two frames; rate/action costs scaled by2; control slew limit doubled. Delay in seconds rounds to representable15Hz frames.",
+    "Boundary mixture explicitly separates position-only starts at3.5/4.5/6.5mm from orientation-only5degree starts at the goal, with a50/50 mixture; all are independently collision-validated.",
+    "Ready/exact starts require measured collision-safe positive states. Targets with no safe positive reset are excluded while retaining every part. Infeasible isolated boundary cases use the explicitly recorded validated near-path negative fallback.",
+    "All nominal approach waypoints are physics-revalidated under the new contact threshold; every runtime reset is selected from a validated bank entry."
+  ],
+  "policy_hz": 15,
+  "physics_hz": 120,
+  "source_policy_hz": 30
+}
